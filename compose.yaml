@@ -52,10 +52,10 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  worker:
+  agent:
     build:
       context: .
-      dockerfile: apps/worker/Dockerfile
+      dockerfile: apps/agent/Dockerfile
     env_file:
       - .env
     environment:
@@ -63,6 +63,7 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
+      CASEPILOT_AGENT_PROVIDER: ${CASEPILOT_AGENT_PROVIDER:-mock}
     depends_on:
       migrate:
         condition: service_completed_successfully
