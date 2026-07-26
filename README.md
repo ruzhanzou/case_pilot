@@ -5,7 +5,7 @@ AI 驱动的测试设计、文本用例管理与测试执行平台。
 CasePilot turns requirements into reviewable, structured test cases and provides a
 lightweight QA execution workspace.
 
-> 当前版本是可本地部署的开发预览版。AI 生成流程使用确定性的 Mock Worker；
+> 当前版本是可本地部署的开发预览版。AI 生成流程使用独立 Agent 中的确定性 Mock Provider；
 > 真实大模型、文件解析、执行历史持久化和生产级安全配置仍在开发中。
 
 ## 功能概览
@@ -25,7 +25,7 @@ lightweight QA execution workspace.
 |---|---|---|
 | Web | React 19、TypeScript、vinext/Vite、Tailwind CSS | 对话、脑图、用例管理和测试执行 |
 | API | FastAPI、SQLAlchemy、Alembic | 会话、空间、生成任务和 REST API |
-| Worker | Celery | 文件分析与 Mock AI 生成管线 |
+| Agent | Python、Celery | 独立的文件分析、模型 Provider 与用例生成管线 |
 | 数据库 | PostgreSQL | 账号、空间、集合、任务等权威数据 |
 | 队列/缓存 | Redis | Celery Broker、任务结果、进度事件和短期缓存 |
 
@@ -68,7 +68,7 @@ docker compose ps
 1. 拉取 PostgreSQL、Redis、Node.js 和 Python 基础镜像。
 2. 创建 PostgreSQL 与 Redis 命名卷。
 3. 执行 Alembic 数据库迁移。
-4. 启动 API、Celery Worker 和 Web。
+4. 启动 API、Agent Worker 和 Web。
 
 访问地址：
 
@@ -83,7 +83,7 @@ docker compose ps
 ### 3. 查看日志
 
 ```bash
-docker compose logs -f web api worker
+docker compose logs -f web api agent
 ```
 
 ### 4. 停止、更新与清理
@@ -144,6 +144,7 @@ pnpm --dir apps/web install --frozen-lockfile
 
 python3.13 -m venv .venv
 .venv/bin/pip install -r apps/api/requirements-dev.txt
+.venv/bin/pip install -r apps/agent/requirements-dev.txt
 ```
 
 复制环境变量：
@@ -179,15 +180,15 @@ REDIS_URL=redis://127.0.0.1:6379/0 \
   .venv/bin/uvicorn casepilot_api.main:app --host 127.0.0.1 --port 8000
 ```
 
-终端二，启动 Worker：
+终端二，启动 Agent：
 
 ```bash
-PYTHONPATH=apps/api/src \
+PYTHONPATH=apps/agent/src \
 DATABASE_URL=postgresql+psycopg://casepilot:casepilot-local@127.0.0.1:5432/casepilot \
 REDIS_URL=redis://127.0.0.1:6379/0 \
 CELERY_BROKER_URL=redis://127.0.0.1:6379/1 \
 CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/2 \
-  .venv/bin/celery -A casepilot_api.worker:celery_app worker --loglevel=INFO
+  .venv/bin/celery -A casepilot_agent.tasks:celery_app worker --loglevel=INFO
 ```
 
 终端三，启动 Web：
@@ -237,10 +238,10 @@ docker compose logs api postgres redis
 
 ### 生成任务没有进度
 
-确认 Worker 和 Redis 正常：
+确认 Agent 和 Redis 正常：
 
 ```bash
-docker compose logs worker
+docker compose logs agent
 docker compose exec redis redis-cli ping
 ```
 
@@ -251,15 +252,16 @@ pnpm --dir apps/web lint
 pnpm --dir apps/web test
 
 PYTHONPATH=apps/api/src .venv/bin/pytest apps/api/tests
-PYTHONPATH=apps/api/src .venv/bin/ruff check apps/api
+PYTHONPATH=apps/agent/src .venv/bin/pytest apps/agent/tests
+.venv/bin/ruff check apps/api apps/agent
 ```
 
 ## 项目结构
 
 ```text
 apps/web       Web 产品界面
-apps/api       FastAPI、数据库迁移与 API 测试
-apps/worker    Celery Worker 容器入口
+apps/api       FastAPI、数据库迁移与平台 API
+apps/agent     可独立开发部署的 Agent、Provider 与任务入口
 docs           产品、调研、交互与开发材料
 compose.yaml   本地完整部署编排
 ```

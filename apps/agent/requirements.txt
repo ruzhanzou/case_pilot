@@ -1,0 +1,6 @@
+celery[redis]>=5.6,<6
+pydantic>=2.11,<3
+pydantic-settings>=2.10,<3
+psycopg[binary]>=3.2,<4
+redis>=6,<7
+sqlalchemy>=2.0,<3

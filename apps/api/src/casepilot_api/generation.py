@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from typing import Annotated
 from uuid import UUID
 
+from celery import Celery
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from redis import Redis
@@ -15,11 +16,15 @@ from casepilot_api.config import get_settings
 from casepilot_api.database import get_db_session
 from casepilot_api.models import Account, GenerationJob
 from casepilot_api.schemas import GenerationJobView, GenerationStartRequest
-from casepilot_api.worker import generate_mock_test_cases
 
 router = APIRouter(prefix="/api/v1", tags=["generation"])
 settings = get_settings()
 DbSession = Annotated[Session, Depends(get_db_session)]
+task_client = Celery(
+    "casepilot-api",
+    broker=settings.celery_broker_url,
+    backend=settings.celery_result_backend,
+)
 
 
 def ensure_job_access(db: Session, account: Account, job_id: UUID) -> GenerationJob:
@@ -53,7 +58,7 @@ def start_generation(
     db.add(job)
     db.commit()
     db.refresh(job)
-    generate_mock_test_cases.delay(str(job.id))
+    task_client.send_task("casepilot.agent.generate", args=[str(job.id)])
     return GenerationJobView(
         id=job.id,
         status=job.status,
