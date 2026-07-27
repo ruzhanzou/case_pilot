@@ -13,95 +13,223 @@ export type Account = {
   }[];
 };
 
-type GenerationJob = {
+export type ExecutionStatusApi =
+  | "not_run"
+  | "passed"
+  | "failed"
+  | "skipped"
+  | "blocked";
+
+export type CaseStepDto = {
   id: string;
+  action: string;
+  expected: string;
 };
 
-type GenerationEvent = {
-  progress?: number;
+export type CaseCollectionDto = {
+  id: string;
+  space_id: string;
+  name: string;
+  description: string;
+  case_count: number;
+  created_at: string;
 };
 
-export type GenerationCompleted = {
-  risks: {
-    id: string;
-    severity: string;
-    title: string;
-    source: string;
+export type TestCaseDto = {
+  id: string;
+  case_key: string;
+  collection_ids: string[];
+  current_revision_id: string;
+  revision_number: number;
+  title: string;
+  module: string;
+  priority: "P0" | "P1" | "P2";
+  case_type: string;
+  tags: string[];
+  preconditions: string[];
+  steps: CaseStepDto[];
+  source: string;
+  created_at: string;
+};
+
+export type TestCaseInput = {
+  case_key?: string;
+  title: string;
+  module: string;
+  priority: "P0" | "P1" | "P2";
+  case_type: string;
+  tags: string[];
+  preconditions: string[];
+  steps: {
+    id?: string;
+    action: string;
+    expected: string;
   }[];
-  test_cases: {
-    id: string;
-    title: string;
-    status: string;
-    preconditions: string[];
-    steps: {
-      action: string;
-      expected: string;
-    }[];
-  }[];
+  source: string;
 };
 
-export async function startMockGeneration(input: {
-  prompt: string;
-  fileNames: string[];
-  spaceId: string;
-  modelId: "auto" | "pro" | "local";
-}): Promise<GenerationJob> {
-  const response = await fetch(`${apiBaseUrl}/api/v1/generation-jobs`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+export type ExecutionRecordDto = {
+  id: string;
+  test_case: TestCaseDto;
+  status: ExecutionStatusApi;
+  completed_step_ids: string[];
+  actual_result: string;
+  defect_ref: string;
+  updated_by_name: string | null;
+  updated_at: string;
+};
+
+export type ExecutionRunDto = {
+  id: string;
+  collection_id: string;
+  collection_name: string;
+  description: string;
+  status: string;
+  creator_name: string;
+  contributor_names: string[];
+  created_at: string;
+  last_activity_at: string;
+  completed_at: string | null;
+  records: ExecutionRecordDto[];
+};
+
+export type ExecutionRunSummaryDto = Omit<ExecutionRunDto, "records"> & {
+  total_count: number;
+  not_run_count: number;
+  passed_count: number;
+  failed_count: number;
+  skipped_count: number;
+  blocked_count: number;
+};
+
+async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    ...init,
     credentials: "include",
-    body: JSON.stringify({
-      prompt: input.prompt,
-      file_names: input.fileNames,
-      space_id: input.spaceId,
-      model_id: input.modelId,
-    }),
+    headers: {
+      "Content-Type": "application/json",
+      ...init?.headers,
+    },
   });
-
   if (!response.ok) {
-    throw new Error(`Mock generation request failed: ${response.status}`);
+    const payload = (await response.json().catch(() => null)) as
+      | { detail?: string }
+      | null;
+    throw new Error(payload?.detail ?? `api_request_failed_${response.status}`);
   }
-
-  return response.json() as Promise<GenerationJob>;
+  if (response.status === 204) return undefined as T;
+  return response.json() as Promise<T>;
 }
 
-export function watchMockGeneration(
-  jobId: string,
-  onProgress: (progress: number) => void,
-): Promise<GenerationCompleted> {
-  return new Promise((resolve, reject) => {
-    const source = new EventSource(
-      `${apiBaseUrl}/api/v1/generation-jobs/${jobId}/events`,
-      { withCredentials: true },
-    );
-    const timeout = window.setTimeout(() => {
-      source.close();
-      reject(new Error("Mock generation stream timed out"));
-    }, 15_000);
+export function listCollections(spaceId: string): Promise<CaseCollectionDto[]> {
+  return apiRequest(`/api/v1/spaces/${spaceId}/collections`);
+}
 
-    const finish = (callback: () => void) => {
-      window.clearTimeout(timeout);
-      source.close();
-      callback();
-    };
+export function createCollection(
+  spaceId: string,
+  input: { name: string; description: string },
+): Promise<CaseCollectionDto> {
+  return apiRequest(`/api/v1/spaces/${spaceId}/collections`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
 
-    source.addEventListener("generation.progress", (event) => {
-      const payload = JSON.parse(
-        (event as MessageEvent<string>).data,
-      ) as GenerationEvent;
-      onProgress(payload.progress ?? 0);
-    });
-    source.addEventListener("generation.completed", (event) => {
-      const payload = JSON.parse(
-        (event as MessageEvent<string>).data,
-      ) as GenerationCompleted;
-      finish(() => resolve(payload));
-    });
-    source.addEventListener("generation.failed", () =>
-      finish(() => reject(new Error("Mock generation failed"))),
-    );
-    source.onerror = () =>
-      finish(() => reject(new Error("Mock generation stream disconnected")));
+export function updateCollection(
+  collectionId: string,
+  input: { name?: string; description?: string },
+): Promise<CaseCollectionDto> {
+  return apiRequest(`/api/v1/collections/${collectionId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteCollection(collectionId: string): Promise<void> {
+  return apiRequest(`/api/v1/collections/${collectionId}`, {
+    method: "DELETE",
+  });
+}
+
+export function listTestCases(collectionId: string): Promise<TestCaseDto[]> {
+  return apiRequest(`/api/v1/collections/${collectionId}/test-cases`);
+}
+
+export function createTestCase(
+  collectionId: string,
+  input: TestCaseInput,
+): Promise<TestCaseDto> {
+  return apiRequest(`/api/v1/collections/${collectionId}/test-cases`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateTestCase(
+  caseId: string,
+  input: TestCaseInput & { base_revision_id: string },
+): Promise<TestCaseDto> {
+  return apiRequest(`/api/v1/test-cases/${caseId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteTestCase(caseId: string): Promise<void> {
+  return apiRequest(`/api/v1/test-cases/${caseId}`, {
+    method: "DELETE",
+  });
+}
+
+export function createExecutionRun(
+  collectionId: string,
+  input: { description: string },
+): Promise<ExecutionRunDto> {
+  return apiRequest(`/api/v1/collections/${collectionId}/execution-runs`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function listExecutionRuns(
+  collectionId: string,
+): Promise<ExecutionRunSummaryDto[]> {
+  return apiRequest(`/api/v1/collections/${collectionId}/execution-runs`);
+}
+
+export function listSpaceExecutionRuns(
+  spaceId: string,
+): Promise<ExecutionRunSummaryDto[]> {
+  return apiRequest(`/api/v1/spaces/${spaceId}/execution-runs`);
+}
+
+export function getExecutionRun(runId: string): Promise<ExecutionRunDto> {
+  return apiRequest(`/api/v1/execution-runs/${runId}`);
+}
+
+export function closeExecutionRun(
+  runId: string,
+  status: "completed" | "aborted",
+): Promise<ExecutionRunDto> {
+  return apiRequest(`/api/v1/execution-runs/${runId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+}
+
+export function updateExecutionRecord(
+  recordId: string,
+  input: {
+    status: ExecutionStatusApi;
+    completed_step_ids: string[];
+    actual_result: string;
+    defect_ref: string;
+    base_updated_at: string;
+  },
+): Promise<ExecutionRecordDto> {
+  return apiRequest(`/api/v1/execution-records/${recordId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
   });
 }
 
