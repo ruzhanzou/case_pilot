@@ -29,7 +29,7 @@ test("server-renders the CasePilot authentication shell", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>CasePilot — 用例管理与执行工作台<\/title>/i);
+  assert.match(html, /<title>CasePilot — AI 用例工作台<\/title>/i);
   assert.match(html, /class="auth-loading"/);
   assert.match(html, /正在连接本地工作区/);
   assert.match(html, /lang="zh-CN"/);
@@ -40,6 +40,7 @@ test("keeps the persisted case management and execution baseline", async () => {
     managementApp,
     caseLibrary,
     caseMindMap,
+    caseWorkbench,
     sampleCases,
     sampleAudioCases,
     executionWorkspace,
@@ -50,6 +51,7 @@ test("keeps the persisted case management and execution baseline", async () => {
     readFile(new URL("../components/case-management-app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/case-library.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/case-mind-map.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/case-workbench.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/sample-cases.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/sample-audio-cases.ts", import.meta.url), "utf8"),
     readFile(new URL("../components/execution-workspace.tsx", import.meta.url), "utf8"),
@@ -59,9 +61,13 @@ test("keeps the persisted case management and execution baseline", async () => {
 
   assert.match(managementApp, /账号登录验收用例集/);
   assert.match(managementApp, /<CaseLibrary/);
+  assert.match(managementApp, /<CaseWorkbench/);
   assert.match(managementApp, /<ExecutionWorkspace/);
+  assert.match(managementApp, /AI 用例工作台/);
   assert.match(caseLibrary, /<CaseMindMap/);
   assert.match(caseLibrary, /onStartExecution/);
+  assert.match(caseLibrary, /onOpenWorkbench/);
+  assert.match(caseLibrary, /AI 编辑/);
   assert.match(caseLibrary, /case-library__main--list/);
   assert.match(caseLibrary, /case-library__body--list/);
   assert.match(caseLibrary, /CASES_PER_PAGE = 20/);
@@ -78,6 +84,19 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(caseMindMap, /position: \{ x: 360, y: moduleCenterRow/);
   assert.match(caseMindMap, /position: \{ x: 1040, y: row/);
   assert.match(caseMindMap, /共同前置/);
+  assert.match(caseWorkbench, /把需求变成可评审的测试用例/);
+  assert.match(caseWorkbench, /聊天输出默认为候选内容/);
+  assert.match(caseWorkbench, /写入用例集/);
+  assert.match(caseWorkbench, /用例脑图/);
+  assert.match(caseWorkbench, /用例列表/);
+  assert.match(caseWorkbench, /selectedModelLabel/);
+  assert.match(caseWorkbench, /onImportCases/);
+  assert.match(caseWorkbench, /Test Design Pro/);
+  assert.match(caseWorkbench, /调整对话区域宽度/);
+  assert.match(caseWorkbench, /调整详情区域宽度/);
+  assert.match(caseWorkbench, /resizePanel/);
+  assert.match(caseWorkbench, /is-preview-resizing/);
+  assert.match(caseWorkbench, /const commit/);
   assert.match(sampleCases, /case_key: "AUTH-001"/);
   assert.match(sampleCases, /case_key: "AUTH-012"/);
   assert.match(sampleAudioCases, /case_key: "AUDIO-001"/);

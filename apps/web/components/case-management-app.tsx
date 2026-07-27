@@ -2,6 +2,7 @@
 
 import { CaseEditorDialog } from "@/components/case-editor-dialog";
 import { CaseLibrary } from "@/components/case-library";
+import { CaseWorkbench } from "@/components/case-workbench";
 import { CollectionEditorDialog } from "@/components/collection-editor-dialog";
 import { ExecutionWorkspace } from "@/components/execution-workspace";
 import {
@@ -27,6 +28,7 @@ import {
   LogOut,
   PencilLine,
   PlayCircle,
+  Sparkles,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -36,7 +38,7 @@ type CaseManagementAppProps = {
   onLogout: () => Promise<void>;
 };
 
-type ManagementPage = "library" | "execution";
+type ManagementPage = "workbench" | "library" | "execution";
 
 const sampleCollectionName = "账号登录验收用例集";
 const legacyCollectionDescription =
@@ -52,7 +54,10 @@ export function CaseManagementApp({
   onLogout,
 }: CaseManagementAppProps) {
   const space = account.spaces[0];
-  const [page, setPage] = useState<ManagementPage>("library");
+  const [page, setPage] = useState<ManagementPage>("workbench");
+  const [workbenchMode, setWorkbenchMode] = useState<
+    "create" | "workspace"
+  >("create");
   const [executionNavigation, setExecutionNavigation] = useState<{
     id: number;
     mode: "overview" | "create";
@@ -283,6 +288,7 @@ export function CaseManagementApp({
         `确定删除用例集合“${selectedCollection.name}”吗？集合内用例仍保留在审计记录中。`,
       )
     ) {
+      return;
     }
     setSaving(true);
     setError("");
@@ -343,6 +349,33 @@ export function CaseManagementApp({
     }
   };
 
+  const importGeneratedCases = async (inputs: TestCaseInput[]) => {
+    if (!selectedCollection) {
+      throw new Error("请先选择目标用例集合");
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const created: TestCaseDto[] = [];
+      for (const input of inputs) {
+        created.push(await createTestCase(selectedCollection.id, input));
+      }
+      await refreshCases(selectedCollection.id, created[0]?.id);
+      return created;
+    } catch (caught) {
+      const message =
+        caught instanceof Error
+          ? caught.message === "case_key_already_exists"
+            ? "候选用例编号已存在，请重新生成后再保存"
+            : caught.message
+          : "候选用例写入失败";
+      setError(message);
+      throw caught;
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <main className="management-app">
       <aside className="management-nav">
@@ -350,6 +383,18 @@ export function CaseManagementApp({
           <PencilLine size={21} />
         </div>
         <nav aria-label="主导航">
+          <button
+            type="button"
+            className={page === "workbench" ? "is-active" : ""}
+            onClick={() => {
+              setWorkbenchMode("create");
+              setPage("workbench");
+            }}
+            aria-label="AI 用例工作台"
+          >
+            <Sparkles size={20} />
+            <span>AI 工作台</span>
+          </button>
           <button
             type="button"
             className={page === "library" ? "is-active" : ""}
@@ -400,7 +445,11 @@ export function CaseManagementApp({
           <div>
             <span>{space?.name ?? "本地质量空间"}</span>
             <strong>
-              {page === "library" ? "用例资产管理" : "QA 用例执行"}
+              {page === "workbench"
+                ? "AI 用例工作台"
+                : page === "library"
+                  ? "用例资产管理"
+                  : "QA 用例执行"}
             </strong>
           </div>
           <div className="management-topbar__status">
@@ -424,6 +473,22 @@ export function CaseManagementApp({
             <LoaderCircle className="auth-spinner" size={24} />
             正在准备登录验收用例…
           </div>
+        ) : page === "workbench" ? (
+          <CaseWorkbench
+            spaceName={space?.name ?? "本地质量空间"}
+            collections={collections}
+            selectedCollection={selectedCollection}
+            cases={cases}
+            loading={loading}
+            onSelectCollection={(collectionId) => void selectCollection(collectionId)}
+            onSelectCase={setSelectedCaseId}
+            onCreateCase={(module) => setCaseEditor({ mode: "create", module })}
+            onEditCase={(testCase) =>
+              setCaseEditor({ mode: "edit", testCase })
+            }
+            onImportCases={importGeneratedCases}
+            initialMode={workbenchMode}
+          />
         ) : page === "library" ? (
           <CaseLibrary
             collections={collections}
@@ -442,6 +507,10 @@ export function CaseManagementApp({
             }
             onDeleteCollection={() => void removeCollection()}
             onCreateCase={(module) => setCaseEditor({ mode: "create", module })}
+            onOpenWorkbench={() => {
+              setWorkbenchMode("workspace");
+              setPage("workbench");
+            }}
             onStartExecution={() => {
               setExecutionNavigation((current) => ({
                 id: current.id + 1,

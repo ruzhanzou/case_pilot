@@ -15,16 +15,16 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://casepilot-aicasegen.ruzhanzou.chatgpt.site"),
-  title: "CasePilot — 用例管理与执行工作台",
+  title: "CasePilot — AI 用例工作台",
   description: "在本地质量空间中管理结构化测试用例并记录 QA 执行结果。",
   openGraph: {
-    title: "CasePilot — 用例管理与执行工作台",
+    title: "CasePilot — AI 用例工作台",
     description: "在本地质量空间中管理结构化测试用例并记录 QA 执行结果。",
     images: [{ url: "/og.png", width: 1664, height: 936, alt: "CasePilot 蓝白主题产品预览" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "CasePilot — 用例管理与执行工作台",
+    title: "CasePilot — AI 用例工作台",
     description: "在本地质量空间中管理结构化测试用例并记录 QA 执行结果。",
     images: ["/og.png"],
   },

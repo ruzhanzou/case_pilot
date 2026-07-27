@@ -14,6 +14,7 @@ import {
   Plus,
   Play,
   Search,
+  Sparkles,
   Tags,
   Trash2,
 } from "lucide-react";
@@ -32,6 +33,7 @@ type CaseLibraryProps = {
   onEditCollection: () => void;
   onDeleteCollection: () => void;
   onCreateCase: (module?: string) => void;
+  onOpenWorkbench: () => void;
   onStartExecution: () => void;
   onSelectCase: (caseId: string) => void;
   onEditCase: (testCase: TestCaseDto) => void;
@@ -49,6 +51,7 @@ export function CaseLibrary({
   onEditCollection,
   onDeleteCollection,
   onCreateCase,
+  onOpenWorkbench,
   onStartExecution,
   onSelectCase,
   onEditCase,
@@ -153,6 +156,13 @@ export function CaseLibrary({
           <div className="case-library__header-actions">
             {selectedCollection && (
               <>
+                <button
+                  className="management-button management-button--ai"
+                  type="button"
+                  onClick={onOpenWorkbench}
+                >
+                  <Sparkles size={16} /> AI 编辑
+                </button>
                 <button
                   className="management-button management-button--execution"
                   type="button"

@@ -1,12 +1,20 @@
 # AI 驱动的用例生成平台：产品设计 V1.5
 
 > 文档状态：开发验收同步稿
-> 版本：V1.5
+> 版本：V1.6
 > 更新时间：2026-07-27
 > 目标：定义可原型、可验证、可进入工程设计的产品体验，并与当前 `apps/web`、Figma 和交互规格保持一致。
 > Figma：[脑图全屏 V4](https://www.figma.com/design/fRnEKJHcshgCIa1CmYXbLx?node-id=110-25) · [执行任务历史 V4](https://www.figma.com/design/fRnEKJHcshgCIa1CmYXbLx?node-id=102-2) · [多人执行详情 V4](https://www.figma.com/design/fRnEKJHcshgCIa1CmYXbLx?node-id=77-3) · [任务必填校验 V4](https://www.figma.com/design/fRnEKJHcshgCIa1CmYXbLx?node-id=111-25)
 
-## 0. V1.5 变更摘要
+## 0. V1.6 变更摘要
+
+- AI 用例工作台已进入开发基线：主导航默认入口为聊天创建页，发送后展开
+  “对话 / 脑图或列表 / 用例详情”三栏工作区。
+- 首次创建页明确选择目标用例集合，并提示候选内容只有人工确认后才写入
+  正式资产。
+- 三栏工作区新增阶段进度、覆盖提醒、AI 候选标识、批量写入和新建对话。
+- 当前工程以本地候选生成验证交互闭环；真实 Provider、文档解析、可恢复
+  Generation Job 和字段级改写 Diff 仍按后续里程碑实现。
 
 - 首页与用例集工作台共用同一模型选择：自动选择、Test Design Pro、本地模型。
 - 模型选择写入生成任务输入快照；切换页面或进入集合工作台不会丢失。
