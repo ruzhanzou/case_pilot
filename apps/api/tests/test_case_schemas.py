@@ -1,11 +1,14 @@
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 
+from casepilot_api.case_management import validate_execution_record_update
 from casepilot_api.schemas import (
     ExecutionRecordUpdate,
     ExecutionRunCreate,
     ExecutionRunUpdate,
     ExecutionStatus,
+    TestCaseBatchCreate as BatchCreateSchema,
 )
 from casepilot_api.schemas import (
     TestCaseCreate as CaseCreateSchema,
@@ -76,6 +79,51 @@ def test_execution_run_requires_task_description() -> None:
 
 
 def test_execution_run_can_only_close_as_completed_or_aborted() -> None:
-    assert ExecutionRunUpdate.model_validate({"status": "completed"}).status == "completed"
+    update = ExecutionRunUpdate.model_validate({"status": "completed"})
+    assert update.status == "completed"
+    assert update.allow_incomplete is False
+    assert (
+        ExecutionRunUpdate.model_validate(
+            {"status": "completed", "allow_incomplete": True}
+        ).allow_incomplete
+        is True
+    )
     with pytest.raises(ValidationError):
         ExecutionRunUpdate.model_validate({"status": "active"})
+
+
+def test_batch_case_create_requires_at_least_one_case() -> None:
+    with pytest.raises(ValidationError):
+        BatchCreateSchema.model_validate({"cases": []})
+    assert len(
+        BatchCreateSchema.model_validate({"cases": [valid_case_payload()]}).cases
+    ) == 1
+
+
+@pytest.mark.parametrize("status", ["failed", "skipped", "blocked"])
+def test_execution_result_reason_is_required(status: str) -> None:
+    payload = ExecutionRecordUpdate.model_validate(
+        {
+            "status": status,
+            "completed_step_ids": [],
+            "actual_result": "",
+            "defect_ref": "",
+        }
+    )
+    with pytest.raises(HTTPException) as caught:
+        validate_execution_record_update(payload, {"submit-login"})
+    assert caught.value.detail == "execution_result_reason_required"
+
+
+def test_passed_execution_requires_all_steps() -> None:
+    payload = ExecutionRecordUpdate.model_validate(
+        {
+            "status": "passed",
+            "completed_step_ids": ["first"],
+            "actual_result": "",
+            "defect_ref": "",
+        }
+    )
+    with pytest.raises(HTTPException) as caught:
+        validate_execution_record_update(payload, {"first", "second"})
+    assert caught.value.detail == "execution_steps_incomplete"

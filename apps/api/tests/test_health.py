@@ -21,6 +21,7 @@ def test_case_management_routes_are_exposed() -> None:
 
     assert "/api/v1/spaces/{space_id}/collections" in paths
     assert "/api/v1/collections/{collection_id}/test-cases" in paths
+    assert "/api/v1/collections/{collection_id}/test-cases/batch" in paths
     assert "/api/v1/test-cases/{case_id}" in paths
     assert "/api/v1/collections/{collection_id}/execution-runs" in paths
     assert "/api/v1/execution-records/{record_id}" in paths

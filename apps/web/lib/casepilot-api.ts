@@ -165,6 +165,16 @@ export function createTestCase(
   });
 }
 
+export function createTestCasesBatch(
+  collectionId: string,
+  inputs: TestCaseInput[],
+): Promise<TestCaseDto[]> {
+  return apiRequest(`/api/v1/collections/${collectionId}/test-cases/batch`, {
+    method: "POST",
+    body: JSON.stringify({ cases: inputs }),
+  });
+}
+
 export function updateTestCase(
   caseId: string,
   input: TestCaseInput & { base_revision_id: string },
@@ -210,10 +220,11 @@ export function getExecutionRun(runId: string): Promise<ExecutionRunDto> {
 export function closeExecutionRun(
   runId: string,
   status: "completed" | "aborted",
+  allowIncomplete = false,
 ): Promise<ExecutionRunDto> {
   return apiRequest(`/api/v1/execution-runs/${runId}`, {
     method: "PATCH",
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, allow_incomplete: allowIncomplete }),
   });
 }
 

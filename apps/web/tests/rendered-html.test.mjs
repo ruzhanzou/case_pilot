@@ -41,6 +41,8 @@ test("keeps the persisted case management and execution baseline", async () => {
     caseLibrary,
     caseMindMap,
     caseWorkbench,
+    caseEditor,
+    executionNotes,
     sampleCases,
     sampleAudioCases,
     executionWorkspace,
@@ -52,6 +54,8 @@ test("keeps the persisted case management and execution baseline", async () => {
     readFile(new URL("../components/case-library.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/case-mind-map.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/case-workbench.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/case-editor-dialog.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/execution-notes.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/sample-cases.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/sample-audio-cases.ts", import.meta.url), "utf8"),
     readFile(new URL("../components/execution-workspace.tsx", import.meta.url), "utf8"),
@@ -91,12 +95,17 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(caseWorkbench, /用例列表/);
   assert.match(caseWorkbench, /selectedModelLabel/);
   assert.match(caseWorkbench, /onImportCases/);
+  assert.match(caseWorkbench, /selectedCandidateIds/);
+  assert.match(caseWorkbench, /编辑当前候选用例/);
+  assert.match(caseWorkbench, /当前对话或候选用例尚未保存/);
   assert.match(caseWorkbench, /Test Design Pro/);
   assert.match(caseWorkbench, /调整对话区域宽度/);
   assert.match(caseWorkbench, /调整详情区域宽度/);
   assert.match(caseWorkbench, /resizePanel/);
   assert.match(caseWorkbench, /is-preview-resizing/);
   assert.match(caseWorkbench, /const commit/);
+  assert.match(caseEditor, /当前用例修改尚未保存/);
+  assert.match(caseEditor, /beforeunload/);
   assert.match(sampleCases, /case_key: "AUTH-001"/);
   assert.match(sampleCases, /case_key: "AUTH-012"/);
   assert.match(sampleAudioCases, /case_key: "AUDIO-001"/);
@@ -114,9 +123,14 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(executionWorkspace, /每 5 秒自动同步多人执行进度/);
   assert.match(executionWorkspace, /closeExecutionRun/);
   assert.match(executionWorkspace, /readOnly/);
+  assert.match(executionWorkspace, /标记通过前，请先逐项完成所有执行步骤/);
+  assert.match(executionWorkspace, /aria-pressed/);
+  assert.doesNotMatch(executionWorkspace, /option\.value === "passed"/);
+  assert.match(executionNotes, /记录已保存/);
   assert.doesNotMatch(executionWorkspace, /内容状态/);
   assert.match(apiClient, /listSpaceExecutionRuns/);
   assert.match(apiClient, /base_updated_at/);
+  assert.match(apiClient, /test-cases\/batch/);
   assert.match(apiClient, /\/execution-records\/\$\{recordId\}/);
   assert.doesNotMatch(apiClient, /CaseStatusApi|status-events/);
   assert.doesNotMatch(apiClient, /startMockGeneration|watchMockGeneration/);

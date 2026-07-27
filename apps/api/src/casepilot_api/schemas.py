@@ -75,6 +75,10 @@ class TestCaseCreate(BaseModel):
     source: str = Field(default="人工创建", max_length=500)
 
 
+class TestCaseBatchCreate(BaseModel):
+    cases: list[TestCaseCreate] = Field(min_length=1, max_length=100)
+
+
 class TestCaseUpdate(BaseModel):
     base_revision_id: UUID
     title: str = Field(min_length=1, max_length=300)
@@ -118,6 +122,7 @@ class ExecutionRunCreate(BaseModel):
 
 class ExecutionRunUpdate(BaseModel):
     status: str = Field(pattern=r"^(completed|aborted)$")
+    allow_incomplete: bool = False
 
 
 class ExecutionRecordView(BaseModel):

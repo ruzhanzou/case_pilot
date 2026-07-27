@@ -2,7 +2,7 @@
 
 import type { TestCaseDto, TestCaseInput } from "@/lib/casepilot-api";
 import { LoaderCircle, Plus, Trash2, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type CaseEditorDialogProps = {
   testCase: TestCaseDto | null;
@@ -65,6 +65,52 @@ export function CaseEditorDialog({
       : [emptyStep("existing-0")],
   );
   const [error, setError] = useState("");
+  const initialSnapshot = JSON.stringify({
+    caseKey: testCase?.case_key ?? "",
+    title: testCase?.title ?? "",
+    module: testCase?.module ?? initialModule ?? "",
+    priority: testCase?.priority ?? "P1",
+    caseType: testCase?.case_type ?? "功能",
+    tags: testCase?.tags.join("，") ?? "",
+    source: testCase?.source ?? "人工创建",
+    preconditions: testCase?.preconditions.length
+      ? testCase.preconditions
+      : [""],
+    steps: testCase?.steps.length
+      ? testCase.steps.map(({ action, expected }) => ({ action, expected }))
+      : [{ action: "", expected: "" }],
+  });
+  const currentSnapshot = JSON.stringify({
+    caseKey,
+    title,
+    module,
+    priority,
+    caseType,
+    tags,
+    source,
+    preconditions: preconditions.map((item) => item.value),
+    steps: steps.map(({ action, expected }) => ({ action, expected })),
+  });
+  const isDirty = initialSnapshot !== currentSnapshot;
+
+  useEffect(() => {
+    if (!isDirty) return;
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+    };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [isDirty]);
+
+  const requestClose = () => {
+    if (
+      isDirty &&
+      !window.confirm("当前用例修改尚未保存，确认放弃这些修改吗？")
+    ) {
+      return;
+    }
+    onClose();
+  };
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -123,7 +169,7 @@ export function CaseEditorDialog({
           <button
             className="management-icon-button"
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             aria-label="关闭编辑窗口"
           >
             <X size={19} />
@@ -326,7 +372,7 @@ export function CaseEditorDialog({
           {error && <div className="management-inline-error">{error}</div>}
 
           <footer className="management-modal__footer">
-            <button type="button" className="management-button" onClick={onClose}>
+            <button type="button" className="management-button" onClick={requestClose}>
               取消
             </button>
             <button

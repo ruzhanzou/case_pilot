@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from casepilot_api.auth import CurrentAccount, require_space_membership
@@ -29,6 +30,7 @@ from casepilot_api.schemas import (
     ExecutionRunSummaryView,
     ExecutionRunUpdate,
     ExecutionRunView,
+    TestCaseBatchCreate,
     TestCaseCreate,
     TestCaseUpdate,
     TestCaseView,
@@ -56,6 +58,77 @@ def normalize_steps(steps: list) -> list[dict[str, str]]:
         }
         for step in steps
     ]
+
+
+def validate_execution_record_update(
+    payload: ExecutionRecordUpdate,
+    valid_step_ids: set[str],
+) -> None:
+    completed_step_ids = set(payload.completed_step_ids)
+    status = payload.status.value
+    if not completed_step_ids.issubset(valid_step_ids):
+        raise HTTPException(status_code=422, detail="invalid_execution_step")
+    if status == ExecutionStatus.PASSED.value and completed_step_ids != valid_step_ids:
+        raise HTTPException(status_code=422, detail="execution_steps_incomplete")
+    if (
+        status
+        in {
+            ExecutionStatus.FAILED.value,
+            ExecutionStatus.SKIPPED.value,
+            ExecutionStatus.BLOCKED.value,
+        }
+        and not payload.actual_result.strip()
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="execution_result_reason_required",
+        )
+
+
+def create_test_case_record(
+    db: Session,
+    *,
+    collection: CaseCollection,
+    payload: TestCaseCreate,
+    account: Account,
+    case_key: str,
+    position: int,
+) -> TestCase:
+    test_case = TestCase(space_id=collection.space_id, case_key=case_key)
+    db.add(test_case)
+    db.flush()
+    revision = TestCaseRevision(
+        test_case_id=test_case.id,
+        revision_number=1,
+        title=payload.title.strip(),
+        module=payload.module.strip(),
+        priority=payload.priority,
+        case_type=payload.case_type.strip(),
+        tags=normalize_tags(payload.tags),
+        preconditions=[item.strip() for item in payload.preconditions if item.strip()],
+        steps=normalize_steps(payload.steps),
+        source_refs=[{"label": payload.source.strip()}],
+    )
+    db.add(revision)
+    db.flush()
+    test_case.current_revision_id = revision.id
+    db.add(
+        CollectionCaseMembership(
+            collection_id=collection.id,
+            test_case_id=test_case.id,
+            position=position,
+        )
+    )
+    write_audit(
+        db,
+        space_id=collection.space_id,
+        actor_id=account.id,
+        action="test_case.created",
+        resource_type="test_case",
+        resource_id=test_case.id,
+        payload={"case_key": case_key},
+    )
+    return test_case
 
 
 def write_audit(
@@ -334,43 +407,69 @@ def create_test_case(
     if existing is not None:
         raise HTTPException(status_code=409, detail="case_key_already_exists")
 
-    test_case = TestCase(space_id=collection.space_id, case_key=case_key)
-    db.add(test_case)
-    db.flush()
-    revision = TestCaseRevision(
-        test_case_id=test_case.id,
-        revision_number=1,
-        title=payload.title.strip(),
-        module=payload.module.strip(),
-        priority=payload.priority,
-        case_type=payload.case_type.strip(),
-        tags=normalize_tags(payload.tags),
-        preconditions=[item.strip() for item in payload.preconditions if item.strip()],
-        steps=normalize_steps(payload.steps),
-        source_refs=[{"label": payload.source.strip()}],
-    )
-    db.add(revision)
-    db.flush()
-    test_case.current_revision_id = revision.id
-    db.add(
-        CollectionCaseMembership(
-            collection_id=collection.id,
-            test_case_id=test_case.id,
-            position=collection_to_view(db, collection).case_count,
-        )
-    )
-    write_audit(
+    test_case = create_test_case_record(
         db,
-        space_id=collection.space_id,
-        actor_id=account.id,
-        action="test_case.created",
-        resource_type="test_case",
-        resource_id=test_case.id,
-        payload={"case_key": case_key},
+        collection=collection,
+        payload=payload,
+        account=account,
+        case_key=case_key,
+        position=collection_to_view(db, collection).case_count,
     )
     db.commit()
     db.refresh(test_case)
     return case_to_view(db, test_case)
+
+
+@router.post(
+    "/collections/{collection_id}/test-cases/batch",
+    response_model=list[TestCaseView],
+    status_code=201,
+)
+def create_test_cases_batch(
+    collection_id: UUID,
+    payload: TestCaseBatchCreate,
+    account: CurrentAccount,
+    db: DbSession,
+) -> list[TestCaseView]:
+    collection = ensure_collection(db, account, collection_id)
+    case_keys = [
+        (item.case_key or f"CASE-{uuid4().hex[:6]}").strip().upper()
+        for item in payload.cases
+    ]
+    if len(case_keys) != len(set(case_keys)):
+        raise HTTPException(status_code=409, detail="duplicate_case_key_in_batch")
+    existing = db.scalar(
+        select(TestCase.id).where(
+            TestCase.space_id == collection.space_id,
+            TestCase.case_key.in_(case_keys),
+        )
+    )
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="case_key_already_exists")
+
+    start_position = collection_to_view(db, collection).case_count
+    try:
+        created = [
+            create_test_case_record(
+                db,
+                collection=collection,
+                payload=item,
+                account=account,
+                case_key=case_keys[index],
+                position=start_position + index,
+            )
+            for index, item in enumerate(payload.cases)
+        ]
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="case_key_already_exists",
+        ) from error
+    for test_case in created:
+        db.refresh(test_case)
+    return [case_to_view(db, test_case) for test_case in created]
 
 
 @router.patch("/test-cases/{case_id}", response_model=TestCaseView)
@@ -708,6 +807,15 @@ def update_execution_run(
     require_space_membership(db, account.id, run.space_id)
     if run.status != "active":
         raise HTTPException(status_code=409, detail="execution_run_already_closed")
+    if payload.status == "completed" and not payload.allow_incomplete:
+        remaining = db.scalar(
+            select(func.count(ExecutionRecord.id)).where(
+                ExecutionRecord.run_id == run.id,
+                ExecutionRecord.status == ExecutionStatus.NOT_RUN,
+            )
+        )
+        if remaining:
+            raise HTTPException(status_code=409, detail="execution_run_incomplete")
     run.status = payload.status
     run.completed_at = datetime.now(UTC)
     write_audit(
@@ -744,9 +852,19 @@ def update_execution_record(
         raise HTTPException(status_code=409, detail="execution_run_closed")
     if payload.base_updated_at is not None and record.updated_at != payload.base_updated_at:
         raise HTTPException(status_code=409, detail="execution_record_changed")
+    revision = db.get(TestCaseRevision, record.revision_id)
+    if revision is None:
+        raise HTTPException(status_code=409, detail="test_case_revision_not_found")
+    valid_step_ids = {
+        str(step.get("id", ""))
+        for step in revision.steps
+        if str(step.get("id", ""))
+    }
+    validate_execution_record_update(payload, valid_step_ids)
+    actual_result = payload.actual_result.strip()
     record.status = ExecutionStatus(payload.status.value)
     record.completed_step_ids = payload.completed_step_ids
-    record.actual_result = payload.actual_result.strip()
+    record.actual_result = actual_result
     record.defect_ref = payload.defect_ref.strip()
     record.updated_by_id = account.id
     record.updated_at = datetime.now(UTC)

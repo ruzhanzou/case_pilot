@@ -7848,3 +7848,271 @@ body.is-resizing-workbench {
     width: 100%;
   }
 }
+
+/* QA review hardening: candidate review, explicit execution states and narrow screens. */
+.workbench-candidate-bulk {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #65768c;
+  font-size: 9px;
+}
+
+.workbench-candidate-bulk button,
+.workbench-candidate-review > button,
+.workbench-case-list__actions button {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 8px;
+  border: 1px solid #cfdceb;
+  border-radius: 7px;
+  color: #526a89;
+  background: #fff;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.workbench-candidate-review {
+  display: grid;
+  gap: 8px;
+}
+
+.workbench-candidate-review > button[aria-pressed="true"],
+.workbench-case-list__actions button[aria-pressed="true"] {
+  border-color: #9ddcc6;
+  color: #087950;
+  background: #edfaf5;
+}
+
+.workbench-case-list__row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  border: 1px solid transparent;
+  border-bottom-color: #e6ecf4;
+  background: #fff;
+}
+
+.workbench-case-list__row:hover,
+.workbench-case-list__row.is-active {
+  border-color: #bed2f3;
+  border-radius: 8px;
+  background: #f2f7ff;
+}
+
+.workbench-case-list__row.is-excluded {
+  opacity: .62;
+  background: #f8fafc;
+}
+
+.workbench-case-list__main {
+  display: grid;
+  min-width: 0;
+  min-height: 64px;
+  flex: 1;
+  grid-template-columns: minmax(210px, 1fr) 110px 48px 45px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 0;
+  color: #607189;
+  background: transparent;
+  font-size: 9px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workbench-case-list__main > span:first-child {
+  min-width: 0;
+}
+
+.workbench-case-list__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 5px;
+  padding-right: 10px;
+}
+
+.execution-queue__item {
+  grid-template-columns: 25px minmax(0, 1fr) auto;
+}
+
+.execution-queue__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #7d8999;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.execution-queue__status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #a9b4c2;
+}
+
+.execution-queue__status--passed { color: #087950; }
+.execution-queue__status--passed i { background: #18a474; }
+.execution-queue__status--failed { color: #c63343; }
+.execution-queue__status--failed i { background: #df4051; }
+.execution-queue__status--skipped { color: #7047bd; }
+.execution-queue__status--skipped i { background: #8a5adb; }
+.execution-queue__status--blocked { color: #b75517; }
+.execution-queue__status--blocked i { background: #e0782d; }
+
+.execution-record-error {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid #efb6bd;
+  border-radius: 8px;
+  color: #b52b3b;
+  background: #fff3f5;
+  font-size: 11px;
+}
+
+@media (max-width: 980px) {
+  .management-app {
+    min-width: 0;
+  }
+
+  .management-topbar {
+    padding-inline: 18px;
+  }
+
+  .execution-header {
+    min-height: 0;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .execution-header__actions {
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .execution-progress {
+    width: auto;
+    flex: 1;
+  }
+
+  .execution-overview-metrics,
+  .execution-task-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .management-app .execution-layout {
+    grid-template-columns: minmax(220px, 34%) minmax(0, 1fr);
+  }
+
+  .execution-case {
+    padding: 20px 18px 32px;
+  }
+
+  .execution-notes {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .execution-notes button {
+    justify-self: start;
+  }
+
+  .case-library {
+    grid-template-columns: 210px minmax(0, 1fr);
+  }
+
+  .case-library__body,
+  .case-library__body--list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .case-library__body--list .case-detail {
+    display: none;
+  }
+
+  .workbench-case-list__row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .workbench-case-list__actions {
+    padding: 0 10px 10px;
+  }
+}
+
+@media (max-width: 760px) {
+  .management-app {
+    grid-template-columns: 60px minmax(0, 1fr);
+  }
+
+  .management-nav {
+    width: 60px;
+    padding-inline: 8px;
+  }
+
+  .management-topbar__status {
+    font-size: 0;
+  }
+
+  .management-topbar__status > span {
+    margin-left: 0;
+    font-size: 11px;
+  }
+
+  .execution-overview-metrics,
+  .execution-task-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .management-app .execution-layout {
+    display: block;
+    margin-inline: -18px;
+    overflow: visible;
+  }
+
+  .management-app .execution-queue {
+    max-height: 280px;
+    border-right: 0;
+    border-bottom: 1px solid var(--management-line);
+  }
+
+  .execution-header__actions {
+    flex-direction: column;
+  }
+
+  .execution-progress,
+  .execution-header__actions > button {
+    width: 100%;
+  }
+
+  .execution-collaborators {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding-block: 9px;
+  }
+
+  .execution-collaborators small {
+    width: 100%;
+    margin-left: 22px;
+  }
+
+  .case-library {
+    display: block;
+    overflow: auto;
+  }
+
+  .case-library__sidebar {
+    max-height: 220px;
+    border-right: 0;
+    border-bottom: 1px solid var(--management-line);
+  }
+
+  .workbench-case-list__main {
+    grid-template-columns: minmax(180px, 1fr) 80px 40px 38px;
+  }
+}

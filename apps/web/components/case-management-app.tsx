@@ -8,6 +8,7 @@ import { ExecutionWorkspace } from "@/components/execution-workspace";
 import {
   createCollection,
   createTestCase,
+  createTestCasesBatch,
   deleteCollection,
   deleteTestCase,
   listCollections,
@@ -69,6 +70,8 @@ export function CaseManagementApp({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [workbenchDirty, setWorkbenchDirty] = useState(false);
+  const [executionDirty, setExecutionDirty] = useState(false);
   const [caseEditor, setCaseEditor] = useState<
     | { mode: "create"; module?: string }
     | { mode: "edit"; testCase: TestCaseDto }
@@ -83,6 +86,15 @@ export function CaseManagementApp({
     collections.find((item) => item.id === selectedCollectionId) ?? null;
   const selectedCase =
     cases.find((item) => item.id === selectedCaseId) ?? null;
+  const confirmDiscardPageChanges = () => {
+    const dirty =
+      (page === "workbench" && workbenchDirty) ||
+      (page === "execution" && executionDirty);
+    return (
+      !dirty ||
+      window.confirm("当前页面有尚未保存的修改，离开将丢失这些内容。是否继续？")
+    );
+  };
 
   const refreshCollections = async (preferredId?: string) => {
     if (!space) return [];
@@ -356,18 +368,17 @@ export function CaseManagementApp({
     setSaving(true);
     setError("");
     try {
-      const created: TestCaseDto[] = [];
-      for (const input of inputs) {
-        created.push(await createTestCase(selectedCollection.id, input));
-      }
+      const created = await createTestCasesBatch(selectedCollection.id, inputs);
       await refreshCases(selectedCollection.id, created[0]?.id);
       return created;
     } catch (caught) {
       const message =
         caught instanceof Error
           ? caught.message === "case_key_already_exists"
-            ? "候选用例编号已存在，请重新生成后再保存"
-            : caught.message
+            ? "候选用例编号已存在，请调整候选后再保存"
+            : caught.message === "duplicate_case_key_in_batch"
+              ? "候选用例中存在重复编号，请调整后再保存"
+              : caught.message
           : "候选用例写入失败";
       setError(message);
       throw caught;
@@ -387,6 +398,7 @@ export function CaseManagementApp({
             type="button"
             className={page === "workbench" ? "is-active" : ""}
             onClick={() => {
+              if (!confirmDiscardPageChanges()) return;
               setWorkbenchMode("create");
               setPage("workbench");
             }}
@@ -398,7 +410,10 @@ export function CaseManagementApp({
           <button
             type="button"
             className={page === "library" ? "is-active" : ""}
-            onClick={() => setPage("library")}
+            onClick={() => {
+              if (!confirmDiscardPageChanges()) return;
+              setPage("library");
+            }}
             aria-label="用例管理"
           >
             <Layers3 size={20} />
@@ -408,6 +423,7 @@ export function CaseManagementApp({
             type="button"
             className={page === "execution" ? "is-active" : ""}
             onClick={() => {
+              if (!confirmDiscardPageChanges()) return;
               setExecutionNavigation((current) => ({
                 id: current.id + 1,
                 mode: "overview",
@@ -431,7 +447,10 @@ export function CaseManagementApp({
           </button>
           <button
             type="button"
-            onClick={() => void onLogout()}
+            onClick={() => {
+              if (!confirmDiscardPageChanges()) return;
+              void onLogout();
+            }}
             aria-label="退出登录"
             title="退出登录"
           >
@@ -488,6 +507,7 @@ export function CaseManagementApp({
             }
             onImportCases={importGeneratedCases}
             initialMode={workbenchMode}
+            onDirtyChange={setWorkbenchDirty}
           />
         ) : page === "library" ? (
           <CaseLibrary
@@ -530,6 +550,7 @@ export function CaseManagementApp({
             collections={collections}
             preferredCollectionId={selectedCollectionId}
             navigationRequest={executionNavigation}
+            onDirtyChange={setExecutionDirty}
           />
         )}
       </section>

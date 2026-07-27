@@ -1,6 +1,7 @@
 "use client";
 
 import { CaseMindMap } from "@/components/case-mind-map";
+import { CaseEditorDialog } from "@/components/case-editor-dialog";
 import type {
   CaseCollectionDto,
   TestCaseDto,
@@ -21,6 +22,7 @@ import {
   LoaderCircle,
   MessageSquarePlus,
   Paperclip,
+  Pencil,
   Plus,
   Save,
   Send,
@@ -52,6 +54,7 @@ type CaseWorkbenchProps = {
   onEditCase: (testCase: TestCaseDto) => void;
   onImportCases: (inputs: TestCaseInput[]) => Promise<TestCaseDto[]>;
   initialMode?: "create" | "workspace";
+  onDirtyChange?: (dirty: boolean) => void;
 };
 
 type ChatMessage = {
@@ -184,6 +187,7 @@ export function CaseWorkbench({
   onEditCase,
   onImportCases,
   initialMode = "create",
+  onDirtyChange,
 }: CaseWorkbenchProps) {
   const [screen, setScreen] = useState<"create" | "workspace">(initialMode);
   const [prompt, setPrompt] = useState("");
@@ -203,6 +207,10 @@ export function CaseWorkbench({
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedInputs, setGeneratedInputs] = useState<TestCaseInput[]>([]);
   const [generatedCases, setGeneratedCases] = useState<TestCaseDto[]>([]);
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
+  const [candidateEditorIndex, setCandidateEditorIndex] = useState<number | null>(
+    null,
+  );
   const [selectedCaseId, setSelectedCaseId] = useState("");
   const [viewMode, setViewMode] = useState<"mind-map" | "list">("mind-map");
   const [saving, setSaving] = useState(false);
@@ -214,6 +222,11 @@ export function CaseWorkbench({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const hasUnsavedDraft =
+    isGenerating ||
+    generatedInputs.length > 0 ||
+    Boolean(prompt.trim()) ||
+    files.length > 0;
 
   useEffect(
     () => () => {
@@ -222,6 +235,20 @@ export function CaseWorkbench({
     },
     [],
   );
+
+  useEffect(() => {
+    onDirtyChange?.(hasUnsavedDraft);
+    return () => onDirtyChange?.(false);
+  }, [hasUnsavedDraft, onDirtyChange]);
+
+  useEffect(() => {
+    if (!hasUnsavedDraft) return;
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+    };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [hasUnsavedDraft]);
 
   const visibleCases = generatedCases.length ? generatedCases : cases;
   const selectedCase =
@@ -236,6 +263,24 @@ export function CaseWorkbench({
   const selectedModelLabel =
     modelOptions.find((option) => option.value === modelId)?.label ??
     modelOptions[0].label;
+  const selectedCandidateCount = selectedCandidateIds.length;
+
+  const confirmDiscardDraft = () =>
+    !hasUnsavedDraft ||
+    window.confirm("当前对话或候选用例尚未保存，确认放弃并继续吗？");
+
+  const toggleCandidate = (caseId: string) => {
+    setSelectedCandidateIds((current) =>
+      current.includes(caseId)
+        ? current.filter((id) => id !== caseId)
+        : [...current, caseId],
+    );
+  };
+
+  const editCandidate = (testCase: TestCaseDto) => {
+    const index = generatedCases.findIndex((item) => item.id === testCase.id);
+    if (index >= 0) setCandidateEditorIndex(index);
+  };
 
   const resizePanel = (
     panel: "chat" | "inspector",
@@ -305,6 +350,7 @@ export function CaseWorkbench({
   };
 
   const resetConversation = () => {
+    if (!confirmDiscardDraft()) return;
     if (timerRef.current) clearInterval(timerRef.current);
     setScreen("create");
     setPrompt("");
@@ -312,6 +358,8 @@ export function CaseWorkbench({
     setMessages([]);
     setGeneratedInputs([]);
     setGeneratedCases([]);
+    setSelectedCandidateIds([]);
+    setCandidateEditorIndex(null);
     setSelectedCaseId("");
     setActiveStage(-1);
     setIsGenerating(false);
@@ -322,6 +370,12 @@ export function CaseWorkbench({
     event?.preventDefault();
     const content = prompt.trim();
     if (!content || isGenerating) return;
+    if (
+      generatedInputs.length &&
+      !window.confirm("生成新候选会替换当前未写入的候选内容，是否继续？")
+    ) {
+      return;
+    }
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
       role: "user",
@@ -349,6 +403,7 @@ export function CaseWorkbench({
       const previews = inputs.map(toPreviewCase);
       setGeneratedInputs(inputs);
       setGeneratedCases(previews);
+      setSelectedCandidateIds(previews.map((item) => item.id));
       setSelectedCaseId(previews[0]?.id ?? "");
       setMessages((current) => [
         ...current,
@@ -370,13 +425,23 @@ export function CaseWorkbench({
   };
 
   const saveCandidates = async () => {
-    if (!generatedInputs.length || !selectedCollection) return;
+    if (
+      !generatedInputs.length ||
+      !selectedCollection ||
+      !selectedCandidateIds.length
+    ) {
+      return;
+    }
     setSaving(true);
     setSavedNotice("");
     try {
-      const created = await onImportCases(generatedInputs);
+      const selectedInputs = generatedInputs.filter((_, index) =>
+        selectedCandidateIds.includes(`candidate-${index}`),
+      );
+      const created = await onImportCases(selectedInputs);
       setGeneratedInputs([]);
       setGeneratedCases([]);
+      setSelectedCandidateIds([]);
       setSelectedCaseId(created[0]?.id ?? "");
       setSavedNotice(`${created.length} 条候选用例已写入“${selectedCollection.name}”`);
       setMessages((current) => [
@@ -395,9 +460,11 @@ export function CaseWorkbench({
   };
 
   const openExistingCollection = () => {
+    if (!confirmDiscardDraft()) return;
     setScreen("workspace");
     setGeneratedInputs([]);
     setGeneratedCases([]);
+    setSelectedCandidateIds([]);
     setSelectedCaseId(cases[0]?.id ?? "");
     setMessages([
       {
@@ -406,6 +473,26 @@ export function CaseWorkbench({
         content: `已打开“${selectedCollection?.name ?? "当前用例集"}”。你可以在这里查看脑图、选择用例，或继续输入需求补充候选用例。`,
       },
     ]);
+  };
+
+  const saveCandidateEdit = async (input: TestCaseInput) => {
+    if (candidateEditorIndex === null) return;
+    setGeneratedInputs((current) =>
+      current.map((item, index) =>
+        index === candidateEditorIndex ? { ...input, case_key: item.case_key } : item,
+      ),
+    );
+    setGeneratedCases((current) =>
+      current.map((item, index) =>
+        index === candidateEditorIndex
+          ? toPreviewCase(
+              { ...input, case_key: generatedInputs[index]?.case_key },
+              index,
+            )
+          : item,
+      ),
+    );
+    setCandidateEditorIndex(null);
   };
 
   const runRewrite = () => {
@@ -784,19 +871,42 @@ export function CaseWorkbench({
               <Sparkles size={14} /> {selectedModelLabel}
             </span>
             {generatedCases.length ? (
-              <button
-                type="button"
-                className="workbench-primary-button"
-                disabled={saving}
-                onClick={() => void saveCandidates()}
-              >
-                {saving ? (
-                  <LoaderCircle className="auth-spinner" size={16} />
-                ) : (
-                  <Save size={16} />
-                )}
-                写入用例集
-              </button>
+              <>
+                <div className="workbench-candidate-bulk">
+                  <span>
+                    已选 {selectedCandidateCount} / {generatedCases.length}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSelectedCandidateIds(
+                        generatedCases.map((item) => item.id),
+                      )
+                    }
+                  >
+                    全选
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCandidateIds([])}
+                  >
+                    清空
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  className="workbench-primary-button"
+                  disabled={saving || !selectedCandidateCount}
+                  onClick={() => void saveCandidates()}
+                >
+                  {saving ? (
+                    <LoaderCircle className="auth-spinner" size={16} />
+                  ) : (
+                    <Save size={16} />
+                  )}
+                  写入 {selectedCandidateCount} 条
+                </button>
+              </>
             ) : (
               <button
                 type="button"
@@ -845,32 +955,62 @@ export function CaseWorkbench({
               }}
               onCreateCase={onCreateCase}
               onEditCase={(testCase) => {
-                if (!testCase.id.startsWith("candidate-")) onEditCase(testCase);
+                if (testCase.id.startsWith("candidate-")) {
+                  editCandidate(testCase);
+                } else {
+                  onEditCase(testCase);
+                }
               }}
             />
           ) : (
             <div className="workbench-case-list">
-              {visibleCases.map((testCase) => (
-                <button
-                  type="button"
-                  key={testCase.id}
-                  className={selectedCase?.id === testCase.id ? "is-active" : ""}
-                  onClick={() => {
-                    setSelectedCaseId(testCase.id);
-                    if (!testCase.id.startsWith("candidate-")) onSelectCase(testCase.id);
-                  }}
-                >
-                  <span>
-                    <code>{testCase.case_key}</code>
-                    <strong>{testCase.title}</strong>
-                  </span>
-                  <span>{testCase.module || "未分类"}</span>
-                  <span className={`priority-badge priority-badge--${testCase.priority.toLowerCase()}`}>
-                    {testCase.priority}
-                  </span>
-                  <span>{testCase.id.startsWith("candidate-") ? "候选" : `V${testCase.revision_number}`}</span>
-                </button>
-              ))}
+              {visibleCases.map((testCase) => {
+                const candidate = testCase.id.startsWith("candidate-");
+                const included = selectedCandidateIds.includes(testCase.id);
+                return (
+                  <div
+                    className={`workbench-case-list__row${selectedCase?.id === testCase.id ? " is-active" : ""}${candidate && !included ? " is-excluded" : ""}`}
+                    key={testCase.id}
+                  >
+                    <button
+                      type="button"
+                      className="workbench-case-list__main"
+                      onClick={() => {
+                        setSelectedCaseId(testCase.id);
+                        if (!candidate) onSelectCase(testCase.id);
+                      }}
+                    >
+                      <span>
+                        <code>{testCase.case_key}</code>
+                        <strong>{testCase.title}</strong>
+                      </span>
+                      <span>{testCase.module || "未分类"}</span>
+                      <span className={`priority-badge priority-badge--${testCase.priority.toLowerCase()}`}>
+                        {testCase.priority}
+                      </span>
+                      <span>{candidate ? "候选" : `V${testCase.revision_number}`}</span>
+                    </button>
+                    {candidate && (
+                      <div className="workbench-case-list__actions">
+                        <button
+                          type="button"
+                          aria-pressed={included}
+                          onClick={() => toggleCandidate(testCase.id)}
+                        >
+                          {included ? <Check size={13} /> : <X size={13} />}
+                          {included ? "已纳入" : "已排除"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => editCandidate(testCase)}
+                        >
+                          <Pencil size={13} /> 编辑
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -902,20 +1042,37 @@ export function CaseWorkbench({
                 <span>CASE DETAILS</span>
                 <code>{selectedCase.case_key} · V{selectedCase.revision_number}</code>
               </div>
-              {!selectedCase.id.startsWith("candidate-") && (
-                <button
-                  type="button"
-                  onClick={() => onEditCase(selectedCase)}
-                  aria-label="编辑当前用例"
-                >
-                  编辑
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() =>
+                  selectedCase.id.startsWith("candidate-")
+                    ? editCandidate(selectedCase)
+                    : onEditCase(selectedCase)
+                }
+                aria-label={
+                  selectedCase.id.startsWith("candidate-")
+                    ? "编辑当前候选用例"
+                    : "编辑当前用例"
+                }
+              >
+                编辑
+              </button>
             </header>
             <div className="workbench-inspector__scroll">
               {selectedCase.id.startsWith("candidate-") && (
-                <div className="workbench-candidate-label">
-                  <Sparkles size={14} /> AI 候选 · 尚未写入正式用例集
+                <div className="workbench-candidate-review">
+                  <div className="workbench-candidate-label">
+                    <Sparkles size={14} /> AI 候选 · 尚未写入正式用例集
+                  </div>
+                  <button
+                    type="button"
+                    aria-pressed={selectedCandidateIds.includes(selectedCase.id)}
+                    onClick={() => toggleCandidate(selectedCase.id)}
+                  >
+                    {selectedCandidateIds.includes(selectedCase.id)
+                      ? "已纳入本次写入"
+                      : "已排除，点击重新纳入"}
+                  </button>
                 </div>
               )}
               <h2>{selectedCase.title}</h2>
@@ -973,6 +1130,15 @@ export function CaseWorkbench({
           </div>
         )}
       </aside>
+      {candidateEditorIndex !== null && generatedCases[candidateEditorIndex] && (
+        <CaseEditorDialog
+          key={`candidate-editor-${candidateEditorIndex}`}
+          testCase={generatedCases[candidateEditorIndex]}
+          saving={false}
+          onClose={() => setCandidateEditorIndex(null)}
+          onSave={saveCandidateEdit}
+        />
+      )}
     </div>
   );
 }

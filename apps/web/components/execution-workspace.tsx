@@ -39,6 +39,7 @@ type ExecutionWorkspaceProps = {
     id: number;
     mode: "overview" | "create";
   };
+  onDirtyChange?: (dirty: boolean) => void;
 };
 
 type ExecutionView = "overview" | "create" | "detail";
@@ -61,6 +62,30 @@ const runStatusLabel: Record<string, string> = {
   aborted: "已终止",
 };
 
+const executionStatusLabel: Record<ExecutionStatusApi, string> = {
+  not_run: "未执行",
+  passed: "通过",
+  failed: "不通过",
+  skipped: "跳过",
+  blocked: "堵塞",
+};
+
+type ExecutionRecordDraft = {
+  recordId: string;
+  status: ExecutionStatusApi;
+  actualResult: string;
+  defectRef: string;
+};
+
+function draftFromRecord(record: ExecutionRecordDto): ExecutionRecordDraft {
+  return {
+    recordId: record.id,
+    status: record.status,
+    actualResult: record.actual_result,
+    defectRef: record.defect_ref,
+  };
+}
+
 function formatTime(value: string) {
   return new Intl.DateTimeFormat("zh-CN", {
     month: "2-digit",
@@ -75,6 +100,7 @@ export function ExecutionWorkspace({
   collections,
   preferredCollectionId,
   navigationRequest,
+  onDirtyChange,
 }: ExecutionWorkspaceProps) {
   const [view, setView] = useState<ExecutionView>("overview");
   const [run, setRun] = useState<ExecutionRunDto | null>(null);
@@ -88,7 +114,11 @@ export function ExecutionWorkspace({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [recordValidationError, setRecordValidationError] = useState("");
+  const [recordDraft, setRecordDraft] =
+    useState<ExecutionRecordDraft | null>(null);
   const descriptionRef = useRef<HTMLTextAreaElement>(null);
+  const actualResultRef = useRef<HTMLTextAreaElement>(null);
   const activeRunId = run?.id;
 
   const refreshHistory = async () => {
@@ -122,6 +152,9 @@ export function ExecutionWorkspace({
     if (navigationRequest.id === 0) return;
     const timer = window.setTimeout(() => {
       if (navigationRequest.mode === "create") {
+        setRun(null);
+        setSelectedRecordId("");
+        setRecordDraft(null);
         setSelectedCollectionId(
           preferredCollectionId || collections[0]?.id || "",
         );
@@ -130,23 +163,63 @@ export function ExecutionWorkspace({
       } else {
         setRun(null);
         setSelectedRecordId("");
+        setRecordDraft(null);
         setView("overview");
       }
     });
     return () => window.clearTimeout(timer);
   }, [collections, navigationRequest, preferredCollectionId]);
 
-  useEffect(() => {
-    if (view !== "detail" || !activeRunId || saving) return;
-    const timer = window.setInterval(() => {
-      void getExecutionRun(activeRunId).then(setRun).catch(() => undefined);
-    }, 5000);
-    return () => window.clearInterval(timer);
-  }, [activeRunId, saving, view]);
-
   const readOnly = run?.status !== "active";
   const selectedRecord =
     run?.records.find((record) => record.id === selectedRecordId) ?? null;
+  const recordDraftDirty = Boolean(
+    selectedRecord &&
+      recordDraft?.recordId === selectedRecord.id &&
+      (recordDraft.status !== selectedRecord.status ||
+        recordDraft.actualResult !== selectedRecord.actual_result ||
+        recordDraft.defectRef !== selectedRecord.defect_ref),
+  );
+  useEffect(() => {
+    if (view !== "detail" || !activeRunId || saving) return;
+    const timer = window.setInterval(() => {
+      void getExecutionRun(activeRunId)
+        .then((latestRun) => {
+          setRun(latestRun);
+          if (!recordDraftDirty) {
+            const latestRecord =
+              latestRun.records.find(
+                (record) => record.id === selectedRecordId,
+              ) ?? null;
+            setRecordDraft(
+              latestRecord ? draftFromRecord(latestRecord) : null,
+            );
+          }
+        })
+        .catch(() => undefined);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [
+    activeRunId,
+    recordDraftDirty,
+    saving,
+    selectedRecordId,
+    view,
+  ]);
+
+  useEffect(() => {
+    onDirtyChange?.(recordDraftDirty);
+    return () => onDirtyChange?.(false);
+  }, [onDirtyChange, recordDraftDirty]);
+
+  useEffect(() => {
+    if (!recordDraftDirty) return;
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+    };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [recordDraftDirty]);
 
   const progress = useMemo(() => {
     if (!run?.records.length) return { done: 0, total: 0, percent: 0 };
@@ -191,6 +264,9 @@ export function ExecutionWorkspace({
       });
       setRun(result);
       setSelectedRecordId(result.records[0]?.id ?? "");
+      setRecordDraft(
+        result.records[0] ? draftFromRecord(result.records[0]) : null,
+      );
       setDescription("");
       setView("detail");
       await refreshHistory();
@@ -208,6 +284,9 @@ export function ExecutionWorkspace({
       const result = await getExecutionRun(runId);
       setRun(result);
       setSelectedRecordId(result.records[0]?.id ?? "");
+      setRecordDraft(
+        result.records[0] ? draftFromRecord(result.records[0]) : null,
+      );
       setView("detail");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "执行任务加载失败");
@@ -218,10 +297,23 @@ export function ExecutionWorkspace({
 
   const finishRun = async () => {
     if (!run || readOnly) return;
+    if (recordDraftDirty) {
+      setRecordValidationError("请先保存或放弃当前用例的执行记录，再结束任务。");
+      return;
+    }
+    const remaining = progress.total - progress.done;
+    const message = remaining
+      ? `仍有 ${remaining} 条用例未执行。确认结束后任务将变为只读，是否继续？`
+      : "结束后任务将变为只读，无法继续修改执行结果。确认结束任务吗？";
+    if (!window.confirm(message)) return;
     setSaving(true);
     setError("");
     try {
-      const result = await closeExecutionRun(run.id, "completed");
+      const result = await closeExecutionRun(
+        run.id,
+        "completed",
+        remaining > 0,
+      );
       setRun(result);
       await refreshHistory();
     } catch (caught) {
@@ -239,8 +331,8 @@ export function ExecutionWorkspace({
         "status" | "completed_step_ids" | "actual_result" | "defect_ref"
       >
     >,
-  ) => {
-    if (readOnly) return;
+  ): Promise<ExecutionRecordDto | null> => {
+    if (readOnly) return null;
     setSaving(true);
     setError("");
     try {
@@ -270,7 +362,9 @@ export function ExecutionWorkspace({
             }
           : current,
       );
+      if (!recordDraftDirty) setRecordDraft(draftFromRecord(updated));
       await refreshHistory();
+      return updated;
     } catch (caught) {
       if (caught instanceof Error && caught.message === "execution_record_changed") {
         if (run) {
@@ -281,14 +375,68 @@ export function ExecutionWorkspace({
       } else {
         setError(caught instanceof Error ? caught.message : "执行记录保存失败");
       }
+      return null;
     } finally {
       setSaving(false);
     }
   };
 
+  const discardRecordDraft = () => {
+    if (selectedRecord) setRecordDraft(draftFromRecord(selectedRecord));
+    setRecordValidationError("");
+  };
+
+  const confirmDiscardRecordDraft = () =>
+    !recordDraftDirty ||
+    window.confirm("当前执行结果尚未保存，离开将丢失这些修改。是否继续？");
+
+  const selectExecutionRecord = (recordId: string) => {
+    if (!confirmDiscardRecordDraft()) return;
+    const nextRecord =
+      run?.records.find((record) => record.id === recordId) ?? null;
+    setRecordDraft(nextRecord ? draftFromRecord(nextRecord) : null);
+    setRecordValidationError("");
+    setSelectedRecordId(recordId);
+  };
+
+  const saveRecordDraft = async () => {
+    if (!selectedRecord || !recordDraft) return;
+    const completedSteps = new Set(selectedRecord.completed_step_ids);
+    const allStepsComplete = selectedRecord.test_case.steps.every((step) =>
+      completedSteps.has(step.id),
+    );
+    if (recordDraft.status === "passed" && !allStepsComplete) {
+      setRecordValidationError("标记通过前，请先逐项完成所有执行步骤。");
+      return;
+    }
+    if (
+      ["failed", "skipped", "blocked"].includes(recordDraft.status) &&
+      !recordDraft.actualResult.trim()
+    ) {
+      setRecordValidationError(
+        recordDraft.status === "failed"
+          ? "标记不通过时必须填写实际结果。"
+          : recordDraft.status === "skipped"
+            ? "标记跳过时必须填写跳过原因。"
+            : "标记堵塞时必须填写原因、依赖和解除条件。",
+      );
+      actualResultRef.current?.focus();
+      return;
+    }
+    setRecordValidationError("");
+    const updated = await persistRecord(selectedRecord, {
+      status: recordDraft.status,
+      actual_result: recordDraft.actualResult,
+      defect_ref: recordDraft.defectRef,
+    });
+    if (updated) setRecordDraft(draftFromRecord(updated));
+  };
+
   return (
     <div className="execution-workspace">
-      {error && <div className="management-banner-error">{error}</div>}
+      {error && (
+        <div className="management-banner-error" role="alert">{error}</div>
+      )}
 
       {view === "overview" && (
         <>
@@ -487,6 +635,8 @@ export function ExecutionWorkspace({
                 type="button"
                 className="execution-back"
                 onClick={() => {
+                  if (!confirmDiscardRecordDraft()) return;
+                  discardRecordDraft();
                   setView("overview");
                   void refreshHistory();
                 }}
@@ -555,7 +705,11 @@ export function ExecutionWorkspace({
                         ? "execution-queue__item is-active"
                         : "execution-queue__item"
                     }
-                    onClick={() => setSelectedRecordId(record.id)}
+                    onClick={() => selectExecutionRecord(record.id)}
+                    aria-current={
+                      record.id === selectedRecordId ? "true" : undefined
+                    }
+                    aria-label={`${String(index + 1).padStart(2, "0")} ${record.test_case.case_key} ${record.test_case.title} ${executionStatusLabel[record.status]}`}
                   >
                     <span>{String(index + 1).padStart(2, "0")}</span>
                     <div>
@@ -565,9 +719,12 @@ export function ExecutionWorkspace({
                         <small>{record.updated_by_name} 最后更新</small>
                       )}
                     </div>
-                    <i
-                      className={`execution-dot execution-dot--${record.status}`}
-                    />
+                    <span
+                      className={`execution-queue__status execution-queue__status--${record.status}`}
+                    >
+                      <i aria-hidden="true" />
+                      {executionStatusLabel[record.status]}
+                    </span>
                   </button>
                 ))}
               </aside>
@@ -598,22 +755,18 @@ export function ExecutionWorkspace({
                               type="button"
                               key={option.value}
                               className={
-                                selectedRecord.status === option.value
+                                recordDraft?.status === option.value
                                   ? `is-active execution-status--${option.value}`
                                   : ""
                               }
                               disabled={saving || readOnly}
+                              aria-pressed={recordDraft?.status === option.value}
                               onClick={() => {
-                                const completedStepIds =
-                                  option.value === "passed"
-                                    ? selectedRecord.test_case.steps.map(
-                                        (step) => step.id,
-                                      )
-                                    : selectedRecord.completed_step_ids;
-                                void persistRecord(selectedRecord, {
+                                setRecordDraft((current) => ({
+                                  ...(current ?? draftFromRecord(selectedRecord)),
                                   status: option.value,
-                                  completed_step_ids: completedStepIds,
-                                });
+                                }));
+                                setRecordValidationError("");
                               }}
                             >
                               <Icon size={15} /> {option.label}
@@ -622,6 +775,11 @@ export function ExecutionWorkspace({
                         })}
                       </div>
                     </header>
+                    {recordValidationError && (
+                      <div className="execution-record-error" role="alert">
+                        {recordValidationError}
+                      </div>
+                    )}
 
                     <section className="execution-preconditions">
                       <h3>执行前确认</h3>
@@ -657,6 +815,10 @@ export function ExecutionWorkspace({
                                     ];
                                 void persistRecord(selectedRecord, {
                                   completed_step_ids: completedStepIds,
+                                  ...(completed &&
+                                  selectedRecord.status === "passed"
+                                    ? { status: "not_run" as const }
+                                    : {}),
                                 });
                               }}
                               aria-label={`${completed ? "取消完成" : "完成"}第 ${index + 1} 步`}
@@ -673,11 +835,26 @@ export function ExecutionWorkspace({
                     </section>
 
                     <ExecutionNotes
-                      key={`${selectedRecord.id}-${selectedRecord.updated_at}`}
-                      record={selectedRecord}
+                      actualResult={recordDraft?.actualResult ?? ""}
+                      defectRef={recordDraft?.defectRef ?? ""}
+                      dirty={recordDraftDirty}
                       saving={saving}
                       readOnly={readOnly}
-                      onSave={(input) => persistRecord(selectedRecord, input)}
+                      actualResultRef={actualResultRef}
+                      onActualResultChange={(value) => {
+                        setRecordDraft((current) => ({
+                          ...(current ?? draftFromRecord(selectedRecord)),
+                          actualResult: value,
+                        }));
+                        setRecordValidationError("");
+                      }}
+                      onDefectRefChange={(value) =>
+                        setRecordDraft((current) => ({
+                          ...(current ?? draftFromRecord(selectedRecord)),
+                          defectRef: value,
+                        }))
+                      }
+                      onSave={saveRecordDraft}
                     />
                   </>
                 ) : (
