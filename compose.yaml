@@ -64,6 +64,10 @@ services:
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
       CASEPILOT_AGENT_PROVIDER: ${CASEPILOT_AGENT_PROVIDER:-mock}
+      CASEPILOT_AGENT_BASE_URL: ${CASEPILOT_AGENT_BASE_URL:-https://api.openai.com/v1}
+      CASEPILOT_AGENT_API_KEY: ${CASEPILOT_AGENT_API_KEY:-}
+      CASEPILOT_AGENT_MODEL: ${CASEPILOT_AGENT_MODEL:-gpt-4.1-mini}
+      CASEPILOT_AGENT_TIMEOUT_SECONDS: ${CASEPILOT_AGENT_TIMEOUT_SECONDS:-60}
     depends_on:
       migrate:
         condition: service_completed_successfully

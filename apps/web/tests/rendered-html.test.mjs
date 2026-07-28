@@ -94,6 +94,10 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(caseWorkbench, /用例脑图/);
   assert.match(caseWorkbench, /用例列表/);
   assert.match(caseWorkbench, /selectedModelLabel/);
+  assert.match(caseWorkbench, /startGeneration/);
+  assert.match(caseWorkbench, /watchGeneration/);
+  assert.match(caseWorkbench, /generationStageIndex/);
+  assert.doesNotMatch(caseWorkbench, /setInterval/);
   assert.match(caseWorkbench, /onImportCases/);
   assert.match(caseWorkbench, /selectedCandidateIds/);
   assert.match(caseWorkbench, /编辑当前候选用例/);
@@ -134,6 +138,8 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(apiClient, /\/execution-records\/\$\{recordId\}/);
   assert.doesNotMatch(apiClient, /CaseStatusApi|status-events/);
   assert.doesNotMatch(apiClient, /startMockGeneration|watchMockGeneration/);
+  assert.match(apiClient, /\/api\/v1\/generation-jobs/);
+  assert.match(apiClient, /requirement\.analyzed/);
   assert.match(css, /\.management-app/);
   assert.match(css, /\.case-library/);
   assert.match(css, /\.execution-workspace/);

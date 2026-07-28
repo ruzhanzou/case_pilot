@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from casepilot_api.auth import CurrentAccount, require_space_membership
 from casepilot_api.config import get_settings
 from casepilot_api.database import get_db_session
-from casepilot_api.models import Account, GenerationJob
+from casepilot_api.models import Account, CaseCollection, GenerationJob
 from casepilot_api.schemas import GenerationJobView, GenerationStartRequest
 
 router = APIRouter(prefix="/api/v1", tags=["generation"])
@@ -41,17 +41,29 @@ def start_generation(
     account: CurrentAccount,
     db: DbSession,
 ) -> GenerationJobView:
-    membership = require_space_membership(db, account.id, payload.space_id)
+    collection = db.scalar(
+        select(CaseCollection).where(
+            CaseCollection.id == payload.collection_id,
+            CaseCollection.deleted_at.is_(None),
+        )
+    )
+    if collection is None:
+        raise HTTPException(status_code=404, detail="collection_not_found")
+    require_space_membership(db, account.id, collection.space_id)
     job = GenerationJob(
-        space_id=membership.space_id,
+        space_id=collection.space_id,
         account_id=account.id,
+        operation="generate",
+        collection_id=collection.id,
         status="queued",
         stage="queued",
         input_payload={
             "prompt": payload.prompt,
+            "markdown_content": payload.markdown_content,
             "file_names": payload.file_names,
             "mode": settings.ai_mode,
             "model_id": payload.model_id,
+            "persist_cases": False,
         },
         output_payload={},
     )
@@ -97,7 +109,12 @@ async def event_stream(job_id: UUID) -> AsyncIterator[str]:
                 event_name = event.pop("event")
                 payload = json.dumps(event, ensure_ascii=False)
                 yield f"id: {cursor}\nevent: {event_name}\ndata: {payload}\n\n"
-                if event_name in {"generation.completed", "generation.failed"}:
+                if event_name in {
+                    "generation.completed",
+                    "generation.failed",
+                    "rewrite.completed",
+                    "rewrite.failed",
+                }:
                     return
         else:
             idle_cycles += 1

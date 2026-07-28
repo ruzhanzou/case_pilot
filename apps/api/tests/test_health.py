@@ -13,7 +13,7 @@ async def test_live_health() -> None:
         response = await client.get("/health/live")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
-    assert response.json()["generation"] == "disabled"
+    assert response.json()["generation"] == "mock"
 
 
 def test_case_management_routes_are_exposed() -> None:
@@ -27,8 +27,10 @@ def test_case_management_routes_are_exposed() -> None:
     assert "/api/v1/execution-records/{record_id}" in paths
 
 
-def test_generation_routes_are_not_exposed() -> None:
+def test_generation_routes_are_exposed_without_legacy_mock_paths() -> None:
     paths = app.openapi()["paths"]
 
     assert all("/mock/" not in path for path in paths)
-    assert all("generation-jobs" not in path for path in paths)
+    assert "/api/v1/generation-jobs" in paths
+    assert "/api/v1/generation-jobs/{job_id}/events" in paths
+    assert "/api/v1/test-cases/{case_id}/candidate-revisions" in paths

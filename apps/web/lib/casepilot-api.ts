@@ -68,6 +68,57 @@ export type TestCaseInput = {
   source: string;
 };
 
+export type AgentModelId = "auto" | "test-design-pro" | "local";
+
+export type AgentTestCaseDraft = {
+  id: string;
+  title: string;
+  module: string;
+  case_type: string;
+  priority: "P0" | "P1" | "P2";
+  tags: string[];
+  status: string;
+  preconditions: string[];
+  steps: {
+    action: string;
+    expected: string;
+  }[];
+  source_refs: {
+    label: string;
+    excerpt: string;
+  }[];
+};
+
+export type GenerationCompleted = {
+  case_ids: string[];
+  requirement: {
+    summary: string;
+    open_questions: {
+      id: string;
+      question: string;
+      impact: string;
+    }[];
+  };
+  feature_points: { id: string; name: string }[];
+  test_points: { id: string; title: string }[];
+  test_cases: AgentTestCaseDraft[];
+  quality: {
+    passed: boolean;
+    score: number;
+    issues: { message: string }[];
+  };
+  model_metadata: {
+    provider?: string;
+    model?: string;
+  };
+};
+
+export type GenerationStage = {
+  name: string;
+  progress: number;
+  count?: number;
+};
+
 export type ExecutionRecordDto = {
   id: string;
   test_case: TestCaseDto;
@@ -119,6 +170,79 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+
+export function startGeneration(input: {
+  prompt: string;
+  fileNames: string[];
+  collectionId: string;
+  modelId: AgentModelId;
+}): Promise<{ id: string }> {
+  return apiRequest("/api/v1/generation-jobs", {
+    method: "POST",
+    body: JSON.stringify({
+      prompt: input.prompt,
+      markdown_content: input.prompt,
+      file_names: input.fileNames,
+      collection_id: input.collectionId,
+      model_id: input.modelId,
+    }),
+  });
+}
+
+export function watchGeneration(
+  jobId: string,
+  onStage: (stage: GenerationStage) => void,
+): Promise<GenerationCompleted> {
+  return new Promise((resolve, reject) => {
+    const source = new EventSource(
+      `${apiBaseUrl}/api/v1/generation-jobs/${jobId}/events`,
+      { withCredentials: true },
+    );
+    const timeout = window.setTimeout(() => {
+      source.close();
+      reject(new Error("AI 生成超时，请稍后重试"));
+    }, 60_000);
+    const close = () => {
+      window.clearTimeout(timeout);
+      source.close();
+    };
+    const handleStage = (event: Event) => {
+      const payload = JSON.parse(
+        (event as MessageEvent<string>).data,
+      ) as Omit<GenerationStage, "name">;
+      onStage({
+        name: event.type,
+        progress: payload.progress ?? 0,
+        count: payload.count,
+      });
+    };
+    [
+      "requirement.analyzed",
+      "feature.generated",
+      "test_point.generated",
+      "test_case.generated",
+      "quality.completed",
+    ].forEach((eventName) => source.addEventListener(eventName, handleStage));
+    source.addEventListener("generation.completed", (event) => {
+      const payload = JSON.parse(
+        (event as MessageEvent<string>).data,
+      ) as GenerationCompleted;
+      close();
+      resolve(payload);
+    });
+    source.addEventListener("generation.failed", (event) => {
+      const payload = JSON.parse(
+        (event as MessageEvent<string>).data,
+      ) as { error_code?: string };
+      close();
+      reject(new Error(payload.error_code ?? "AI 生成失败"));
+    });
+    source.onerror = () => {
+      close();
+      reject(new Error("AI 任务连接中断"));
+    };
+  });
 }
 
 export function listCollections(spaceId: string): Promise<CaseCollectionDto[]> {

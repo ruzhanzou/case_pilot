@@ -108,6 +108,47 @@ class TestCaseView(BaseModel):
     created_at: datetime
 
 
+class GenerationStartRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=8000)
+    markdown_content: str = Field(default="", max_length=100_000)
+    file_names: list[str] = Field(default_factory=list, max_length=10)
+    collection_id: UUID
+    model_id: str = Field(
+        default="auto",
+        pattern=r"^(auto|test-design-pro|pro|local)$",
+    )
+
+
+class GenerationJobView(BaseModel):
+    id: UUID
+    status: str
+    stage: str
+    space_id: UUID
+
+
+class CandidateCreate(BaseModel):
+    base_revision_id: UUID
+    instruction: str = Field(min_length=1, max_length=2000)
+    model_id: str = Field(
+        default="auto",
+        pattern=r"^(auto|test-design-pro|pro|local)$",
+    )
+
+
+class CandidateView(BaseModel):
+    id: UUID
+    test_case_id: UUID
+    base_revision_id: UUID
+    status: str
+    proposed_snapshot: dict
+    field_diff: list[dict]
+    reason: str
+
+
+class CandidateJobView(BaseModel):
+    job_id: UUID
+
+
 class ExecutionRecordUpdate(BaseModel):
     status: ExecutionStatus
     completed_step_ids: list[str] = Field(default_factory=list, max_length=100)

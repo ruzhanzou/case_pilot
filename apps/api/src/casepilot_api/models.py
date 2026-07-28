@@ -20,6 +20,14 @@ class ExecutionStatus(StrEnum):
     BLOCKED = "blocked"
 
 
+class GenerationStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 def enum_values(enum_class: type[StrEnum]) -> list[str]:
     return [item.value for item in enum_class]
 
@@ -244,6 +252,90 @@ class ExecutionRecord(TimestampMixin, Base):
         onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
+
+
+class GenerationJob(TimestampMixin, Base):
+    __tablename__ = "generation_jobs"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    space_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    account_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("accounts.id", ondelete="SET NULL"),
+        index=True,
+    )
+    operation: Mapped[str] = mapped_column(
+        String(32), default="generate", nullable=False
+    )
+    collection_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("case_collections.id", ondelete="CASCADE"),
+        index=True,
+    )
+    status: Mapped[GenerationStatus] = mapped_column(
+        Enum(
+            GenerationStatus,
+            name="generation_status",
+            values_callable=enum_values,
+        ),
+        default=GenerationStatus.QUEUED,
+        nullable=False,
+        index=True,
+    )
+    stage: Mapped[str] = mapped_column(String(80), default="queued", nullable=False)
+    input_payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    output_payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(120))
+
+
+class GenerationArtifact(TimestampMixin, Base):
+    __tablename__ = "generation_artifacts"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    generation_job_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("generation_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    requirement_analysis: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    feature_points: Mapped[list[dict]] = mapped_column(JSONB, default=list, nullable=False)
+    test_points: Mapped[list[dict]] = mapped_column(JSONB, default=list, nullable=False)
+    open_questions: Mapped[list[dict]] = mapped_column(JSONB, default=list, nullable=False)
+    quality_report: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    model_metadata: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+class CandidateRevision(TimestampMixin, Base):
+    __tablename__ = "candidate_revisions"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    test_case_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("test_cases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    base_revision_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("test_case_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    generation_job_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("generation_jobs.id", ondelete="SET NULL"),
+    )
+    instruction: Mapped[str] = mapped_column(Text, nullable=False)
+    proposed_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    field_diff: Mapped[list[dict]] = mapped_column(JSONB, default=list, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="pending", nullable=False)
+    created_by: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
 
 
 class AuditEvent(TimestampMixin, Base):

@@ -2,10 +2,14 @@
 
 import { CaseMindMap } from "@/components/case-mind-map";
 import { CaseEditorDialog } from "@/components/case-editor-dialog";
-import type {
-  CaseCollectionDto,
-  TestCaseDto,
-  TestCaseInput,
+import {
+  startGeneration,
+  watchGeneration,
+  type AgentModelId,
+  type AgentTestCaseDraft,
+  type CaseCollectionDto,
+  type TestCaseDto,
+  type TestCaseInput,
 } from "@/lib/casepilot-api";
 import {
   ArrowUp,
@@ -64,11 +68,19 @@ type ChatMessage = {
 };
 
 const generationStages = [
-  "理解测试目标",
-  "识别风险与边界",
-  "组织场景结构",
+  "规范化需求",
+  "提取功能点",
+  "设计测试点",
   "生成结构化用例",
+  "完成质量检查",
 ];
+const generationStageIndex: Record<string, number> = {
+  "requirement.analyzed": 0,
+  "feature.generated": 1,
+  "test_point.generated": 2,
+  "test_case.generated": 3,
+  "quality.completed": 4,
+};
 
 const starterPrompts = [
   "根据需求梳理正常、异常和边界场景",
@@ -87,62 +99,23 @@ function normalizeTitle(prompt: string) {
   return compact.length > 30 ? `${compact.slice(0, 30)}…` : compact;
 }
 
-function buildGeneratedInputs(
-  prompt: string,
+function agentDraftsToInputs(
+  drafts: AgentTestCaseDraft[],
   modelLabel: string,
+  jobToken: string,
 ): TestCaseInput[] {
-  const sourceTitle = normalizeTitle(prompt) || "当前需求";
-  const isAudio = /音频|录音|麦克风|转写|audio/i.test(prompt);
-  const isAuth = /登录|账号|密码|验证码|鉴权|权限/i.test(prompt);
-  const moduleName = isAudio ? "音频主流程" : isAuth ? "账号与认证" : "核心流程";
-  const stamp = Date.now().toString().slice(-6);
-  const scenarios = isAudio
-    ? [
-        ["正常开始录音并持续显示输入反馈", "P0", "点击开始录音并连续说话", "录音状态稳定，音量或波形持续更新"],
-        ["首次使用时完成麦克风授权", "P0", "首次进入并允许麦克风权限", "权限申请只出现一次，录音入口立即可用"],
-        ["拒绝麦克风权限后提供恢复引导", "P0", "拒绝权限后再次尝试录音", "说明受限原因，并提供可执行的设置入口"],
-        ["网络中断后保留本地录音并恢复处理", "P1", "录音中断开网络并在 20 秒后恢复", "本地录音不中断，恢复后不重复或丢失结果"],
-        ["长时间静音不会误结束录音", "P1", "录音中保持静音 60 秒后继续说话", "录音任务保持有效，后续音频继续被接收"],
-        ["切换音频输入设备后状态保持一致", "P2", "录音中连接或断开蓝牙耳机", "设备切换有反馈，录音状态和时间轴保持连续"],
-      ]
-    : isAuth
-      ? [
-          ["使用正确凭据完成登录", "P0", "输入有效账号与正确凭据并提交", "登录成功并进入目标工作空间"],
-          ["错误凭据不会创建登录会话", "P0", "输入错误凭据并提交", "拒绝登录，提示明确且不泄露账号信息"],
-          ["连续失败触发账号保护策略", "P0", "连续提交错误凭据直至达到阈值", "按规则限流或锁定，并明确说明恢复方式"],
-          ["会话过期后安全返回登录页", "P1", "等待会话过期后访问受保护页面", "原会话失效，返回登录页且不展示敏感内容"],
-          ["网络恢复后允许重新提交", "P1", "提交时断网，恢复网络后重试", "失败反馈可恢复，不产生重复会话"],
-        ]
-      : [
-          [`${sourceTitle}主流程可完整完成`, "P0", "使用有效数据完成核心操作", "流程成功结束并生成唯一业务结果"],
-          [`${sourceTitle}必填输入为空时阻止提交`, "P0", "清空必填内容后提交", "在对应位置提示错误且不产生业务数据"],
-          [`${sourceTitle}服务异常时给出可恢复反馈`, "P1", "模拟服务暂时不可用并执行操作", "错误说明清晰，恢复后可以安全重试"],
-          [`${sourceTitle}重复操作保持幂等`, "P1", "快速连续执行两次相同操作", "只产生一次有效结果，不出现重复数据"],
-          [`${sourceTitle}临界数据按规则处理`, "P2", "分别提交最小值、最大值和超限值", "边界内成功，超限值被明确阻止"],
-        ];
-
-  return scenarios.map(([title, priority, action, expected], index) => ({
-    case_key: `AI-${stamp}-${String(index + 1).padStart(2, "0")}`,
-    title,
-    module: moduleName,
-    priority: priority as TestCaseInput["priority"],
-    case_type: "功能",
-    tags: [
-      index === 0 ? "主流程" : index === 1 ? "异常" : index === 2 ? "恢复" : "边界",
-      "AI 候选",
-    ],
-    preconditions: [
-      "已进入目标功能页面",
-      index > 1 ? "基础服务与测试数据已准备" : "使用有效测试账号",
-    ],
-    steps: [
-      {
-        id: `step-${index + 1}`,
-        action,
-        expected,
-      },
-    ],
-    source: `AI Workbench · ${modelLabel} · ${sourceTitle}`,
+  return drafts.map((draft) => ({
+    case_key: `AI-${jobToken}-${draft.id}`.slice(0, 40).toUpperCase(),
+    title: draft.title,
+    module: draft.module,
+    priority: draft.priority,
+    case_type: draft.case_type,
+    tags: [...new Set([...draft.tags, "AI 候选"])],
+    preconditions: draft.preconditions,
+    steps: draft.steps,
+    source:
+      draft.source_refs[0]?.label ??
+      `AI Workbench · ${modelLabel} · ${draft.id}`,
   }));
 }
 
@@ -215,12 +188,16 @@ export function CaseWorkbench({
   const [viewMode, setViewMode] = useState<"mind-map" | "list">("mind-map");
   const [saving, setSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState("");
+  const [openQuestions, setOpenQuestions] = useState<
+    { question: string; impact: string }[]
+  >([]);
+  const [qualityScore, setQualityScore] = useState<number | null>(null);
   const [rewritePrompt, setRewritePrompt] = useState("");
-  const [modelId, setModelId] = useState("auto");
+  const [modelId, setModelId] = useState<AgentModelId>("auto");
   const [chatWidth, setChatWidth] = useState(340);
   const [inspectorWidth, setInspectorWidth] = useState(350);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const generationRunRef = useRef(0);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
   const hasUnsavedDraft =
     isGenerating ||
@@ -230,7 +207,7 @@ export function CaseWorkbench({
 
   useEffect(
     () => () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      generationRunRef.current += 1;
       resizeCleanupRef.current?.();
     },
     [],
@@ -351,7 +328,7 @@ export function CaseWorkbench({
 
   const resetConversation = () => {
     if (!confirmDiscardDraft()) return;
-    if (timerRef.current) clearInterval(timerRef.current);
+    generationRunRef.current += 1;
     setScreen("create");
     setPrompt("");
     setFiles([]);
@@ -364,12 +341,14 @@ export function CaseWorkbench({
     setActiveStage(-1);
     setIsGenerating(false);
     setSavedNotice("");
+    setOpenQuestions([]);
+    setQualityScore(null);
   };
 
-  const submitPrompt = (event?: FormEvent) => {
+  const submitPrompt = async (event?: FormEvent) => {
     event?.preventDefault();
     const content = prompt.trim();
-    if (!content || isGenerating) return;
+    if (!content || isGenerating || !selectedCollection) return;
     if (
       generatedInputs.length &&
       !window.confirm("生成新候选会替换当前未写入的候选内容，是否继续？")
@@ -387,22 +366,35 @@ export function CaseWorkbench({
     setGeneratedInputs([]);
     setGeneratedCases([]);
     setSavedNotice("");
+    setOpenQuestions([]);
+    setQualityScore(null);
     setActiveStage(0);
     setIsGenerating(true);
 
-    let stage = 0;
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      stage += 1;
-      if (stage < generationStages.length) {
-        setActiveStage(stage);
-        return;
-      }
-      if (timerRef.current) clearInterval(timerRef.current);
-      const inputs = buildGeneratedInputs(content, selectedModelLabel);
+    const runId = generationRunRef.current + 1;
+    generationRunRef.current = runId;
+    try {
+      const job = await startGeneration({
+        prompt: content,
+        fileNames: files.map((file) => file.name),
+        collectionId: selectedCollection.id,
+        modelId,
+      });
+      const result = await watchGeneration(job.id, (stage) => {
+        if (generationRunRef.current !== runId) return;
+        setActiveStage(generationStageIndex[stage.name] ?? 0);
+      });
+      if (generationRunRef.current !== runId) return;
+      const inputs = agentDraftsToInputs(
+        result.test_cases,
+        selectedModelLabel,
+        job.id.slice(0, 6),
+      );
       const previews = inputs.map(toPreviewCase);
       setGeneratedInputs(inputs);
       setGeneratedCases(previews);
+      setOpenQuestions(result.requirement.open_questions);
+      setQualityScore(result.quality.score);
       setSelectedCandidateIds(previews.map((item) => item.id));
       setSelectedCaseId(previews[0]?.id ?? "");
       setMessages((current) => [
@@ -410,12 +402,24 @@ export function CaseWorkbench({
         {
           id: `assistant-${Date.now()}`,
           role: "assistant",
-          content: `已围绕“${normalizeTitle(content)}”整理 ${previews.length} 条候选用例，覆盖主流程、异常、边界与恢复场景。请在右侧逐条评审，确认后再写入用例集。`,
+          content: `Agent 已围绕“${normalizeTitle(content)}”生成 ${previews.length} 条候选用例，质量评分 ${result.quality.score}。${result.requirement.open_questions.length ? `另有 ${result.requirement.open_questions.length} 个开放问题需要评审。` : ""} 请在右侧逐条确认后再写入用例集。`,
         },
       ]);
       setIsGenerating(false);
       setActiveStage(generationStages.length);
-    }, 420);
+    } catch (error) {
+      if (generationRunRef.current !== runId) return;
+      setMessages((current) => [
+        ...current,
+        {
+          id: `assistant-error-${Date.now()}`,
+          role: "assistant",
+          content: `生成失败：${error instanceof Error ? error.message : "未知错误"}。请检查本地 Agent Worker 后重试。`,
+        },
+      ]);
+      setIsGenerating(false);
+      setActiveStage(-1);
+    }
   };
 
   const addFiles = (event: ChangeEvent<HTMLInputElement>) => {
@@ -538,7 +542,7 @@ export function CaseWorkbench({
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
-                    submitPrompt();
+                    void submitPrompt();
                   }
                 }}
                 placeholder="例如：根据 Audio Feature 需求补充录音、实时反馈和中断恢复用例…"
@@ -587,7 +591,9 @@ export function CaseWorkbench({
                   <select
                     aria-label="生成模型"
                     value={modelId}
-                    onChange={(event) => setModelId(event.target.value)}
+                    onChange={(event) =>
+                      setModelId(event.target.value as AgentModelId)
+                    }
                   >
                     {modelOptions.map((option) => (
                       <option key={option.value} value={option.value}>
@@ -600,7 +606,7 @@ export function CaseWorkbench({
                 <button
                   type="submit"
                   className="workbench-send-button"
-                  disabled={!prompt.trim()}
+                  disabled={!prompt.trim() || !selectedCollection || isGenerating}
                 >
                   开始设计 <ArrowUp size={17} />
                 </button>
@@ -770,8 +776,16 @@ export function CaseWorkbench({
           {!!generatedCases.length && !isGenerating && (
             <section className="workbench-risk">
               <span><CircleAlert size={15} /> 覆盖提醒</span>
-              <strong>识别到 2 项建议确认</strong>
-              <p>异常恢复后的数据一致性，以及重复操作的幂等规则需要产品确认。</p>
+              <strong>
+                质量评分 {qualityScore ?? "—"} · {openQuestions.length} 项建议确认
+              </strong>
+              <p>
+                {openQuestions.length
+                  ? openQuestions
+                      .map((item) => `${item.question}（${item.impact}）`)
+                      .join("；")
+                  : "确定性规则与结构校验已通过，可继续人工评审。"}
+              </p>
             </section>
           )}
           {savedNotice && (
@@ -788,7 +802,7 @@ export function CaseWorkbench({
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
-                submitPrompt();
+                void submitPrompt();
               }
             }}
             placeholder="描述测试目标，或继续追问当前需求…"
@@ -807,7 +821,9 @@ export function CaseWorkbench({
               <select
                 aria-label="生成模型"
                 value={modelId}
-                onChange={(event) => setModelId(event.target.value)}
+                onChange={(event) =>
+                  setModelId(event.target.value as AgentModelId)
+                }
               >
                 {modelOptions.map((option) => (
                   <option key={option.value} value={option.value}>

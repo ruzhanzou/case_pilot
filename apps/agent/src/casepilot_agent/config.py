@@ -8,6 +8,16 @@ class AgentSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     provider: str = Field(default="mock", validation_alias="CASEPILOT_AGENT_PROVIDER")
+    base_url: str = Field(
+        default="https://api.openai.com/v1",
+        validation_alias="CASEPILOT_AGENT_BASE_URL",
+    )
+    api_key: str = Field(default="", validation_alias="CASEPILOT_AGENT_API_KEY")
+    model: str = Field(default="gpt-4.1-mini", validation_alias="CASEPILOT_AGENT_MODEL")
+    timeout_seconds: float = Field(
+        default=60,
+        validation_alias="CASEPILOT_AGENT_TIMEOUT_SECONDS",
+    )
     database_url: str = Field(
         default="postgresql+psycopg://casepilot:casepilot-local@localhost:5432/casepilot",
         validation_alias="DATABASE_URL",

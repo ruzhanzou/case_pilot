@@ -4,8 +4,8 @@ CasePilot 是一个本地部署的结构化测试用例管理与 QA 执行平台
 
 当前验收版本覆盖“聊天创建候选用例 → 脑图/列表评审 → 写入正式用例资产
 → 创建执行任务 → 多人协作记录结果”的完整产品闭环。AI 工作台已按 Figma
-V2.2 接入主导航；当前生成逻辑用于本地交互验收，真实模型、文件解析和异步
-生成任务仍由独立 Agent 基础设施承接后续接入。
+V2.2 接入主导航，并通过 FastAPI、Celery、Redis 调用独立 Agent 的 Mock
+Provider，返回真实阶段事件和结构化候选用例。
 
 ## 当前可用能力
 
@@ -36,14 +36,13 @@ V2.2 接入主导航；当前生成逻辑用于本地交互验收，真实模型
 
 ## 当前实现边界
 
-- 真实 AI Provider 与服务端异步生成任务。
+- OpenAI 兼容 Provider 已提供配置入口；默认仍使用无需密钥的 Mock Provider。
 - 文件内容上传、解析、OCR 与来源定位；当前界面仅管理本地附件上下文。
 - 自动应用 AI 改写；当前改写输入作为评审建议，正式变更仍进入结构化编辑。
 - 结构化测试说明生成。
 - 自动化脚本绑定与执行结果回写。
 
-这些能力仍保留在产品路线图、独立 Agent 和设计文档中，但不会出现在当前
-验收页面或 OpenAPI 路由中。
+文件解析、自动发布和自动化执行仍保留在产品路线图中。
 
 ## 验收账号
 
@@ -69,7 +68,7 @@ API 在首次启动时自动创建本地示例账号：
 | --- | --- | --- |
 | Web | React 19、TypeScript、Vinext/Vite | 登录、用例管理和 QA 执行界面 |
 | API | FastAPI、SQLAlchemy、Pydantic | 会话、空间、用例和执行 REST API |
-| Agent | Python、Celery | 隔离的文件分析、模型 Provider 与生成管线；等待真实 Provider 接入工作台 |
+| Agent | Python、Celery | 独立执行需求分析、功能点/测试点提取、用例生成与质量检查 |
 | 数据库 | PostgreSQL 18 | 用例修订、执行任务、执行记录和审计数据 |
 | 缓存/队列 | Redis 8 | API 健康依赖、Agent Broker、任务结果和后续事件 |
 | 迁移 | Alembic | 数据库结构版本管理 |
@@ -160,8 +159,7 @@ PYTHONPATH=apps/api/src .venv/bin/uvicorn casepilot_api.main:app \
   --host 127.0.0.1 --port 8000
 ```
 
-可选：在另一个终端启动独立 Agent。当前工作台使用本地候选生成完成前端闭环，
-服务端异步生成尚未接入；Agent 可单独验证：
+在另一个终端启动独立 Agent。默认使用 Mock Provider，不需要 API Key：
 
 ```bash
 PYTHONPATH=apps/agent/src \
@@ -201,6 +199,13 @@ pnpm dev
 - `GET /api/v1/test-cases/{case_id}`
 - `PATCH /api/v1/test-cases/{case_id}`
 - `DELETE /api/v1/test-cases/{case_id}`
+
+AI 生成：
+
+- `POST /api/v1/generation-jobs`
+- `GET /api/v1/generation-jobs/{job_id}`
+- `GET /api/v1/generation-jobs/{job_id}/events`
+- `POST /api/v1/test-cases/{case_id}/candidate-revisions`
 
 执行：
 
