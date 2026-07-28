@@ -1,21 +1,21 @@
-# CasePilot 开发基线 V1.1
+# CasePilot 开发基线 V1.2
 
-> 日期：2026-07-24
-> 状态：待评审 / 未冻结
+> 日期：2026-07-27
+> 状态：开发验收同步稿
 > 适用范围：首个可公开发布的 MVP
 > 冻结条件：第 17 节的待确认项全部形成决策记录
 
 ## 1. 基线结论
 
-CasePilot V1 采用“可自部署的模块化单体 + 独立异步 Worker”架构。
+CasePilot 当前采用“可自部署的 Web + 模块化 API + 独立 Agent + PostgreSQL/Redis”架构；Agent 与 Mock Provider 已隔离到 `apps/agent`，当前产品界面和 OpenAPI 尚未启用生成任务入口。
 
 - 保留当前原型的蓝白视觉、页面结构、React 组件、脑图交互和动效方向。
-- 不把当前 `prototype/` 直接演进为生产后端；其中数据库为空、AI 为模拟流程、鉴权依赖原型托管环境。
-- 正式系统重新建立空间、集合、文件、需求、风险、测试点、用例、版本、状态、文档和审计模型。
+- 当前 `apps/web` 与 `apps/api` 已建立真实账号、空间、集合、用例、Revision、执行任务和审计模型。
+- 文件、需求、风险、测试点、评审发布和文档模型按后续里程碑接入。
 - Web、REST API 和 Worker 清晰分层，但第一版不拆分成大量微服务。
 - AI 输出永远先形成候选工件，通过 Schema、规则和人工确认后才能成为权威用例版本。
-- 五种状态是用例本身的 `case_status`：Pending、通过、不通过、跳过、堵塞，不是执行结果。
-- 首页和集合工作台共用 `model_id`；每次 Generation Job 保存模型路由输入快照。
+- 用例集合与用例资产无 QA 执行状态；五种执行结果只属于具体 `ExecutionRecord`。
+- 后续启用 AI 时，首页和集合工作台共用 `model_id`；每次 Generation Job 保存模型路由输入快照。
 - 正常服务连接状态不作为业务导航常驻信息；仅在检查、降级和离线影响当前动作时显示。
 - 不 fork 调研中的业务项目；以 clean-room 方式重新实现，仅使用许可证兼容的通用依赖。
 
@@ -34,7 +34,7 @@ CasePilot V1 采用“可自部署的模块化单体 + 独立异步 Worker”架
 5. 获取测试点脑图和结构化文本用例。
 6. 在脑图或详情面板中对用例增删查改。
 7. 对节点或分支发起自然语言 AI 改写，并评审差异。
-8. 将用例设置为 Pending、通过、不通过、跳过或堵塞。
+8. 通过 Review Event 评审 Candidate Revision，并发布集合 Baseline。
 9. 生成、编辑、发布并导出结构化测试说明。
 10. 查看所有关键操作的版本和审计历史。
 11. 加载一个用例集合，逐条执行并记录本次执行结果。
@@ -44,7 +44,7 @@ CasePilot V1 采用“可自部署的模块化单体 + 独立异步 Worker”架
 - 使用一份真实 PRD 和一份真实历史 Excel，用 15 分钟以内得到第一版可评审用例集合。
 - 每条用例至少包含名称、前置步骤、执行步骤和校验点。
 - 用户能够定位 AI 结论的来源，识别 AI 推断和需求事实的区别。
-- AI 改写不静默覆盖已通过用例。
+- AI 改写不静默覆盖已发布 Revision。
 - 页面刷新、模型超时或单文件失败不会清空已完成资产。
 - 脑图、列表、详情和测试说明读取同一份结构化数据。
 
@@ -56,17 +56,16 @@ CasePilot V1 采用“可自部署的模块化单体 + 独立异步 Worker”架
 |---|---|
 | 账号 | 自有邮箱验证码注册；首次云端保存、评审或共享时触发 |
 | 空间 | 创建、切换、成员角色、资产隔离 |
-| 用例集合 | 增删查改、搜索、状态筛选、历史、Excel 导入 |
+| 用例集合 | 增删查改、搜索、修订信息、历史、Excel 导入 |
 | 对话 | 多轮消息、附件、作用范围、快捷提示 |
 | 文件中心 | DOCX、PDF、XLSX、XLS、CSV、Markdown、TXT、PNG、JPG |
 | AI 分析 | 需求抽取、歧义、风险、业务规则、测试点和用例生成 |
 | 生成任务 | 分阶段进度、取消、重试、断点恢复、检查点 |
-| 脑图 | 查看、搜索、缩放、折叠、增删改、移动、复制和批量操作 |
+| 脑图 | 查看、搜索、滑动平移、独立缩放、全屏、非叶子折叠、一键隐藏叶子、共同前置条件投影、增删改、移动、复制和批量操作 |
 | AI 改写 | 单节点、子树、多选、字段级差异、接受/拒绝/撤销 |
-| 用例状态 | Pending、通过、不通过、跳过、堵塞 |
 | 版本 | 不可变 Revision、候选变更、集合 Baseline、审计 |
-| 测试说明 | 章节编辑、追踪、覆盖率、状态快照、版本和导出 |
-| 轻量测试执行 | 加载集合、执行队列、步骤确认、结果标记、进度汇总 |
+| 测试说明 | 章节编辑、追踪、覆盖率、Revision/Baseline、版本和导出 |
+| 轻量测试执行 | 任务描述、冻结 Revision、执行队列、结果与进度 |
 | 导出 | DOCX、PDF、Markdown、XLSX |
 
 ### 3.2 不纳入 V1
@@ -82,51 +81,28 @@ CasePilot V1 采用“可自部署的模块化单体 + 独立异步 Worker”架
 
 这些能力需要在 Schema 和 API 中预留扩展点，但不阻塞 V1 发布。
 
-## 4. 用例状态基线
+## 4. 生命周期与执行结果基线
 
-### 4.1 唯一用户可见状态
+### 4.1 资产生命周期
+
+- TestCase 是稳定身份，内容保存在不可变 TestCaseRevision。
+- Revision 生命周期使用 `draft | candidate | published | superseded`。
+- 评审结论保存在 Review Event；通过或驳回不是 QA 执行结果。
+- Collection 是复用容器，Collection Baseline 冻结一组精确 Revision。
+- 资产页、脑图、详情和测试说明不得显示“最近一次执行结果”作为资产状态。
+
+### 4.2 QA 执行结果
 
 ```text
-case_status:
-  pending
+execution_status:
+  not_run
   passed
   failed
   skipped
   blocked
 ```
 
-| 中文 | API 值 | 含义 |
-|---|---|---|
-| Pending | `pending` | 新建、AI 生成、导入或修改后等待处理 |
-| 通过 | `passed` | 当前用例内容已被确认可用 |
-| 不通过 | `failed` | 当前内容存在问题，需要修改 |
-| 跳过 | `skipped` | 当前范围内明确不处理该用例 |
-| 堵塞 | `blocked` | 因需求、依赖或其他条件暂时无法继续 |
-
-### 4.2 状态流转
-
-```mermaid
-stateDiagram-v2
-  [*] --> Pending
-  Pending --> Passed
-  Pending --> Failed
-  Pending --> Skipped
-  Pending --> Blocked
-  Failed --> Pending: 修改用例
-  Skipped --> Pending: 重新纳入范围
-  Blocked --> Pending: 解除堵塞
-  Passed --> Pending: 内容产生新修订
-```
-
-规则：
-
-- AI 生成、Excel 导入和人工新建默认都是 Pending。
-- 不通过必须填写原因。
-- 跳过必须填写范围或业务原因。
-- 堵塞必须填写原因、依赖和解除条件。
-- 已通过内容被修改时，旧 Revision 保持通过，新 Revision 回到 Pending。
-- 状态不是 TestCase 表上可被覆盖的一列；每次变化写入 `test_case_status_events`，TestCase 保存最新状态投影。
-- 评审人、评论和决定保存为 `review_events`，不再形成第二套用户可见评审状态。
+每个 ExecutionRun 必须包含 `space_id`、`collection_id`、`description`、创建人和时间。每个 ExecutionRecord 绑定 Run 与冻结的 `case_revision_id`，并保存最后更新成员和更新时间。空间成员可共同执行；更新必须携带 `base_updated_at`，发生并发冲突时返回 409，不得静默覆盖他人结果。新建执行任务不得复制或覆盖旧 Run 的结果。
 
 ## 5. 当前原型处理策略
 
@@ -149,7 +125,7 @@ stateDiagram-v2
 - 浏览器内模拟生成改为持久化异步任务。
 - 临时 `useState` 空间和身份改为服务端权威数据。
 - 当前上传格式、数量和大小限制与产品基线对齐。
-- 状态文本统一为五种 `case_status`。
+- 移除资产页和脑图上的执行结果状态；结果只在 QA 执行与历史页面展示。
 - 错误、空状态、权限和并发冲突补齐。
 
 ### 5.3 不进入正式工程
@@ -315,7 +291,6 @@ AICaseGen/
 - `test_cases`
 - `test_case_revisions`
 - `test_case_steps`
-- `test_case_status_events`
 - `review_events`
 - `comments`
 - `traceability_links`
@@ -325,8 +300,13 @@ AICaseGen/
 - TestCase 是稳定身份；TestCaseRevision 是不可变内容。
 - 步骤固定在 Revision 下，不直接挂在可变 TestCase 上。
 - 追踪关系尽量连接精确 Revision。
-- `case_status` 变更记录关联当前 Revision、操作者、时间和原因。
+- Review Event 关联精确 Revision、操作者、时间和结论。
 - 脑图父子关系使用稳定 ID；拖拽改变结构，不自动改变需求追踪。
+- 滚轮或触控板双指滑动只更新视口 `x/y`，不得修改 `zoom`；捏合手势和显式工具栏操作可以修改 `zoom`。
+- 所有非叶子节点必须支持隐藏/显示其叶子，脑图工具栏必须支持一键隐藏/显示全部叶子；折叠状态属于会话级视图偏好。
+- 同一模块内完全相同且至少被两条叶子用例引用的前置条件可投影为共同前置条件节点。每条叶子最多选择一个复用次数最高的共同条件作为视觉父节点，Revision 原始数据保持不变。
+- 自动布局至少为“集合、模块、共同前置条件、叶子用例”预留四列，并保证节点间连接线具有可辨识长度。
+- 画布右上角必须提供全屏入口；进入后自动适配节点，`Esc` 或退出按钮恢复原布局，原生全屏不可用时降级为页面内全屏。
 
 ### 9.5 文档与审计
 
@@ -401,10 +381,9 @@ GET    /test-cases/{case_id}
 POST   /test-cases/{case_id}/revisions
 POST   /test-cases/{case_id}/candidate-revisions
 POST   /candidate-revisions/{candidate_id}/apply
-POST   /test-cases/{case_id}/status-events
 ```
 
-更新 Revision 时携带 `base_revision_id`；基线已变化返回 `409 Conflict` 和可合并差异。
+更新 Revision 时携带 `base_revision_id`；基线已变化返回 `409 Conflict` 和可合并差异。用例是可跨版本复用的资产，不保存通过、不通过、跳过或堵塞状态。
 
 ### 10.5 测试说明
 
@@ -421,6 +400,7 @@ GET    /exports/{export_id}
 - 创建和重试接口支持 `Idempotency-Key`。
 - 写操作必须校验空间成员和对象所属空间。
 - 列表使用游标分页。
+- Web 用例列表交互固定为每页 20 条；搜索、集合切换时重置第一页，结果数量变化时派生有效页码，避免通过 Effect 同步本地分页状态。
 - Patch 只修改传入字段。
 - 错误采用统一 `problem+json` 结构，包含机器码、用户文案和 trace ID。
 - 所有批量写操作先返回影响摘要，确认后执行。
@@ -460,7 +440,7 @@ GET    /exports/{export_id}
 5. Map：生成需求—测试点覆盖关系。
 6. Generate：生成结构化用例候选。
 7. Validate：执行 Schema、引用、重复、步骤和校验点检查。
-8. Persist Candidate：创建 TestCase 和不可变 Candidate Revision；用例状态为 Pending。
+8. Persist Candidate：创建 TestCase 和不可变 Candidate Revision。
 9. Document Candidate：按同一数据生成测试说明候选稿。
 
 每个阶段都保存输入引用、输出 artifact、Schema 版本和检查点。
@@ -471,7 +451,7 @@ GET    /exports/{export_id}
 - 模型生成的 ID 不作为数据库主键。
 - 每个推断项带 `evidence_type`：requirement、history、user、inference。
 - 每个用例至少包含 title、preconditions、steps、expected_results。
-- AI 不能直接设置通过状态；初始状态固定 Pending。
+- AI 不能直接发布 Revision 或写入 QA 执行结果；输出固定为 Candidate Revision。
 - AI 改写输出 Patch 和理由，不输出“已经修改成功”的假状态。
 - Provider 不可用时不清空输入、检查点和已生成 artifact。
 
@@ -509,7 +489,7 @@ GET    /exports/{export_id}
 - 空间成员和权限变化。
 - 文件上传、删除、导入和回滚。
 - AI 生成、重试、取消和模型切换。
-- 用例新增、修订、软删除、恢复和状态变化。
+- 用例新增、修订、软删除、恢复和 Review Event。
 - 候选改写接受或拒绝。
 - 文档发布和导出。
 
@@ -522,7 +502,7 @@ GET    /exports/{export_id}
 | 单元测试 | 状态机、权限、Schema、解析器、diff、去重规则 |
 | API 集成 | PostgreSQL、Redis、对象存储、幂等、事务、冲突 |
 | 契约测试 | OpenAPI、生成客户端、SSE 事件 |
-| 组件测试 | 聊天框、上传队列、状态选择、差异视图、脑图工具栏 |
+| 组件测试 | 聊天框、上传队列、执行结果选择、差异视图、脑图平移/缩放/全屏、分支折叠、共同前置条件投影、工具栏一键隐藏和任务描述必填反馈 |
 | E2E | 真实浏览器跑通核心闭环和异常分支 |
 | AI Evals | 结构合法率、来源正确率、覆盖率、重复率、人工接受率 |
 | 迁移测试 | 空库升级、旧版本升级、回滚安全性 |
@@ -548,7 +528,10 @@ critical E2E smoke
 - 常规 CRUD API P95 小于 500 ms，不包含 AI 和文件处理。
 - 生成状态变化在 2 秒内推送到前台。
 - 10,000 条用例集合采用分页/虚拟化，不一次加载全部详情。
+- 用例列表验证 0、1、20、21 条及删除最后一页唯一记录等分页边界；标题摘要换行时不得与工具栏或分隔线重叠。
 - 1,000 个可见脑图节点完成性能专项验证；默认通过折叠限制可见节点。
+- 大脑图隐藏/显示全部叶子后，缩放比例保持不变，布局重算不产生节点重叠或错误父子连线。
+- 任务描述为空时创建按钮仍可操作，并在点击后提供字段级提示与自动聚焦；不得以无反馈禁用状态阻断用户。
 - 桌面端满足键盘访问和 WCAG AA 对比度。
 - 所有网络操作具有 loading、empty、error、retry 和 unauthorized 状态。
 
@@ -594,16 +577,16 @@ critical E2E smoke
 ### M3：AI 分析与生成
 
 - 完成 Provider Adapter、生成阶段、SSE、风险、测试点、用例 Schema 和质量门。
-- 退出标准：真实 PRD 从上传到 Pending 用例闭环，刷新后任务可恢复。
+- 退出标准：真实 PRD 从上传到 Candidate Revision 闭环，刷新后任务可恢复。
 
 ### M4：脑图、编辑与版本
 
 - 完成脑图 CRUD、详情编辑、候选改写、diff、并发冲突、状态机和审计。
-- 退出标准：已通过用例被修改时生成新 Revision 并回到 Pending。
+- 退出标准：已发布用例被修改时生成新的 Candidate Revision，旧 Published Revision 保持不可变。
 
 ### M5：测试说明与发布
 
-- 完成测试说明、章节同步、覆盖率、状态快照、版本和四种导出。
+- 完成测试说明、章节同步、覆盖率、Revision/Baseline、版本和四种导出。
 - 退出标准：发布文档可追踪到精确用例 Revision 和来源。
 
 ### M6：发布准备
@@ -618,8 +601,8 @@ critical E2E smoke
 | ID | 决策 | 推荐值 | 状态 |
 |---|---|---|---|
 | D-01 | V1 是否按第 3 节范围冻结 | 是 | 必须确认 |
-| D-02 | 五种状态是否完全按第 4 节定义 | 是 | 必须确认 |
-| D-03 | 已通过用例修改后是否自动回 Pending | 是 | 必须确认 |
+| D-02 | QA 结果是否只属于 Execution Record | 是 | 已接受 |
+| D-03 | Revision 是否使用独立生命周期并由 Review Event 评审 | 是 | 已接受 |
 | D-04 | 一条用例是否可以属于多个集合 | 可以 | 必须确认 |
 | D-05 | 当前自部署验收是否使用本地账号登录 | 是；公开演示版另行决策 | 已接受 |
 | D-06 | 首个默认 AI Provider | Provider Adapter，默认值由部署者配置 | 必须确认 |

@@ -1,293 +1,259 @@
 # CasePilot
 
-AI 驱动的测试设计、文本用例管理与测试执行平台。
+CasePilot 是一个本地部署的结构化测试用例管理与 QA 执行平台。
 
-CasePilot turns requirements into reviewable, structured test cases and provides a
-lightweight QA execution workspace.
+当前验收版本覆盖“聊天创建候选用例 → 脑图/列表评审 → 写入正式用例资产
+→ 创建执行任务 → 多人协作记录结果”的完整产品闭环。AI 工作台已按 Figma
+V2.2 接入主导航；当前生成逻辑用于本地交互验收，真实模型、文件解析和异步
+生成任务仍由独立 Agent 基础设施承接后续接入。
 
-> 当前版本是可本地部署的开发预览版。AI 生成流程使用独立 Agent 中的确定性 Mock Provider；
-> 真实大模型、文件解析、执行历史持久化和生产级安全配置仍在开发中。
+## 当前可用能力
 
-## 功能概览
+- 本地账号注册、登录、退出和持久会话。
+- AI 用例工作台首次进入采用聊天创建页，可选择目标集合、输入测试目标、
+  添加需求文件并使用示例提示快速开始。
+- 生成完成后进入“对话 / 脑图或列表 / 用例详情”三栏工作区，展示阶段进度、
+  覆盖提醒、结构化候选用例和改写建议入口。
+- 候选内容与正式资产隔离；只有点击“写入用例集”才通过现有 API 创建正式
+  用例，AI 输出不会直接产生 QA 执行结果。
+- 以空间管理数据，每个账号拥有默认质量空间。
+- 用例集合新增、查看、编辑、软删除。
+- 结构化用例新增、查看、编辑、软删除。
+- 用例字段包括编号、名称、模块、类型、优先级、标签、前置条件、执行步骤、
+  预期结果和来源。
+- 编辑用例时创建新 Revision，不覆盖旧版本。
+- 列表与脑图读取同一份用例资产；脑图支持滑动平移、独立缩放、全屏、分支
+  折叠、一键隐藏叶子和共同前置条件投影。
+- 用例集合和用例资产没有 QA 执行状态；`未执行`、`通过`、`不通过`、`跳过`
+  和`堵塞`只属于具体执行任务。
+- QA 执行入口展示空间级任务历史、多人进度和结果分布；创建任务只需选择
+  集合并填写任务描述。
+- QA 可逐步勾选并记录当前任务的执行结果、实际结果和缺陷引用。
+- 执行记录锁定执行时的用例 Revision，历史结果不会随用例后续修改而变化。
+- 多位空间成员可共同执行；记录采用乐观并发控制，避免静默覆盖他人结果。
+- PostgreSQL 持久化业务数据，Redis 作为本地基础设施预留。
+- 审计记录覆盖集合、用例 Revision、执行任务和执行记录变更。
 
-- 以空间管理需求、用例集合和测试资产。
-- 通过自然语言与 Word、PDF、Excel、Markdown、图片等材料发起测试设计。
-- 展示需求分析、风险识别和分阶段生成进度。
-- 以脑图、列表、详情和结构化测试说明复用同一份用例数据。
-- 支持单条用例 AI 改写候选、人工评审和五种用例状态。
-- 支持 Excel 历史用例导入设计。
-- 提供轻量测试执行页：加载集合、逐条确认步骤并记录本次执行结果。
-- 用例内容状态与执行结果独立，执行失败不会覆盖已评审的用例状态。
+## 当前实现边界
+
+- 真实 AI Provider 与服务端异步生成任务。
+- 文件内容上传、解析、OCR 与来源定位；当前界面仅管理本地附件上下文。
+- 自动应用 AI 改写；当前改写输入作为评审建议，正式变更仍进入结构化编辑。
+- 结构化测试说明生成。
+- 自动化脚本绑定与执行结果回写。
+
+这些能力仍保留在产品路线图、独立 Agent 和设计文档中，但不会出现在当前
+验收页面或 OpenAPI 路由中。
+
+## 验收账号
+
+API 在首次启动时自动创建本地示例账号：
+
+```text
+邮箱：demo@casepilot.local
+密码：CasePilot123!
+```
+
+首次使用该账号进入工作台时，系统会在真实 PostgreSQL 数据库中准备：
+
+- 用例集合：`账号登录验收用例集`
+- 登录用例：`AUTH-001 使用正确邮箱与密码登录成功`
+- 3 条前置条件
+- 3 个执行步骤及对应预期结果
+
+示例数据只在不存在时创建，刷新页面不会重复插入。
 
 ## 技术架构
 
-| 层级 | 技术 | 本地职责 |
-|---|---|---|
-| Web | React 19、TypeScript、vinext/Vite、Tailwind CSS | 对话、脑图、用例管理和测试执行 |
-| API | FastAPI、SQLAlchemy、Alembic | 会话、空间、生成任务和 REST API |
-| Agent | Python、Celery | 独立的文件分析、模型 Provider 与用例生成管线 |
-| 数据库 | PostgreSQL | 账号、空间、集合、任务等权威数据 |
-| 队列/缓存 | Redis | Celery Broker、任务结果、进度事件和短期缓存 |
+| 组件 | 技术 | 责任 |
+| --- | --- | --- |
+| Web | React 19、TypeScript、Vinext/Vite | 登录、用例管理和 QA 执行界面 |
+| API | FastAPI、SQLAlchemy、Pydantic | 会话、空间、用例和执行 REST API |
+| Agent | Python、Celery | 隔离的文件分析、模型 Provider 与生成管线；等待真实 Provider 接入工作台 |
+| 数据库 | PostgreSQL 18 | 用例修订、执行任务、执行记录和审计数据 |
+| 缓存/队列 | Redis 8 | API 健康依赖、Agent Broker、任务结果和后续事件 |
+| 迁移 | Alembic | 数据库结构版本管理 |
 
-Redis 数据库分工：
+## 目录
 
-- DB 0：生成进度事件与短期缓存。
-- DB 1：Celery Broker。
-- DB 2：Celery 任务结果。
+```text
+apps/
+  agent/                  独立 Agent、Mock Provider 和测试
+  api/                    FastAPI 服务、模型、迁移和测试
+  web/                    React Web 应用
+docs/
+  acceptance-case-management-execution-v0.2.md
+  development-progress.md
+compose.yaml              本地 Docker Compose
+```
 
-## 快速部署：Docker Compose
+## 使用 Docker 启动
 
-### 前置条件
+要求：
 
-- Git
-- Docker Desktop，或 Docker Engine + Compose 插件
-- 建议至少 4 GB 可用内存
-- 本机端口 `3000`、`8000`、`5432`、`6379` 未被占用
+- Docker Desktop 或兼容的 Docker Engine
+- Docker Compose V2
 
-### 1. 克隆与配置
+复制环境变量并启动：
 
 ```bash
-git clone https://github.com/ruzhanzou/case_pilot.git
-cd case_pilot
 cp .env.example .env
-```
-
-`.env.example` 的默认值仅用于本机开发。公开网络部署前必须修改数据库密码，
-并根据实际域名调整 `CASEPILOT_WEB_ORIGIN` 和
-`NEXT_PUBLIC_CASEPILOT_API_URL`。
-
-### 2. 启动
-
-```bash
 docker compose up --build -d
-docker compose ps
 ```
 
-首次启动会自动：
+打开：
 
-1. 拉取 PostgreSQL、Redis、Node.js 和 Python 基础镜像。
-2. 创建 PostgreSQL 与 Redis 命名卷。
-3. 执行 Alembic 数据库迁移。
-4. 启动 API、Agent Worker 和 Web。
+- Web：<http://localhost:3000>
+- API 健康检查：<http://localhost:8000/health/ready>
+- OpenAPI：<http://localhost:8000/docs>
 
-访问地址：
-
-| 服务 | 地址 |
-|---|---|
-| 产品界面 | http://localhost:3000 |
-| REST API | http://localhost:8000 |
-| OpenAPI 文档 | http://localhost:8000/docs |
-| API 存活检查 | http://localhost:8000/health/live |
-| API 就绪检查 | http://localhost:8000/health/ready |
-
-### 3. 查看日志
+查看状态：
 
 ```bash
+docker compose ps
 docker compose logs -f web api agent
 ```
 
-### 4. 停止、更新与清理
-
-停止服务但保留数据库和 Redis 数据：
+停止服务：
 
 ```bash
 docker compose down
 ```
 
-更新代码并重新构建：
-
-```bash
-git pull
-docker compose up --build -d
-```
-
-删除服务及全部本地数据：
+保留数据库数据时不要添加 `-v`。只有确定要清空本地 PostgreSQL 和 Redis
+数据时，才执行：
 
 ```bash
 docker compose down -v
 ```
 
-> `down -v` 会永久删除 PostgreSQL 和 Redis 命名卷，请先确认不需要保留数据。
+## 不使用 Docker 启动
 
-## 不使用 Docker 的本机部署
+要求：
 
-### 前置条件
+- PostgreSQL 18（或兼容版本）
+- Redis 8（或兼容版本）
+- Python 3.13
+- Node.js 22+
+- pnpm 11
 
-- Node.js `>=22.13`
-- pnpm `11.9`
-- Python `>=3.13,<3.15`
-- PostgreSQL（推荐 16+）
-- Redis（推荐 7+）
+创建本地数据库：
 
-macOS 可以通过 Homebrew 安装 PostgreSQL 和 Redis：
-
-```bash
-brew install postgresql@18 redis
-brew services start postgresql@18
-brew services start redis
+```sql
+CREATE USER casepilot WITH PASSWORD 'casepilot-local';
+CREATE DATABASE casepilot OWNER casepilot;
 ```
 
-### 1. 准备数据库
-
-创建用户和数据库，密码请与本机 `.env` 保持一致：
+安装并启动 API：
 
 ```bash
-createuser --login --pwprompt casepilot
-createdb --owner=casepilot casepilot
-```
-
-### 2. 安装依赖
-
-```bash
-corepack enable
-pnpm --dir apps/web install --frozen-lockfile
-
 python3.13 -m venv .venv
 .venv/bin/pip install -r apps/api/requirements-dev.txt
 .venv/bin/pip install -r apps/agent/requirements-dev.txt
+
+export DATABASE_URL=postgresql+psycopg://casepilot:casepilot-local@127.0.0.1:5432/casepilot
+export REDIS_URL=redis://127.0.0.1:6379/0
+export CASEPILOT_WEB_ORIGIN=http://localhost:3000
+
+.venv/bin/alembic -c apps/api/alembic.ini upgrade head
+PYTHONPATH=apps/api/src .venv/bin/uvicorn casepilot_api.main:app \
+  --host 127.0.0.1 --port 8000
 ```
 
-复制环境变量：
-
-```bash
-cp .env.example .env
-```
-
-将 `.env` 中的容器主机名改为本机地址：
-
-```dotenv
-DATABASE_URL=postgresql+psycopg://casepilot:casepilot-local@127.0.0.1:5432/casepilot
-REDIS_URL=redis://127.0.0.1:6379/0
-CELERY_BROKER_URL=redis://127.0.0.1:6379/1
-CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/2
-```
-
-### 3. 执行迁移
-
-```bash
-DATABASE_URL=postgresql+psycopg://casepilot:casepilot-local@127.0.0.1:5432/casepilot \
-  .venv/bin/alembic -c apps/api/alembic.ini upgrade head
-```
-
-### 4. 启动三个进程
-
-终端一，启动 API：
-
-```bash
-PYTHONPATH=apps/api/src \
-DATABASE_URL=postgresql+psycopg://casepilot:casepilot-local@127.0.0.1:5432/casepilot \
-REDIS_URL=redis://127.0.0.1:6379/0 \
-  .venv/bin/uvicorn casepilot_api.main:app --host 127.0.0.1 --port 8000
-```
-
-终端二，启动 Agent：
+可选：在另一个终端启动独立 Agent。当前工作台使用本地候选生成完成前端闭环，
+服务端异步生成尚未接入；Agent 可单独验证：
 
 ```bash
 PYTHONPATH=apps/agent/src \
-DATABASE_URL=postgresql+psycopg://casepilot:casepilot-local@127.0.0.1:5432/casepilot \
-REDIS_URL=redis://127.0.0.1:6379/0 \
 CELERY_BROKER_URL=redis://127.0.0.1:6379/1 \
 CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/2 \
   .venv/bin/celery -A casepilot_agent.tasks:celery_app worker --loglevel=INFO
 ```
 
-终端三，启动 Web：
+再启动 Web：
 
 ```bash
-pnpm --dir apps/web dev
+cd apps/web
+pnpm install
+pnpm dev
 ```
 
-完成后打开 http://localhost:3000。
+## API 概览
 
-## 首次验收
+认证：
 
-首次运行选择“创建本地账号”，可使用：
+- `POST /api/v1/auth/register`
+- `POST /api/v1/auth/login`
+- `GET /api/v1/auth/me`
+- `POST /api/v1/auth/logout`
 
-- 邮箱：`demo@casepilot.local`
-- 密码：`CasePilot123!`
+用例集合：
 
-登录后输入：
+- `GET /api/v1/spaces/{space_id}/collections`
+- `POST /api/v1/spaces/{space_id}/collections`
+- `PATCH /api/v1/collections/{collection_id}`
+- `DELETE /api/v1/collections/{collection_id}`
 
-> 请为手机号验证码登录生成测试用例，覆盖验证码错误、过期和重复提交。
+用例：
 
-预期可以看到风险分析、生成进度、结构化用例、脑图、用例列表、测试说明和
-测试执行入口。完整步骤见
-[登录与简单生成验收](./docs/acceptance-login-generation-v0.1.md)。
+- `GET /api/v1/collections/{collection_id}/test-cases`
+- `POST /api/v1/collections/{collection_id}/test-cases`
+- `GET /api/v1/test-cases/{case_id}`
+- `PATCH /api/v1/test-cases/{case_id}`
+- `DELETE /api/v1/test-cases/{case_id}`
 
-## 常见问题
+执行：
 
-### PostgreSQL 或 Redis 端口被占用
+- `GET /api/v1/collections/{collection_id}/execution-runs`
+- `POST /api/v1/collections/{collection_id}/execution-runs`
+- `GET /api/v1/execution-runs/{run_id}`
+- `PATCH /api/v1/execution-runs/{run_id}`
+- `PATCH /api/v1/execution-records/{record_id}`
 
-如果本机已经运行 PostgreSQL 或 Redis，Docker Compose 可能无法绑定端口。
-先停止本机服务，或修改 `compose.yaml` 左侧的宿主机端口。
+所有业务接口都要求登录 Cookie，并校验当前账号是否属于目标空间。
+
+## 验收路径
+
+1. 打开 <http://localhost:3000>。
+2. 使用示例账号登录。
+3. 在“用例管理”查看 `AUTH-001`。
+4. 点击编辑，修改任意内容并保存，确认版本从 V1 递增。
+5. 打开“执行用例”，确认首先看到当前空间全部任务、进度和参与成员。
+6. 新建任务，选择集合并填写任务描述。
+7. 逐条勾选步骤，标记本任务执行结果并填写实际结果；其他空间成员可同时参与。
+8. 结束任务后确认其只读，并从任务历史重新打开。
+9. 刷新页面，确认执行状态、步骤、最后更新成员和实际结果仍然存在。
+
+详细验收标准见
+[docs/acceptance-case-management-execution-v0.2.md](./docs/acceptance-case-management-execution-v0.2.md)。
+
+## 本地验证
+
+后端：
 
 ```bash
-lsof -nP -iTCP:5432 -sTCP:LISTEN
-lsof -nP -iTCP:6379 -sTCP:LISTEN
+.venv/bin/ruff check apps/api/src apps/api/tests
+.venv/bin/pytest apps/api/tests -q
+.venv/bin/pytest apps/agent/tests -q
 ```
 
-### API 显示 degraded
-
-检查依赖服务和日志：
+前端：
 
 ```bash
-curl http://localhost:8000/health/ready
-docker compose ps
-docker compose logs api postgres redis
+cd apps/web
+pnpm lint
+pnpm build
 ```
 
-### 生成任务没有进度
+## 数据与安全说明
 
-确认 Agent 和 Redis 正常：
+- 密码使用 PBKDF2-SHA256 和随机盐保存，不存储明文密码。
+- 会话 Cookie 为 HttpOnly，默认有效期 7 天。
+- 删除集合和用例采用软删除，避免直接破坏审计链路。
+- 所有更新都会校验空间成员关系。
+- 用例更新必须携带 `base_revision_id`，冲突时返回 `409`，防止覆盖他人修订。
+- 示例账号只适用于本地验收，生产环境应禁用或替换自动示例账号。
 
-```bash
-docker compose logs agent
-docker compose exec redis redis-cli ping
-```
+## 许可证
 
-## 开发与验证
-
-```bash
-pnpm --dir apps/web lint
-pnpm --dir apps/web test
-
-PYTHONPATH=apps/api/src .venv/bin/pytest apps/api/tests
-PYTHONPATH=apps/agent/src .venv/bin/pytest apps/agent/tests
-.venv/bin/ruff check apps/api apps/agent
-```
-
-## 项目结构
-
-```text
-apps/web       Web 产品界面
-apps/api       FastAPI、数据库迁移与平台 API
-apps/agent     可独立开发部署的 Agent、Provider 与任务入口
-docs           产品、调研、交互与开发材料
-compose.yaml   本地完整部署编排
-```
-
-## 当前边界
-
-- AI Provider 当前为 Mock；模型选择会进入任务快照，但不会调用真实模型。
-- 文件上传控件与解析流程处于产品原型阶段。
-- 脑图编辑、用例状态和测试执行记录尚未全部服务端持久化。
-- Compose 当前面向本地开发与验收，Web 使用开发服务器。
-- 直接暴露到公网前，需要补充 TLS、密钥管理、生产 Web 镜像、数据库网络隔离、
-  备份恢复、限流和安全审计。
-
-## 产品与设计文档
-
-- [材料索引](./docs/README.md)
-- [产品设计 V1.4](./docs/product-design-v1.md)
-- [产品规格 V1.4](./docs/product-spec-v1.md)
-- [完整工作流与交互设计 V1.4](./docs/product-interaction-design.md)
-- [产品逻辑 Review V1.4](./docs/product-logic-review-v1.4.md)
-- [轻量测试执行设计 V1.4](./docs/test-execution-design.md)
-- [开发基线](./docs/development-baseline-v1.md)
-- [开源项目调研](./docs/opensource-research.md)
-- [Figma AI Workbench V2.1](https://www.figma.com/design/fRnEKJHcshgCIa1CmYXbLx?node-id=38-2)
-- [Figma 测试执行 V1.4](https://www.figma.com/design/fRnEKJHcshgCIa1CmYXbLx?node-id=77-3)
-
-## License
-
-CasePilot 使用 [Apache License 2.0](./LICENSE) 开源。
+[Apache License 2.0](./LICENSE)

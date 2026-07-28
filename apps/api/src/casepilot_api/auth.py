@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from casepilot_api.config import get_settings
-from casepilot_api.database import get_db_session
+from casepilot_api.database import get_db_session, get_session_factory
 from casepilot_api.models import (
     Account,
     AccountSession,
@@ -27,6 +27,8 @@ from casepilot_api.schemas import (
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 settings = get_settings()
 PASSWORD_ITERATIONS = 310_000
+DEMO_EMAIL = "demo@casepilot.local"
+DEMO_PASSWORD = "CasePilot123!"
 DbSession = Annotated[Session, Depends(get_db_session)]
 
 
@@ -109,6 +111,40 @@ def create_session(db: Session, response: Response, account: Account) -> None:
     )
 
 
+def ensure_demo_account() -> None:
+    """Create the documented local acceptance account on a fresh database."""
+    with get_session_factory()() as db:
+        existing = db.scalar(select(Account.id).where(Account.email == DEMO_EMAIL))
+        if existing is not None:
+            return
+        account = Account(
+            email=DEMO_EMAIL,
+            display_name="体验用户",
+            password_hash=hash_password(DEMO_PASSWORD),
+        )
+        space = Space(
+            name="体验用户的质量空间",
+            description="CasePilot 本地验收空间",
+        )
+        db.add_all([account, space])
+        db.flush()
+        db.add_all(
+            [
+                SpaceMembership(
+                    space_id=space.id,
+                    account_id=account.id,
+                    role="owner",
+                ),
+                CaseCollection(
+                    space_id=space.id,
+                    name="账号登录验收用例集",
+                    description="用于验收用例管理、版本修订和 QA 执行状态记录",
+                ),
+            ]
+        )
+        db.commit()
+
+
 def require_account(
     request: Request,
     db: DbSession,
@@ -158,8 +194,8 @@ def register(
             SpaceMembership(space_id=space.id, account_id=account.id, role="owner"),
             CaseCollection(
                 space_id=space.id,
-                name="快速体验用例集",
-                description="用于登录后的第一个用例生成示例",
+                name="账号登录验收用例集",
+                description="用于验收用例管理、版本修订和 QA 执行状态记录",
             ),
         ]
     )

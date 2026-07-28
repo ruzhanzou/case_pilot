@@ -1,6 +1,6 @@
 "use client";
 
-import { PrototypeApp } from "@/components/prototype-app";
+import { CaseManagementApp } from "@/components/case-management-app";
 import {
   getCurrentAccount,
   loginAccount,
@@ -9,7 +9,12 @@ import {
   type Account,
 } from "@/lib/casepilot-api";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowRight, CheckCircle2, LoaderCircle, Sparkles } from "lucide-react";
+import {
+  ArrowRight,
+  CheckCircle2,
+  ClipboardCheck,
+  LoaderCircle,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 
 type AuthMode = "login" | "register";
@@ -83,22 +88,22 @@ export function AuthenticatedApp() {
   }
 
   if (account) {
-    return <PrototypeApp account={account} onLogout={logout} />;
+    return <CaseManagementApp account={account} onLogout={logout} />;
   }
 
   return (
     <main className="auth-shell">
       <section className="auth-story">
-        <div className="auth-brand"><Sparkles size={18} />CasePilot</div>
+        <div className="auth-brand"><ClipboardCheck size={18} />CasePilot</div>
         <div>
-          <span className="eyebrow">AI TEST DESIGN WORKSPACE</span>
-          <h1>从一段需求，生成<br />可评审的测试用例。</h1>
-          <p>登录后进入你的本地质量空间，输入一个简单场景，即可查看风险分析、生成进度和结构化用例。</p>
+          <span className="eyebrow">TEST CASE MANAGEMENT WORKSPACE</span>
+          <h1>管理、评审并执行<br />结构化测试用例。</h1>
+          <p>登录后进入本地质量空间，维护用例集合、修订结构化用例，并记录每一次 QA 执行结果。</p>
         </div>
         <div className="auth-flow">
           <span><b>01</b>登录本地账号</span>
-          <span><b>02</b>描述测试需求</span>
-          <span><b>03</b>评审生成用例</span>
+          <span><b>02</b>管理用例资产</span>
+          <span><b>03</b>执行并留痕</span>
         </div>
       </section>
 
@@ -113,7 +118,7 @@ export function AuthenticatedApp() {
             <div className="auth-card__head">
               <span className="auth-card__mark"><CheckCircle2 size={20} /></span>
               <h2 id="auth-title">{mode === "login" ? "欢迎回来" : "创建本地账号"}</h2>
-              <p>{mode === "login" ? "登录后继续用例设计工作" : "账号与数据仅保存在本地环境"}</p>
+              <p>{mode === "login" ? "登录后继续用例管理与执行" : "账号与数据仅保存在本地环境"}</p>
             </div>
             <form action={submit} className="auth-form">
               {mode === "register" && (

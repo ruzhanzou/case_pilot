@@ -12,20 +12,12 @@ class Base(DeclarativeBase):
     pass
 
 
-class CaseStatus(StrEnum):
-    PENDING = "pending"
+class ExecutionStatus(StrEnum):
+    NOT_RUN = "not_run"
     PASSED = "passed"
     FAILED = "failed"
     SKIPPED = "skipped"
     BLOCKED = "blocked"
-
-
-class GenerationStatus(StrEnum):
-    QUEUED = "queued"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
 
 
 def enum_values(enum_class: type[StrEnum]) -> list[str]:
@@ -106,10 +98,14 @@ class CaseCollection(TimestampMixin, Base):
     )
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class TestCase(TimestampMixin, Base):
     __tablename__ = "test_cases"
+    __table_args__ = (
+        UniqueConstraint("space_id", "case_key", name="uq_test_case_space_key"),
+    )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     space_id: Mapped[UUID] = mapped_column(
@@ -118,13 +114,12 @@ class TestCase(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    current_revision_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
-    current_status: Mapped[CaseStatus] = mapped_column(
-        Enum(CaseStatus, name="case_status", values_callable=enum_values),
-        default=CaseStatus.PENDING,
-        nullable=False,
-        index=True,
+    case_key: Mapped[str] = mapped_column(String(40), nullable=False)
+    current_revision_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("test_case_revisions.id", ondelete="SET NULL", use_alter=True),
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class TestCaseRevision(TimestampMixin, Base):
@@ -139,39 +134,43 @@ class TestCaseRevision(TimestampMixin, Base):
     )
     revision_number: Mapped[int] = mapped_column(nullable=False)
     title: Mapped[str] = mapped_column(String(300), nullable=False)
+    module: Mapped[str] = mapped_column(String(160), default="", nullable=False)
+    priority: Mapped[str] = mapped_column(String(8), default="P1", nullable=False)
+    case_type: Mapped[str] = mapped_column(String(40), default="功能", nullable=False)
+    tags: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
     preconditions: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
     steps: Mapped[list[dict[str, str]]] = mapped_column(JSONB, default=list, nullable=False)
     source_refs: Mapped[list[dict[str, str]]] = mapped_column(JSONB, default=list, nullable=False)
 
 
-class TestCaseStatusEvent(TimestampMixin, Base):
-    __tablename__ = "test_case_status_events"
+class CollectionCaseMembership(TimestampMixin, Base):
+    __tablename__ = "collection_case_memberships"
+    __table_args__ = (
+        UniqueConstraint(
+            "collection_id",
+            "test_case_id",
+            name="uq_collection_case_membership",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    collection_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("case_collections.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     test_case_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("test_cases.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    revision_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("test_case_revisions.id", ondelete="RESTRICT"),
-        nullable=False,
-    )
-    from_status: Mapped[CaseStatus | None] = mapped_column(
-        Enum(CaseStatus, name="case_status", values_callable=enum_values),
-    )
-    to_status: Mapped[CaseStatus] = mapped_column(
-        Enum(CaseStatus, name="case_status", values_callable=enum_values),
-        nullable=False,
-    )
-    reason: Mapped[str] = mapped_column(Text, default="", nullable=False)
-    actor_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    position: Mapped[int] = mapped_column(default=0, nullable=False)
 
 
-class GenerationJob(TimestampMixin, Base):
-    __tablename__ = "generation_jobs"
+class ExecutionRun(TimestampMixin, Base):
+    __tablename__ = "execution_runs"
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     space_id: Mapped[UUID] = mapped_column(
@@ -180,25 +179,71 @@ class GenerationJob(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    account_id: Mapped[UUID | None] = mapped_column(
+    collection_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("case_collections.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    executor_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("accounts.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="active", nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ExecutionRecord(TimestampMixin, Base):
+    __tablename__ = "execution_records"
+    __table_args__ = (
+        UniqueConstraint("run_id", "test_case_id", name="uq_execution_run_case"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("execution_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    test_case_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("test_cases.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    revision_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("test_case_revisions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    updated_by_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("accounts.id", ondelete="SET NULL"),
         index=True,
     )
-    status: Mapped[GenerationStatus] = mapped_column(
-        Enum(
-            GenerationStatus,
-            name="generation_status",
-            values_callable=enum_values,
-        ),
-        default=GenerationStatus.QUEUED,
+    status: Mapped[ExecutionStatus] = mapped_column(
+        Enum(ExecutionStatus, name="execution_status", values_callable=enum_values),
+        default=ExecutionStatus.NOT_RUN,
         nullable=False,
         index=True,
     )
-    stage: Mapped[str] = mapped_column(String(80), default="queued", nullable=False)
-    input_payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    output_payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    error_code: Mapped[str | None] = mapped_column(String(120))
+    completed_step_ids: Mapped[list[str]] = mapped_column(
+        JSONB,
+        default=list,
+        nullable=False,
+    )
+    actual_result: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    defect_ref: Mapped[str] = mapped_column(String(160), default="", nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
 
 
 class AuditEvent(TimestampMixin, Base):

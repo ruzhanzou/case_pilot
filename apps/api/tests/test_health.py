@@ -13,37 +13,22 @@ async def test_live_health() -> None:
         response = await client.get("/health/live")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
-    assert response.json()["ai_mode"] == "mock"
+    assert response.json()["generation"] == "disabled"
 
 
-@pytest.mark.asyncio
-async def test_mock_generation_starts_pending_cases() -> None:
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        response = await client.post(
-            "/api/v1/mock/generation-jobs",
-            json={"prompt": "生成支付回调测试用例", "file_names": ["支付需求.docx"]},
-        )
-    assert response.status_code == 202
-    body = response.json()
-    assert body["mode"] == "mock"
-    assert body["test_cases"]
-    assert all(case["status"] == "pending" for case in body["test_cases"])
+def test_case_management_routes_are_exposed() -> None:
+    paths = app.openapi()["paths"]
+
+    assert "/api/v1/spaces/{space_id}/collections" in paths
+    assert "/api/v1/collections/{collection_id}/test-cases" in paths
+    assert "/api/v1/collections/{collection_id}/test-cases/batch" in paths
+    assert "/api/v1/test-cases/{case_id}" in paths
+    assert "/api/v1/collections/{collection_id}/execution-runs" in paths
+    assert "/api/v1/execution-records/{record_id}" in paths
 
 
-@pytest.mark.asyncio
-async def test_login_prompt_returns_login_test_cases() -> None:
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        response = await client.post(
-            "/api/v1/mock/generation-jobs",
-            json={"prompt": "为手机号验证码登录生成用例"},
-        )
-    assert response.status_code == 202
-    body = response.json()
-    assert body["test_cases"][0]["id"] == "AUTH-001"
-    assert all(case["status"] == "pending" for case in body["test_cases"])
+def test_generation_routes_are_not_exposed() -> None:
+    paths = app.openapi()["paths"]
+
+    assert all("/mock/" not in path for path in paths)
+    assert all("generation-jobs" not in path for path in paths)
