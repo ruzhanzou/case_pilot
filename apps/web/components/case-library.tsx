@@ -149,6 +149,7 @@ export function CaseLibrary({
             {selectedCollection && (
               <div className="case-library__summary" aria-label="用例集合摘要">
                 <span><b>{cases.length}</b> 用例</span>
+                <span>工作区状态：持续 Session · 自动保存</span>
                 <span>执行结果请在 QA 执行批次中查看</span>
               </div>
             )}
@@ -161,7 +162,7 @@ export function CaseLibrary({
                   type="button"
                   onClick={onOpenWorkbench}
                 >
-                  <Sparkles size={16} /> AI 编辑
+                  <Sparkles size={16} /> 进入/继续工作区
                 </button>
                 <button
                   className="management-button management-button--execution"

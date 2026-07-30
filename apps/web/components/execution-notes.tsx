@@ -9,6 +9,7 @@ type ExecutionNotesProps = {
   dirty: boolean;
   saving: boolean;
   readOnly?: boolean;
+  readOnlyLabel?: string;
   actualResultRef: RefObject<HTMLTextAreaElement | null>;
   onActualResultChange: (value: string) => void;
   onDefectRefChange: (value: string) => void;
@@ -21,6 +22,7 @@ export function ExecutionNotes({
   dirty,
   saving,
   readOnly = false,
+  readOnlyLabel = "批次已结束",
   actualResultRef,
   onActualResultChange,
   onDefectRefChange,
@@ -60,7 +62,7 @@ export function ExecutionNotes({
         ) : (
           <Save size={16} />
         )}
-        {readOnly ? "批次已结束" : dirty ? "保存执行记录" : "记录已保存"}
+        {readOnly ? readOnlyLabel : dirty ? "保存执行记录" : "记录已保存"}
       </button>
     </section>
   );

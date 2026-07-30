@@ -1,0 +1,90 @@
+{
+  "executed_at": "2026-07-30T01:10:00+08:00",
+  "environment": {
+    "url": "http://127.0.0.1:3000/",
+    "database_schema": "casepilot_e2e_5dc0",
+    "redis_databases": [10, 11, 12],
+    "provider": "mock"
+  },
+  "assistant_identity": {
+    "expected_name": "CasePilot",
+    "source_occurrences_of_old_names": 0,
+    "persisted_message_occurrences_of_old_names": 0,
+    "persisted_message_occurrences_of_expected_name": 2,
+    "browser_occurrences_of_old_names": 0,
+    "browser_occurrences_of_expected_name": 5,
+    "migration_head": "20260730_0014"
+  },
+  "viewports": [
+    {
+      "width": 1280,
+      "height": 900,
+      "document_client_width": 1280,
+      "document_scroll_width": 1280,
+      "workspace_height": 830,
+      "visible_fonts_below_12px": 0,
+      "controls_below_14px": 0,
+      "controls_below_34px_height": 0,
+      "model_selectors": 1,
+      "new_chat_visible": false,
+      "new_case_visible": false,
+      "data_connected_visible": false
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "document_client_width": 1440,
+      "document_scroll_width": 1440,
+      "workspace_height": 830,
+      "visible_fonts_below_12px": 0,
+      "controls_below_14px": 0,
+      "controls_below_34px_height": 0,
+      "model_selectors": 1,
+      "new_chat_visible": false,
+      "new_case_visible": false,
+      "data_connected_visible": false
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "document_client_width": 1920,
+      "document_scroll_width": 1920,
+      "workspace_height": 1010,
+      "visible_fonts_below_12px": 0,
+      "controls_below_14px": 0,
+      "controls_below_34px_height": 0,
+      "model_selectors": 1,
+      "new_chat_visible": false,
+      "new_case_visible": false,
+      "data_connected_visible": false
+    }
+  ],
+  "generation_cancellation": {
+    "stop_button_visible_while_busy": true,
+    "stop_button_count_while_busy": 1,
+    "send_button_restored_after_cancel": true,
+    "cancelled_feedback_visible": true,
+    "confirmed_brief_retained": true,
+    "candidate_rows_after_cancel": 0,
+    "candidate_commit_button_after_cancel": false
+  },
+  "refresh_recovery": {
+    "same_collection_restored": true,
+    "same_brief_version_restored": true,
+    "cancelled_message_restored": true,
+    "request_history_restored": true,
+    "leave_or_save_prompt_visible": false
+  },
+  "browser_console": {
+    "errors": 0,
+    "warnings": 0
+  },
+  "visual_defects_found_and_fixed": [
+    {
+      "id": "CP-P1-011",
+      "description": "长对话将三栏工作区撑高到 3695px，输入区与右侧空态离开首屏",
+      "fix": "工作区作为管理页弹性子项收缩，并让聊天列在固定视口高度内独立滚动",
+      "retest": "passed"
+    }
+  ]
+}

@@ -9,8 +9,12 @@ from redis import Redis
 from casepilot_api.auth import ensure_demo_account
 from casepilot_api.auth import router as auth_router
 from casepilot_api.case_management import router as case_management_router
+from casepilot_api.cases import router as candidate_router
 from casepilot_api.config import get_settings
+from casepilot_api.conversations import router as conversation_router
 from casepilot_api.database import check_database
+from casepilot_api.generation import router as generation_router
+from casepilot_api.knowledge import router as knowledge_router
 
 settings = get_settings()
 
@@ -24,18 +28,22 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="CasePilot API",
     version="0.1.0",
-    description="CasePilot 本地用例管理与 QA 执行 API。AI 生成与改写当前未启用。",
+    description="CasePilot 本地用例管理、AI 测试设计与 QA 执行 API。",
     lifespan=lifespan,
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.web_origin],
+    allow_origins=list(settings.allowed_web_origins),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 app.include_router(auth_router)
 app.include_router(case_management_router)
+app.include_router(generation_router)
+app.include_router(knowledge_router)
+app.include_router(candidate_router)
+app.include_router(conversation_router)
 
 
 @app.get("/health/live")
@@ -43,7 +51,7 @@ async def live() -> dict[str, str]:
     return {
         "status": "ok",
         "service": "casepilot-api",
-        "generation": "disabled",
+        "generation": settings.ai_mode,
     }
 
 

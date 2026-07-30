@@ -46,8 +46,8 @@
 - 写入正式集合后创建正常 Test Case/Revision；执行结果仍只记录在独立
   Execution Run。
 - 当前附件不上传服务端，不读取文件内容。
-- 当前候选生成是本地交互实现；真实 Provider、解析和异步任务不在 V0.6
-  验收范围。
+- 当前候选由服务端异步 Mock Agent 生成，并通过 Redis/SSE 返回真实阶段；
+  OpenAI 兼容 Provider、文件解析和任务恢复不在 V0.6 验收范围。
 
 ## 4. 机械验证
 

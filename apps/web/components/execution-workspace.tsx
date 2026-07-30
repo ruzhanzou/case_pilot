@@ -3,15 +3,21 @@
 import { ExecutionNotes } from "@/components/execution-notes";
 import {
   closeExecutionRun,
+  addSpaceMember,
   createExecutionRun,
   getExecutionRun,
+  listSpaceMembers,
   listSpaceExecutionRuns,
+  publicErrorMessage,
+  reassignExecutionRecord,
+  removeSpaceMember,
   updateExecutionRecord,
   type CaseCollectionDto,
   type ExecutionRecordDto,
   type ExecutionRunDto,
   type ExecutionRunSummaryDto,
   type ExecutionStatusApi,
+  type SpaceMemberDto,
 } from "@/lib/casepilot-api";
 import {
   AlertTriangle,
@@ -33,6 +39,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 type ExecutionWorkspaceProps = {
   spaceId: string;
+  accountId: string;
+  spaceRole: string;
   collections: CaseCollectionDto[];
   preferredCollectionId: string;
   navigationRequest: {
@@ -97,6 +105,8 @@ function formatTime(value: string) {
 
 export function ExecutionWorkspace({
   spaceId,
+  accountId,
+  spaceRole,
   collections,
   preferredCollectionId,
   navigationRequest,
@@ -111,6 +121,10 @@ export function ExecutionWorkspace({
   );
   const [description, setDescription] = useState("");
   const [descriptionError, setDescriptionError] = useState("");
+  const [members, setMembers] = useState<SpaceMemberDto[]>([]);
+  const [selectedAssigneeIds, setSelectedAssigneeIds] = useState<string[]>([]);
+  const [memberEmail, setMemberEmail] = useState("");
+  const [recordFilter, setRecordFilter] = useState("all");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -125,6 +139,18 @@ export function ExecutionWorkspace({
     setRunHistory(await listSpaceExecutionRuns(spaceId));
   };
 
+  const refreshMembers = async () => {
+    const result = await listSpaceMembers(spaceId);
+    setMembers(result);
+    setSelectedAssigneeIds((current) =>
+      current.length
+        ? current.filter((id) =>
+            result.some((member) => member.account_id === id),
+          )
+        : result.map((member) => member.account_id),
+    );
+  };
+
   useEffect(() => {
     let ignored = false;
     const load = () => {
@@ -135,7 +161,9 @@ export function ExecutionWorkspace({
         .catch((caught) => {
           if (!ignored) {
             setError(
-              caught instanceof Error ? caught.message : "执行任务加载失败",
+              caught instanceof Error
+                ? publicErrorMessage(caught.message)
+                : "执行任务加载失败",
             );
           }
         });
@@ -145,6 +173,30 @@ export function ExecutionWorkspace({
     return () => {
       ignored = true;
       window.clearInterval(timer);
+    };
+  }, [spaceId]);
+
+  useEffect(() => {
+    let ignored = false;
+    void listSpaceMembers(spaceId)
+      .then((result) => {
+        if (ignored) return;
+        setMembers(result);
+        setSelectedAssigneeIds(
+          result.map((member) => member.account_id),
+        );
+      })
+      .catch((caught) => {
+        if (!ignored) {
+          setError(
+            caught instanceof Error
+              ? publicErrorMessage(caught.message)
+              : "空间成员加载失败",
+          );
+        }
+      });
+    return () => {
+      ignored = true;
     };
   }, [spaceId]);
 
@@ -173,6 +225,20 @@ export function ExecutionWorkspace({
   const readOnly = run?.status !== "active";
   const selectedRecord =
     run?.records.find((record) => record.id === selectedRecordId) ?? null;
+  const recordReadOnly = Boolean(
+    readOnly || (selectedRecord && !selectedRecord.can_edit),
+  );
+  const filteredRecords = useMemo(() => {
+    if (!run) return [];
+    if (recordFilter === "mine") {
+      return run.records.filter((record) => record.assignee_id === accountId);
+    }
+    if (recordFilter.startsWith("assignee:")) {
+      const assigneeId = recordFilter.slice("assignee:".length);
+      return run.records.filter((record) => record.assignee_id === assigneeId);
+    }
+    return run.records;
+  }, [accountId, recordFilter, run]);
   const recordDraftDirty = Boolean(
     selectedRecord &&
       recordDraft?.recordId === selectedRecord.id &&
@@ -255,12 +321,24 @@ export function ExecutionWorkspace({
       descriptionRef.current?.focus();
       return;
     }
+    const selectedCollection = collections.find(
+      (collection) => collection.id === selectedCollectionId,
+    );
+    if (!selectedCollection?.case_count) {
+      setError("空用例集合不能创建执行任务。");
+      return;
+    }
+    if (!selectedAssigneeIds.length) {
+      setError("请至少选择一名执行人。");
+      return;
+    }
     setLoading(true);
     setError("");
     setDescriptionError("");
     try {
       const result = await createExecutionRun(selectedCollectionId, {
         description: description.trim(),
+        assignee_ids: selectedAssigneeIds,
       });
       setRun(result);
       setSelectedRecordId(result.records[0]?.id ?? "");
@@ -271,7 +349,11 @@ export function ExecutionWorkspace({
       setView("detail");
       await refreshHistory();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "执行任务创建失败");
+      setError(
+        caught instanceof Error
+          ? publicErrorMessage(caught.message)
+          : "执行任务创建失败",
+      );
     } finally {
       setLoading(false);
     }
@@ -289,14 +371,18 @@ export function ExecutionWorkspace({
       );
       setView("detail");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "执行任务加载失败");
+      setError(
+        caught instanceof Error
+          ? publicErrorMessage(caught.message)
+          : "执行任务加载失败",
+      );
     } finally {
       setLoading(false);
     }
   };
 
   const finishRun = async () => {
-    if (!run || readOnly) return;
+    if (!run || readOnly || !run.can_manage) return;
     if (recordDraftDirty) {
       setRecordValidationError("请先保存或放弃当前用例的执行记录，再结束任务。");
       return;
@@ -317,7 +403,11 @@ export function ExecutionWorkspace({
       setRun(result);
       await refreshHistory();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "执行任务结束失败");
+      setError(
+        caught instanceof Error
+          ? publicErrorMessage(caught.message)
+          : "执行任务结束失败",
+      );
     } finally {
       setSaving(false);
     }
@@ -332,7 +422,7 @@ export function ExecutionWorkspace({
       >
     >,
   ): Promise<ExecutionRecordDto | null> => {
-    if (readOnly) return null;
+    if (readOnly || !record.can_edit) return null;
     setSaving(true);
     setError("");
     try {
@@ -373,7 +463,11 @@ export function ExecutionWorkspace({
         }
         setError("该用例刚被其他成员更新，已为你加载最新结果，请确认后重试。");
       } else {
-        setError(caught instanceof Error ? caught.message : "执行记录保存失败");
+        setError(
+          caught instanceof Error
+            ? publicErrorMessage(caught.message)
+            : "执行记录保存失败",
+        );
       }
       return null;
     } finally {
@@ -400,15 +494,7 @@ export function ExecutionWorkspace({
   };
 
   const saveRecordDraft = async () => {
-    if (!selectedRecord || !recordDraft) return;
-    const completedSteps = new Set(selectedRecord.completed_step_ids);
-    const allStepsComplete = selectedRecord.test_case.steps.every((step) =>
-      completedSteps.has(step.id),
-    );
-    if (recordDraft.status === "passed" && !allStepsComplete) {
-      setRecordValidationError("标记通过前，请先逐项完成所有执行步骤。");
-      return;
-    }
+    if (!selectedRecord || !recordDraft || recordReadOnly) return;
     if (
       ["failed", "skipped", "blocked"].includes(recordDraft.status) &&
       !recordDraft.actualResult.trim()
@@ -432,8 +518,87 @@ export function ExecutionWorkspace({
     if (updated) setRecordDraft(draftFromRecord(updated));
   };
 
+  const addMember = async () => {
+    if (!memberEmail.trim()) return;
+    setLoading(true);
+    setError("");
+    try {
+      await addSpaceMember(spaceId, memberEmail.trim());
+      setMemberEmail("");
+      await refreshMembers();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? publicErrorMessage(caught.message)
+          : "成员添加失败",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const removeMember = async (memberId: string) => {
+    setLoading(true);
+    setError("");
+    try {
+      await removeSpaceMember(spaceId, memberId);
+      await refreshMembers();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? publicErrorMessage(caught.message)
+          : "成员移除失败",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const reassignRecord = async (recordId: string, assigneeId: string) => {
+    if (!run?.can_manage) return;
+    setSaving(true);
+    setError("");
+    try {
+      const updated = await reassignExecutionRecord(recordId, assigneeId);
+      setRun((current) =>
+        current
+          ? {
+              ...current,
+              assignee_ids: Array.from(
+                new Set([...current.assignee_ids, assigneeId]),
+              ),
+              assignee_names: Array.from(
+                new Set([
+                  ...current.assignee_names,
+                  updated.assignee_name ?? "",
+                ]),
+              ).filter(Boolean),
+              records: current.records.map((item) =>
+                item.id === updated.id ? updated : item,
+              ),
+            }
+          : current,
+      );
+      setRecordDraft(draftFromRecord(updated));
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? publicErrorMessage(caught.message)
+          : "重新分配失败",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <div className="execution-workspace">
+    <div
+      className={
+        view === "detail"
+          ? "execution-workspace execution-workspace--detail"
+          : "execution-workspace"
+      }
+    >
       {error && (
         <div className="management-banner-error" role="alert">{error}</div>
       )}
@@ -609,6 +774,63 @@ export function ExecutionWorkspace({
                   </small>
                 )}
               </label>
+              <fieldset className="execution-assignee-picker">
+                <legend>执行人 *（用例将按稳定顺序平均分配）</legend>
+                {members.map((member) => (
+                  <label key={member.account_id}>
+                    <input
+                      type="checkbox"
+                      checked={selectedAssigneeIds.includes(member.account_id)}
+                      onChange={(event) =>
+                        setSelectedAssigneeIds((current) =>
+                          event.target.checked
+                            ? [...new Set([...current, member.account_id])]
+                            : current.filter(
+                                (item) => item !== member.account_id,
+                              ),
+                        )
+                      }
+                    />
+                    <span>
+                      <strong>{member.display_name}</strong>
+                      <small>{member.email}</small>
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
+              {spaceRole === "owner" && (
+                <div className="execution-member-manager">
+                  <strong>空间成员管理</strong>
+                  <div>
+                    <input
+                      type="email"
+                      value={memberEmail}
+                      onChange={(event) => setMemberEmail(event.target.value)}
+                      placeholder="输入已注册邮箱"
+                    />
+                    <button
+                      type="button"
+                      disabled={!memberEmail.trim() || loading}
+                      onClick={() => void addMember()}
+                    >
+                      添加成员
+                    </button>
+                  </div>
+                  {members
+                    .filter((member) => member.role !== "owner")
+                    .map((member) => (
+                      <p key={member.account_id}>
+                        <span>{member.display_name} · {member.email}</span>
+                        <button
+                          type="button"
+                          onClick={() => void removeMember(member.account_id)}
+                        >
+                          移除
+                        </button>
+                      </p>
+                    ))}
+                </div>
+              )}
             </div>
             <button
               type="button"
@@ -629,7 +851,7 @@ export function ExecutionWorkspace({
 
       {view === "detail" && run && (
         <>
-          <header className="execution-header">
+          <header className="execution-header execution-header--detail">
             <div>
               <button
                 type="button"
@@ -660,7 +882,7 @@ export function ExecutionWorkspace({
                   <i style={{ width: `${progress.percent}%` }} />
                 </span>
               </div>
-              {!readOnly && (
+              {!readOnly && run.can_manage && (
                 <button
                   type="button"
                   className="management-button"
@@ -677,9 +899,7 @@ export function ExecutionWorkspace({
             <Users size={15} />
             <strong>参与成员</strong>
             <span>
-              {run.contributor_names.length
-                ? run.contributor_names.join("、")
-                : run.creator_name}
+              {run.assignee_names.join("、")}
             </span>
             <small>多人更新每 5 秒自动同步</small>
           </section>
@@ -694,9 +914,44 @@ export function ExecutionWorkspace({
               <aside className="execution-queue">
                 <div className="execution-queue__head">
                   <strong>执行队列</strong>
-                  <span>{run.records.length} 条</span>
+                  <select
+                    aria-label="按执行人筛选"
+                    value={recordFilter}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setRecordFilter(value);
+                      const nextRecord =
+                        value === "all"
+                          ? run.records[0]
+                          : value === "mine"
+                            ? run.records.find(
+                                (record) => record.assignee_id === accountId,
+                              )
+                            : run.records.find(
+                                (record) =>
+                                  record.assignee_id ===
+                                  value.slice("assignee:".length),
+                              );
+                      if (nextRecord) {
+                        setSelectedRecordId(nextRecord.id);
+                        setRecordDraft(draftFromRecord(nextRecord));
+                      }
+                    }}
+                  >
+                    <option value="all">全部 · {run.records.length}</option>
+                    <option value="mine">我的用例</option>
+                    {members.map((member) => (
+                      <option
+                        key={member.account_id}
+                        value={`assignee:${member.account_id}`}
+                      >
+                        {member.display_name}
+                      </option>
+                    ))}
+                  </select>
+                  <span>{filteredRecords.length} 条</span>
                 </div>
-                {run.records.map((record, index) => (
+                {filteredRecords.map((record, index) => (
                   <button
                     type="button"
                     key={record.id}
@@ -718,6 +973,7 @@ export function ExecutionWorkspace({
                       {record.updated_by_name && (
                         <small>{record.updated_by_name} 最后更新</small>
                       )}
+                      <small>执行人：{record.assignee_name ?? "未分配"}</small>
                     </div>
                     <span
                       className={`execution-queue__status execution-queue__status--${record.status}`}
@@ -746,6 +1002,30 @@ export function ExecutionWorkspace({
                             ? ` · ${selectedRecord.updated_by_name} 最后更新`
                             : ""}
                         </p>
+                        {run.can_manage && !readOnly && (
+                          <label className="execution-reassign">
+                            执行人
+                            <select
+                              value={selectedRecord.assignee_id ?? ""}
+                              onChange={(event) =>
+                                void reassignRecord(
+                                  selectedRecord.id,
+                                  event.target.value,
+                                )
+                              }
+                              disabled={saving}
+                            >
+                              {members.map((member) => (
+                                <option
+                                  key={member.account_id}
+                                  value={member.account_id}
+                                >
+                                  {member.display_name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
                       </div>
                       <div className="execution-status-actions">
                         {executionOptions.map((option) => {
@@ -759,7 +1039,7 @@ export function ExecutionWorkspace({
                                   ? `is-active execution-status--${option.value}`
                                   : ""
                               }
-                              disabled={saving || readOnly}
+                              disabled={saving || recordReadOnly}
                               aria-pressed={recordDraft?.status === option.value}
                               onClick={() => {
                                 setRecordDraft((current) => ({
@@ -791,7 +1071,10 @@ export function ExecutionWorkspace({
                     </section>
 
                     <section className="execution-steps">
-                      <h3>执行步骤</h3>
+                      <h3>
+                        执行步骤
+                        <span>可选记录，不影响执行结果</span>
+                      </h3>
                       {selectedRecord.test_case.steps.map((step, index) => {
                         const completed =
                           selectedRecord.completed_step_ids.includes(step.id);
@@ -803,7 +1086,7 @@ export function ExecutionWorkspace({
                             <button
                               type="button"
                               className="execution-step-check"
-                              disabled={saving || readOnly}
+                              disabled={saving || recordReadOnly}
                               onClick={() => {
                                 const completedStepIds = completed
                                   ? selectedRecord.completed_step_ids.filter(
@@ -815,10 +1098,6 @@ export function ExecutionWorkspace({
                                     ];
                                 void persistRecord(selectedRecord, {
                                   completed_step_ids: completedStepIds,
-                                  ...(completed &&
-                                  selectedRecord.status === "passed"
-                                    ? { status: "not_run" as const }
-                                    : {}),
                                 });
                               }}
                               aria-label={`${completed ? "取消完成" : "完成"}第 ${index + 1} 步`}
@@ -839,7 +1118,10 @@ export function ExecutionWorkspace({
                       defectRef={recordDraft?.defectRef ?? ""}
                       dirty={recordDraftDirty}
                       saving={saving}
-                      readOnly={readOnly}
+                      readOnly={recordReadOnly}
+                      readOnlyLabel={
+                        readOnly ? "批次已结束" : "仅当前执行人可编辑"
+                      }
                       actualResultRef={actualResultRef}
                       onActualResultChange={(value) => {
                         setRecordDraft((current) => ({

@@ -4,26 +4,34 @@ import { CaseEditorDialog } from "@/components/case-editor-dialog";
 import { CaseLibrary } from "@/components/case-library";
 import { CaseWorkbench } from "@/components/case-workbench";
 import { CollectionEditorDialog } from "@/components/collection-editor-dialog";
+import { ConversationHistoryDrawer } from "@/components/conversation-history-drawer";
 import { ExecutionWorkspace } from "@/components/execution-workspace";
+import { KnowledgeBase } from "@/components/knowledge-base";
+import { NewConversation } from "@/components/new-conversation";
 import {
   createCollection,
   createTestCase,
   createTestCasesBatch,
   deleteCollection,
   deleteTestCase,
+  getConversation,
+  getOrCreateWorkspace,
   listCollections,
   listTestCases,
+  sendConversationMessage,
   updateCollection,
   updateTestCase,
+  waitForConversationJob,
   type Account,
+  type AgentModelId,
   type CaseCollectionDto,
+  type ConversationDto,
+  type ConversationSummaryDto,
   type TestCaseDto,
   type TestCaseInput,
 } from "@/lib/casepilot-api";
-import { sampleAudioCases } from "@/lib/sample-audio-cases";
-import { sampleLoginCases } from "@/lib/sample-cases";
 import {
-  CheckCircle2,
+  BookOpen,
   Layers3,
   LoaderCircle,
   LogOut,
@@ -39,16 +47,7 @@ type CaseManagementAppProps = {
   onLogout: () => Promise<void>;
 };
 
-type ManagementPage = "workbench" | "library" | "execution";
-
-const sampleCollectionName = "账号登录验收用例集";
-const legacyCollectionDescription =
-  "用于验收用例管理、版本修订和 QA 执行状态记录";
-const sampleCollectionDescription =
-  "覆盖账号登录、登录安全、会话管理与账号注册的 12 条结构化示例用例";
-const audioCollectionName = "Audio Feature 用例集";
-const audioCollectionDescription =
-  "覆盖音频初始化、录制、实时反馈、中断恢复、保存回放和稳定性的 18 条结构化用例";
+type ManagementPage = "workbench" | "knowledge" | "library" | "execution";
 
 export function CaseManagementApp({
   account,
@@ -70,8 +69,11 @@ export function CaseManagementApp({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [workbenchDirty, setWorkbenchDirty] = useState(false);
   const [executionDirty, setExecutionDirty] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyRevision, setHistoryRevision] = useState(0);
+  const [landingConversation, setLandingConversation] =
+    useState<ConversationDto | null>(null);
   const [caseEditor, setCaseEditor] = useState<
     | { mode: "create"; module?: string }
     | { mode: "edit"; testCase: TestCaseDto }
@@ -87,9 +89,7 @@ export function CaseManagementApp({
   const selectedCase =
     cases.find((item) => item.id === selectedCaseId) ?? null;
   const confirmDiscardPageChanges = () => {
-    const dirty =
-      (page === "workbench" && workbenchDirty) ||
-      (page === "execution" && executionDirty);
+    const dirty = page === "execution" && executionDirty;
     return (
       !dirty ||
       window.confirm("当前页面有尚未保存的修改，离开将丢失这些内容。是否继续？")
@@ -145,6 +145,96 @@ export function CaseManagementApp({
     }
   };
 
+  const openLibraryWithFreshCases = async () => {
+    if (!selectedCollectionId) {
+      setPage("library");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      await refreshCases(selectedCollectionId);
+      await refreshCollections(selectedCollectionId);
+      setPage("library");
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "正式用例加载失败",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const sendNewConversationMessage = async (input: {
+    content: string;
+    modelId: AgentModelId;
+  }) => {
+    if (!space) return;
+    setSaving(true);
+    setError("");
+    try {
+      let conversation = landingConversation;
+      let collectionId = conversation?.collection_id ?? "";
+      const isFirstTurn = !conversation;
+
+      if (!conversation) {
+        const collection = await createCollection(space.id, {
+          name: "新对话",
+          description: input.content.slice(0, 2000),
+        });
+        collectionId = collection.id;
+        setCollections((current) => [...current, collection]);
+        setSelectedCollectionId(collection.id);
+        setSelectedCaseId("");
+        setCases([]);
+        conversation = await getOrCreateWorkspace(collection.id);
+        setLandingConversation(conversation);
+      }
+
+      const turn = await sendConversationMessage(conversation.id, {
+        content: input.content,
+        modelId: input.modelId,
+        scope: "current",
+        useSpaceKnowledge: true,
+      });
+      let refreshedConversation = await getConversation(conversation.id);
+      setLandingConversation(refreshedConversation);
+
+      if (isFirstTurn) {
+        await updateCollection(collectionId, {
+          name: refreshedConversation.title,
+          description: input.content.slice(0, 2000),
+        });
+        await refreshCollections(collectionId);
+      }
+
+      setHistoryRevision((current) => current + 1);
+
+      if (turn.intent === "CASE_GENERATE") {
+        setWorkbenchMode("workspace");
+        setPage("workbench");
+        return;
+      }
+
+      if (turn.action.job_id) {
+        await waitForConversationJob(
+          refreshedConversation.id,
+          turn.action.job_id,
+        );
+        refreshedConversation = await getConversation(
+          refreshedConversation.id,
+        );
+        setLandingConversation(refreshedConversation);
+        setHistoryRevision((current) => current + 1);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "消息处理失败");
+      throw caught;
+    } finally {
+      setSaving(false);
+    }
+  };
+
   useEffect(() => {
     let active = true;
     if (!space || bootstrapped.current) return;
@@ -152,97 +242,22 @@ export function CaseManagementApp({
     setLoading(true);
     setError("");
     void (async () => {
-      let availableCollections = await listCollections(space.id);
-      let acceptanceCollection =
-        availableCollections.find((item) => item.name === sampleCollectionName);
-      const legacyCollection = availableCollections.find(
-        (item) => item.name === "快速体验用例集",
-      );
-      if (
-        acceptanceCollection &&
-        acceptanceCollection.description === legacyCollectionDescription
-      ) {
-        acceptanceCollection = await updateCollection(
-          acceptanceCollection.id,
-          { description: sampleCollectionDescription },
-        );
-        availableCollections = availableCollections.map((item) =>
-          item.id === acceptanceCollection?.id ? acceptanceCollection : item,
-        );
-      }
-      if (!acceptanceCollection && legacyCollection) {
-        acceptanceCollection = await updateCollection(legacyCollection.id, {
-          name: sampleCollectionName,
-          description: sampleCollectionDescription,
-        });
-        availableCollections = availableCollections.map((item) =>
-          item.id === acceptanceCollection?.id ? acceptanceCollection : item,
-        );
-      }
-      if (!acceptanceCollection) {
-        acceptanceCollection = await createCollection(space.id, {
-          name: sampleCollectionName,
-          description: sampleCollectionDescription,
-        });
-        availableCollections = [...availableCollections, acceptanceCollection];
-      }
-      let acceptanceCases = await listTestCases(acceptanceCollection.id);
-      const existingKeys = new Set(
-        acceptanceCases.map((item) => item.case_key),
-      );
-      for (const definition of sampleLoginCases) {
-        const caseKey = definition.input.case_key;
-        if (!caseKey || existingKeys.has(caseKey)) continue;
-        const created = await createTestCase(
-          acceptanceCollection.id,
-          definition.input,
-        );
-        acceptanceCases = [...acceptanceCases, created];
-        existingKeys.add(caseKey);
-      }
-      let audioCollection = availableCollections.find(
-        (item) => item.name === audioCollectionName,
-      );
-      if (!audioCollection) {
-        audioCollection = await createCollection(space.id, {
-          name: audioCollectionName,
-          description: audioCollectionDescription,
-        });
-        availableCollections = [...availableCollections, audioCollection];
-      }
-      let audioCases = await listTestCases(audioCollection.id);
-      const existingAudioKeys = new Set(
-        audioCases.map((item) => item.case_key),
-      );
-      for (const definition of sampleAudioCases) {
-        const caseKey = definition.input.case_key;
-        if (!caseKey || existingAudioKeys.has(caseKey)) continue;
-        const created = await createTestCase(
-          audioCollection.id,
-          definition.input,
-        );
-        audioCases = [...audioCases, created];
-        existingAudioKeys.add(caseKey);
-      }
+      const availableCollections = await listCollections(space.id);
+      const initialCollection = availableCollections[0];
+      const initialCases = initialCollection
+        ? await listTestCases(initialCollection.id)
+        : [];
       if (!active) return;
       setCollections(
-        availableCollections.map((collection) => {
-          if (collection.id === acceptanceCollection.id) {
-            return { ...collection, case_count: acceptanceCases.length };
-          }
-          if (collection.id === audioCollection.id) {
-            return { ...collection, case_count: audioCases.length };
-          }
-          return collection;
-        }),
+        availableCollections.map((collection) =>
+          collection.id === initialCollection?.id
+            ? { ...collection, case_count: initialCases.length }
+            : collection,
+        ),
       );
-      setSelectedCollectionId(acceptanceCollection.id);
-      setCases(acceptanceCases);
-      setSelectedCaseId(
-        acceptanceCases.find((item) => item.case_key === "AUTH-001")?.id ??
-          acceptanceCases[0]?.id ??
-          "",
-      );
+      setSelectedCollectionId(initialCollection?.id ?? "");
+      setCases(initialCases);
+      setSelectedCaseId("");
     })()
       .catch((caught) => {
         if (active) {
@@ -256,6 +271,14 @@ export function CaseManagementApp({
       active = false;
     };
   }, [space]);
+
+  const openHistoryConversation = async (
+    conversation: ConversationSummaryDto,
+  ) => {
+    await selectCollection(conversation.collection_id);
+    setWorkbenchMode("workspace");
+    setPage("workbench");
+  };
 
   const displayName = useMemo(
     () => account.display_name.slice(0, 1).toUpperCase(),
@@ -361,15 +384,19 @@ export function CaseManagementApp({
     }
   };
 
-  const importGeneratedCases = async (inputs: TestCaseInput[]) => {
-    if (!selectedCollection) {
+  const importGeneratedCases = async (
+    collectionId: string,
+    inputs: TestCaseInput[],
+  ) => {
+    if (!collections.some((collection) => collection.id === collectionId)) {
       throw new Error("请先选择目标用例集合");
     }
     setSaving(true);
     setError("");
     try {
-      const created = await createTestCasesBatch(selectedCollection.id, inputs);
-      await refreshCases(selectedCollection.id, created[0]?.id);
+      const created = await createTestCasesBatch(collectionId, inputs);
+      setSelectedCollectionId(collectionId);
+      await refreshCases(collectionId, created[0]?.id);
       return created;
     } catch (caught) {
       const message =
@@ -396,9 +423,23 @@ export function CaseManagementApp({
         <nav aria-label="主导航">
           <button
             type="button"
+            className={page === "knowledge" ? "is-active" : ""}
+            onClick={() => {
+              if (!confirmDiscardPageChanges()) return;
+              setHistoryOpen(false);
+              setPage("knowledge");
+            }}
+            aria-label="空间知识库"
+          >
+            <BookOpen size={20} />
+            <span>知识库</span>
+          </button>
+          <button
+            type="button"
             className={page === "workbench" ? "is-active" : ""}
             onClick={() => {
               if (!confirmDiscardPageChanges()) return;
+              setHistoryOpen(false);
               setWorkbenchMode("create");
               setPage("workbench");
             }}
@@ -412,6 +453,7 @@ export function CaseManagementApp({
             className={page === "library" ? "is-active" : ""}
             onClick={() => {
               if (!confirmDiscardPageChanges()) return;
+              setHistoryOpen(false);
               setPage("library");
             }}
             aria-label="用例管理"
@@ -424,6 +466,7 @@ export function CaseManagementApp({
             className={page === "execution" ? "is-active" : ""}
             onClick={() => {
               if (!confirmDiscardPageChanges()) return;
+              setHistoryOpen(false);
               setExecutionNavigation((current) => ({
                 id: current.id + 1,
                 mode: "overview",
@@ -465,15 +508,17 @@ export function CaseManagementApp({
             <span>{space?.name ?? "本地质量空间"}</span>
             <strong>
               {page === "workbench"
-                ? "AI 用例工作台"
+                ? workbenchMode === "create"
+                  ? "AI 新对话"
+                  : "AI 用例工作台"
+                : page === "knowledge"
+                  ? "空间知识库"
                 : page === "library"
                   ? "用例资产管理"
                   : "QA 用例执行"}
             </strong>
           </div>
           <div className="management-topbar__status">
-            <CheckCircle2 size={15} />
-            数据已连接
             <span>{account.display_name}</span>
           </div>
         </header>
@@ -487,28 +532,55 @@ export function CaseManagementApp({
           </div>
         )}
 
+        <ConversationHistoryDrawer
+          open={historyOpen && page === "workbench"}
+          revision={historyRevision}
+          onClose={() => setHistoryOpen(false)}
+          onNewConversation={() => {
+            setLandingConversation(null);
+            setWorkbenchMode("create");
+            setPage("workbench");
+          }}
+          onOpenConversation={openHistoryConversation}
+        />
+
         {loading && !collections.length ? (
           <div className="management-loading management-loading--page">
             <LoaderCircle className="auth-spinner" size={24} />
-            正在准备登录验收用例…
+            正在准备工作区…
           </div>
+        ) : page === "workbench" && workbenchMode === "create" ? (
+          <NewConversation
+            spaceName={space?.name ?? "本地质量空间"}
+            saving={saving}
+            conversation={landingConversation}
+            onSend={sendNewConversationMessage}
+            onOpenKnowledge={() => setPage("knowledge")}
+            onOpenLibrary={() => setPage("library")}
+            onOpenHistory={() => setHistoryOpen(true)}
+          />
         ) : page === "workbench" ? (
           <CaseWorkbench
+            spaceId={space?.id ?? ""}
             spaceName={space?.name ?? "本地质量空间"}
-            collections={collections}
             selectedCollection={selectedCollection}
             cases={cases}
             loading={loading}
-            onSelectCollection={(collectionId) => void selectCollection(collectionId)}
             onSelectCase={setSelectedCaseId}
             onCreateCase={(module) => setCaseEditor({ mode: "create", module })}
             onEditCase={(testCase) =>
               setCaseEditor({ mode: "edit", testCase })
             }
             onImportCases={importGeneratedCases}
-            initialMode={workbenchMode}
-            onDirtyChange={setWorkbenchDirty}
+            onOpenLibrary={() => void openLibraryWithFreshCases()}
+            onNewConversation={() => {
+              setLandingConversation(null);
+              setWorkbenchMode("create");
+            }}
+            onOpenHistory={() => setHistoryOpen(true)}
           />
+        ) : page === "knowledge" ? (
+          <KnowledgeBase spaceId={space?.id ?? ""} />
         ) : page === "library" ? (
           <CaseLibrary
             collections={collections}
@@ -547,6 +619,8 @@ export function CaseManagementApp({
         ) : (
           <ExecutionWorkspace
             spaceId={space?.id ?? ""}
+            accountId={account.id}
+            spaceRole={space?.role ?? "member"}
             collections={collections}
             preferredCollectionId={selectedCollectionId}
             navigationRequest={executionNavigation}

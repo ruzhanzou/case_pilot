@@ -1,0 +1,23 @@
+{
+  "executed_at": "2026-07-30T15:03:21+08:00",
+  "environment": {
+    "database": "casepilot_e2e_5dc0",
+    "redis_databases": [12, 14, 15],
+    "demo_database_touched": false
+  },
+  "result": "passed",
+  "provider_models": [
+    "doubao-seed-2.0-lite",
+    "openai_compatible:doubao-embedding-vision"
+  ],
+  "brief_version": 2,
+  "blocking_items_clarified": true,
+  "candidate_count": 9,
+  "committed_count": 9,
+  "formal_case_count_after_restore": 9,
+  "workspace_restored": true,
+  "workspace_phase_after_restore": "maintenance",
+  "provider_fallback_used": false,
+  "invalid_response_retry_used": false,
+  "collection_id": "5cb27fb0-32a7-4516-9668-d3b8597c3351"
+}

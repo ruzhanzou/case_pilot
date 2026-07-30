@@ -1,49 +1,46 @@
-# CasePilot
+# CasePilot V1.0
 
-CasePilot 是一个本地部署的结构化测试用例管理与 QA 执行平台。
+CasePilot 是一个可本地部署的 AI 测试设计、正式用例管理与 QA 执行平台。
+V1.0 的产品真相以端到端测试为准：
 
-当前验收版本覆盖“聊天创建候选用例 → 脑图/列表评审 → 写入正式用例资产
-→ 创建执行任务 → 多人协作记录结果”的完整产品闭环。AI 工作台已按 Figma
-V2.2 接入主导航；当前生成逻辑用于本地交互验收，真实模型、文件解析和异步
-生成任务仍由独立 Agent 基础设施承接后续接入。
+`新对话 → 知识索引 → 阻塞澄清 → 结构化测试说明 → 候选评审 → 纳入正式集合 → QA 执行`
 
-## 当前可用能力
+Figma、交互规格和本文档已在 2026-07-30 按这条实际链路重新生成。
 
-- 本地账号注册、登录、退出和持久会话。
-- AI 用例工作台首次进入采用聊天创建页，可选择目标集合、输入测试目标、
-  添加需求文件并使用示例提示快速开始。
-- 生成完成后进入“对话 / 脑图或列表 / 用例详情”三栏工作区，展示阶段进度、
-  覆盖提醒、结构化候选用例和改写建议入口。
-- 候选内容与正式资产隔离；只有点击“写入用例集”才通过现有 API 创建正式
-  用例，AI 输出不会直接产生 QA 执行结果。
-- 以空间管理数据，每个账号拥有默认质量空间。
-- 用例集合新增、查看、编辑、软删除。
-- 结构化用例新增、查看、编辑、软删除。
-- 用例字段包括编号、名称、模块、类型、优先级、标签、前置条件、执行步骤、
-  预期结果和来源。
-- 编辑用例时创建新 Revision，不覆盖旧版本。
-- 列表与脑图读取同一份用例资产；脑图支持滑动平移、独立缩放、全屏、分支
-  折叠、一键隐藏叶子和共同前置条件投影。
-- 用例集合和用例资产没有 QA 执行状态；`未执行`、`通过`、`不通过`、`跳过`
-  和`堵塞`只属于具体执行任务。
-- QA 执行入口展示空间级任务历史、多人进度和结果分布；创建任务只需选择
-  集合并填写任务描述。
-- QA 可逐步勾选并记录当前任务的执行结果、实际结果和缺陷引用。
-- 执行记录锁定执行时的用例 Revision，历史结果不会随用例后续修改而变化。
-- 多位空间成员可共同执行；记录采用乐观并发控制，避免静默覆盖他人结果。
-- PostgreSQL 持久化业务数据，Redis 作为本地基础设施预留。
-- 审计记录覆盖集合、用例 Revision、执行任务和执行记录变更。
+- [Figma V1.0 端到端原型](https://www.figma.com/design/fRnEKJHcshgCIa1CmYXbLx?node-id=165-38)
+- [Figma V1.0 组件页](https://www.figma.com/design/fRnEKJHcshgCIa1CmYXbLx?node-id=165-30)
+- [完整交互规格](./docs/product-interaction-design.md)
+- [产品设计](./docs/product-design-v1.md)
+- [V1.0 发布与验收记录](./docs/release-v1.0.0.md)
 
-## 当前实现边界
+## V1.0 可用能力
 
-- 真实 AI Provider 与服务端异步生成任务。
-- 文件内容上传、解析、OCR 与来源定位；当前界面仅管理本地附件上下文。
-- 自动应用 AI 改写；当前改写输入作为评审建议，正式变更仍进入结构化编辑。
-- 结构化测试说明生成。
-- 自动化脚本绑定与执行结果回写。
+- 本地账号注册、登录、退出与持久会话。
+- 登录后的默认入口是“今天想测试什么？”；第一条消息自动创建会话和集合，
+  不要求用户先理解集合模型。
+- 会话历史支持搜索、新建和恢复；恢复时一并恢复测试说明、候选结果与集合上下文。
+- 空间知识库支持 PDF、DOCX、XLSX/CSV、MD/TXT、PNG/JPEG；可检索来源保留
+  页码、章节、Sheet、行号或段落定位。
+- Embedding 不可用时自动降级到全文、需求编号和错误码检索，并明确提示降级，
+  不阻塞核心生成链路。
+- AI 先生成可审阅的结构化测试说明。缺少测试对象或成功标准时，确认按钮保持
+  不可用；用户通过对话补充后才可继续。
+- 测试说明确认后生成候选用例；候选支持列表/脑图查看、结构化详情和人工修改。
+- 候选与正式资产严格隔离。只有显式点击“纳入正式集合”才创建正式用例 Revision。
+- 正式集合支持搜索、列表/脑图、结构化编辑、软删除和修订历史；刷新不会丢失。
+- QA 执行只读取正式用例，并冻结发起执行时的 Revision；结果、实际情况、证据和
+  缺陷引用只属于当前 Execution Run。
+- `未执行`、`通过`、`不通过`、`跳过`和`堵塞`不会写回用例资产状态。
+- Chat 与 Embedding Provider 独立配置；默认 Mock 无需密钥，真实环境支持
+  OpenAI-compatible 服务。
 
-这些能力仍保留在产品路线图、独立 Agent 和设计文档中，但不会出现在当前
-验收页面或 OpenAPI 路由中。
+## V1.0 产品边界
+
+- 已实现结构化测试说明、候选评审、正式资产交接与人工 QA 执行。
+- 已实现文件型知识来源；Jira、ADO、Confluence、Drive 等连接器不在 V1.0。
+- AI 改写和批量纳入始终经过人工门禁，不自动发布正式用例。
+- V1.0 不生成或运行浏览器/API 自动化脚本，也不自动把执行结果回写为资产状态。
+- 自动化脚本生成、CI 编排、缺陷系统双向同步和自动发布属于后续版本。
 
 ## 验收账号
 
@@ -69,8 +66,8 @@ API 在首次启动时自动创建本地示例账号：
 | --- | --- | --- |
 | Web | React 19、TypeScript、Vinext/Vite | 登录、用例管理和 QA 执行界面 |
 | API | FastAPI、SQLAlchemy、Pydantic | 会话、空间、用例和执行 REST API |
-| Agent | Python、Celery | 隔离的文件分析、模型 Provider 与生成管线；等待真实 Provider 接入工作台 |
-| 数据库 | PostgreSQL 18 | 用例修订、执行任务、执行记录和审计数据 |
+| Agent | Python、Celery | 独立执行需求分析、功能点/测试点提取、用例生成与质量检查 |
+| 数据库 | PostgreSQL 18 + pgvector/pg_trgm | 用例修订、知识检索、阶段产物和审计数据 |
 | 缓存/队列 | Redis 8 | API 健康依赖、Agent Broker、任务结果和后续事件 |
 | 迁移 | Alembic | 数据库结构版本管理 |
 
@@ -160,8 +157,7 @@ PYTHONPATH=apps/api/src .venv/bin/uvicorn casepilot_api.main:app \
   --host 127.0.0.1 --port 8000
 ```
 
-可选：在另一个终端启动独立 Agent。当前工作台使用本地候选生成完成前端闭环，
-服务端异步生成尚未接入；Agent 可单独验证：
+在另一个终端启动独立 Agent。默认使用 Mock Provider，不需要 API Key：
 
 ```bash
 PYTHONPATH=apps/agent/src \
@@ -169,6 +165,63 @@ CELERY_BROKER_URL=redis://127.0.0.1:6379/1 \
 CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/2 \
   .venv/bin/celery -A casepilot_agent.tasks:celery_app worker --loglevel=INFO
 ```
+
+### 配置火山方舟模型
+
+项目同时读取 `.env` 和 `.env.local`，后者优先级更高且已被 Git 忽略。
+先复制示例配置：
+
+```bash
+cp .env.example .env.local
+```
+
+在 `.env.local` 中设置以下内容，并将密钥占位符替换为自己的方舟
+Coding Plan API Key：
+
+```dotenv
+CASEPILOT_AI_MODE=real
+CASEPILOT_AGENT_PROVIDER=openai_compatible
+CASEPILOT_AGENT_PROVIDER_LABEL=火山方舟 Coding Plan
+CASEPILOT_AGENT_BASE_URL=https://ark.cn-beijing.volces.com/api/coding/v3
+CASEPILOT_AGENT_API_KEY=替换为你的服务端密钥
+
+# 默认模型与工作台可选模型；逗号顺序就是下拉框显示顺序。
+CASEPILOT_AGENT_MODEL=doubao-seed-2.0-lite
+CASEPILOT_AGENT_PRO_MODEL=deepseek-v4-pro
+CASEPILOT_AGENT_LOCAL_MODEL=ark-code-latest
+CASEPILOT_AGENT_MODELS=ark-code-latest,doubao-seed-2.0-lite,glm-5.2,kimi-k2.7-code,deepseek-v4-pro,deepseek-v4-flash,minimax-m3,minimax-m2.7,kimi-k2.6,doubao-seed-2.1-turbo
+
+# 知识库向量模型；留空 CASEPILOT_EMBEDDING_API_KEY 时复用 Agent 密钥。
+CASEPILOT_EMBEDDING_PROVIDER=openai_compatible
+CASEPILOT_EMBEDDING_BASE_URL=https://ark.cn-beijing.volces.com/api/coding/v3
+CASEPILOT_EMBEDDING_API_KEY=
+CASEPILOT_EMBEDDING_MODEL=doubao-embedding-vision
+CASEPILOT_EMBEDDING_DIMENSIONS=2048
+CASEPILOT_EMBEDDING_TIMEOUT_SECONDS=60
+CASEPILOT_EMBEDDING_FALLBACK_ENABLED=true
+CASEPILOT_AGENT_TIMEOUT_SECONDS=120
+```
+
+模型变量的作用：
+
+| 变量 | 作用 |
+| --- | --- |
+| `CASEPILOT_AGENT_MODELS` | 工作台模型下拉框的数据源和服务端允许列表，使用逗号分隔 |
+| `CASEPILOT_AGENT_MODEL` | 默认模型，也是未指定或旧任务模型无法解析时的回退模型 |
+| `CASEPILOT_AGENT_PRO_MODEL` | 兼容旧任务中的 `pro`、`test-design-pro` 模型别名 |
+| `CASEPILOT_AGENT_LOCAL_MODEL` | 兼容旧任务中的 `local` 模型别名 |
+| `CASEPILOT_AGENT_PROVIDER_LABEL` | 工作台中显示的 Provider 名称 |
+| `CASEPILOT_EMBEDDING_MODEL` | 知识库索引和语义检索使用的向量模型 |
+| `CASEPILOT_EMBEDDING_DIMENSIONS` | 数据库向量维度；`doubao-embedding-vision` 必须配置为 `2048` |
+
+修改配置后重启 API 与 Agent。工作台会通过
+`GET /api/v1/generation-models` 动态加载模型，无需重新构建 Web。
+使用 Docker Compose 时，API、Agent 和清理服务会自动读取 `.env.local`，
+启动阶段也会自动执行 2048 维数据库迁移。
+
+若向量接口不可用且降级开关为 `true`，资料仍会标记为可检索，但界面会显示
+“仅全文检索”。密钥只应配置在 API/Agent 服务端环境中，不要放入 Web 环境
+或提交到仓库。
 
 再启动 Web：
 
@@ -202,6 +255,23 @@ pnpm dev
 - `PATCH /api/v1/test-cases/{case_id}`
 - `DELETE /api/v1/test-cases/{case_id}`
 
+AI 生成：
+
+- `POST /api/v1/generation-jobs`
+- `GET /api/v1/generation-jobs/{job_id}`
+- `GET /api/v1/generation-jobs/{job_id}/events`
+- `POST /api/v1/generation-jobs/{job_id}/answers`
+- `POST /api/v1/generation-jobs/{job_id}/retry`
+- `POST /api/v1/test-cases/{case_id}/candidate-revisions`
+
+空间知识库：
+
+- `POST /api/v1/spaces/{space_id}/knowledge-sources`
+- `GET /api/v1/spaces/{space_id}/knowledge-sources`
+- `POST /api/v1/spaces/{space_id}/knowledge-documents`
+- `POST /api/v1/knowledge-sources/{source_id}/reindex`
+- `DELETE /api/v1/knowledge-sources/{source_id}`
+
 执行：
 
 - `GET /api/v1/collections/{collection_id}/execution-runs`
@@ -216,16 +286,15 @@ pnpm dev
 
 1. 打开 <http://localhost:3000>。
 2. 使用示例账号登录。
-3. 在“用例管理”查看 `AUTH-001`。
-4. 点击编辑，修改任意内容并保存，确认版本从 V1 递增。
-5. 打开“执行用例”，确认首先看到当前空间全部任务、进度和参与成员。
-6. 新建任务，选择集合并填写任务描述。
-7. 逐条勾选步骤，标记本任务执行结果并填写实际结果；其他空间成员可同时参与。
-8. 结束任务后确认其只读，并从任务历史重新打开。
-9. 刷新页面，确认执行状态、步骤、最后更新成员和实际结果仍然存在。
+3. 在“空间知识库”上传需求并等待状态变为“可检索”。
+4. 回到“AI 用例工作台”，从新对话发送含阻塞歧义的需求。
+5. 在对话中补齐测试对象与成功标准，确认“结构化测试说明”。
+6. 评审候选并点击“纳入正式集合”，刷新后确认正式 Revision 可读取。
+7. 在“用例管理”编辑用例，确认版本递增。
+8. 从正式用例打开“执行用例”，记录步骤、结果、证据和缺陷引用。
 
-详细验收标准见
-[docs/acceptance-case-management-execution-v0.2.md](./docs/acceptance-case-management-execution-v0.2.md)。
+V1.0 的产品真相、Figma 节点和自动化结果见
+[docs/release-v1.0.0.md](./docs/release-v1.0.0.md)。
 
 ## 本地验证
 
@@ -243,6 +312,7 @@ pnpm dev
 cd apps/web
 pnpm lint
 pnpm build
+CASEPILOT_E2E_BASE_URL=http://localhost:3000 pnpm exec playwright test
 ```
 
 ## 数据与安全说明

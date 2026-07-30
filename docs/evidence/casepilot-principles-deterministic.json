@@ -1,0 +1,33 @@
+{
+  "environment": {
+    "database": "casepilot / schema casepilot_e2e_5dc0",
+    "redis_databases": [10, 11, 12],
+    "provider": "mock",
+    "demo_database_touched": false
+  },
+  "result": "passed",
+  "cases": {
+    "AG-01": "passed",
+    "AG-02": "passed",
+    "AG-03": "passed",
+    "AG-04": "passed",
+    "AG-05": "passed",
+    "BR-01": "passed",
+    "BR-02": "passed",
+    "BR-03": "passed",
+    "BR-04": "passed",
+    "EX-01": "passed",
+    "EX-02": "passed",
+    "EX-03": "passed",
+    "EX-04": "passed",
+    "EX-EMPTY": "passed",
+    "MEM-01": "passed",
+    "WS-01": "passed",
+    "WS-02": "passed"
+  },
+  "additional_checks": {
+    "workspace_shared_across_owner_and_member": true,
+    "five_cases_two_assignees_distribution": [3, 2],
+    "cancel_status_is_terminal": true
+  }
+}
