@@ -4,10 +4,12 @@ from pydantic import ValidationError
 
 from casepilot_api.case_management import validate_execution_record_update
 from casepilot_api.schemas import (
+    CandidateCreate,
     ExecutionRecordUpdate,
     ExecutionRunCreate,
     ExecutionRunUpdate,
     ExecutionStatus,
+    GenerationStartRequest,
 )
 from casepilot_api.schemas import (
     TestCaseBatchCreate as BatchCreateSchema,
@@ -73,9 +75,15 @@ def test_execution_record_accepts_step_completion_and_actual_result() -> None:
 
 def test_execution_run_requires_task_description() -> None:
     with pytest.raises(ValidationError):
-        ExecutionRunCreate.model_validate({"description": ""})
+        ExecutionRunCreate.model_validate({"description": "", "assignee_ids": []})
+    assignee_id = "00000000-0000-0000-0000-000000000002"
     assert (
-        ExecutionRunCreate.model_validate({"description": "Audio 回归测试"}).description
+        ExecutionRunCreate.model_validate(
+            {
+                "description": "Audio 回归测试",
+                "assignee_ids": [assignee_id],
+            }
+        ).description
         == "Audio 回归测试"
     )
 
@@ -102,6 +110,38 @@ def test_batch_case_create_requires_at_least_one_case() -> None:
     ) == 1
 
 
+def test_generation_requests_accept_configured_model_names() -> None:
+    collection_id = "00000000-0000-0000-0000-000000000001"
+    request = GenerationStartRequest.model_validate(
+        {
+            "prompt": "生成支付测试用例",
+            "collection_id": collection_id,
+            "model_id": "deepseek-v4-pro",
+        }
+    )
+    candidate = CandidateCreate.model_validate(
+        {
+            "base_revision_id": collection_id,
+            "instruction": "补充边界场景",
+            "model_id": "glm-5.2",
+        }
+    )
+
+    assert request.model_id == "deepseek-v4-pro"
+    assert candidate.model_id == "glm-5.2"
+
+
+def test_generation_requests_reject_unsafe_model_names() -> None:
+    with pytest.raises(ValidationError):
+        GenerationStartRequest.model_validate(
+            {
+                "prompt": "生成支付测试用例",
+                "collection_id": "00000000-0000-0000-0000-000000000001",
+                "model_id": "../unexpected-model",
+            }
+        )
+
+
 @pytest.mark.parametrize("status", ["failed", "skipped", "blocked"])
 def test_execution_result_reason_is_required(status: str) -> None:
     payload = ExecutionRecordUpdate.model_validate(
@@ -117,7 +157,7 @@ def test_execution_result_reason_is_required(status: str) -> None:
     assert caught.value.detail == "execution_result_reason_required"
 
 
-def test_passed_execution_requires_all_steps() -> None:
+def test_passed_execution_allows_optional_step_tracking() -> None:
     payload = ExecutionRecordUpdate.model_validate(
         {
             "status": "passed",
@@ -126,6 +166,4 @@ def test_passed_execution_requires_all_steps() -> None:
             "defect_ref": "",
         }
     )
-    with pytest.raises(HTTPException) as caught:
-        validate_execution_record_update(payload, {"first", "second"})
-    assert caught.value.detail == "execution_steps_incomplete"
+    validate_execution_record_update(payload, {"first", "second"})

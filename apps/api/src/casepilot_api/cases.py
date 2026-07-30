@@ -58,6 +58,8 @@ def create_candidate(
     account: CurrentAccount,
     db: DbSession,
 ) -> CandidateJobView:
+    if not settings.is_agent_model_allowed(payload.model_id):
+        raise HTTPException(status_code=422, detail="generation_model_not_configured")
     test_case = ensure_case(db, account, case_id)
     revision = get_current_revision(db, test_case)
     if revision.id != payload.base_revision_id:

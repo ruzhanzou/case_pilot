@@ -1,0 +1,133 @@
+{
+  "acceptance_id": "CASEPILOT-RESTORED-20260730-1515",
+  "executed_at": "2026-07-30T15:15:00+08:00",
+  "product": "CasePilot",
+  "agent_name": "CasePilot",
+  "environment": {
+    "web": "http://localhost:13000/",
+    "api": "http://127.0.0.1:18000/api/v1",
+    "database": "casepilot_e2e_5dc0",
+    "fresh_migration_database": "casepilot_e2e_casepilot_0014_1431",
+    "redis": {
+      "application": 12,
+      "broker": 14,
+      "results": 15
+    },
+    "demo_database_touched": false
+  },
+  "result": "passed",
+  "migration": {
+    "fresh_database_to_head": "passed",
+    "head": "20260730_0014",
+    "persisted_old_identity_occurrences": 0
+  },
+  "deterministic_acceptance": {
+    "result": "passed",
+    "passed": 17,
+    "total": 17,
+    "cases": {
+      "AG-01": "passed",
+      "AG-02": "passed",
+      "AG-03": "passed",
+      "AG-04": "passed",
+      "AG-05": "passed",
+      "BR-01": "passed",
+      "BR-02": "passed",
+      "BR-03": "passed",
+      "BR-04": "passed",
+      "EX-01": "passed",
+      "EX-02": "passed",
+      "EX-03": "passed",
+      "EX-04": "passed",
+      "EX-EMPTY": "passed",
+      "MEM-01": "passed",
+      "WS-01": "passed",
+      "WS-02": "passed"
+    }
+  },
+  "live_provider_generation": {
+    "result": "passed",
+    "fallback_to_mock": false,
+    "provider_models": [
+      "doubao-seed-2.0-lite",
+      "openai_compatible:doubao-embedding-vision"
+    ],
+    "brief_version": 2,
+    "blocking_items_clarified": true,
+    "invalid_response_retry_used": false,
+    "candidate_count": 9,
+    "committed_count": 9,
+    "workspace_restored": true,
+    "collection_id": "5cb27fb0-32a7-4516-9668-d3b8597c3351"
+  },
+  "live_knowledge_qa": {
+    "result": "passed",
+    "source_status": "ready",
+    "source_id": "4565cf90-dd5c-4cef-862c-db4e57622831",
+    "intent": "KNOWLEDGE_QA",
+    "job_status": "completed",
+    "stage_models": [
+      "doubao-seed-2.0-lite",
+      "openai_compatible:doubao-embedding-vision"
+    ],
+    "citation_count": 2,
+    "answer_contains": [
+      "锁屏后允许继续保持实时语音通话",
+      "切到后台后允许继续保持实时语音通话",
+      "弱网恢复耗时不超过3秒",
+      "不得重复播报已经播放过的内容"
+    ],
+    "collection_id": "08bc790c-4d1c-4872-9a9e-8e1ff5ee5981"
+  },
+  "browser_journey": {
+    "login_lands_on_new_conversation": true,
+    "history_drawer_default_hidden": true,
+    "history_drawer_width": 300,
+    "history_drawer_is_overlay": true,
+    "history_drawer_escape_close": true,
+    "history_selection_auto_closes": true,
+    "model_selector_count": 1,
+    "configured_model_count": 10,
+    "real_knowledge_answer_visible": true,
+    "real_knowledge_citations_visible": true,
+    "formal_case_count_visible": 9,
+    "execution_assignees": 2,
+    "assignment_counts": [5, 4],
+    "execution_result_saved": true,
+    "execution_progress": "1 / 9",
+    "browser_console_errors": 0
+  },
+  "responsive_ui": [
+    {
+      "width": 1280,
+      "height": 900,
+      "horizontal_overflow": false,
+      "interactive_fonts_below_14": 0,
+      "visible_text_below_12": 0
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "horizontal_overflow": false,
+      "interactive_fonts_below_14": 0,
+      "visible_text_below_12": 0
+    },
+    {
+      "width": 1920,
+      "height": 900,
+      "horizontal_overflow": false,
+      "interactive_fonts_below_14": 0,
+      "visible_text_below_12": 0
+    }
+  ],
+  "verification": {
+    "api_tests": "26 passed",
+    "agent_tests": "26 passed",
+    "web_render_tests": "2 passed",
+    "web_build": "passed",
+    "web_lint": "passed",
+    "python_lint": "passed",
+    "git_diff_check": "passed",
+    "browser_console_errors": 0
+  }
+}

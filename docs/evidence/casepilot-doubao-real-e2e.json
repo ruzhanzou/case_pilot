@@ -1,0 +1,153 @@
+{
+  "acceptance_id": "CASEPILOT-DOUBAO-REAL-E2E-20260730",
+  "executed_at": "2026-07-30T01:55:00+08:00",
+  "status": "passed",
+  "product": "CasePilot",
+  "agent_name": "CasePilot",
+  "environment": {
+    "web": "http://127.0.0.1:3000/",
+    "api_mode": "real",
+    "provider": "openai_compatible",
+    "database_schema": "casepilot_e2e_5dc0",
+    "knowledge_retrieval": "lexical_fallback",
+    "browser_console_errors": []
+  },
+  "knowledge": {
+    "collection_id": "4f4fe947-a244-49e7-8135-bfe789e552f1",
+    "collection_name": "豆包实时通话端到端验收 20260730",
+    "source_id": "93868980-6205-46fb-a65d-34921a2936ae",
+    "document_id": "b95b1b69-6c04-43d4-a27e-74e87b533053",
+    "source_name": "豆包实时通话产品需求与验收规则",
+    "source_file": "docs/requirements/doubao-realtime-voice-call.md",
+    "retrieval_result": "真实生成结果包含该知识文档的 source_id、document_id、chunk_id 与 locator"
+  },
+  "workspace": {
+    "workspace_id": "49e89745-17e0-4515-866d-f0b296243f97",
+    "brief_versions": [
+      {
+        "version": 1,
+        "blocking_questions": 2
+      },
+      {
+        "version": 2,
+        "blocking_questions": 0,
+        "confirmed": true
+      }
+    ],
+    "generation_job_id": "ba02b47b-c622-4378-959f-2f23a8e2ff24",
+    "generation_status": "completed",
+    "generation_model": "doubao-seed-2.0-lite",
+    "generation_stages": [
+      {
+        "stage": "requirement.analyzed",
+        "model": "doubao-seed-2.0-lite",
+        "latency_ms": 20100,
+        "total_tokens": 8632
+      },
+      {
+        "stage": "feature.generated",
+        "model": "doubao-seed-2.0-lite",
+        "latency_ms": 35657,
+        "total_tokens": 12221
+      },
+      {
+        "stage": "test_point.generated",
+        "model": "doubao-seed-2.0-lite",
+        "latency_ms": 35636,
+        "total_tokens": 14483
+      },
+      {
+        "stage": "test_case.generated",
+        "model": "doubao-seed-2.0-lite",
+        "latency_ms": 41342,
+        "total_tokens": 18816
+      }
+    ],
+    "candidate_count": 8,
+    "module_count": 1,
+    "quality_score_recorded": 92,
+    "candidate_edit": {
+      "ref": "tc-005",
+      "new_title": "弱网断网重连≤3秒且不重复播放验证",
+      "persisted_to_formal_collection": true
+    },
+    "formal_case_count": 8
+  },
+  "execution": {
+    "run_id": "ba01ff00-8795-4653-bb4f-f630e7469c4c",
+    "description": "豆包实时通话真实模型端到端验收：双人平均执行 8 条用例",
+    "status": "active",
+    "assignees": [
+      "体验用户",
+      "执行成员"
+    ],
+    "assignment_counts": {
+      "体验用户": 4,
+      "执行成员": 4
+    },
+    "total_count": 8,
+    "passed_count": 1,
+    "not_run_count": 7,
+    "saved_record": {
+      "case_key": "CP-15DA1E16",
+      "status": "passed",
+      "completed_steps": 2,
+      "actual_result_saved": true
+    }
+  },
+  "responsive_ui": {
+    "viewports": [
+      "1280x900",
+      "1440x900",
+      "1920x1080"
+    ],
+    "horizontal_overflow": false,
+    "mindmap_controls_inside_canvas": true,
+    "minimum_auxiliary_font_px": 12,
+    "minimum_control_and_body_font_px": 14
+  },
+  "fixed_defects": [
+    {
+      "id": "DB-REAL-E2E-001",
+      "severity": "P1",
+      "summary": "候选写入成功后用例管理仍显示旧的 0 条状态",
+      "result": "fixed"
+    },
+    {
+      "id": "DB-REAL-E2E-002",
+      "severity": "P1",
+      "summary": "900px 高度下脑图底部缩放工具栏被裁切",
+      "result": "fixed"
+    },
+    {
+      "id": "DB-REAL-E2E-003",
+      "severity": "P1",
+      "summary": "执行页正文、状态和队列存在 10–13px 字号",
+      "result": "fixed"
+    },
+    {
+      "id": "DB-REAL-E2E-004",
+      "severity": "P2",
+      "summary": "真实模型返回本地化覆盖矩阵字段时产生错误的需求覆盖告警",
+      "result": "fixed"
+    },
+    {
+      "id": "DB-REAL-E2E-005",
+      "severity": "P2",
+      "summary": "知识源刷新成功后仍残留旧的 Failed to fetch 提示",
+      "result": "fixed"
+    }
+  ],
+  "verification": {
+    "web_lint": "passed",
+    "web_build": "passed",
+    "web_render_tests": "2 passed",
+    "api_tests": "24 passed",
+    "agent_tests": "23 passed",
+    "python_lint": "passed",
+    "git_diff_check": "passed"
+  },
+  "non_blocking_limitations": [
+    "本地验收环境的 Embedding 服务不可用，知识检索降级为全文检索；真实生成仍成功引用目标知识文档。历史生成任务作为审计记录保留原始 92 分，修复后的本地化覆盖矩阵校验已由回归测试验证。"
+  ]
+}

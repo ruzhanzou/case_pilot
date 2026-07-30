@@ -1,4 +1,5 @@
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -6,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", ".env.local"),
         extra="ignore",
     )
 
@@ -18,6 +19,30 @@ class Settings(BaseSettings):
         validation_alias="CASEPILOT_WEB_ORIGIN",
     )
     ai_mode: str = Field(default="mock", validation_alias="CASEPILOT_AI_MODE")
+    agent_provider: str = Field(
+        default="mock",
+        validation_alias="CASEPILOT_AGENT_PROVIDER",
+    )
+    agent_model: str = Field(
+        default="doubao-seed-2.0-lite",
+        validation_alias="CASEPILOT_AGENT_MODEL",
+    )
+    agent_pro_model: str = Field(
+        default="deepseek-v4-pro",
+        validation_alias="CASEPILOT_AGENT_PRO_MODEL",
+    )
+    agent_local_model: str = Field(
+        default="ark-code-latest",
+        validation_alias="CASEPILOT_AGENT_LOCAL_MODEL",
+    )
+    agent_models: str = Field(
+        default="",
+        validation_alias="CASEPILOT_AGENT_MODELS",
+    )
+    agent_provider_label: str = Field(
+        default="OpenAI Compatible",
+        validation_alias="CASEPILOT_AGENT_PROVIDER_LABEL",
+    )
     database_url: str = Field(
         default=(
             "postgresql+psycopg://casepilot:casepilot-local@localhost:5432/casepilot"
@@ -36,6 +61,14 @@ class Settings(BaseSettings):
         default="redis://localhost:6379/2",
         validation_alias="CELERY_RESULT_BACKEND",
     )
+    knowledge_storage_path: str = Field(
+        default="/var/lib/casepilot/knowledge",
+        validation_alias="CASEPILOT_KNOWLEDGE_STORAGE_PATH",
+    )
+    knowledge_max_file_bytes: int = Field(
+        default=25 * 1024 * 1024,
+        validation_alias="CASEPILOT_KNOWLEDGE_MAX_FILE_BYTES",
+    )
     session_cookie_name: str = Field(
         default="casepilot_session",
         validation_alias="CASEPILOT_SESSION_COOKIE_NAME",
@@ -44,6 +77,54 @@ class Settings(BaseSettings):
         default=168,
         validation_alias="CASEPILOT_SESSION_TTL_HOURS",
     )
+
+    @property
+    def allowed_web_origins(self) -> tuple[str, ...]:
+        origins: list[str] = []
+        loopback_hosts = {"localhost", "127.0.0.1", "::1"}
+        for configured_origin in self.web_origin.split(","):
+            origin = configured_origin.strip().rstrip("/")
+            if not origin:
+                continue
+            origins.append(origin)
+            parsed = urlsplit(origin)
+            if parsed.hostname not in loopback_hosts or not parsed.scheme:
+                continue
+            port = f":{parsed.port}" if parsed.port is not None else ""
+            origins.extend(
+                (
+                    f"{parsed.scheme}://localhost{port}",
+                    f"{parsed.scheme}://127.0.0.1{port}",
+                    f"{parsed.scheme}://[::1]{port}",
+                )
+            )
+        return tuple(dict.fromkeys(origins))
+
+    @property
+    def available_agent_models(self) -> tuple[str, ...]:
+        models = [
+            model.strip()
+            for model in self.agent_models.split(",")
+            if model.strip()
+        ]
+        if not models:
+            models = [
+                self.agent_model,
+                self.agent_pro_model,
+                self.agent_local_model,
+            ]
+        return tuple(dict.fromkeys(models))
+
+    def is_agent_model_allowed(self, model_id: str) -> bool:
+        if self.ai_mode == "mock" or self.agent_provider == "mock":
+            return model_id == "auto"
+        return model_id in {
+            "auto",
+            "test-design-pro",
+            "pro",
+            "local",
+            *self.available_agent_models,
+        }
 
 
 @lru_cache

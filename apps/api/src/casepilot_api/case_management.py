@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from casepilot_api.auth import CurrentAccount, require_space_membership
+from casepilot_api.auth import CurrentAccount, normalize_email, require_space_membership
 from casepilot_api.database import get_db_session
 from casepilot_api.models import (
     Account,
@@ -16,7 +16,9 @@ from casepilot_api.models import (
     CollectionCaseMembership,
     ExecutionRecord,
     ExecutionRun,
+    ExecutionRunAssignee,
     ExecutionStatus,
+    SpaceMembership,
     TestCase,
     TestCaseRevision,
 )
@@ -24,12 +26,15 @@ from casepilot_api.schemas import (
     CaseCollectionCreate,
     CaseCollectionUpdate,
     CaseCollectionView,
+    ExecutionRecordReassign,
     ExecutionRecordUpdate,
     ExecutionRecordView,
     ExecutionRunCreate,
     ExecutionRunSummaryView,
     ExecutionRunUpdate,
     ExecutionRunView,
+    SpaceMemberAdd,
+    SpaceMemberView,
     TestCaseBatchCreate,
     TestCaseCreate,
     TestCaseUpdate,
@@ -68,8 +73,6 @@ def validate_execution_record_update(
     status = payload.status.value
     if not completed_step_ids.issubset(valid_step_ids):
         raise HTTPException(status_code=422, detail="invalid_execution_step")
-    if status == ExecutionStatus.PASSED.value and completed_step_ids != valid_step_ids:
-        raise HTTPException(status_code=422, detail="execution_steps_incomplete")
     if (
         status
         in {
@@ -107,7 +110,10 @@ def create_test_case_record(
         tags=normalize_tags(payload.tags),
         preconditions=[item.strip() for item in payload.preconditions if item.strip()],
         steps=normalize_steps(payload.steps),
-        source_refs=[{"label": payload.source.strip()}],
+        source_refs=(
+            [item.model_dump(mode="json") for item in payload.source_refs]
+            or [{"label": payload.source.strip(), "excerpt": ""}]
+        ),
     )
     db.add(revision)
     db.flush()
@@ -168,6 +174,141 @@ def ensure_collection(
         raise HTTPException(status_code=404, detail="collection_not_found")
     require_space_membership(db, account.id, collection.space_id)
     return collection
+
+
+def require_space_owner(
+    db: Session,
+    account_id: UUID,
+    space_id: UUID,
+) -> SpaceMembership:
+    membership = require_space_membership(db, account_id, space_id)
+    if membership.role != "owner":
+        raise HTTPException(status_code=403, detail="space_owner_required")
+    return membership
+
+
+def space_member_view(
+    account: Account,
+    membership: SpaceMembership,
+) -> SpaceMemberView:
+    return SpaceMemberView(
+        account_id=account.id,
+        email=account.email,
+        display_name=account.display_name,
+        role=membership.role,
+        created_at=membership.created_at,
+    )
+
+
+@router.get("/spaces/{space_id}/members", response_model=list[SpaceMemberView])
+def list_space_members(
+    space_id: UUID,
+    account: CurrentAccount,
+    db: DbSession,
+) -> list[SpaceMemberView]:
+    require_space_membership(db, account.id, space_id)
+    rows = db.execute(
+        select(Account, SpaceMembership)
+        .join(SpaceMembership, SpaceMembership.account_id == Account.id)
+        .where(SpaceMembership.space_id == space_id)
+        .order_by(
+            SpaceMembership.role.desc(),
+            SpaceMembership.created_at,
+            Account.display_name,
+        )
+    ).all()
+    return [
+        space_member_view(member, membership)
+        for member, membership in rows
+    ]
+
+
+@router.post(
+    "/spaces/{space_id}/members",
+    response_model=SpaceMemberView,
+    status_code=201,
+)
+def add_space_member(
+    space_id: UUID,
+    payload: SpaceMemberAdd,
+    account: CurrentAccount,
+    db: DbSession,
+) -> SpaceMemberView:
+    require_space_owner(db, account.id, space_id)
+    member = db.scalar(
+        select(Account).where(Account.email == normalize_email(payload.email))
+    )
+    if member is None or not member.is_active:
+        raise HTTPException(status_code=404, detail="registered_account_not_found")
+    existing = db.scalar(
+        select(SpaceMembership).where(
+            SpaceMembership.space_id == space_id,
+            SpaceMembership.account_id == member.id,
+        )
+    )
+    if existing is not None:
+        return space_member_view(member, existing)
+    membership = SpaceMembership(
+        space_id=space_id,
+        account_id=member.id,
+        role="member",
+    )
+    db.add(membership)
+    db.flush()
+    write_audit(
+        db,
+        space_id=space_id,
+        actor_id=account.id,
+        action="space_member.added",
+        resource_type="account",
+        resource_id=member.id,
+        payload={"email": member.email},
+    )
+    db.commit()
+    db.refresh(membership)
+    return space_member_view(member, membership)
+
+
+@router.delete("/spaces/{space_id}/members/{member_id}", status_code=204)
+def remove_space_member(
+    space_id: UUID,
+    member_id: UUID,
+    account: CurrentAccount,
+    db: DbSession,
+) -> Response:
+    require_space_owner(db, account.id, space_id)
+    membership = db.scalar(
+        select(SpaceMembership).where(
+            SpaceMembership.space_id == space_id,
+            SpaceMembership.account_id == member_id,
+        )
+    )
+    if membership is None:
+        raise HTTPException(status_code=404, detail="space_member_not_found")
+    if membership.role == "owner":
+        raise HTTPException(status_code=409, detail="space_owner_cannot_be_removed")
+    active_assignments = db.scalar(
+        select(func.count(ExecutionRecord.id))
+        .join(ExecutionRun, ExecutionRun.id == ExecutionRecord.run_id)
+        .where(
+            ExecutionRun.space_id == space_id,
+            ExecutionRun.status == "active",
+            ExecutionRecord.assignee_id == member_id,
+        )
+    )
+    if active_assignments:
+        raise HTTPException(status_code=409, detail="member_has_active_assignments")
+    db.delete(membership)
+    write_audit(
+        db,
+        space_id=space_id,
+        actor_id=account.id,
+        action="space_member.removed",
+        resource_type="account",
+        resource_id=member_id,
+    )
+    db.commit()
+    return Response(status_code=204)
 
 
 def ensure_case(db: Session, account: Account, case_id: UUID) -> TestCase:
@@ -536,7 +677,44 @@ def delete_test_case(
     return Response(status_code=204)
 
 
-def execution_run_to_view(db: Session, run: ExecutionRun) -> ExecutionRunView:
+def execution_run_assignees(
+    db: Session,
+    run: ExecutionRun,
+) -> list[Account]:
+    return list(
+        db.scalars(
+            select(Account)
+            .join(
+                ExecutionRunAssignee,
+                ExecutionRunAssignee.account_id == Account.id,
+            )
+            .where(ExecutionRunAssignee.run_id == run.id)
+            .order_by(ExecutionRunAssignee.created_at, Account.display_name)
+        )
+    )
+
+
+def can_manage_execution_run(
+    db: Session,
+    run: ExecutionRun,
+    account_id: UUID,
+) -> bool:
+    if run.executor_id == account_id:
+        return True
+    membership = db.scalar(
+        select(SpaceMembership).where(
+            SpaceMembership.space_id == run.space_id,
+            SpaceMembership.account_id == account_id,
+        )
+    )
+    return bool(membership and membership.role == "owner")
+
+
+def execution_run_to_view(
+    db: Session,
+    run: ExecutionRun,
+    viewer_id: UUID | None = None,
+) -> ExecutionRunView:
     collection = db.get(CaseCollection, run.collection_id)
     creator = db.get(Account, run.executor_id)
     records = list(
@@ -554,6 +732,11 @@ def execution_run_to_view(db: Session, run: ExecutionRun) -> ExecutionRunView:
         updater = (
             db.get(Account, record.updated_by_id) if record.updated_by_id is not None else None
         )
+        assignee = (
+            db.get(Account, record.assignee_id)
+            if record.assignee_id is not None
+            else None
+        )
         record_views.append(
             ExecutionRecordView(
                 id=record.id,
@@ -562,6 +745,13 @@ def execution_run_to_view(db: Session, run: ExecutionRun) -> ExecutionRunView:
                 completed_step_ids=list(record.completed_step_ids),
                 actual_result=record.actual_result,
                 defect_ref=record.defect_ref,
+                assignee_id=record.assignee_id,
+                assignee_name=assignee.display_name if assignee else None,
+                can_edit=bool(
+                    viewer_id is not None
+                    and record.assignee_id == viewer_id
+                    and run.status == "active"
+                ),
                 updated_by_name=updater.display_name if updater else None,
                 updated_at=record.updated_at,
             )
@@ -571,6 +761,7 @@ def execution_run_to_view(db: Session, run: ExecutionRun) -> ExecutionRunView:
     if run.completed_at is not None:
         activity_times.append(run.completed_at)
     last_activity_at = max(activity_times)
+    assignees = execution_run_assignees(db, run)
     return ExecutionRunView(
         id=run.id,
         collection_id=run.collection_id,
@@ -578,6 +769,13 @@ def execution_run_to_view(db: Session, run: ExecutionRun) -> ExecutionRunView:
         description=run.description,
         status=run.status,
         creator_name=creator.display_name if creator else "未知成员",
+        creator_id=run.executor_id,
+        assignee_ids=[item.id for item in assignees],
+        assignee_names=[item.display_name for item in assignees],
+        can_manage=bool(
+            viewer_id is not None
+            and can_manage_execution_run(db, run, viewer_id)
+        ),
         contributor_names=contributors,
         created_at=run.created_at,
         last_activity_at=last_activity_at,
@@ -643,6 +841,7 @@ def execution_run_to_summary(
     last_record_update = db.scalar(
         select(func.max(ExecutionRecord.updated_at)).where(ExecutionRecord.run_id == run.id)
     )
+    assignees = execution_run_assignees(db, run)
     return ExecutionRunSummaryView(
         id=run.id,
         collection_id=run.collection_id,
@@ -650,6 +849,8 @@ def execution_run_to_summary(
         description=run.description,
         status=run.status,
         creator_name=creator.display_name if creator else "未知成员",
+        assignee_ids=[item.id for item in assignees],
+        assignee_names=[item.display_name for item in assignees],
         contributor_names=execution_run_contributors(db, run),
         created_at=run.created_at,
         last_activity_at=max(
@@ -727,7 +928,7 @@ def get_execution_run(
     if run is None:
         raise HTTPException(status_code=404, detail="execution_run_not_found")
     require_space_membership(db, account.id, run.space_id)
-    return execution_run_to_view(db, run)
+    return execution_run_to_view(db, run, account.id)
 
 
 @router.post(
@@ -741,24 +942,17 @@ def create_execution_run(
     db: DbSession,
 ) -> ExecutionRunView:
     collection = ensure_collection(db, account, collection_id)
-    run = ExecutionRun(
-        space_id=collection.space_id,
-        collection_id=collection.id,
-        executor_id=account.id,
-        description=payload.description.strip(),
-        status="active",
+    assignee_ids = list(dict.fromkeys(payload.assignee_ids))
+    memberships = list(
+        db.scalars(
+            select(SpaceMembership).where(
+                SpaceMembership.space_id == collection.space_id,
+                SpaceMembership.account_id.in_(assignee_ids),
+            )
+        )
     )
-    db.add(run)
-    db.flush()
-    write_audit(
-        db,
-        space_id=collection.space_id,
-        actor_id=account.id,
-        action="execution_run.started",
-        resource_type="execution_run",
-        resource_id=run.id,
-        payload={"description": run.description},
-    )
+    if len(memberships) != len(assignee_ids):
+        raise HTTPException(status_code=422, detail="execution_assignee_not_space_member")
     cases = list(
         db.scalars(
             select(TestCase)
@@ -770,16 +964,50 @@ def create_execution_run(
                 CollectionCaseMembership.collection_id == collection.id,
                 TestCase.deleted_at.is_(None),
             )
+            .order_by(
+                CollectionCaseMembership.position,
+                TestCase.id,
+            )
         )
     )
-    for test_case in cases:
-        if test_case.current_revision_id is None:
-            continue
+    cases = [item for item in cases if item.current_revision_id is not None]
+    if not cases:
+        raise HTTPException(status_code=409, detail="empty_collection_cannot_execute")
+    run = ExecutionRun(
+        space_id=collection.space_id,
+        collection_id=collection.id,
+        executor_id=account.id,
+        description=payload.description.strip(),
+        status="active",
+    )
+    db.add(run)
+    db.flush()
+    for assignee_id in assignee_ids:
+        db.add(
+            ExecutionRunAssignee(
+                run_id=run.id,
+                account_id=assignee_id,
+            )
+        )
+    write_audit(
+        db,
+        space_id=collection.space_id,
+        actor_id=account.id,
+        action="execution_run.started",
+        resource_type="execution_run",
+        resource_id=run.id,
+        payload={
+            "description": run.description,
+            "assignee_ids": [str(item) for item in assignee_ids],
+        },
+    )
+    for index, test_case in enumerate(cases):
         db.add(
             ExecutionRecord(
                 run_id=run.id,
                 test_case_id=test_case.id,
                 revision_id=test_case.current_revision_id,
+                assignee_id=assignee_ids[index % len(assignee_ids)],
                 status=ExecutionStatus.NOT_RUN,
                 completed_step_ids=[],
                 actual_result="",
@@ -788,7 +1016,7 @@ def create_execution_run(
         )
     db.commit()
     db.refresh(run)
-    return execution_run_to_view(db, run)
+    return execution_run_to_view(db, run, account.id)
 
 
 @router.patch(
@@ -805,6 +1033,8 @@ def update_execution_run(
     if run is None:
         raise HTTPException(status_code=404, detail="execution_run_not_found")
     require_space_membership(db, account.id, run.space_id)
+    if not can_manage_execution_run(db, run, account.id):
+        raise HTTPException(status_code=403, detail="execution_run_manager_required")
     if run.status != "active":
         raise HTTPException(status_code=409, detail="execution_run_already_closed")
     if payload.status == "completed" and not payload.allow_incomplete:
@@ -828,7 +1058,7 @@ def update_execution_run(
     )
     db.commit()
     db.refresh(run)
-    return execution_run_to_view(db, run)
+    return execution_run_to_view(db, run, account.id)
 
 
 @router.patch(
@@ -848,6 +1078,8 @@ def update_execution_record(
     if run is None:
         raise HTTPException(status_code=404, detail="execution_run_not_found")
     require_space_membership(db, account.id, run.space_id)
+    if record.assignee_id != account.id:
+        raise HTTPException(status_code=403, detail="execution_record_assignee_required")
     if run.status != "active":
         raise HTTPException(status_code=409, detail="execution_run_closed")
     if payload.base_updated_at is not None and record.updated_at != payload.base_updated_at:
@@ -889,6 +1121,88 @@ def update_execution_record(
         completed_step_ids=list(record.completed_step_ids),
         actual_result=record.actual_result,
         defect_ref=record.defect_ref,
+        assignee_id=record.assignee_id,
+        assignee_name=account.display_name,
+        can_edit=True,
         updated_by_name=account.display_name,
+        updated_at=record.updated_at,
+    )
+
+
+@router.patch(
+    "/execution-records/{record_id}/assignee",
+    response_model=ExecutionRecordView,
+)
+def reassign_execution_record(
+    record_id: UUID,
+    payload: ExecutionRecordReassign,
+    account: CurrentAccount,
+    db: DbSession,
+) -> ExecutionRecordView:
+    record = db.get(ExecutionRecord, record_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="execution_record_not_found")
+    run = db.get(ExecutionRun, record.run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="execution_run_not_found")
+    require_space_membership(db, account.id, run.space_id)
+    if not can_manage_execution_run(db, run, account.id):
+        raise HTTPException(status_code=403, detail="execution_run_manager_required")
+    if run.status != "active":
+        raise HTTPException(status_code=409, detail="execution_run_closed")
+    new_membership = db.scalar(
+        select(SpaceMembership).where(
+            SpaceMembership.space_id == run.space_id,
+            SpaceMembership.account_id == payload.assignee_id,
+        )
+    )
+    if new_membership is None:
+        raise HTTPException(status_code=422, detail="execution_assignee_not_space_member")
+    old_assignee_id = record.assignee_id
+    record.assignee_id = payload.assignee_id
+    existing = db.scalar(
+        select(ExecutionRunAssignee).where(
+            ExecutionRunAssignee.run_id == run.id,
+            ExecutionRunAssignee.account_id == payload.assignee_id,
+        )
+    )
+    if existing is None:
+        db.add(
+            ExecutionRunAssignee(
+                run_id=run.id,
+                account_id=payload.assignee_id,
+            )
+        )
+    write_audit(
+        db,
+        space_id=run.space_id,
+        actor_id=account.id,
+        action="execution_record.reassigned",
+        resource_type="execution_record",
+        resource_id=record.id,
+        payload={
+            "from": str(old_assignee_id) if old_assignee_id else None,
+            "to": str(payload.assignee_id),
+            "result_preserved": True,
+        },
+    )
+    db.commit()
+    db.refresh(record)
+    assignee = db.get(Account, payload.assignee_id)
+    updater = db.get(Account, record.updated_by_id) if record.updated_by_id else None
+    test_case = db.get(TestCase, record.test_case_id)
+    if test_case is None:
+        raise HTTPException(status_code=409, detail="test_case_not_found")
+    return ExecutionRecordView(
+        id=record.id,
+        test_case=case_to_view(db, test_case, record.revision_id),
+        status=record.status,
+        completed_step_ids=list(record.completed_step_ids),
+        actual_result=record.actual_result,
+        defect_ref=record.defect_ref,
+        assignee_id=record.assignee_id,
+        assignee_name=assignee.display_name if assignee else None,
+        can_edit=record.assignee_id == account.id and run.status == "active",
+        updated_by_name=updater.display_name if updater else None,
         updated_at=record.updated_at,
     )

@@ -21,6 +21,8 @@ dist/
 .wrangler/
 coverage/
 htmlcov/
+test-results/
+playwright-report/
 *.log
 artifacts/
 prototype/

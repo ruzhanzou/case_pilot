@@ -2,7 +2,7 @@ name: casepilot
 
 services:
   postgres:
-    image: postgres:18-alpine
+    image: pgvector/pgvector:pg18
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-casepilot}
       POSTGRES_USER: ${POSTGRES_USER:-casepilot}
@@ -37,10 +37,14 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     env_file:
-      - .env
+      - path: .env
+        required: false
+      - path: .env.local
+        required: false
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://casepilot:casepilot-local@postgres:5432/casepilot}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CASEPILOT_KNOWLEDGE_STORAGE_PATH: ${CASEPILOT_KNOWLEDGE_STORAGE_PATH:-/var/lib/casepilot/knowledge}
     ports:
       - "8000:8000"
     depends_on:
@@ -50,6 +54,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - casepilot_knowledge:/var/lib/casepilot/knowledge
     restart: unless-stopped
 
   agent:
@@ -57,17 +63,16 @@ services:
       context: .
       dockerfile: apps/agent/Dockerfile
     env_file:
-      - .env
+      - path: .env
+        required: false
+      - path: .env.local
+        required: false
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://casepilot:casepilot-local@postgres:5432/casepilot}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
-      CASEPILOT_AGENT_PROVIDER: ${CASEPILOT_AGENT_PROVIDER:-mock}
-      CASEPILOT_AGENT_BASE_URL: ${CASEPILOT_AGENT_BASE_URL:-https://api.openai.com/v1}
-      CASEPILOT_AGENT_API_KEY: ${CASEPILOT_AGENT_API_KEY:-}
-      CASEPILOT_AGENT_MODEL: ${CASEPILOT_AGENT_MODEL:-gpt-4.1-mini}
-      CASEPILOT_AGENT_TIMEOUT_SECONDS: ${CASEPILOT_AGENT_TIMEOUT_SECONDS:-60}
+      CASEPILOT_KNOWLEDGE_STORAGE_PATH: ${CASEPILOT_KNOWLEDGE_STORAGE_PATH:-/var/lib/casepilot/knowledge}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -75,6 +80,33 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - casepilot_knowledge:/var/lib/casepilot/knowledge
+    restart: unless-stopped
+
+  cleanup:
+    build:
+      context: .
+      dockerfile: apps/agent/Dockerfile
+    command: ["celery", "-A", "casepilot_agent.tasks:celery_app", "beat", "--loglevel=INFO"]
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.local
+        required: false
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://casepilot:casepilot-local@postgres:5432/casepilot}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
+      CASEPILOT_KNOWLEDGE_STORAGE_PATH: ${CASEPILOT_KNOWLEDGE_STORAGE_PATH:-/var/lib/casepilot/knowledge}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - casepilot_knowledge:/var/lib/casepilot/knowledge
     restart: unless-stopped
 
   web:
@@ -96,7 +128,8 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://casepilot:casepilot-local@postgres:5432/casepilot}
     command: ["alembic", "-c", "apps/api/alembic.ini", "upgrade", "head"]
@@ -109,3 +142,4 @@ volumes:
   casepilot_postgres:
   casepilot_redis:
   casepilot_node_modules:
+  casepilot_knowledge:

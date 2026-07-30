@@ -29,6 +29,8 @@ settings = get_settings()
 PASSWORD_ITERATIONS = 310_000
 DEMO_EMAIL = "demo@casepilot.local"
 DEMO_PASSWORD = "CasePilot123!"
+DEMO_EXECUTOR_EMAIL = "executor@casepilot.local"
+DEMO_EXECUTOR_PASSWORD = "CasePilot123!"
 DbSession = Annotated[Session, Depends(get_db_session)]
 
 
@@ -112,36 +114,75 @@ def create_session(db: Session, response: Response, account: Account) -> None:
 
 
 def ensure_demo_account() -> None:
-    """Create the documented local acceptance account on a fresh database."""
+    """Create the documented owner and executor accounts for local acceptance."""
     with get_session_factory()() as db:
-        existing = db.scalar(select(Account.id).where(Account.email == DEMO_EMAIL))
-        if existing is not None:
-            return
-        account = Account(
-            email=DEMO_EMAIL,
-            display_name="体验用户",
-            password_hash=hash_password(DEMO_PASSWORD),
+        account = db.scalar(select(Account).where(Account.email == DEMO_EMAIL))
+        if account is None:
+            account = Account(
+                email=DEMO_EMAIL,
+                display_name="体验用户",
+                password_hash=hash_password(DEMO_PASSWORD),
+            )
+            space = Space(
+                name="体验用户的质量空间",
+                description="CasePilot 本地验收空间",
+            )
+            db.add_all([account, space])
+            db.flush()
+            db.add_all(
+                [
+                    SpaceMembership(
+                        space_id=space.id,
+                        account_id=account.id,
+                        role="owner",
+                    ),
+                    CaseCollection(
+                        space_id=space.id,
+                        name="账号登录验收用例集",
+                        description="用于验收用例管理、版本修订和 QA 执行状态记录",
+                    ),
+                ]
+            )
+        else:
+            owner_membership = db.scalar(
+                select(SpaceMembership)
+                .where(
+                    SpaceMembership.account_id == account.id,
+                    SpaceMembership.role == "owner",
+                )
+                .order_by(SpaceMembership.created_at)
+            )
+            if owner_membership is None:
+                return
+            space = db.get(Space, owner_membership.space_id)
+            if space is None:
+                return
+
+        executor = db.scalar(
+            select(Account).where(Account.email == DEMO_EXECUTOR_EMAIL)
         )
-        space = Space(
-            name="体验用户的质量空间",
-            description="CasePilot 本地验收空间",
+        if executor is None:
+            executor = Account(
+                email=DEMO_EXECUTOR_EMAIL,
+                display_name="执行成员",
+                password_hash=hash_password(DEMO_EXECUTOR_PASSWORD),
+            )
+            db.add(executor)
+            db.flush()
+        membership = db.scalar(
+            select(SpaceMembership).where(
+                SpaceMembership.space_id == space.id,
+                SpaceMembership.account_id == executor.id,
+            )
         )
-        db.add_all([account, space])
-        db.flush()
-        db.add_all(
-            [
+        if membership is None:
+            db.add(
                 SpaceMembership(
                     space_id=space.id,
-                    account_id=account.id,
-                    role="owner",
-                ),
-                CaseCollection(
-                    space_id=space.id,
-                    name="账号登录验收用例集",
-                    description="用于验收用例管理、版本修订和 QA 执行状态记录",
-                ),
-            ]
-        )
+                    account_id=executor.id,
+                    role="member",
+                )
+            )
         db.commit()
 
 
