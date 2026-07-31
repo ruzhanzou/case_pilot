@@ -86,30 +86,119 @@ compose.yaml              本地 Docker Compose
 
 ## 使用 Docker 启动
 
+### Windows 10/11（推荐）
+
+Windows 上推荐使用 Docker Desktop，不建议直接在原生 PowerShell/CMD 中分别安装
+PostgreSQL、Redis、Python 和 Celery。
+
 要求：
 
-- Docker Desktop 或兼容的 Docker Engine
-- Docker Compose V2
+- 已启用 BIOS/UEFI 硬件虚拟化和 WSL 2；建议 WSL 版本不低于 `2.1.5`
+- Docker Desktop 使用 WSL 2 后端，并运行 Linux containers
+- Docker Compose `2.24.0` 或更高版本
+- Docker Desktop 已启动
+- 需要从 GitHub 获取代码时，已安装 Git for Windows
 
-复制环境变量并启动：
+在 PowerShell 中确认环境：
 
-```bash
-cp .env.example .env
+```powershell
+wsl --version
+docker version
+docker compose version
+```
+
+如果 Docker Desktop 菜单显示“Switch to Linux containers”，需要先点击它；
+如果显示“Switch to Windows containers”，说明当前已经在使用 Linux containers。
+
+尚未获取代码时，在 PowerShell 中克隆仓库；如果已经下载或解压代码，可直接
+进入现有项目根目录：
+
+```powershell
+git clone --branch main https://github.com/ruzhanzou/case_pilot.git
+Set-Location .\case_pilot
+```
+
+首次部署且 `.env` 不存在时，复制示例配置，校验 Compose 文件并启动。默认使用
+本地 Mock Provider，不需要 API Key；需要连接真实模型时再按后文修改
+`.env.local`：
+
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+docker compose config --quiet
 docker compose up --build -d
 ```
 
-打开：
+首次构建需要下载 PostgreSQL、Redis、Python 和 Node.js 镜像，耗时取决于网络。
+启动后查看所有服务：
+
+```powershell
+docker compose ps -a
+```
+
+正常状态应满足：
+
+- `postgres`、`redis` 为 `healthy`
+- `api`、`agent`、`cleanup`、`web` 为运行状态
+- `migrate` 完成迁移后为 `Exited (0)`
+
+验证服务：
+
+```powershell
+curl.exe http://localhost:8000/health/ready
+```
+
+然后打开：
 
 - Web：<http://localhost:3000>
 - API 健康检查：<http://localhost:8000/health/ready>
 - OpenAPI：<http://localhost:8000/docs>
 
+> 当前 `compose.yaml` 面向同一台电脑上的本地验收。Web API 地址和登录跨域来源
+> 默认都是 `localhost`，不能直接作为局域网或公网部署方案。PostgreSQL 和 Redis
+> 端口也会发布到 Windows 主机，不要在防火墙中向局域网或公网开放 `5432` 和
+> `6379`。需要让其他电脑访问时，应另外配置公开访问地址、CORS、反向代理、TLS
+> 和正式密码。
+
+### macOS / Linux
+
+要求：
+
+- Docker Desktop 或兼容的 Docker Engine
+- Docker Compose `2.24.0` 或更高版本
+
+复制环境变量并启动：
+
+```bash
+cp .env.example .env
+docker compose config --quiet
+docker compose up --build -d
+```
+
+### 查看日志与停止服务
+
 查看状态：
 
 ```bash
-docker compose ps
+docker compose ps -a
 docker compose logs -f web api agent
 ```
+
+Windows PowerShell 和 Bash 使用相同的 Docker Compose 命令。需要排查首次迁移或
+依赖启动问题时执行：
+
+```powershell
+docker compose logs --tail=200 migrate postgres redis api agent web
+```
+
+Windows 端口冲突可在 PowerShell 中检查：
+
+```powershell
+Get-NetTCPConnection -LocalPort 3000,8000,5432,6379 -ErrorAction SilentlyContinue
+```
+
+如果 `migrate` 不是 `Exited (0)`，先检查 `migrate` 和 `postgres` 日志，不要直接
+执行带 `-v` 的清理命令。镜像下载失败时，先检查 Docker Desktop 的网络或代理
+配置，再重新执行 `docker compose up --build -d`。
 
 停止服务：
 
@@ -124,7 +213,11 @@ docker compose down
 docker compose down -v
 ```
 
-## 不使用 Docker 启动
+## 不使用 Docker 启动（Linux、macOS 或 WSL 2）
+
+以下命令使用 Bash 语法，不能直接在原生 Windows PowerShell/CMD 中执行。
+Celery 不官方支持原生 Windows，因此 Windows 用户应优先使用上面的 Docker
+Desktop 方案，或在 WSL 2 的 Linux 终端中运行本节命令。
 
 要求：
 
@@ -168,8 +261,17 @@ CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/2 \
 
 ### 配置火山方舟模型
 
-项目同时读取 `.env` 和 `.env.local`，后者优先级更高且已被 Git 忽略。
-先复制示例配置：
+应用同时读取 `.env` 和 `.env.local`；对于本节列出的模型与 Embedding 变量，
+`.env.local` 优先级更高且已被 Git 忽略。先复制示例配置。
+
+Windows PowerShell：
+
+```powershell
+if (-not (Test-Path .env.local)) { Copy-Item .env.example .env.local }
+notepad .env.local
+```
+
+Linux、macOS 或 WSL 2：
 
 ```bash
 cp .env.example .env.local
@@ -218,6 +320,14 @@ CASEPILOT_AGENT_TIMEOUT_SECONDS=120
 `GET /api/v1/generation-models` 动态加载模型，无需重新构建 Web。
 使用 Docker Compose 时，API、Agent 和清理服务会自动读取 `.env.local`，
 启动阶段也会自动执行 2048 维数据库迁移。
+
+Docker Compose 用户修改环境变量后，应重新创建相关容器；只执行
+`docker compose restart` 不会应用新的环境变量：
+
+```powershell
+docker compose up -d --force-recreate api agent cleanup
+docker compose logs --tail=100 api agent cleanup
+```
 
 若向量接口不可用且降级开关为 `true`，资料仍会标记为可检索，但界面会显示
 “仅全文检索”。密钥只应配置在 API/Agent 服务端环境中，不要放入 Web 环境
@@ -297,6 +407,10 @@ V1.0 的产品真相、Figma 节点和自动化结果见
 [docs/release-v1.0.0.md](./docs/release-v1.0.0.md)。
 
 ## 本地验证
+
+以下开发验证命令使用 Bash 语法，适用于 Linux、macOS 或 WSL 2。Windows
+Docker Desktop 部署可先执行 `docker compose ps -a`，再按“验收路径”完成业务
+验证。
 
 后端：
 
