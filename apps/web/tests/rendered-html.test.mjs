@@ -129,6 +129,8 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(caseWorkbench, /commitWorkspaceCandidates/);
   assert.match(caseWorkbench, /updateWorkspaceCandidate/);
   assert.match(caseWorkbench, /updateWorkspaceState/);
+  assert.match(caseWorkbench, /result\.context\.model_id/);
+  assert.match(caseWorkbench, /model_id: nextModelId/);
   assert.doesNotMatch(caseWorkbench, /当前对话或候选用例尚未保存/);
   assert.doesNotMatch(caseWorkbench, /> 新对话</);
   assert.match(caseWorkbench, /CASE_GENERATE/);

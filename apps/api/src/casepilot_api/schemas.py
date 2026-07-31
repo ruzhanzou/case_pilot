@@ -278,6 +278,12 @@ class WorkspaceCandidateView(BaseModel):
 
 class WorkspaceStateUpdate(BaseModel):
     draft_text: str | None = Field(default=None, max_length=8000)
+    model_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=120,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
     selected_case_id: str | None = Field(default=None, max_length=160)
     active_view: str | None = Field(default=None, pattern=r"^(list|map)$")
     search_query: str | None = Field(default=None, max_length=500)

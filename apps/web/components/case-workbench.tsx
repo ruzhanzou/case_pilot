@@ -262,6 +262,8 @@ export function CaseWorkbench({
   const applyWorkspaceResult = useCallback((result: ConversationDto) => {
     setWorkspace(result);
     setPrompt(String(result.context.draft_text ?? ""));
+    const restoredModelId = String(result.context.model_id ?? "");
+    if (restoredModelId) setModelId(restoredModelId);
     setViewMode(result.context.active_view === "map" ? "map" : "list");
     const restoredBriefVersion = Number(
       result.context.selected_brief_version ??
@@ -347,7 +349,9 @@ export function CaseWorkbench({
         setModels(
           result.models.map((item) => ({ id: item.id, label: item.label })),
         );
-        setModelId(result.default_model_id);
+        setModelId((current) =>
+          current === "auto" ? result.default_model_id : current,
+        );
       })
       .catch(() => {
         setModels([{ id: "auto", label: "默认模型" }]);
@@ -919,7 +923,15 @@ export function CaseWorkbench({
             <select
               aria-label="生成模型"
               value={modelId}
-              onChange={(event) => setModelId(event.target.value)}
+              onChange={(event) => {
+                const nextModelId = event.target.value;
+                setModelId(nextModelId);
+                if (workspace) {
+                  void updateWorkspaceState(workspace.id, {
+                    model_id: nextModelId,
+                  }).then(setWorkspace, () => undefined);
+                }
+              }}
               disabled={busy}
             >
               {models.map((model) => (

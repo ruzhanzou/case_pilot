@@ -712,6 +712,7 @@ export function updateWorkspaceState(
   conversationId: string,
   input: {
     draft_text?: string;
+    model_id?: AgentModelId;
     selected_case_id?: string | null;
     active_view?: "list" | "map";
     search_query?: string;

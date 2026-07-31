@@ -321,6 +321,15 @@ def classify_intent(
         term in normalized for term in ("修改", "调整", "补充", "增加", "删除")
     ):
         return "CASE_GENERATE", 0.98
+    explicitly_generates_cases = bool(
+        re.search(
+            r"(?:生成|设计|编写|创建|新增|补充|重新生成|重新设计)"
+            r".{0,40}?(?:测试)?用例",
+            normalized,
+        )
+    )
+    if explicitly_generates_cases and not has_targets:
+        return "CASE_GENERATE", 0.98
     generate_score = sum(term in normalized for term in GENERATE_TERMS)
     modify_score = sum(term in normalized for term in MODIFY_TERMS)
     qa_score = sum(term in normalized for term in QA_TERMS)
@@ -1256,6 +1265,9 @@ def update_workspace_state(
 ) -> ConversationView:
     conversation = _ensure_conversation(db, account.id, conversation_id)
     updates = payload.model_dump(exclude_none=True)
+    model_id = updates.get("model_id")
+    if model_id and not settings.is_agent_model_allowed(model_id):
+        raise HTTPException(status_code=422, detail="generation_model_not_configured")
     conversation.context = {**dict(conversation.context), **updates}
     conversation.updated_at = datetime.now(UTC)
     db.commit()
@@ -1510,6 +1522,7 @@ def confirm_test_brief(
         "phase": "generating",
         "confirmed_brief_version": brief.version,
         "active_job_id": str(job.id),
+        "model_id": payload.model_id,
     }
     conversation.updated_at = datetime.now(UTC)
     db.commit()
@@ -1662,6 +1675,12 @@ def send_message(
     db: DbSession,
 ) -> ConversationTurnView:
     conversation = _ensure_conversation(db, account.id, conversation_id)
+    if not settings.is_agent_model_allowed(payload.model_id):
+        raise HTTPException(status_code=422, detail="generation_model_not_configured")
+    conversation.context = {
+        **dict(conversation.context),
+        "model_id": payload.model_id,
+    }
     phase = str(dict(conversation.context).get("phase", "idle"))
     if phase == "brief_review" and _looks_like_brief_confirmation(payload.content):
         latest_brief = db.scalar(
