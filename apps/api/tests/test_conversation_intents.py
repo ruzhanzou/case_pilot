@@ -22,6 +22,10 @@ from casepilot_api.schemas import (
 
 def test_intent_classifier_routes_generation_modification_and_qa() -> None:
     assert classify_intent("补充弱网用例")[0] == "CASE_GENERATE"
+    assert classify_intent("为已登录用户修改密码生成测试用例") == (
+        "CASE_GENERATE",
+        0.98,
+    )
     assert classify_intent("给当前用例补充弱网恢复步骤", has_targets=True)[0] == (
         "CASE_MODIFY"
     )

@@ -10,6 +10,7 @@ from casepilot_api.schemas import (
     ExecutionRunUpdate,
     ExecutionStatus,
     GenerationStartRequest,
+    WorkspaceStateUpdate,
 )
 from casepilot_api.schemas import (
     TestCaseBatchCreate as BatchCreateSchema,
@@ -140,6 +141,16 @@ def test_generation_requests_reject_unsafe_model_names() -> None:
                 "model_id": "../unexpected-model",
             }
         )
+
+
+def test_workspace_state_accepts_safe_model_names() -> None:
+    state = WorkspaceStateUpdate.model_validate(
+        {"model_id": "doubao-seed-2.0-lite"}
+    )
+
+    assert state.model_id == "doubao-seed-2.0-lite"
+    with pytest.raises(ValidationError):
+        WorkspaceStateUpdate.model_validate({"model_id": "../unexpected-model"})
 
 
 @pytest.mark.parametrize("status", ["failed", "skipped", "blocked"])
