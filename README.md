@@ -174,6 +174,146 @@ docker compose config --quiet
 docker compose up --build -d
 ```
 
+### macOS + Colima 部署排障记录
+
+下面汇总一次完整本地部署中实际遇到的问题。默认入口仍是
+<http://localhost:3000>；只有明确把 Web 改到其他端口时，才需要同步修改端口和
+CORS 配置。
+
+#### 1. Docker 无法下载镜像或域名解析失败
+
+现象通常是拉取 `node`、`postgres` 或 `redis` 镜像时出现 DNS、超时或代理连接
+错误。先确认 Colima 和 Docker daemon 正常，再检查虚拟机内的 DNS/代理；宿主机
+上的 `127.0.0.1:<代理端口>` 不能直接从 Colima 虚拟机访问，需要使用虚拟机可达
+的宿主机地址。
+
+可在 `~/.colima/default/colima.yaml` 中按本机网络填写，例如：
+
+```yaml
+docker:
+  dns:
+    - 192.168.0.1
+    - 8.8.8.8
+  proxies:
+    http-proxy: http://<宿主机地址>:<代理端口>
+    https-proxy: http://<宿主机地址>:<代理端口>
+    no-proxy: localhost,127.0.0.1,::1,host.docker.internal
+```
+
+修改后重启 Colima，再单独拉取一个镜像验证网络：
+
+```bash
+colima stop
+colima start
+docker pull node:24-slim
+```
+
+不要照抄示例里的网关、宿主机地址或代理端口；它们随当前 Wi-Fi、VPN 和代理软件
+变化。未使用代理时不要配置 `proxies`。
+
+#### 2. Web 容器在 Alpine 中启动失败
+
+前端依赖包含原生运行时。使用 `node:24-alpine` 时可能因 musl 与仅提供 glibc
+构建的依赖不兼容，表现为 `workerd`、`rolldown` 等模块无法执行。项目的
+`compose.yaml` 因此使用 `node:24-slim`，不要随意改回 Alpine。
+
+如果旧的 `node_modules` 命名卷缓存了错误平台的依赖，只清理该依赖缓存卷，不要
+删除数据库卷：
+
+```bash
+docker compose stop web
+docker volume ls --filter label=com.docker.compose.volume=casepilot_node_modules
+docker volume rm <上一步显示的依赖缓存卷名>
+docker compose up -d web
+```
+
+此操作只会让前端重新安装依赖。不要用 `docker compose down -v` 代替，否则会
+同时删除 PostgreSQL、Redis 和知识库数据。
+
+#### 3. Web 长时间停在 Vite 依赖优化阶段
+
+先查看 Web 日志；若后端均正常但 Web 容器持续没有监听端口，可临时采用“后端
+Docker、前端宿主机运行”的方式：
+
+```bash
+docker compose up -d postgres redis migrate api agent cleanup
+pnpm --dir apps/web install
+NEXT_PUBLIC_CASEPILOT_API_URL=http://localhost:8000 \
+  pnpm --dir apps/web dev --host 127.0.0.1 --port 13000
+```
+
+这只是本地开发兜底，不是生产部署方式。容器化 Web 恢复后应回到 Compose 默认的
+`3000` 端口，避免同时运行两份前端开发服务器。
+
+#### 4. 浏览器显示 `ERR_CONNECTION_REFUSED`
+
+先核对浏览器地址与实际监听端口。Compose 默认发布 `3000:3000`，因此访问
+`127.0.0.1:13000` 会被拒绝，除非已经按上一节把宿主机前端启动在 `13000`。
+
+```bash
+docker compose ps -a
+curl -I http://127.0.0.1:3000
+curl -I http://127.0.0.1:13000
+```
+
+固定使用 `13000` 时，也可以将 Web 的 Compose 端口映射改为 `13000:3000`；不要
+额外启动一个长期端口转发进程来掩盖配置不一致。
+
+#### 5. API 和数据库健康，但登录提示“本地数据服务尚未就绪”
+
+这是端口改变后最容易误判的问题。先使用正确的健康检查地址：
+
+```bash
+curl http://localhost:8000/health/ready
+```
+
+返回 `status`、`postgres`、`redis` 均为 `ok`，但 API 日志中的
+`OPTIONS /api/v1/auth/login` 是 `400` 时，实际原因通常是 CORS，而不是数据库。
+`/health` 并不是本项目的健康检查端点，返回 `404` 属于预期行为。
+
+`CASEPILOT_WEB_ORIGIN` 必须包含浏览器实际使用的端口，并支持用逗号配置多个本地
+入口：
+
+```dotenv
+CASEPILOT_WEB_ORIGIN=http://localhost:3000,http://localhost:13000
+```
+
+修改环境变量后，`docker compose restart` 不会重新读取它，必须重新创建 API
+容器：
+
+```bash
+docker compose up -d --no-deps --force-recreate api
+curl http://localhost:8000/health/ready
+```
+
+#### 6. 如何判断 Compose 状态是否正常
+
+- `postgres`、`redis`：应为 `healthy`。
+- `api`、`agent`、`cleanup`、`web`：应为运行状态。
+- `migrate`：成功迁移后显示 `Exited (0)` 是正常完成，不是崩溃。
+- `web` 显示 `Exited (137)`：通常是进程被终止或内存不足，需要检查日志和前端
+  依赖缓存。
+
+### 是否需要保存 Docker 镜像
+
+普通本地开发和联网部署不需要执行 `docker save`。`compose.yaml`、Dockerfile、
+依赖锁文件和环境变量模板才是可重复部署的来源；下次运行 Compose 会复用本机镜像
+或重新构建。
+
+还要注意：`docker save` 只保存镜像，不会保存 PostgreSQL、Redis、知识库文件或
+命名卷，因此不能当作业务数据备份。需要备份数据时，应分别导出 PostgreSQL，并
+备份对应命名卷。
+
+仅在以下场景才建议保存镜像：
+
+- 需要搬到无法联网或网络不稳定的机器；
+- 需要归档一套已经验收过的精确镜像用于回滚或审计；
+- 镜像构建成本很高，且目标机器无法访问原镜像仓库。
+
+这时可使用 `docker save -o casepilot-images.tar <镜像名...>`，目标机器用
+`docker load -i casepilot-images.tar` 导入。镜像归档通常很大，可能包含运行时
+配置痕迹，不应提交到 Git，也不应替代数据库备份。
+
 ### 查看日志与停止服务
 
 查看状态：

@@ -110,7 +110,7 @@ services:
     restart: unless-stopped
 
   web:
-    image: node:24-alpine
+    image: node:24-slim
     working_dir: /workspace/apps/web
     command: ["sh", "-lc", "corepack enable && pnpm install --frozen-lockfile && pnpm dev --host 0.0.0.0"]
     environment:
