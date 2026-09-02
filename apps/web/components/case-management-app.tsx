@@ -9,24 +9,31 @@ import { ExecutionWorkspace } from "@/components/execution-workspace";
 import { KnowledgeBase } from "@/components/knowledge-base";
 import { NewConversation } from "@/components/new-conversation";
 import {
+  cancelConversationOperation,
+  continueOperationInNewConversation,
   createCollection,
+  createConversation,
   createTestCase,
   createTestCasesBatch,
+  confirmConversationIntent,
   deleteCollection,
   deleteTestCase,
   getConversation,
-  getOrCreateWorkspace,
   listCollections,
   listTestCases,
+  resumeConversationOperation,
   sendConversationMessage,
   updateCollection,
   updateTestCase,
+  uploadConversationAttachments,
   waitForConversationJob,
   type Account,
   type AgentModelId,
   type CaseCollectionDto,
   type ConversationDto,
+  type ConversationIntent,
   type ConversationSummaryDto,
+  type ConversationTurnDto,
   type TestCaseDto,
   type TestCaseInput,
 } from "@/lib/casepilot-api";
@@ -49,6 +56,33 @@ type CaseManagementAppProps = {
 
 type ManagementPage = "workbench" | "knowledge" | "library" | "execution";
 
+function nextRunnableOperation(conversation: ConversationDto) {
+  const operations = conversation.operation_plan?.operations ?? [];
+  return operations.find(
+    (operation) =>
+      operation.status === "queued" &&
+      operations
+        .filter((item) => item.sequence < operation.sequence)
+        .every((item) => ["completed", "skipped"].includes(item.status)),
+  );
+}
+
+const assetIntents: ConversationIntent[] = [
+  "CASE_GENERATE",
+  "CASE_MODIFY",
+  "CASE_DELETE",
+  "CASE_QUERY",
+];
+
+function shouldOpenWorkspace(
+  intent: ConversationIntent,
+  conversation: ConversationDto,
+) {
+  return Boolean(
+    conversation.collection_id && assetIntents.includes(intent),
+  );
+}
+
 export function CaseManagementApp({
   account,
   onLogout,
@@ -70,7 +104,7 @@ export function CaseManagementApp({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [executionDirty, setExecutionDirty] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(true);
   const [historyRevision, setHistoryRevision] = useState(0);
   const [landingConversation, setLandingConversation] =
     useState<ConversationDto | null>(null);
@@ -165,6 +199,22 @@ export function CaseManagementApp({
     }
   };
 
+  const updateLandingStream = (jobId: string, content: string) => {
+    setLandingConversation((current) =>
+      current
+        ? {
+            ...current,
+            messages: current.messages.map((message) =>
+              message.role === "assistant" &&
+              message.related_job_id === jobId
+                ? { ...message, content, status: "running" }
+                : message,
+            ),
+          }
+        : current,
+    );
+  };
+
   const sendNewConversationMessage = async (input: {
     content: string;
     modelId: AgentModelId;
@@ -174,20 +224,11 @@ export function CaseManagementApp({
     setError("");
     try {
       let conversation = landingConversation;
-      let collectionId = conversation?.collection_id ?? "";
-      const isFirstTurn = !conversation;
-
       if (!conversation) {
-        const collection = await createCollection(space.id, {
-          name: "新对话",
-          description: input.content.slice(0, 2000),
+        conversation = await createConversation({
+          spaceId: space.id,
+          title: "新对话",
         });
-        collectionId = collection.id;
-        setCollections((current) => [...current, collection]);
-        setSelectedCollectionId(collection.id);
-        setSelectedCaseId("");
-        setCases([]);
-        conversation = await getOrCreateWorkspace(collection.id);
         setLandingConversation(conversation);
       }
 
@@ -200,17 +241,16 @@ export function CaseManagementApp({
       let refreshedConversation = await getConversation(conversation.id);
       setLandingConversation(refreshedConversation);
 
-      if (isFirstTurn) {
-        await updateCollection(collectionId, {
-          name: refreshedConversation.title,
-          description: input.content.slice(0, 2000),
-        });
-        await refreshCollections(collectionId);
-      }
-
       setHistoryRevision((current) => current + 1);
 
-      if (turn.intent === "CASE_GENERATE") {
+      if (
+        shouldOpenWorkspace(turn.intent, refreshedConversation) &&
+        !turn.requires_intent_confirmation
+      ) {
+        if (refreshedConversation.collection_id) {
+          await refreshCollections(refreshedConversation.collection_id);
+          await selectCollection(refreshedConversation.collection_id);
+        }
         setWorkbenchMode("workspace");
         setPage("workbench");
         return;
@@ -220,6 +260,177 @@ export function CaseManagementApp({
         await waitForConversationJob(
           refreshedConversation.id,
           turn.action.job_id,
+          900_000,
+          (content) => updateLandingStream(turn.action.job_id!, content),
+        );
+        refreshedConversation = await getConversation(
+          refreshedConversation.id,
+        );
+        setLandingConversation(refreshedConversation);
+        setHistoryRevision((current) => current + 1);
+      }
+      for (let index = 0; index < 3; index += 1) {
+        const nextOperation = nextRunnableOperation(refreshedConversation);
+        if (!nextOperation) break;
+        const resumed = await resumeConversationOperation(nextOperation.id);
+        refreshedConversation = await getConversation(refreshedConversation.id);
+        setLandingConversation(refreshedConversation);
+        setHistoryRevision((current) => current + 1);
+        if (shouldOpenWorkspace(resumed.intent, refreshedConversation)) {
+          if (refreshedConversation.collection_id) {
+            await refreshCollections(refreshedConversation.collection_id);
+            await selectCollection(refreshedConversation.collection_id);
+          }
+          setWorkbenchMode("workspace");
+          setPage("workbench");
+          return;
+        }
+        if (resumed.action.job_id) {
+          await waitForConversationJob(
+            refreshedConversation.id,
+            resumed.action.job_id,
+            900_000,
+            (content) =>
+              updateLandingStream(resumed.action.job_id!, content),
+          );
+        }
+        refreshedConversation = await getConversation(refreshedConversation.id);
+        setLandingConversation(refreshedConversation);
+        setHistoryRevision((current) => current + 1);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "消息处理失败");
+      throw caught;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const uploadNewConversationFiles = async (files: File[]) => {
+    if (!space) return;
+    setSaving(true);
+    setError("");
+    try {
+      let conversation = landingConversation;
+      if (!conversation) {
+        conversation = await createConversation({
+          spaceId: space.id,
+          title: "新对话",
+        });
+      }
+      await uploadConversationAttachments(conversation.id, files);
+      const refreshed = await getConversation(conversation.id);
+      setLandingConversation(refreshed);
+      setHistoryRevision((current) => current + 1);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "附件上传失败");
+      throw caught;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const confirmLandingCollection = async (turn: ConversationTurnDto) => {
+    setSaving(true);
+    setError("");
+    try {
+      const bound = await getConversation(turn.conversation_id);
+      setLandingConversation(bound);
+      setHistoryRevision((current) => current + 1);
+      if (!bound.collection_id) throw new Error("集合确认未生效");
+      await refreshCollections(bound.collection_id);
+      await selectCollection(bound.collection_id);
+      setWorkbenchMode("workspace");
+      setPage("workbench");
+      if (turn.action.job_id) {
+        void waitForConversationJob(
+          bound.id,
+          turn.action.job_id,
+          900_000,
+          (content) => updateLandingStream(turn.action.job_id!, content),
+        ).then(async () => {
+          setLandingConversation(await getConversation(bound.id));
+          setHistoryRevision((current) => current + 1);
+        });
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "集合绑定失败");
+      throw caught;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const continueLandingInNewConversation = async (
+    operationId: string,
+    collectionId: string,
+  ) => {
+    setSaving(true);
+    setError("");
+    try {
+      const conversation = await continueOperationInNewConversation(
+        operationId,
+        collectionId,
+      );
+      setLandingConversation(conversation);
+      await refreshCollections(collectionId);
+      await selectCollection(collectionId);
+      setWorkbenchMode("workspace");
+      setPage("workbench");
+      setHistoryRevision((current) => current + 1);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "新建对话失败");
+      throw caught;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const cancelLandingOperation = async (operationId: string) => {
+    if (!landingConversation) return;
+    setSaving(true);
+    setError("");
+    try {
+      await cancelConversationOperation(operationId);
+      setLandingConversation(await getConversation(landingConversation.id));
+      setHistoryRevision((current) => current + 1);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "取消操作失败");
+      throw caught;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const confirmLandingConversationIntent = async (
+    messageId: string,
+    intent: ConversationIntent,
+  ) => {
+    if (!landingConversation) return;
+    setSaving(true);
+    setError("");
+    try {
+      const turn = await confirmConversationIntent(messageId, intent);
+      let refreshedConversation = await getConversation(landingConversation.id);
+      setLandingConversation(refreshedConversation);
+      setHistoryRevision((current) => current + 1);
+
+      if (shouldOpenWorkspace(turn.intent, refreshedConversation)) {
+        if (refreshedConversation.collection_id) {
+          await refreshCollections(refreshedConversation.collection_id);
+          await selectCollection(refreshedConversation.collection_id);
+        }
+        setWorkbenchMode("workspace");
+        setPage("workbench");
+        return;
+      }
+
+      if (turn.action.job_id) {
+        await waitForConversationJob(
+          refreshedConversation.id,
+          turn.action.job_id,
+          900_000,
+          (content) => updateLandingStream(turn.action.job_id!, content),
         );
         refreshedConversation = await getConversation(
           refreshedConversation.id,
@@ -228,7 +439,42 @@ export function CaseManagementApp({
         setHistoryRevision((current) => current + 1);
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "消息处理失败");
+      setError(caught instanceof Error ? caught.message : "意图确认失败");
+      throw caught;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const confirmLandingOperation = async (
+    operationId: string,
+    intent: ConversationIntent,
+  ) => {
+    if (!landingConversation) return;
+    setSaving(true);
+    setError("");
+    try {
+      const turn = await resumeConversationOperation(operationId, { intent });
+      const refreshed = await getConversation(landingConversation.id);
+      setLandingConversation(refreshed);
+      setHistoryRevision((current) => current + 1);
+      if (shouldOpenWorkspace(intent, refreshed)) {
+        if (refreshed.collection_id) {
+          await refreshCollections(refreshed.collection_id);
+          await selectCollection(refreshed.collection_id);
+        }
+        setWorkbenchMode("workspace");
+      } else if (turn.action.job_id) {
+        await waitForConversationJob(
+          refreshed.id,
+          turn.action.job_id,
+          900_000,
+          (content) => updateLandingStream(turn.action.job_id!, content),
+        );
+        setLandingConversation(await getConversation(refreshed.id));
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "意图确认失败");
       throw caught;
     } finally {
       setSaving(false);
@@ -275,8 +521,12 @@ export function CaseManagementApp({
   const openHistoryConversation = async (
     conversation: ConversationSummaryDto,
   ) => {
-    await selectCollection(conversation.collection_id);
-    setWorkbenchMode("workspace");
+    const detail = await getConversation(conversation.id);
+    setLandingConversation(detail);
+    if (conversation.collection_id) {
+      await selectCollection(conversation.collection_id);
+    }
+    setWorkbenchMode(conversation.collection_id ? "workspace" : "create");
     setPage("workbench");
   };
 
@@ -502,7 +752,13 @@ export function CaseManagementApp({
         </div>
       </aside>
 
-      <section className="management-stage">
+      <section
+        className={`management-stage${
+          historyOpen && page === "workbench"
+            ? " management-stage--history-open"
+            : ""
+        }`}
+      >
         <header className="management-topbar">
           <div>
             <span>{space?.name ?? "本地质量空间"}</span>
@@ -533,8 +789,10 @@ export function CaseManagementApp({
         )}
 
         <ConversationHistoryDrawer
+          spaceId={space?.id ?? ""}
           open={historyOpen && page === "workbench"}
           revision={historyRevision}
+          currentConversationId={landingConversation?.id}
           onClose={() => setHistoryOpen(false)}
           onNewConversation={() => {
             setLandingConversation(null);
@@ -554,10 +812,16 @@ export function CaseManagementApp({
             spaceName={space?.name ?? "本地质量空间"}
             saving={saving}
             conversation={landingConversation}
+            collections={collections}
             onSend={sendNewConversationMessage}
-            onOpenKnowledge={() => setPage("knowledge")}
+            onUploadFiles={uploadNewConversationFiles}
             onOpenLibrary={() => setPage("library")}
             onOpenHistory={() => setHistoryOpen(true)}
+            onConfirmCollection={confirmLandingCollection}
+            onContinueInNewConversation={continueLandingInNewConversation}
+            onCancelOperation={cancelLandingOperation}
+            onConfirmIntent={confirmLandingConversationIntent}
+            onConfirmOperation={confirmLandingOperation}
           />
         ) : page === "workbench" ? (
           <CaseWorkbench
@@ -566,6 +830,16 @@ export function CaseManagementApp({
             selectedCollection={selectedCollection}
             cases={cases}
             loading={loading}
+            conversationId={
+              landingConversation?.collection_id === selectedCollectionId
+                ? landingConversation.id
+                : undefined
+            }
+            pendingOperationId={
+              landingConversation?.operation_plan?.operations.find(
+                (operation) => operation.status === "awaiting_target",
+              )?.id
+            }
             onSelectCase={setSelectedCaseId}
             onCreateCase={(module) => setCaseEditor({ mode: "create", module })}
             onEditCase={(testCase) =>
@@ -577,6 +851,8 @@ export function CaseManagementApp({
               setLandingConversation(null);
               setWorkbenchMode("create");
             }}
+            onContinueInNewConversation={continueLandingInNewConversation}
+            onCancelOperation={cancelLandingOperation}
             onOpenHistory={() => setHistoryOpen(true)}
           />
         ) : page === "knowledge" ? (

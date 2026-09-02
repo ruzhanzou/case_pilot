@@ -23,6 +23,22 @@ class Settings(BaseSettings):
         default="mock",
         validation_alias="CASEPILOT_AGENT_PROVIDER",
     )
+    agent_base_url: str = Field(
+        default="https://ark.cn-beijing.volces.com/api/coding/v3",
+        validation_alias="CASEPILOT_AGENT_BASE_URL",
+    )
+    agent_api_key: str = Field(
+        default="",
+        validation_alias="CASEPILOT_AGENT_API_KEY",
+    )
+    agent_timeout_seconds: float = Field(
+        default=60,
+        validation_alias="CASEPILOT_AGENT_TIMEOUT_SECONDS",
+    )
+    agent_tracing_enabled: bool = Field(
+        default=False,
+        validation_alias="CASEPILOT_AGENT_TRACING_ENABLED",
+    )
     agent_model: str = Field(
         default="doubao-seed-2.0-lite",
         validation_alias="CASEPILOT_AGENT_MODEL",

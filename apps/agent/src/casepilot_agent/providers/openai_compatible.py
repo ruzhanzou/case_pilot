@@ -1,4 +1,5 @@
 import json
+import re
 from time import monotonic, sleep
 from typing import Any, TypeVar
 
@@ -16,6 +17,18 @@ from casepilot_agent.contracts import (
 
 ResultT = TypeVar("ResultT", bound=BaseModel)
 TRANSIENT_STATUS_CODES = {408, 429, 500, 502, 503, 504, 520, 522, 524}
+MARKDOWN_JSON_FENCE = re.compile(
+    r"\A```(?:json)?\s*(.*?)\s*```\Z",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+
+def _normalize_structured_content(content: str) -> str:
+    if not isinstance(content, str):
+        raise TypeError("structured_model_content_must_be_text")
+    normalized = content.lstrip("\ufeff").strip()
+    fenced = MARKDOWN_JSON_FENCE.fullmatch(normalized)
+    return fenced.group(1).strip() if fenced else normalized
 
 
 class ProviderResponseError(RuntimeError):
@@ -122,7 +135,9 @@ class OpenAICompatibleProvider:
             payload = response.json()
             try:
                 content = payload["choices"][0]["message"]["content"]
-                result = result_type.model_validate_json(content)
+                result = result_type.model_validate_json(
+                    _normalize_structured_content(content)
+                )
                 usage = payload.get("usage", {})
                 return result, UsageMetadata(
                     model=payload.get("model", model),

@@ -5,6 +5,7 @@ from casepilot_api.conversations import (
     AGENT_MEMORY_CONTENT_LIMIT,
     AGENT_MEMORY_MESSAGE_LIMIT,
     _agent_conversation_memory,
+    _collection_candidates,
     _extract_explicit_test_object,
     _looks_like_brief_confirmation,
     _test_object_from_messages,
@@ -36,6 +37,24 @@ def test_intent_classifier_routes_generation_modification_and_qa() -> None:
     assert classify_intent("你是谁") == ("SMALL_TALK", 0.99)
     assert classify_intent("删除当前用例", has_targets=True)[0] == "CASE_DELETE"
     assert classify_intent("查询用例")[0] == "CASE_QUERY"
+    assert classify_intent("CasePilot 可以帮我做什么？")[0] == "SMALL_TALK"
+    assert classify_intent("CasePilot 可以帮我完成哪些测试工作？")[0] == (
+        "SMALL_TALK"
+    )
+    assert classify_intent("边界值分析和等价类有什么区别？")[0] == "KNOWLEDGE_QA"
+    assert classify_intent("介绍一下接口幂等性的测试方法")[0] == "KNOWLEDGE_QA"
+    assert classify_intent("帮我设计登录功能的测试用例")[0] == "CASE_GENERATE"
+    assert classify_intent("查询登录集合中的 P0 用例")[0] == "CASE_QUERY"
+    assert classify_intent("查询已有用例")[0] == "CASE_QUERY"
+    assert classify_intent("删除当前选中的两条用例", has_targets=True)[0] == (
+        "CASE_DELETE"
+    )
+    assert classify_intent("先别删除当前用例", has_targets=True)[0] == (
+        "KNOWLEDGE_QA"
+    )
+    assert classify_intent(
+        "把失败场景的预期结果改得更明确", has_targets=True
+    )[0] == "CASE_MODIFY"
 
 
 def test_ambiguous_modification_requires_confirmation() -> None:
@@ -44,14 +63,31 @@ def test_ambiguous_modification_requires_confirmation() -> None:
     assert confidence < 0.8
 
 
-def test_brief_review_routes_requirements_to_brief_updates() -> None:
+def test_brief_review_does_not_treat_plain_statements_as_asset_writes() -> None:
     statement = "锁屏和切后台后允许继续保持实时语音通话"
-    assert classify_intent(statement, phase="brief_review")[0] == "CASE_GENERATE"
+    assert classify_intent(statement, phase="brief_review")[0] == "KNOWLEDGE_QA"
     assert classify_intent("你好", phase="brief_review")[0] == "SMALL_TALK"
     assert (
         classify_intent("实时通话超时策略是什么？", phase="brief_review")[0]
         == "KNOWLEDGE_QA"
     )
+    assert classify_intent("什么是ASR", phase="brief_review")[0] == "KNOWLEDGE_QA"
+
+
+def test_collection_candidates_builds_query_with_collection_columns() -> None:
+    class FakeDb:
+        def scalars(self, statement):
+            assert statement is not None
+            return []
+
+    candidates, suggested = _collection_candidates(
+        FakeDb(),
+        SimpleNamespace(space_id=uuid4()),
+        "请生成登录用例",
+    )
+
+    assert candidates == []
+    assert suggested is None
 
 
 def test_natural_language_brief_confirmation_phrases() -> None:

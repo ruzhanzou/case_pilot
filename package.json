@@ -14,6 +14,7 @@
     "lint:web": "pnpm --dir apps/web lint",
     "test:api": "PYTHONPATH=apps/api/src .venv/bin/pytest apps/api/tests",
     "test:agent": "PYTHONPATH=apps/agent/src .venv/bin/pytest apps/agent/tests",
+    "accept:conversation": ".venv/bin/python scripts/casepilot_conversation_acceptance.py",
     "test:python": "pnpm test:api && pnpm test:agent",
     "lint:python": ".venv/bin/ruff check apps/api apps/agent"
   }

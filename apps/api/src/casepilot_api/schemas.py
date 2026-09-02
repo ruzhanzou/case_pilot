@@ -13,6 +13,19 @@ class ExecutionStatus(StrEnum):
     BLOCKED = "blocked"
 
 
+class ConversationOperationStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    AWAITING_INTENT = "awaiting_intent"
+    AWAITING_COLLECTION = "awaiting_collection"
+    AWAITING_TARGET = "awaiting_target"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    SKIPPED = "skipped"
+
+
 class AccountRegistration(BaseModel):
     email: str = Field(min_length=5, max_length=320, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     display_name: str = Field(min_length=2, max_length=120)
@@ -178,7 +191,8 @@ class GenerationAnswersRequest(BaseModel):
 
 
 class ConversationCreate(BaseModel):
-    collection_id: UUID
+    space_id: UUID | None = None
+    collection_id: UUID | None = None
     title: str = Field(default="新对话", min_length=1, max_length=240)
     knowledge_source_ids: list[UUID] = Field(default_factory=list, max_length=50)
     document_ids: list[UUID] = Field(default_factory=list, max_length=6)
@@ -189,6 +203,16 @@ class ConversationTargetSnapshot(BaseModel):
     ref: str = Field(min_length=1, max_length=160)
     version: int = Field(default=1, ge=1)
     snapshot: dict
+
+
+class ConversationTarget(BaseModel):
+    kind: str = Field(pattern=r"^(case|module|condition|previous_result)$")
+    collection_id: UUID | None = None
+    case_ids: list[UUID] = Field(default_factory=list, max_length=100)
+    candidate_refs: list[str] = Field(default_factory=list, max_length=100)
+    module: str = Field(default="", max_length=160)
+    condition: str = Field(default="", max_length=1000)
+    source_operation_id: UUID | None = None
 
 
 class ConversationMessageCreate(BaseModel):
@@ -208,19 +232,79 @@ class ConversationMessageCreate(BaseModel):
         default_factory=list,
         max_length=100,
     )
+    targets: list[ConversationTarget] = Field(default_factory=list, max_length=100)
     knowledge_source_ids: list[UUID] = Field(default_factory=list, max_length=50)
     document_ids: list[UUID] = Field(default_factory=list, max_length=6)
     use_space_knowledge: bool = True
     intent_override: str | None = Field(
         default=None,
-        pattern=r"^(CASE_GENERATE|CASE_MODIFY|CASE_DELETE|CASE_QUERY|KNOWLEDGE_QA|SMALL_TALK)$",
+        pattern=r"^(CASE_GENERATE|CASE_MODIFY|CASE_DELETE|CASE_QUERY|KNOWLEDGE_QA|SMALL_TALK|UNRESOLVED)$",
     )
 
 
 class IntentConfirmationRequest(BaseModel):
     intent: str = Field(
-        pattern=r"^(CASE_GENERATE|CASE_MODIFY|CASE_DELETE|CASE_QUERY|KNOWLEDGE_QA|SMALL_TALK)$"
+        pattern=r"^(CASE_GENERATE|CASE_MODIFY|CASE_DELETE|CASE_QUERY|KNOWLEDGE_QA|SMALL_TALK|UNRESOLVED)$"
     )
+
+
+class ConversationBindingUpdate(BaseModel):
+    collection_id: UUID
+
+
+class ConversationOperationCollectionConfirmRequest(BaseModel):
+    collection_id: UUID | None = None
+    create_collection_name: str | None = Field(default=None, min_length=1, max_length=160)
+
+    @model_validator(mode="after")
+    def require_exactly_one_collection_choice(
+        self,
+    ) -> "ConversationOperationCollectionConfirmRequest":
+        if (self.collection_id is None) == (self.create_collection_name is None):
+            raise ValueError("exactly_one_collection_choice_required")
+        if self.create_collection_name is not None:
+            self.create_collection_name = self.create_collection_name.strip()
+        return self
+
+
+class ConversationOperationContinueRequest(BaseModel):
+    collection_id: UUID
+
+
+class ConversationOperationResumeRequest(BaseModel):
+    intent: str | None = Field(
+        default=None,
+        pattern=r"^(CASE_GENERATE|CASE_MODIFY|CASE_DELETE|CASE_QUERY|KNOWLEDGE_QA|SMALL_TALK|UNRESOLVED)$",
+    )
+    targets: list[ConversationTarget] = Field(default_factory=list, max_length=100)
+    target_case_ids: list[UUID] = Field(default_factory=list, max_length=100)
+    target_candidate_snapshots: list[ConversationTargetSnapshot] = Field(
+        default_factory=list,
+        max_length=100,
+    )
+
+
+class ConversationOperationView(BaseModel):
+    id: UUID
+    sequence: int
+    intent: str
+    confidence: float
+    status: ConversationOperationStatus
+    target: dict
+    payload: dict
+    result: dict
+    requires_confirmation: bool
+    related_job_id: UUID | None
+    related_change_set_id: UUID | None
+    error_code: str | None
+    created_at: datetime
+
+
+class ConversationOperationPlanView(BaseModel):
+    status: str
+    source_message_id: UUID | None = None
+    current_operation_id: UUID | None = None
+    operations: list[ConversationOperationView] = Field(default_factory=list)
 
 
 class TestBriefContent(BaseModel):
@@ -256,6 +340,7 @@ class TestBriefContent(BaseModel):
 
 class WorkspaceTestBriefView(BaseModel):
     id: UUID
+    source_operation_id: UUID | None = None
     version: int
     content: TestBriefContent
     markdown_content: str
@@ -285,11 +370,12 @@ class WorkspaceStateUpdate(BaseModel):
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
     )
     selected_case_id: str | None = Field(default=None, max_length=160)
+    selected_targets: list[dict] | None = Field(default=None, max_length=100)
     active_view: str | None = Field(default=None, pattern=r"^(list|map)$")
     search_query: str | None = Field(default=None, max_length=500)
     filters: dict | None = None
-    chat_width: int | None = Field(default=None, ge=300, le=520)
-    inspector_width: int | None = Field(default=None, ge=300, le=520)
+    chat_width: int | None = Field(default=None, ge=280, le=520)
+    inspector_width: int | None = Field(default=None, ge=280, le=520)
     selected_brief_version: int | None = Field(default=None, ge=1)
 
 
@@ -356,7 +442,7 @@ class ConversationWorkflowRunView(BaseModel):
 class ConversationView(BaseModel):
     id: UUID
     space_id: UUID
-    collection_id: UUID
+    collection_id: UUID | None
     title: str
     status: str
     context: dict
@@ -364,15 +450,16 @@ class ConversationView(BaseModel):
     test_briefs: list[WorkspaceTestBriefView] = Field(default_factory=list)
     candidates: list[WorkspaceCandidateView] = Field(default_factory=list)
     workflow_runs: list[ConversationWorkflowRunView] = Field(default_factory=list)
+    operation_plan: ConversationOperationPlanView | None = None
     created_at: datetime
     updated_at: datetime
 
 
 class ConversationSummaryView(BaseModel):
     id: UUID
-    collection_id: UUID
+    collection_id: UUID | None
     title: str
-    collection_name: str
+    collection_name: str | None
     phase: str
     last_message_preview: str
     created_at: datetime
@@ -392,6 +479,7 @@ class ConversationTurnView(BaseModel):
     intent_confidence: float
     requires_intent_confirmation: bool = False
     action: dict = Field(default_factory=dict)
+    operation_plan: ConversationOperationPlanView | None = None
 
 
 class ChangeSetApplyRequest(BaseModel):

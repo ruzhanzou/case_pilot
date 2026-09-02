@@ -47,6 +47,7 @@ test("keeps the persisted case management and execution baseline", async () => {
     sampleAudioCases,
     executionWorkspace,
     newConversation,
+    conversationExamples,
     conversationHistory,
     apiClient,
     css,
@@ -62,6 +63,7 @@ test("keeps the persisted case management and execution baseline", async () => {
     readFile(new URL("../lib/sample-audio-cases.ts", import.meta.url), "utf8"),
     readFile(new URL("../components/execution-workspace.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/new-conversation.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../content/conversation-examples.ts", import.meta.url), "utf8"),
     readFile(new URL("../components/conversation-history-drawer.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/casepilot-api.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
@@ -76,8 +78,15 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(managementApp, /<NewConversation/);
   assert.match(managementApp, /workbenchMode === "create"/);
   assert.match(managementApp, /setWorkbenchMode\("workspace"\)/);
-  assert.match(managementApp, /turn\.intent === "CASE_GENERATE"/);
-  assert.match(managementApp, /refreshedConversation\.title/);
+  assert.match(managementApp, /shouldOpenWorkspace\(turn\.intent/);
+  assert.match(managementApp, /"CASE_DELETE"/);
+  assert.match(managementApp, /"CASE_QUERY"/);
+  assert.match(managementApp, /createConversation\(\{/);
+  assert.match(managementApp, /spaceId: space\.id/);
+  assert.match(newConversation, /确认本对话维护的用例集合/);
+  assert.match(newConversation, /confirmConversationOperationCollection/);
+  assert.match(caseWorkbench, /本对话仅维护此集合/);
+  assert.match(caseWorkbench, /新建对话并打开该集合/);
   assert.match(managementApp, /<ExecutionWorkspace/);
   assert.match(managementApp, /AI 用例工作台/);
   assert.match(caseLibrary, /<CaseMindMap/);
@@ -104,6 +113,9 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(caseWorkbench, /CasePilot/);
   assert.match(caseWorkbench, /结构化测试说明/);
   assert.match(caseWorkbench, /确认并生成用例/);
+  assert.match(caseWorkbench, /正在启动生成/);
+  assert.match(caseWorkbench, /confirmPendingIntent/);
+  assert.match(caseWorkbench, /conversation-intent-confirmation/);
   assert.match(caseWorkbench, /创建新对话/);
   assert.match(caseWorkbench, /继续修改测试说明、维护当前用例/);
   assert.match(caseWorkbench, /downloadTestBrief/);
@@ -143,10 +155,20 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(caseWorkbench, /确认软删除/);
   assert.match(newConversation, /今天想测试什么/);
   assert.match(newConversation, /自动识别意图/);
-  assert.match(newConversation, /仅在识别为“生成用例”时进入用例工作区/);
-  assert.match(newConversation, /生成登录用例/);
-  assert.match(newConversation, /梳理测试范围/);
-  assert.match(newConversation, /了解 CasePilot/);
+  assert.match(newConversation, /正在识别并处理/);
+  assert.match(newConversation, /awaiting_intent/);
+  assert.match(managementApp, /confirmLandingConversationIntent/);
+  assert.match(
+    newConversation,
+    /仅在确认生成、修改、删除或查询用例时进入绑定集合工作台/,
+  );
+  assert.match(newConversation, /accept="\.pdf,\.txt,application\/pdf,text\/plain"/);
+  assert.match(caseWorkbench, /selectedTargets/);
+  assert.match(caseMindMap, /onSelectTarget/);
+  assert.match(apiClient, /conversation-operations/);
+  assert.match(conversationExamples, /生成登录用例/);
+  assert.match(conversationExamples, /梳理测试范围/);
+  assert.match(conversationExamples, /局部修改用例/);
   assert.match(newConversation, /历史对话/);
   assert.match(conversationHistory, /listConversationHistory/);
   assert.match(conversationHistory, /role="dialog"/);

@@ -14,8 +14,10 @@ import {
 import { useEffect, useRef, useState } from "react";
 
 type ConversationHistoryDrawerProps = {
+  spaceId: string;
   open: boolean;
   revision: number;
+  currentConversationId?: string;
   onClose: () => void;
   onNewConversation: () => void;
   onOpenConversation: (conversation: ConversationSummaryDto) => Promise<void>;
@@ -38,7 +40,9 @@ function formatUpdatedAt(value: string): string {
 
 export function ConversationHistoryDrawer({
   open,
+  spaceId,
   revision,
+  currentConversationId,
   onClose,
   onNewConversation,
   onOpenConversation,
@@ -70,7 +74,7 @@ export function ConversationHistoryDrawer({
     const timer = window.setTimeout(() => {
       setLoading(true);
       setError("");
-      void listConversationHistory({ query, limit: 30 })
+      void listConversationHistory({ spaceId, query, limit: 30 })
         .then((result) => {
           if (!active) return;
           setItems(result.items);
@@ -89,13 +93,14 @@ export function ConversationHistoryDrawer({
       active = false;
       window.clearTimeout(timer);
     };
-  }, [open, query, revision]);
+  }, [open, query, revision, spaceId]);
 
   const loadMore = async () => {
     if (!nextCursor || loadingMore) return;
     setLoadingMore(true);
     try {
       const result = await listConversationHistory({
+        spaceId,
         query,
         cursor: nextCursor,
         limit: 30,
@@ -111,10 +116,11 @@ export function ConversationHistoryDrawer({
     }
   };
 
-  if (!open) return null;
-
   return (
-    <div className="conversation-history-layer">
+    <div
+      className={`conversation-history-layer ${open ? "is-open" : "is-closed"}`}
+      aria-hidden={!open}
+    >
       <button
         type="button"
         className="conversation-history-backdrop"
@@ -124,7 +130,7 @@ export function ConversationHistoryDrawer({
       <aside
         className="conversation-history-drawer"
         role="dialog"
-        aria-modal="true"
+        aria-modal={open ? "true" : undefined}
         aria-label="我的历史对话"
       >
         <header>
@@ -173,6 +179,12 @@ export function ConversationHistoryDrawer({
                 <button
                   type="button"
                   key={conversation.id}
+                  className={
+                    conversation.id === currentConversationId ? "is-current" : ""
+                  }
+                  aria-current={
+                    conversation.id === currentConversationId ? "page" : undefined
+                  }
                   onClick={() => {
                     setError("");
                     void onOpenConversation(conversation)

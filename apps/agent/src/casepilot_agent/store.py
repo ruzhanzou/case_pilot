@@ -275,6 +275,26 @@ conversation_messages = Table(
     Column("metadata", JSONB),
     Column("created_at", DateTime(timezone=True)),
 )
+conversation_operations = Table(
+    "conversation_operations",
+    metadata,
+    Column("id", PGUUID(as_uuid=True), primary_key=True),
+    Column("conversation_id", PGUUID(as_uuid=True)),
+    Column("message_id", PGUUID(as_uuid=True)),
+    Column("sequence", Integer),
+    Column("intent", String),
+    Column("confidence", String),
+    Column("status", String),
+    Column("target", JSONB),
+    Column("payload", JSONB),
+    Column("result", JSONB),
+    Column("requires_confirmation", Boolean),
+    Column("related_job_id", PGUUID(as_uuid=True)),
+    Column("related_change_set_id", PGUUID(as_uuid=True)),
+    Column("error_code", String),
+    Column("completed_at", DateTime(timezone=True)),
+    Column("created_at", DateTime(timezone=True)),
+)
 conversations = Table(
     "conversations",
     metadata,
@@ -287,6 +307,7 @@ workspace_test_briefs = Table(
     metadata,
     Column("id", PGUUID(as_uuid=True), primary_key=True),
     Column("conversation_id", PGUUID(as_uuid=True)),
+    Column("source_operation_id", PGUUID(as_uuid=True)),
     Column("version", Integer),
     Column("content", JSONB),
     Column("markdown_content", Text),
@@ -376,6 +397,51 @@ class JobStore:
         connection.execute(
             update(generation_jobs).where(generation_jobs.c.id == job_id).values(**values)
         )
+        if "status" not in values:
+            return
+        job = self.get_job(connection, job_id)
+        operation_id = dict(job.get("input_payload") or {}).get(
+            "conversation_operation_id"
+        )
+        if not operation_id:
+            return
+        job_status = str(getattr(values["status"], "value", values["status"]))
+        operation_status = {
+            "queued": "queued",
+            "running": "running",
+            "awaiting_input": "awaiting_confirmation",
+            "failed": "failed",
+            "cancelled": "cancelled",
+        }.get(job_status)
+        if job_status == "completed":
+            operation_status = (
+                "awaiting_confirmation"
+                if job["operation"] in {"draft_brief", "conversation_modify"}
+                else "completed"
+            )
+        if operation_status:
+            operation_values: dict[str, Any] = {
+                "status": operation_status,
+                "related_job_id": job_id,
+            }
+            if job_status == "completed" and operation_status == "completed":
+                output_payload = dict(values.get("output_payload", {}) or {})
+                operation_values["result"] = {
+                    **output_payload,
+                    "candidate_ids": output_payload.get(
+                        "workspace_candidate_ids",
+                        output_payload.get("candidate_ids", []),
+                    ),
+                }
+                operation_values["completed_at"] = datetime.now(UTC)
+            if job_status == "failed":
+                operation_values["error_code"] = values.get("error_code")
+                operation_values["completed_at"] = datetime.now(UTC)
+            connection.execute(
+                update(conversation_operations)
+                .where(conversation_operations.c.id == UUID(str(operation_id)))
+                .values(**operation_values)
+            )
 
     def is_cancelled(self, connection: Connection, job_id: UUID) -> bool:
         status = connection.scalar(
@@ -869,6 +935,11 @@ class JobStore:
             insert(workspace_test_briefs).values(
                 id=uuid4(),
                 conversation_id=conversation_id,
+                source_operation_id=(
+                    UUID(str(job["input_payload"]["conversation_operation_id"]))
+                    if job["input_payload"].get("conversation_operation_id")
+                    else None
+                ),
                 version=version,
                 content=content,
                 markdown_content=render_test_brief_markdown(version, content),

@@ -5,22 +5,25 @@ import {
   applyCaseChangeSet,
   cancelGeneration,
   commitWorkspaceCandidates,
+  confirmConversationIntent,
   confirmTestBrief,
   downloadTestBrief,
   getCaseChangeSet,
+  getConversation,
   getOrCreateWorkspace,
   listGenerationModels,
+  resumeConversationOperation,
   sendConversationMessage,
   updateWorkspaceCandidate,
   updateWorkspaceState,
   uploadKnowledgeFiles,
-  waitForConversationJob,
   watchGeneration,
   type AgentModelId,
   type CaseChangeSetDto,
   type CaseCollectionDto,
   type ConversationDto,
   type ConversationIntent,
+  type ConversationTarget,
   type GenerationStage,
   type TestCaseDto,
   type TestCaseInput,
@@ -67,6 +70,8 @@ type CaseWorkbenchProps = {
   selectedCollection: CaseCollectionDto | null;
   cases: TestCaseDto[];
   loading: boolean;
+  conversationId?: string;
+  pendingOperationId?: string;
   onSelectCase: (caseId: string) => void;
   onCreateCase: (module?: string) => void;
   onEditCase: (testCase: TestCaseDto) => void;
@@ -76,6 +81,11 @@ type CaseWorkbenchProps = {
   ) => Promise<TestCaseDto[]>;
   onOpenLibrary: () => void;
   onNewConversation: () => void;
+  onContinueInNewConversation: (
+    operationId: string,
+    collectionId: string,
+  ) => Promise<void>;
+  onCancelOperation: (operationId: string) => Promise<void>;
   onOpenHistory: () => void;
   onDirtyChange?: (dirty: boolean) => void;
 };
@@ -87,6 +97,12 @@ const intentLabels: Record<ConversationIntent, string> = {
   CASE_QUERY: "查询用例",
   KNOWLEDGE_QA: "知识问答",
   SMALL_TALK: "CasePilot",
+  UNRESOLVED: "补充说明",
+};
+
+const intentActionLabels: Record<ConversationIntent, string> = {
+  ...intentLabels,
+  SMALL_TALK: "日常对话",
 };
 
 const phaseLabels: Record<string, string> = {
@@ -115,9 +131,21 @@ const workflowStageLabels: Record<string, string> = {
 };
 
 const terminalWorkflowStatuses = new Set(["completed", "failed", "cancelled"]);
+const terminalOperationStatuses = new Set(["completed", "skipped"]);
+
+function nextRunnableOperation(conversation: ConversationDto | null) {
+  const operations = conversation?.operation_plan?.operations ?? [];
+  return operations.find(
+    (operation) =>
+      operation.status === "queued" &&
+      operations
+        .filter((item) => item.sequence < operation.sequence)
+        .every((item) => terminalOperationStatuses.has(item.status)),
+  );
+}
 
 function clampPanelWidth(value: number): number {
-  return Math.min(520, Math.max(300, Math.round(value)));
+  return Math.min(520, Math.max(280, Math.round(value)));
 }
 
 function candidateToCase(candidate: WorkspaceCandidateDto): TestCaseDto {
@@ -165,10 +193,14 @@ export function CaseWorkbench({
   selectedCollection,
   cases,
   loading,
+  conversationId,
+  pendingOperationId,
   onSelectCase,
   onEditCase,
   onOpenLibrary,
   onNewConversation,
+  onContinueInNewConversation,
+  onCancelOperation,
   onOpenHistory,
   onDirtyChange,
 }: CaseWorkbenchProps) {
@@ -178,6 +210,9 @@ export function CaseWorkbench({
   const [models, setModels] = useState<{ id: string; label: string }[]>([]);
   const [viewMode, setViewMode] = useState<"list" | "map">("list");
   const [selectedCaseId, setSelectedCaseId] = useState("");
+  const [selectedTargets, setSelectedTargets] = useState<
+    { key: string; label: string; target: ConversationTarget }[]
+  >([]);
   const [busy, setBusy] = useState(false);
   const [currentJobId, setCurrentJobId] = useState("");
   const [progress, setProgress] = useState<GenerationStage | null>(null);
@@ -186,8 +221,8 @@ export function CaseWorkbench({
   const [notice, setNotice] = useState("");
   const [selectedBriefVersion, setSelectedBriefVersion] = useState(0);
   const [artifactOpen, setArtifactOpen] = useState(false);
-  const [chatWidth, setChatWidth] = useState(360);
-  const [inspectorWidth, setInspectorWidth] = useState(360);
+  const [chatWidth, setChatWidth] = useState(320);
+  const [inspectorWidth, setInspectorWidth] = useState(340);
   const [activeChangeSet, setActiveChangeSet] =
     useState<CaseChangeSetDto | null>(null);
   const [acceptedFields, setAcceptedFields] = useState<
@@ -200,6 +235,7 @@ export function CaseWorkbench({
   const [sourceIds, setSourceIds] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const promptSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const streamScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const watchedJobRef = useRef("");
   const {
     scrollRef: messagesScrollRef,
@@ -258,6 +294,27 @@ export function CaseWorkbench({
     artifactOpen ||
     !["candidate_review", "maintenance"].includes(phase);
 
+  const toggleTarget = useCallback(
+    (target: ConversationTarget, label: string) => {
+      const key = JSON.stringify(target);
+      setSelectedTargets((current) => {
+        const next = current.some((item) => item.key === key)
+          ? current.filter((item) => item.key !== key)
+          : [...current, { key, label, target }];
+        if (workspace) {
+          void updateWorkspaceState(workspace.id, {
+            selected_targets: next.map((item) => ({
+              label: item.label,
+              target: item.target,
+            })),
+          });
+        }
+        return next;
+      });
+    },
+    [workspace],
+  );
+
   const selectedCollectionId = selectedCollection?.id ?? "";
   const applyWorkspaceResult = useCallback((result: ConversationDto) => {
     setWorkspace(result);
@@ -277,13 +334,25 @@ export function CaseWorkbench({
       ),
     );
     setChatWidth(
-      clampPanelWidth(Number(result.context.chat_width ?? 360)),
+      clampPanelWidth(Number(result.context.chat_width ?? 320)),
     );
     setInspectorWidth(
-      clampPanelWidth(Number(result.context.inspector_width ?? 360)),
+      clampPanelWidth(Number(result.context.inspector_width ?? 340)),
     );
     const restoredCaseId = String(result.context.selected_case_id ?? "");
     setSelectedCaseId(restoredCaseId);
+    const restoredTargets = Array.isArray(result.context.selected_targets)
+      ? (result.context.selected_targets as {
+          label: string;
+          target: ConversationTarget;
+        }[])
+      : [];
+    setSelectedTargets(
+      restoredTargets.map((item) => ({
+        ...item,
+        key: JSON.stringify(item.target),
+      })),
+    );
     const activeJobId = String(result.context.active_job_id ?? "");
     setCurrentJobId(activeJobId);
     setBusy(
@@ -302,33 +371,53 @@ export function CaseWorkbench({
   }, []);
   const refreshWorkspace = useCallback(async () => {
     if (!selectedCollectionId) return null;
-    const result = await getOrCreateWorkspace(selectedCollectionId);
+    const result = conversationId
+      ? await getConversation(conversationId)
+      : await getOrCreateWorkspace(selectedCollectionId);
     applyWorkspaceResult(result);
     return result;
-  }, [applyWorkspaceResult, selectedCollectionId]);
+  }, [applyWorkspaceResult, conversationId, selectedCollectionId]);
   const waitAndRefresh = useCallback(
     async (jobId: string, conversationId = workspace?.id ?? "") => {
       if (!conversationId || watchedJobRef.current === jobId) return;
       watchedJobRef.current = jobId;
       setBusy(true);
       setCurrentJobId(jobId);
+      setProgress({ name: "queued", progress: 0 });
       try {
-        const job = await watchGeneration(jobId, (stage) => {
-          setProgress(stage);
-          setLiveStages((current) => {
-            const existingIndex = current.findIndex(
-              (item) => item.name === stage.name,
+        const job = await watchGeneration(
+          jobId,
+          (stage) => {
+            setProgress(stage);
+            setLiveStages((current) => {
+              const existingIndex = current.findIndex(
+                (item) => item.name === stage.name,
+              );
+              if (existingIndex === -1) return [...current, stage];
+              return current.map((item, index) =>
+                index === existingIndex ? stage : item,
+              );
+            });
+          },
+          (content) => {
+            setWorkspace((current) =>
+              current
+                ? {
+                    ...current,
+                    messages: current.messages.map((message) =>
+                      message.role === "assistant" &&
+                      message.related_job_id === jobId
+                        ? { ...message, content, status: "running" }
+                        : message,
+                    ),
+                  }
+                : current,
             );
-            if (existingIndex === -1) return [...current, stage];
-            return current.map((item, index) =>
-              index === existingIndex ? stage : item,
-            );
-          });
-        });
+          },
+        );
         if (job.status === "failed") {
           throw new Error(job.error_code ?? "任务处理失败，请稍后重试");
         }
-        await waitForConversationJob(conversationId, jobId);
         await refreshWorkspace();
       } finally {
         if (watchedJobRef.current === jobId) {
@@ -361,7 +450,9 @@ export function CaseWorkbench({
   useEffect(() => {
     if (!selectedCollectionId) return;
     let ignored = false;
-    void getOrCreateWorkspace(selectedCollectionId)
+    void (conversationId
+      ? getConversation(conversationId)
+      : getOrCreateWorkspace(selectedCollectionId))
       .then((result) => {
         if (ignored) return;
         applyWorkspaceResult(result);
@@ -374,7 +465,7 @@ export function CaseWorkbench({
     return () => {
       ignored = true;
     };
-  }, [applyWorkspaceResult, selectedCollectionId]);
+  }, [applyWorkspaceResult, conversationId, selectedCollectionId]);
 
   useEffect(() => {
     if (
@@ -396,11 +487,28 @@ export function CaseWorkbench({
 
   useEffect(() => {
     if (!latestMessage) return;
+    if (currentJobId) {
+      if (streamScrollTimerRef.current) return;
+      streamScrollTimerRef.current = setTimeout(() => {
+        streamScrollTimerRef.current = null;
+        void scrollToBottom({ animation: "instant", ignoreEscapes: true });
+      }, 96);
+      return;
+    }
     void scrollToBottom({
       animation: "smooth",
       ignoreEscapes: true,
     });
   }, [currentJobId, latestMessage, scrollToBottom]);
+
+  useEffect(
+    () => () => {
+      if (streamScrollTimerRef.current) {
+        clearTimeout(streamScrollTimerRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!workspace || prompt === String(workspace.context.draft_text ?? "")) {
@@ -446,18 +554,20 @@ export function CaseWorkbench({
 
   const submitMessage = async (event: FormEvent) => {
     event.preventDefault();
-    if (!workspace || !prompt.trim() || busy) return;
+    if (
+      !workspace ||
+      busy ||
+      (!pendingOperationId && !prompt.trim()) ||
+      (pendingOperationId && !selectedTargets.length && !selectedCandidate)
+    ) return;
     const content = prompt.trim();
     setPrompt("");
     setError("");
     setNotice("");
+    const structuredTargets = selectedTargets.map((item) => item.target);
     const formalTargets =
-      selectedCase && phase === "maintenance"
-        ? selectedCase.module && /当前模块|整个模块|本模块/.test(content)
-          ? cases
-              .filter((item) => item.module === selectedCase.module)
-              .map((item) => item.id)
-          : [selectedCase.id]
+      phase === "maintenance" && !structuredTargets.length && selectedCase
+        ? [selectedCase.id]
         : [];
     const candidateTargets = selectedCandidate
       ? [
@@ -472,18 +582,22 @@ export function CaseWorkbench({
         ]
       : [];
     try {
-      const turn = await sendConversationMessage(workspace.id, {
-        content,
-        modelId,
-        scope:
-          selectedCase?.module && /当前模块|整个模块|本模块/.test(content)
-            ? "module"
-            : "current",
-        targetCaseIds: formalTargets,
-        targetCandidateSnapshots: candidateTargets,
-        knowledgeSourceIds: sourceIds,
-        useSpaceKnowledge: true,
-      });
+      const turn = pendingOperationId
+        ? await resumeConversationOperation(pendingOperationId, {
+            targets: structuredTargets,
+            targetCaseIds: formalTargets,
+            targetCandidateSnapshots: candidateTargets,
+          })
+        : await sendConversationMessage(workspace.id, {
+            content,
+            modelId,
+            scope: "current",
+            targetCaseIds: formalTargets,
+            targetCandidateSnapshots: candidateTargets,
+            knowledgeSourceIds: sourceIds,
+            useSpaceKnowledge: true,
+            targets: structuredTargets,
+          });
       setWorkspace(
         await updateWorkspaceState(workspace.id, {
           draft_text: "",
@@ -492,7 +606,8 @@ export function CaseWorkbench({
       const jobId = turn.action.job_id;
       if (jobId) {
         await waitAndRefresh(jobId);
-      } else if (turn.action.change_set_id) {
+      }
+      if (turn.action.change_set_id) {
         const changeSet = await getCaseChangeSet(turn.action.change_set_id);
         setActiveChangeSet(changeSet);
         setAcceptedFields(
@@ -504,9 +619,36 @@ export function CaseWorkbench({
           ),
         );
       }
+      if (pendingOperationId) setSelectedTargets([]);
+      if (jobId && !turn.action.change_set_id) {
+        const refreshed = await refreshWorkspace();
+        const next = nextRunnableOperation(refreshed);
+        if (next) {
+          const resumed = await resumeConversationOperation(next.id);
+          if (resumed.action.job_id) await waitAndRefresh(resumed.action.job_id);
+          else await refreshWorkspace();
+        }
+      }
     } catch (caught) {
       setPrompt(content);
       setError(caught instanceof Error ? caught.message : "消息处理失败");
+    }
+  };
+
+  const confirmOperation = async (
+    operationId: string,
+    intent: ConversationIntent,
+  ) => {
+    setBusy(true);
+    setError("");
+    try {
+      const turn = await resumeConversationOperation(operationId, { intent });
+      if (turn.action.job_id) await waitAndRefresh(turn.action.job_id);
+      else await refreshWorkspace();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "意图确认失败");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -528,7 +670,11 @@ export function CaseWorkbench({
 
   const confirmBriefAndGenerate = async () => {
     if (!workspace) return;
+    setBusy(true);
+    setProgress({ name: "queued", progress: 0 });
+    setLiveStages([]);
     setError("");
+    setNotice("已提交生成请求，正在启动 CasePilot 工作流…");
     try {
       if (!activeBrief) throw new Error("请先生成结构化测试说明");
       const turn = await confirmTestBrief(
@@ -536,9 +682,75 @@ export function CaseWorkbench({
         activeBrief.version,
         modelId,
       );
-      if (turn.action.job_id) await waitAndRefresh(turn.action.job_id);
+      await refreshWorkspace();
+      if (turn.action.job_id) {
+        await waitAndRefresh(turn.action.job_id);
+      } else {
+        setBusy(false);
+        setProgress(null);
+      }
+      let refreshed = await refreshWorkspace();
+      for (let index = 0; index < 2; index += 1) {
+        const next = nextRunnableOperation(refreshed);
+        if (!next) break;
+        const resumed = await resumeConversationOperation(next.id);
+        if (resumed.action.job_id) {
+          await waitAndRefresh(resumed.action.job_id);
+        }
+        if (resumed.action.change_set_id) {
+          const changeSet = await getCaseChangeSet(resumed.action.change_set_id);
+          setActiveChangeSet(changeSet);
+          setAcceptedFields(
+            Object.fromEntries(
+              changeSet.items.map((item) => [
+                item.ref,
+                item.field_diff.map((diff) => diff.field),
+              ]),
+            ),
+          );
+          break;
+        }
+        refreshed = await refreshWorkspace();
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "测试说明确认失败");
+      setNotice("");
+      setBusy(false);
+      setProgress(null);
+      setLiveStages([]);
+    }
+  };
+
+  const confirmPendingIntent = async (
+    messageId: string,
+    intent: ConversationIntent,
+  ) => {
+    if (!workspace || busy) return;
+    setBusy(true);
+    setError("");
+    setNotice("已确认意图，正在继续处理…");
+    try {
+      const turn = await confirmConversationIntent(messageId, intent);
+      await refreshWorkspace();
+      if (turn.action.job_id) {
+        await waitAndRefresh(turn.action.job_id);
+      }
+      if (turn.action.change_set_id) {
+        const changeSet = await getCaseChangeSet(turn.action.change_set_id);
+        setActiveChangeSet(changeSet);
+        setAcceptedFields(
+          Object.fromEntries(
+            changeSet.items.map((item) => [
+              item.ref,
+              item.field_diff.map((diff) => diff.field),
+            ]),
+          ),
+        );
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "意图确认失败");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -573,8 +785,15 @@ export function CaseWorkbench({
     try {
       const committed = await commitWorkspaceCandidates(workspace.id);
       setNotice(`已纳入 ${committed.length} 条正式用例`);
-      await refreshWorkspace();
-      onOpenLibrary();
+      let refreshed = await refreshWorkspace();
+      const next = nextRunnableOperation(refreshed);
+      if (next) {
+        const resumed = await resumeConversationOperation(next.id);
+        if (resumed.action.job_id) await waitAndRefresh(resumed.action.job_id);
+        else refreshed = await refreshWorkspace();
+      } else {
+        onOpenLibrary();
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "候选纳入失败");
     } finally {
@@ -588,7 +807,13 @@ export function CaseWorkbench({
     try {
       await applyCaseChangeSet(activeChangeSet.id, acceptedFields);
       setActiveChangeSet(null);
-      await refreshWorkspace();
+      const refreshed = await refreshWorkspace();
+      const next = nextRunnableOperation(refreshed);
+      if (next) {
+        const resumed = await resumeConversationOperation(next.id);
+        if (resumed.action.job_id) await waitAndRefresh(resumed.action.job_id);
+        else await refreshWorkspace();
+      }
       setNotice("变更已应用并记录审计");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "变更应用失败");
@@ -664,9 +889,10 @@ export function CaseWorkbench({
   };
 
   const resetPanelWidth = (panel: "chat" | "inspector") => {
-    if (panel === "chat") setChatWidth(360);
-    else setInspectorWidth(360);
-    persistPanelWidth(panel, 360);
+    const defaultWidth = panel === "chat" ? 320 : 340;
+    if (panel === "chat") setChatWidth(defaultWidth);
+    else setInspectorWidth(defaultWidth);
+    persistPanelWidth(panel, defaultWidth);
   };
 
   const selectBriefVersion = (version: number) => {
@@ -715,6 +941,7 @@ export function CaseWorkbench({
   return (
     <section
       className="principle-workbench"
+      aria-busy={busy}
       data-inspector-collapsed={inspectorCollapsed}
       style={
         {
@@ -727,7 +954,7 @@ export function CaseWorkbench({
         <div className="principle-context-card">
           <span>当前工作区</span>
           <strong>{selectedCollection.name}</strong>
-          <small>{spaceName} · 自动保存</small>
+          <small>{spaceName} · 自动保存 · 本对话仅维护此集合</small>
         </div>
 
         <div
@@ -777,7 +1004,99 @@ export function CaseWorkbench({
                     message.metadata,
                   )}
                 </span>
-                {message.content && <p>{message.content}</p>}
+                {message.content && (
+                  <Streamdown
+                    animated={{
+                      animation: "fadeIn",
+                      duration: 90,
+                      easing: "ease-out",
+                      sep: "char",
+                      stagger: 8,
+                    }}
+                    caret="block"
+                    isAnimating={isLiveWorkflow}
+                  >
+                    {message.content}
+                  </Streamdown>
+                )}
+                {message.status === "awaiting_intent" && (
+                  <div className="conversation-intent-confirmation">
+                    <span>请选择这句话希望 CasePilot 执行的操作：</span>
+                    <div>
+                      {[
+                        message.intent,
+                        ...(
+                          [
+                            "CASE_GENERATE",
+                            "CASE_MODIFY",
+                            "KNOWLEDGE_QA",
+                            "SMALL_TALK",
+                          ] as ConversationIntent[]
+                        ).filter((intent) => intent !== message.intent),
+                      ]
+                        .filter(
+                          (intent): intent is ConversationIntent =>
+                            Boolean(intent),
+                        )
+                        .map((intent) => (
+                          <button
+                            type="button"
+                            key={intent}
+                            disabled={busy}
+                            onClick={() =>
+                              void confirmPendingIntent(message.id, intent)
+                            }
+                          >
+                            {intentActionLabels[intent]}
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                )}
+                {message.metadata.action === "new_conversation_required" && (
+                  <div className="conversation-cross-collection">
+                    <span>当前对话已锁定此集合，不会执行跨集合变更。</span>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        const collectionId = String(
+                          message.metadata.requested_collection_id ?? "",
+                        );
+                        const operationId = String(
+                          message.metadata.operation_id ?? "",
+                        );
+                        if (operationId && collectionId) {
+                          void onContinueInNewConversation(
+                            operationId,
+                            collectionId,
+                          );
+                        }
+                      }}
+                    >
+                      新建对话并打开该集合
+                    </button>
+                    <button
+                      type="button"
+                      className="is-secondary"
+                      disabled={busy}
+                      onClick={() => {
+                        const operationId = String(
+                          message.metadata.operation_id ?? "",
+                        );
+                        if (operationId) {
+                          void onCancelOperation(operationId).then(async () => {
+                            if (workspace) {
+                              setWorkspace(await getConversation(workspace.id));
+                            }
+                          });
+                        }
+                      }}
+                    >
+                      取消本次操作
+                    </button>
+                  </div>
+                )}
                 {(workflow || isLiveWorkflow) && (
                   <div
                     className="principle-workflow"
@@ -885,6 +1204,53 @@ export function CaseWorkbench({
         )}
 
         <form className="principle-composer" onSubmit={submitMessage}>
+          {workspace?.operation_plan &&
+            workspace.operation_plan.operations.length > 1 && (
+              <ol className="conversation-operation-plan" aria-label="多意图执行进度">
+                {workspace.operation_plan.operations.map((operation) => (
+                  <li key={operation.id} data-status={operation.status}>
+                    <span>{operation.sequence + 1}</span>
+                    <strong>{intentActionLabels[operation.intent]}</strong>
+                    <small>{operation.status}</small>
+                    {operation.status === "awaiting_intent" && (
+                      <div className="conversation-operation-confirmation">
+                        {(
+                          [
+                            "CASE_GENERATE",
+                            "CASE_MODIFY",
+                            "KNOWLEDGE_QA",
+                            "SMALL_TALK",
+                          ] as ConversationIntent[]
+                        ).map((intent) => (
+                          <button
+                            type="button"
+                            key={intent}
+                            disabled={busy}
+                            onClick={() => void confirmOperation(operation.id, intent)}
+                          >
+                            {intentActionLabels[intent]}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            )}
+          {selectedTargets.length > 0 && (
+            <div className="principle-targets" aria-label="已选修改目标">
+              {selectedTargets.map((item) => (
+                <button
+                  type="button"
+                  key={item.key}
+                  onClick={() => toggleTarget(item.target, item.label)}
+                  title="移除此目标"
+                >
+                  {item.label} ×
+                </button>
+              ))}
+            </div>
+          )}
           {attachmentLabels.length > 0 && (
             <div className="principle-attachments">
               {attachmentLabels.map((name) => (
@@ -895,7 +1261,11 @@ export function CaseWorkbench({
           <textarea
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
-            placeholder="继续修改测试说明、维护当前用例，或询问需求内容…"
+            placeholder={
+              pendingOperationId
+                ? "选择上方用例或脑图节点后，继续执行修改"
+                : "继续修改测试说明、维护当前用例，或询问需求内容…"
+            }
             rows={4}
             disabled={busy}
           />
@@ -940,7 +1310,7 @@ export function CaseWorkbench({
                 </option>
               ))}
             </select>
-            {busy ? (
+            {busy && currentJobId ? (
               <button
                 type="button"
                 className="principle-stop"
@@ -948,9 +1318,21 @@ export function CaseWorkbench({
               >
                 <Square size={16} /> 停止生成
               </button>
+            ) : busy ? (
+              <button type="button" disabled>
+                <LoaderCircle className="auth-spinner" size={16} /> 正在处理
+              </button>
             ) : (
-              <button type="submit" disabled={!prompt.trim() || uploading}>
-                <Send size={16} /> 发送
+              <button
+                type="submit"
+                disabled={
+                  uploading ||
+                  (pendingOperationId
+                    ? !selectedTargets.length && !selectedCandidate
+                    : !prompt.trim())
+                }
+              >
+                <Send size={16} /> {pendingOperationId ? "继续执行修改" : "发送"}
               </button>
             )}
           </div>
@@ -962,7 +1344,7 @@ export function CaseWorkbench({
         role="separator"
         aria-label="调整对话区域宽度"
         aria-orientation="vertical"
-        aria-valuemin={300}
+        aria-valuemin={280}
         aria-valuemax={520}
         aria-valuenow={chatWidth}
         tabIndex={0}
@@ -981,7 +1363,9 @@ export function CaseWorkbench({
           <div>
             <small>用例集合 / 持续工作区</small>
             <h1>{selectedCollection.name}</h1>
-            <p>{phaseLabels[phase] ?? "工作区已恢复"}</p>
+            <p>
+              {phaseLabels[phase] ?? "工作区已恢复"} · 本对话仅维护此集合
+            </p>
           </div>
           <div className="principle-canvas-actions">
             <button type="button" onClick={onOpenHistory}>
@@ -1082,8 +1466,12 @@ export function CaseWorkbench({
                     onClick={() => void confirmBriefAndGenerate()}
                     disabled={busy || blockingQuestions.length > 0}
                   >
-                    <Check size={16} />
-                    确认并生成用例
+                    {busy ? (
+                      <LoaderCircle className="auth-spinner" size={16} />
+                    ) : (
+                      <Check size={16} />
+                    )}
+                    {busy ? "正在启动生成…" : "确认并生成用例"}
                   </button>
                 )}
             </header>
@@ -1170,6 +1558,7 @@ export function CaseWorkbench({
                   if (phase === "maintenance") onEditCase(testCase);
                   else setSelectedCaseId(testCase.id);
                 }}
+                onSelectTarget={toggleTarget}
               />
             ) : (
               <div className="principle-case-list">
@@ -1226,6 +1615,25 @@ export function CaseWorkbench({
                           纳入
                         </label>
                       )}
+                      {!candidate && phase === "maintenance" && (
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={selectedTargets.some(
+                              (item) =>
+                                item.target.kind === "case" &&
+                                item.target.case_ids?.includes(testCase.id),
+                            )}
+                            onChange={() =>
+                              toggleTarget(
+                                { kind: "case", case_ids: [testCase.id] },
+                                testCase.title,
+                              )
+                            }
+                          />
+                          选择
+                        </label>
+                      )}
                     </div>
                   );
                 })}
@@ -1258,7 +1666,7 @@ export function CaseWorkbench({
           role="separator"
           aria-label="调整详情区域宽度"
           aria-orientation="vertical"
-          aria-valuemin={300}
+          aria-valuemin={280}
           aria-valuemax={520}
           aria-valuenow={inspectorWidth}
           tabIndex={0}

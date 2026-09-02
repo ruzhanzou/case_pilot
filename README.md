@@ -442,6 +442,8 @@ CASEPILOT_EMBEDDING_DIMENSIONS=2048
 CASEPILOT_EMBEDDING_TIMEOUT_SECONDS=60
 CASEPILOT_EMBEDDING_FALLBACK_ENABLED=true
 CASEPILOT_AGENT_TIMEOUT_SECONDS=120
+# 豆包等非 OpenAI Provider 默认关闭 OpenAI tracing。
+CASEPILOT_AGENT_TRACING_ENABLED=false
 ```
 
 模型变量的作用：
@@ -453,6 +455,7 @@ CASEPILOT_AGENT_TIMEOUT_SECONDS=120
 | `CASEPILOT_AGENT_PRO_MODEL` | 兼容旧任务中的 `pro`、`test-design-pro` 模型别名 |
 | `CASEPILOT_AGENT_LOCAL_MODEL` | 兼容旧任务中的 `local` 模型别名 |
 | `CASEPILOT_AGENT_PROVIDER_LABEL` | 工作台中显示的 Provider 名称 |
+| `CASEPILOT_AGENT_TRACING_ENABLED` | 是否开启 Agents SDK tracing；非 OpenAI Provider 默认关闭 |
 | `CASEPILOT_EMBEDDING_MODEL` | 知识库索引和语义检索使用的向量模型 |
 | `CASEPILOT_EMBEDDING_DIMENSIONS` | 数据库向量维度；`doubao-embedding-vision` 必须配置为 `2048` |
 
@@ -460,6 +463,10 @@ CASEPILOT_AGENT_TIMEOUT_SECONDS=120
 `GET /api/v1/generation-models` 动态加载模型，无需重新构建 Web。
 使用 Docker Compose 时，API、Agent 和清理服务会自动读取 `.env.local`，
 启动阶段也会自动执行 2048 维数据库迁移。
+
+`openai_compatible` 仍使用上述 CasePilot 豆包/方舟 Base URL、密钥和模型名，
+但 Chat 编排由 OpenAI Agents SDK 的 `OpenAIChatCompletionsModel` 执行；会话历史
+继续以 CasePilot 数据库为唯一上下文源，不启用 SDK Session 的重复持久化。
 
 Docker Compose 用户修改环境变量后，应重新创建相关容器；只执行
 `docker compose restart` 不会应用新的环境变量：

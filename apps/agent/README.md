@@ -47,4 +47,6 @@ pnpm dev:agent
 
 默认使用 `mock` Provider。使用 OpenAI 兼容服务时设置
 `CASEPILOT_AGENT_PROVIDER=openai_compatible`，并配置 Base URL、API Key 和模型名。
+该模式通过 OpenAI Agents SDK 的 Chat Completions 适配器调用现有豆包/方舟服务；
+默认设置 `CASEPILOT_AGENT_TRACING_ENABLED=false`。
 模型密钥仅配置在 Agent 服务。

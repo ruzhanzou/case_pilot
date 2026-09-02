@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from copy import deepcopy
 from hashlib import sha256
 from math import sqrt
@@ -323,6 +324,26 @@ class MockProvider:
             latency_ms=1,
             token_usage={"prompt_tokens": 0, "completion_tokens": 0},
         )
+
+    def complete_text_stream(
+        self,
+        *,
+        stage: str,
+        instruction: str,
+        payload: dict[str, Any],
+        model_id: str,
+        on_delta: Callable[[str], None],
+    ) -> tuple[str, UsageMetadata]:
+        result, usage = self.complete(
+            stage=stage,
+            instruction=instruction,
+            payload=payload,
+            result_type=KnowledgeAnswer,
+            model_id=model_id,
+        )
+        for start in range(0, len(result.answer), 12):
+            on_delta(result.answer[start : start + 12])
+        return result.answer, usage
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         vectors: list[list[float]] = []

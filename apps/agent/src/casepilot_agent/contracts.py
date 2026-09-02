@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from enum import StrEnum
 from typing import Any, Protocol, TypeVar
 
@@ -229,3 +230,13 @@ class AgentProvider(Protocol):
         result_type: type[StructuredResultT],
         model_id: str,
     ) -> tuple[StructuredResultT, UsageMetadata]: ...
+
+    def complete_text_stream(
+        self,
+        *,
+        stage: str,
+        instruction: str,
+        payload: dict[str, Any],
+        model_id: str,
+        on_delta: Callable[[str], None],
+    ) -> tuple[str, UsageMetadata]: ...

@@ -18,6 +18,7 @@ from casepilot_agent.pipeline import (
     validate_generation,
 )
 from casepilot_agent.providers.mock import MockProvider
+from casepilot_agent.tasks import KNOWLEDGE_ANSWER_INSTRUCTION
 
 
 def executor(provider: MockProvider, stages: list[str] | None = None):
@@ -33,6 +34,15 @@ def executor(provider: MockProvider, stages: list[str] | None = None):
         )[0]
 
     return execute
+
+
+def test_knowledge_answer_instruction_allows_general_concept_answers() -> None:
+    assert "即使没有空间资料证据也必须直接基于通用知识回答" in (
+        KNOWLEDGE_ANSWER_INSTRUCTION
+    )
+    assert "只有问题涉及当前产品、组织流程或内部规则" in (
+        KNOWLEDGE_ANSWER_INSTRUCTION
+    )
 
 
 def test_login_generation_has_traceable_objects_and_real_stage_order() -> None:

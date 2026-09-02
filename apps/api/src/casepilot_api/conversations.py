@@ -2,18 +2,19 @@ import base64
 import json
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
 from celery import Celery
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse
 from redis import Redis
 from sqlalchemy import func, or_, select, update
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from casepilot_api.agent_router import needs_intent_confirmation, plan_intents
 from casepilot_api.auth import CurrentAccount, require_space_membership
 from casepilot_api.case_management import (
     case_to_view,
@@ -24,6 +25,7 @@ from casepilot_api.case_management import (
 )
 from casepilot_api.config import get_settings
 from casepilot_api.database import get_db_session
+from casepilot_api.knowledge import _store_uploads
 from casepilot_api.models import (
     CandidateRevision,
     CaseChangeSet,
@@ -31,6 +33,7 @@ from casepilot_api.models import (
     CollectionCaseMembership,
     Conversation,
     ConversationMessage,
+    ConversationOperation,
     GenerationJob,
     GenerationJobStage,
     TestCase,
@@ -42,17 +45,26 @@ from casepilot_api.schemas import (
     CaseChangeSetApplyView,
     CaseChangeSetView,
     ChangeSetApplyRequest,
+    ConversationBindingUpdate,
     ConversationCreate,
     ConversationHistoryPage,
     ConversationMessageCreate,
     ConversationMessageView,
+    ConversationOperationCollectionConfirmRequest,
+    ConversationOperationContinueRequest,
+    ConversationOperationPlanView,
+    ConversationOperationResumeRequest,
+    ConversationOperationView,
     ConversationSummaryView,
+    ConversationTarget,
+    ConversationTargetSnapshot,
     ConversationTurnView,
     ConversationView,
     ConversationWorkflowRunView,
     ConversationWorkflowStageView,
     GenerationAnswersRequest,
     IntentConfirmationRequest,
+    KnowledgeUploadView,
     TestBriefConfirmRequest,
     TestBriefContent,
     TestBriefCreate,
@@ -107,7 +119,9 @@ INTENTS = {
     "CASE_QUERY",
     "KNOWLEDGE_QA",
     "SMALL_TALK",
+    "UNRESOLVED",
 }
+ASSET_INTENTS = {"CASE_GENERATE", "CASE_MODIFY", "CASE_DELETE", "CASE_QUERY"}
 CHANGE_FIELDS = {
     "title",
     "module",
@@ -141,30 +155,102 @@ MODIFY_TERMS = (
 MODIFY_OBJECT_TERMS = ("当前用例", "这条用例", "步骤", "预期结果", "前置条件", "优先级")
 DELETE_TERMS = ("删除用例", "删除当前用例", "移除用例", "作废用例")
 QUERY_TERMS = ("查询用例", "查找用例", "列出用例", "搜索用例", "有哪些用例")
+NEGATED_ASSET_DELETE = re.compile(
+    r"(?:不要|无需|不用|别|禁止|先别|暂不|暂时不要).{0,16}(?:删除|移除|作废)"
+)
+EXPLICIT_ASSET_DELETE = re.compile(
+    r"(?:删除|移除|作废).{0,24}(?:用例|场景)|"
+    r"(?:用例|场景).{0,24}(?:删除|移除|作废)"
+)
+EXPLICIT_ASSET_QUERY = re.compile(
+    r"(?:查询|查找|列出|搜索|筛选|检索).{0,40}(?:用例|场景)|"
+    r"(?:用例|场景).{0,24}(?:有哪些|列表|清单)"
+)
+EXPLICIT_ASSET_MODIFY = re.compile(
+    r"(?:修改|改写|调整|替换|优化|完善|改得|改成|改为).{0,40}"
+    r"(?:用例|场景|步骤|预期结果|前置条件|优先级)|"
+    r"(?:用例|场景|步骤|预期结果|前置条件|优先级).{0,40}"
+    r"(?:修改|改写|调整|替换|优化|完善|改得|改成|改为)"
+)
 SMALL_TALK_TERMS = (
     "你好",
     "您好",
     "嗨",
+    "早上好",
+    "下午好",
+    "晚上好",
+    "晚安",
     "hello",
     "hi",
     "在吗",
     "谢谢",
+    "辛苦了",
+    "再见",
+    "好的",
+    "收到",
+    "明白了",
     "你是谁",
     "叫什么",
 )
+CAPABILITY_TERMS = (
+    "能做什么",
+    "可以做什么",
+    "能帮我做什么",
+    "可以帮我做什么",
+    "能帮我完成哪些",
+    "可以帮我完成哪些",
+    "支持什么",
+    "支持哪些工作",
+    "支持哪些功能",
+    "有哪些能力",
+    "有什么能力",
+    "会什么",
+    "擅长什么",
+    "主要做什么",
+)
 QA_TERMS = (
+    "什么是",
     "是什么",
     "为什么",
+    "怎么",
+    "如何",
     "如何理解",
+    "区别",
+    "介绍一下",
+    "讲讲",
+    "说明一下",
+    "最佳实践",
+    "应该",
+    "能否",
+    "是否",
     "是否提到",
     "有没有提到",
     "覆盖情况",
     "解释",
     "多少",
     "哪些",
+    "哪个",
+    "哪里",
+    "何时",
     "吗",
     "？",
     "?",
+)
+DOMAIN_QA_TERMS = (
+    "测试",
+    "用例",
+    "质量",
+    "需求",
+    "缺陷",
+    "接口",
+    "性能",
+    "安全",
+    "自动化",
+    "验收",
+    "冒烟",
+    "回归",
+    "边界值",
+    "等价类",
 )
 TITLE_LIMIT = 32
 AGENT_MEMORY_MESSAGE_LIMIT = 100
@@ -302,21 +388,50 @@ def classify_intent(
 ) -> tuple[str, float]:
     normalized = " ".join(content.strip().split())
     compact = normalized.casefold().strip("。！？!?，, ")
-    if compact in SMALL_TALK_TERMS or any(
-        term in compact for term in ("你是谁", "叫什么名字")
+    asks_about_capabilities = (
+        "casepilot" in compact or "你" in compact
+    ) and any(term in compact for term in CAPABILITY_TERMS)
+    if (
+        compact in SMALL_TALK_TERMS
+        or any(
+            term in compact
+            for term in ("你是谁", "叫什么名字", "谢谢", "辛苦了", "再见")
+        )
+        or asks_about_capabilities
     ):
         return "SMALL_TALK", 0.99
-    if any(term in normalized for term in DELETE_TERMS):
+    question_like = any(term in normalized for term in QA_TERMS)
+    question_like = question_like or any(
+        term in normalized for term in ("什么", "为何", "含义", "指什么")
+    )
+    generation_request = any(
+        term in normalized
+        for term in ("帮我", "请为", "请生成", "给我生成", "替我")
+    )
+    if NEGATED_ASSET_DELETE.search(normalized):
+        return "KNOWLEDGE_QA", 0.96
+    if any(term in normalized for term in DELETE_TERMS) or EXPLICIT_ASSET_DELETE.search(
+        normalized
+    ):
+        explicit_delete_request = any(
+            term in normalized
+            for term in ("请删除", "帮我删除", "我要删除", "立即删除", "现在删除")
+        )
+        if question_like and not explicit_delete_request:
+            return "KNOWLEDGE_QA", 0.94
         return "CASE_DELETE", 0.98
-    if any(term in normalized for term in QUERY_TERMS):
+    if any(term in normalized for term in QUERY_TERMS) or EXPLICIT_ASSET_QUERY.search(
+        normalized
+    ):
         return "CASE_QUERY", 0.96
     if phase == "brief_review":
-        if (
-            any(term in normalized for term in QA_TERMS)
-            and normalized.rstrip().endswith(("?", "？"))
-        ):
+        if any(term in normalized for term in ("补充", "增加", "覆盖", "修改", "调整")):
+            return "CASE_GENERATE", 0.97
+        if question_like:
             return "KNOWLEDGE_QA", 0.94
-        return "CASE_GENERATE", 0.97
+        if re.fullmatch(r"(?:继续|照这个|按这个|改一下)[吧。！!]?", normalized):
+            return "UNRESOLVED", 0.55
+        return "KNOWLEDGE_QA", 0.82
     if "测试说明" in normalized and any(
         term in normalized for term in ("修改", "调整", "补充", "增加", "删除")
     ):
@@ -328,8 +443,12 @@ def classify_intent(
             normalized,
         )
     )
+    if question_like and not generation_request:
+        return "KNOWLEDGE_QA", 0.94
     if explicitly_generates_cases and not has_targets:
         return "CASE_GENERATE", 0.98
+    if EXPLICIT_ASSET_MODIFY.search(normalized):
+        return "CASE_MODIFY", 0.96 if has_targets else 0.91
     generate_score = sum(term in normalized for term in GENERATE_TERMS)
     modify_score = sum(term in normalized for term in MODIFY_TERMS)
     qa_score = sum(term in normalized for term in QA_TERMS)
@@ -353,11 +472,13 @@ def classify_intent(
         return "CASE_MODIFY", 0.96 if modify_score >= 2 else 0.88
     if generate_score:
         return "CASE_GENERATE", 0.96 if generate_score >= 2 else 0.88
-    if qa_score:
-        return "KNOWLEDGE_QA", 0.94
     if has_targets and any(term in normalized for term in ("优化", "完善", "调整")):
         return "CASE_MODIFY", 0.68
-    return "SMALL_TALK", 0.9
+    if qa_score or any(term in normalized for term in DOMAIN_QA_TERMS):
+        return "KNOWLEDGE_QA", 0.88 if qa_score else 0.84
+    if any(term in normalized for term in ("改一下", "调整一下", "处理一下", "弄一下")):
+        return "UNRESOLVED", 0.55
+    return "KNOWLEDGE_QA", 0.82
 
 
 def _looks_like_brief_confirmation(content: str) -> bool:
@@ -436,6 +557,87 @@ def _message_view(message: ConversationMessage) -> ConversationMessageView:
     )
 
 
+def _operation_view(operation: ConversationOperation) -> ConversationOperationView:
+    return ConversationOperationView(
+        id=operation.id,
+        sequence=operation.sequence,
+        intent=operation.intent,
+        confidence=operation.confidence,
+        status=operation.status,
+        target=dict(operation.target),
+        payload=dict(operation.payload),
+        result=dict(operation.result),
+        requires_confirmation=operation.requires_confirmation,
+        related_job_id=operation.related_job_id,
+        related_change_set_id=operation.related_change_set_id,
+        error_code=operation.error_code,
+        created_at=operation.created_at,
+    )
+
+
+def _operation_plan_view(
+    operations: list[ConversationOperation],
+) -> ConversationOperationPlanView | None:
+    if not operations:
+        return None
+    current = next(
+        (
+            item
+            for item in operations
+            if item.status
+            not in {"completed", "failed", "cancelled", "skipped"}
+        ),
+        None,
+    )
+    status = (
+        "failed"
+        if any(item.status == "failed" for item in operations)
+        else "completed"
+        if all(item.status in {"completed", "skipped"} for item in operations)
+        else "paused"
+        if current and current.status.startswith("awaiting_")
+        else "running"
+    )
+    return ConversationOperationPlanView(
+        status=status,
+        source_message_id=operations[0].message_id,
+        current_operation_id=current.id if current else None,
+        operations=[_operation_view(item) for item in operations],
+    )
+
+
+def _operation_runtime_status(
+    operation: ConversationOperation,
+    assistant: ConversationMessage,
+    action: dict[str, Any],
+) -> None:
+    if assistant.status == "completed" and not action.get("job_id"):
+        operation.status = "completed"
+        operation.completed_at = datetime.now(UTC)
+    elif assistant.status == "awaiting_confirmation":
+        operation.status = "awaiting_confirmation"
+    elif assistant.status.startswith("awaiting_"):
+        operation.status = (
+            "awaiting_intent"
+            if operation.intent == "UNRESOLVED"
+            else "awaiting_collection"
+            if assistant.status == "awaiting_collection"
+            else "awaiting_target"
+        )
+    else:
+        operation.status = "running"
+    if assistant.related_job_id:
+        operation.related_job_id = assistant.related_job_id
+    if action.get("change_set_id"):
+        operation.related_change_set_id = UUID(str(action["change_set_id"]))
+    if action.get("type") == "new_conversation_required":
+        operation.result = {
+            **dict(operation.result),
+            "requested_collection_id": action["requested_collection_id"],
+            "draft_text": action.get("draft_text", ""),
+        }
+
+
 def _brief_view(
     brief: WorkspaceTestBrief,
     resolved_test_object: str = "",
@@ -452,6 +654,7 @@ def _brief_view(
     normalized_content = content.model_dump(mode="json")
     return WorkspaceTestBriefView(
         id=brief.id,
+        source_operation_id=brief.source_operation_id,
         version=brief.version,
         content=content,
         markdown_content=(
@@ -504,6 +707,36 @@ def _conversation_view(db: Session, conversation: Conversation) -> ConversationV
             .order_by(WorkspaceCandidate.position, WorkspaceCandidate.created_at)
         )
     )
+    operations = list(
+        db.scalars(
+            select(ConversationOperation)
+            .where(ConversationOperation.conversation_id == conversation.id)
+            .order_by(
+                ConversationOperation.created_at,
+                ConversationOperation.message_id,
+                ConversationOperation.sequence,
+            )
+        )
+    )
+    if operations:
+        active_operation = next(
+            (
+                item
+                for item in operations
+                if item.status not in {"completed", "failed", "cancelled", "skipped"}
+            ),
+            None,
+        )
+        latest_operation_message_id = (
+            active_operation.message_id
+            if active_operation is not None
+            else operations[-1].message_id
+        )
+        operations = [
+            item
+            for item in operations
+            if item.message_id == latest_operation_message_id
+        ]
     message_by_job_id = {
         message.related_job_id: message
         for message in messages
@@ -577,6 +810,7 @@ def _conversation_view(db: Session, conversation: Conversation) -> ConversationV
         ],
         candidates=[_candidate_view(candidate) for candidate in candidates],
         workflow_runs=workflow_runs,
+        operation_plan=_operation_plan_view(operations),
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
     )
@@ -658,6 +892,119 @@ def _agent_conversation_memory(
     return memory
 
 
+def _collection_candidates(
+    db: Session,
+    conversation: Conversation,
+    content: str,
+) -> tuple[list[dict[str, str]], UUID | None]:
+    collections = list(
+        db.scalars(
+            select(CaseCollection)
+            .where(
+                CaseCollection.space_id == conversation.space_id,
+                CaseCollection.deleted_at.is_(None),
+            )
+            .order_by(CaseCollection.created_at.desc(), CaseCollection.name)
+            .limit(100)
+        )
+    )
+    normalized = "".join(content.casefold().split())
+    candidates = [
+        {"id": str(item.id), "name": item.name}
+        for item in collections
+    ]
+    matches = [
+        item.id
+        for item in collections
+        if len("".join(item.name.casefold().split())) >= 2
+        and "".join(item.name.casefold().split()) in normalized
+    ]
+    return candidates, matches[0] if len(matches) == 1 else None
+
+
+def _collection_gate(
+    db: Session,
+    conversation: Conversation,
+    payload: ConversationMessageCreate,
+    intent: str,
+    confidence: float,
+    operation_id: UUID | None,
+) -> tuple[ConversationMessage, dict[str, Any], str | None] | None:
+    if intent not in ASSET_INTENTS:
+        return None
+    candidates, mentioned_collection_id = _collection_candidates(
+        db,
+        conversation,
+        payload.content,
+    )
+    if conversation.collection_id is None:
+        assistant = _new_assistant_message(
+            conversation.id,
+            content="请先确认本次对话要维护的用例集合。确认后，该对话将只维护这一集合。",
+            intent=intent,
+            confidence=confidence,
+            status="awaiting_collection",
+            target_case_ids=[],
+            metadata={
+                "collection_candidates": candidates,
+                "suggested_collection_id": (
+                    str(mentioned_collection_id) if mentioned_collection_id else None
+                ),
+                "allow_create_collection": intent == "CASE_GENERATE",
+                "operation_id": str(operation_id) if operation_id else None,
+            },
+        )
+        db.add(assistant)
+        db.flush()
+        return (
+            assistant,
+            {
+                "type": "collection_confirmation",
+                "suggested_collection_id": (
+                    str(mentioned_collection_id) if mentioned_collection_id else None
+                ),
+                "allow_create_collection": intent == "CASE_GENERATE",
+            },
+            None,
+        )
+    if mentioned_collection_id and mentioned_collection_id != conversation.collection_id:
+        requested = next(
+            item for item in candidates if item["id"] == str(mentioned_collection_id)
+        )
+        current = db.get(CaseCollection, conversation.collection_id)
+        assistant = _new_assistant_message(
+            conversation.id,
+            content=(
+                f"当前对话已绑定“{current.name if current else '当前集合'}”，"
+                f"不能切换到“{requested['name']}”。请新建对话后继续。"
+            ),
+            intent=intent,
+            confidence=confidence,
+            status="awaiting_confirmation",
+            target_case_ids=[],
+            metadata={
+                "action": "new_conversation_required",
+                "current_collection_id": str(conversation.collection_id),
+                "requested_collection_id": requested["id"],
+                "requested_collection_name": requested["name"],
+                "draft_text": payload.content.strip(),
+                "operation_id": str(operation_id) if operation_id else None,
+            },
+        )
+        db.add(assistant)
+        db.flush()
+        return (
+            assistant,
+            {
+                "type": "new_conversation_required",
+                "requested_collection_id": requested["id"],
+                "draft_text": payload.content.strip(),
+            },
+            None,
+        )
+    return None
+
+
 def _start_action(
     db: Session,
     account: Any,
@@ -666,7 +1013,30 @@ def _start_action(
     payload: ConversationMessageCreate,
     intent: str,
     confidence: float,
+    operation_id: UUID | None = None,
 ) -> tuple[ConversationMessage, dict[str, Any], str | None]:
+    collection_gate = _collection_gate(
+        db,
+        conversation,
+        payload,
+        intent,
+        confidence,
+        operation_id,
+    )
+    if collection_gate is not None:
+        return collection_gate
+    if intent == "UNRESOLVED":
+        assistant = _new_assistant_message(
+            conversation.id,
+            content="我还不能可靠判断这句话要执行什么操作，请补充具体对象和期望动作。",
+            intent=intent,
+            confidence=confidence,
+            status="awaiting_clarification",
+            target_case_ids=[],
+        )
+        db.add(assistant)
+        db.flush()
+        return assistant, {"type": "clarification"}, None
     target_ids = [str(item) for item in payload.target_case_ids]
     case_context: list[dict[str, Any]] = [
         {
@@ -693,29 +1063,6 @@ def _start_action(
                 "snapshot": case_to_view(db, test_case).model_dump(mode="json"),
             }
         )
-
-    if intent == "SMALL_TALK":
-        normalized = payload.content.casefold()
-        content = (
-            "我是 CasePilot，负责测试用例的生成、查询、模块或单用例修改与审阅式删除。"
-            if any(term in normalized for term in ("谁", "名字", "叫什么"))
-            else (
-                "你好，我是 CasePilot。你可以告诉我需要覆盖的业务需求，"
-                "我会先整理结构化测试说明供你确认。"
-            )
-        )
-        assistant = _new_assistant_message(
-            conversation.id,
-            content=content,
-            intent=intent,
-            confidence=confidence,
-            status="completed",
-            target_case_ids=[],
-            metadata={"retrieval_performed": False},
-        )
-        db.add(assistant)
-        db.flush()
-        return assistant, {"type": "small_talk", "retrieval_performed": False}, None
 
     if intent == "CASE_QUERY":
         cases = list(
@@ -839,6 +1186,7 @@ def _start_action(
         "user_message_id": str(user_message.id),
         "case_context": case_context,
         "conversation_memory": conversation_memory,
+        "conversation_operation_id": str(operation_id) if operation_id else None,
     }
 
     if intent == "CASE_MODIFY" and not (
@@ -891,6 +1239,7 @@ def _start_action(
             "CASE_GENERATE": "draft_brief",
             "CASE_MODIFY": "conversation_modify",
             "KNOWLEDGE_QA": "knowledge_qa",
+            "SMALL_TALK": "knowledge_qa",
         }[intent],
         collection_id=conversation.collection_id,
         status="queued",
@@ -924,7 +1273,7 @@ def _start_action(
         )
         task_name = "casepilot.agent.draft_brief"
         action: dict[str, Any] = {"type": "test_brief", "job_id": str(job.id)}
-    elif intent == "KNOWLEDGE_QA":
+    elif intent in {"KNOWLEDGE_QA", "SMALL_TALK"}:
         assistant = _new_assistant_message(
             conversation.id,
             content="",
@@ -935,7 +1284,10 @@ def _start_action(
             metadata={"hidden_progress": True},
         )
         task_name = "casepilot.agent.answer_question"
-        action = {"type": "knowledge_qa", "job_id": str(job.id)}
+        action = {
+            "type": "small_talk" if intent == "SMALL_TALK" else "knowledge_qa",
+            "job_id": str(job.id),
+        }
     else:
         formal_targets: list[dict[str, str]] = []
         for case_id in payload.target_case_ids:
@@ -1006,7 +1358,7 @@ def _start_action(
         **dict(job.input_payload),
         "assistant_message_id": str(assistant.id),
     }
-    conversation.context = {
+    context_update = {
         **dict(conversation.context),
         "active_job_id": str(job.id),
         "last_intent": intent,
@@ -1014,6 +1366,11 @@ def _start_action(
             conversation.context
         ).get("phase", "maintenance"),
     }
+    if intent in {"CASE_GENERATE", "CASE_MODIFY", "CASE_DELETE"}:
+        context_update["active_operation_id"] = (
+            str(operation_id) if operation_id else None
+        )
+    conversation.context = context_update
     conversation.updated_at = datetime.now(UTC)
     db.flush()
     return assistant, action, task_name
@@ -1025,18 +1382,20 @@ def create_conversation(
     account: CurrentAccount,
     db: DbSession,
 ) -> ConversationView:
-    collection = ensure_collection(db, account, payload.collection_id)
-    existing = db.scalar(
-        select(Conversation).where(
-            Conversation.collection_id == collection.id,
-            Conversation.status == "active",
-        )
+    collection = (
+        ensure_collection(db, account, payload.collection_id)
+        if payload.collection_id
+        else None
     )
-    if existing is not None:
-        return _conversation_view(db, existing)
+    if collection and payload.space_id and collection.space_id != payload.space_id:
+        raise HTTPException(status_code=422, detail="collection_space_mismatch")
+    space_id = collection.space_id if collection else payload.space_id
+    if space_id is None:
+        raise HTTPException(status_code=422, detail="conversation_space_required")
+    require_space_membership(db, account.id, space_id)
     conversation = Conversation(
-        space_id=collection.space_id,
-        collection_id=collection.id,
+        space_id=space_id,
+        collection_id=collection.id if collection else None,
         account_id=account.id,
         title=payload.title.strip(),
         status="active",
@@ -1056,18 +1415,7 @@ def create_conversation(
         },
     )
     db.add(conversation)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        conversation = db.scalar(
-            select(Conversation).where(
-                Conversation.collection_id == collection.id,
-                Conversation.status == "active",
-            )
-        )
-        if conversation is None:
-            raise
+    db.commit()
     db.refresh(conversation)
     return _conversation_view(db, conversation)
 
@@ -1081,14 +1429,102 @@ def get_or_create_workspace(
     account: CurrentAccount,
     db: DbSession,
 ) -> ConversationView:
+    collection = ensure_collection(db, account, collection_id)
+    existing = db.scalar(
+        select(Conversation)
+        .where(
+            Conversation.collection_id == collection.id,
+            Conversation.status == "active",
+        )
+        .order_by(Conversation.updated_at.desc())
+    )
+    if existing is not None:
+        return _conversation_view(db, existing)
     return create_conversation(
         ConversationCreate(
+            space_id=collection.space_id,
             collection_id=collection_id,
             title="集合工作区",
         ),
         account,
         db,
     )
+
+
+@router.patch(
+    "/conversations/{conversation_id}/collection",
+    response_model=ConversationView,
+)
+def bind_conversation_collection(
+    conversation_id: UUID,
+    payload: ConversationBindingUpdate,
+    account: CurrentAccount,
+    db: DbSession,
+) -> ConversationView:
+    conversation = _ensure_conversation(db, account.id, conversation_id)
+    collection = ensure_collection(db, account, payload.collection_id)
+    if collection.space_id != conversation.space_id:
+        raise HTTPException(status_code=422, detail="collection_space_mismatch")
+    if conversation.collection_id is not None:
+        if conversation.collection_id == collection.id:
+            return _conversation_view(db, conversation)
+        raise HTTPException(status_code=409, detail="conversation_collection_locked")
+    conversation.collection_id = collection.id
+    current_phase = str(dict(conversation.context).get("phase", "idle"))
+    conversation.context = {
+        **dict(conversation.context),
+        "phase": "maintenance" if current_phase == "idle" else current_phase,
+    }
+    conversation.updated_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(conversation)
+    return _conversation_view(db, conversation)
+
+
+@router.post(
+    "/conversations/{conversation_id}/attachments",
+    response_model=KnowledgeUploadView,
+    status_code=202,
+)
+def upload_conversation_attachments(
+    conversation_id: UUID,
+    account: CurrentAccount,
+    db: DbSession,
+    files: Annotated[list[UploadFile], File()],
+) -> KnowledgeUploadView:
+    conversation = _ensure_conversation(db, account.id, conversation_id)
+    allowed = {
+        ".pdf": {"application/pdf"},
+        ".txt": {"text/plain"},
+    }
+    for upload in files:
+        extension = Path(upload.filename or "").suffix.lower()
+        mime_type = (upload.content_type or "").lower()
+        if extension not in allowed or mime_type not in allowed[extension]:
+            raise HTTPException(
+                status_code=415,
+                detail="conversation_attachment_type_not_supported",
+            )
+    result = _store_uploads(
+        db,
+        account.id,
+        conversation.space_id,
+        f"对话附件 {conversation.title}",
+        files,
+        "temporary",
+    )
+    source_ids = list(dict(conversation.context).get("knowledge_source_ids", []))
+    source_ids.append(str(result.source.id))
+    document_ids = list(dict(conversation.context).get("document_ids", []))
+    document_ids.extend(str(item) for item in result.document_ids)
+    conversation.context = {
+        **dict(conversation.context),
+        "knowledge_source_ids": list(dict.fromkeys(source_ids)),
+        "document_ids": list(dict.fromkeys(document_ids)),
+    }
+    conversation.updated_at = datetime.now(UTC)
+    db.commit()
+    return result
 
 
 @router.get(
@@ -1140,9 +1576,10 @@ def _decode_history_cursor(cursor: str) -> tuple[datetime, UUID]:
 def list_conversation_history(
     account: CurrentAccount,
     db: DbSession,
-    query: str = Query(default="", alias="q", max_length=160),
-    cursor: str | None = Query(default=None, max_length=500),
-    limit: int = Query(default=30, ge=1, le=50),
+    space_id: Annotated[UUID | None, Query()] = None,
+    query: Annotated[str, Query(alias="q", max_length=160)] = "",
+    cursor: Annotated[str | None, Query(max_length=500)] = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 30,
 ) -> ConversationHistoryPage:
     last_message = (
         select(ConversationMessage.content)
@@ -1160,13 +1597,19 @@ def list_conversation_history(
             CaseCollection.name.label("collection_name"),
             last_message.label("last_message"),
         )
-        .join(CaseCollection, CaseCollection.id == Conversation.collection_id)
+        .outerjoin(CaseCollection, CaseCollection.id == Conversation.collection_id)
         .where(
             Conversation.account_id == account.id,
             Conversation.status == "active",
-            CaseCollection.deleted_at.is_(None),
+            or_(
+                Conversation.collection_id.is_(None),
+                CaseCollection.deleted_at.is_(None),
+            ),
         )
     )
+    if space_id is not None:
+        require_space_membership(db, account.id, space_id)
+        statement = statement.where(Conversation.space_id == space_id)
     normalized_query = " ".join(query.split())
     if normalized_query:
         escaped = (
@@ -1179,6 +1622,7 @@ def list_conversation_history(
             or_(
                 Conversation.title.ilike(pattern, escape="\\"),
                 CaseCollection.name.ilike(pattern, escape="\\"),
+                last_message.ilike(pattern, escape="\\"),
             )
         )
     if cursor:
@@ -1208,7 +1652,7 @@ def list_conversation_history(
                 title=(
                     conversation.title
                     if dict(conversation.context).get("title_initialized")
-                    else f"{collection_name}（未开始）"
+                    else f"{collection_name or '新对话'}（未开始）"
                 ),
                 collection_name=collection_name,
                 phase=str(dict(conversation.context).get("phase", "idle")),
@@ -1457,6 +1901,29 @@ def confirm_test_brief(
     )
     db.add(system_user)
     db.flush()
+    active_operation = (
+        db.scalar(
+            select(ConversationOperation)
+            .where(
+                ConversationOperation.id == brief.source_operation_id,
+                ConversationOperation.conversation_id == conversation.id,
+                ConversationOperation.intent == "CASE_GENERATE",
+            )
+            .with_for_update()
+        )
+        if brief.source_operation_id
+        else db.scalar(
+            select(ConversationOperation)
+            .where(
+                ConversationOperation.conversation_id == conversation.id,
+                ConversationOperation.intent == "CASE_GENERATE",
+                ConversationOperation.status == "awaiting_confirmation",
+            )
+            .order_by(ConversationOperation.created_at.desc())
+            .limit(1)
+            .with_for_update()
+        )
+    )
     prompt = str(brief_content.get("test_objective") or "生成测试用例")
     job = GenerationJob(
         space_id=conversation.space_id,
@@ -1492,6 +1959,9 @@ def confirm_test_brief(
             "conversation_memory": _agent_conversation_memory(db, conversation.id),
             "confirmed_test_brief": brief_content,
             "confirmed_test_brief_version": brief.version,
+            "conversation_operation_id": (
+                str(active_operation.id) if active_operation else None
+            ),
         },
         output_payload={},
     )
@@ -1513,6 +1983,9 @@ def confirm_test_brief(
     db.add(assistant)
     db.flush()
     assistant.related_job_id = job.id
+    if active_operation is not None:
+        active_operation.status = "running"
+        active_operation.related_job_id = job.id
     job.input_payload = {
         **dict(job.input_payload),
         "assistant_message_id": str(assistant.id),
@@ -1540,6 +2013,9 @@ def confirm_test_brief(
         intent="CASE_GENERATE",
         intent_confidence=1.0,
         action={"type": "generation", "job_id": str(job.id)},
+        operation_plan=(
+            _operation_plan_view([active_operation]) if active_operation else None
+        ),
     )
 
 
@@ -1640,6 +2116,16 @@ def commit_workspace_candidates(
         "phase": "maintenance",
         "active_job_id": None,
     }
+    active_operation_id = dict(conversation.context).get("active_operation_id")
+    if active_operation_id:
+        operation = db.get(ConversationOperation, UUID(str(active_operation_id)))
+        if operation is not None:
+            operation.status = "completed"
+            operation.result = {
+                "candidate_ids": [str(item.id) for item in candidates],
+                "test_case_ids": [str(item.id) for item in created],
+            }
+            operation.completed_at = datetime.now(UTC)
     conversation.updated_at = datetime.now(UTC)
     db.add(
         ConversationMessage(
@@ -1663,6 +2149,118 @@ def commit_workspace_candidates(
     ]
 
 
+def _expand_conversation_targets(
+    db: Session,
+    conversation: Conversation,
+    payload: ConversationMessageCreate,
+) -> ConversationMessageCreate:
+    case_ids = list(payload.target_case_ids)
+    candidate_snapshots = list(payload.target_candidate_snapshots)
+    candidate_refs = {item.ref for item in candidate_snapshots}
+    for target in payload.targets:
+        if target.collection_id and target.collection_id != conversation.collection_id:
+            raise HTTPException(status_code=422, detail="target_collection_mismatch")
+        if target.kind == "case":
+            case_ids.extend(target.case_ids)
+            for candidate_ref in target.candidate_refs:
+                candidate = db.scalar(
+                    select(WorkspaceCandidate).where(
+                        WorkspaceCandidate.conversation_id == conversation.id,
+                        WorkspaceCandidate.ref == candidate_ref,
+                        WorkspaceCandidate.status == "candidate",
+                    )
+                )
+                if candidate is not None and candidate.ref not in candidate_refs:
+                    candidate_snapshots.append(
+                        ConversationTargetSnapshot(
+                            ref=candidate.ref,
+                            version=candidate.version,
+                            snapshot=dict(candidate.snapshot),
+                        )
+                    )
+                    candidate_refs.add(candidate.ref)
+            continue
+        if target.kind == "previous_result":
+            source = (
+                db.get(ConversationOperation, target.source_operation_id)
+                if target.source_operation_id
+                else None
+            )
+            if source is None or source.conversation_id != conversation.id:
+                raise HTTPException(status_code=422, detail="previous_result_not_found")
+            result_ids = [
+                UUID(str(item)) for item in dict(source.result).get("candidate_ids", [])
+            ]
+            for candidate in db.scalars(
+                select(WorkspaceCandidate).where(
+                    WorkspaceCandidate.id.in_(result_ids),
+                    WorkspaceCandidate.conversation_id == conversation.id,
+                )
+            ):
+                if candidate.ref in candidate_refs:
+                    continue
+                candidate_snapshots.append(
+                    ConversationTargetSnapshot(
+                        ref=candidate.ref,
+                        version=candidate.version,
+                        snapshot=dict(candidate.snapshot),
+                    )
+                )
+                candidate_refs.add(candidate.ref)
+            continue
+        if target.kind not in {"module", "condition"}:
+            continue
+        if conversation.collection_id is None:
+            raise HTTPException(status_code=409, detail="conversation_collection_required")
+        cases = list(
+            db.scalars(
+                select(TestCase)
+                .join(
+                    CollectionCaseMembership,
+                    CollectionCaseMembership.test_case_id == TestCase.id,
+                )
+                .where(
+                    CollectionCaseMembership.collection_id == conversation.collection_id,
+                    TestCase.deleted_at.is_(None),
+                )
+            )
+        )
+        for test_case in cases:
+            view = case_to_view(db, test_case)
+            if target.kind == "module" and view.module == target.module:
+                case_ids.append(test_case.id)
+            if (
+                target.kind == "condition"
+                and target.condition in view.preconditions
+                and (not target.module or view.module == target.module)
+            ):
+                case_ids.append(test_case.id)
+    unique_ids = list(dict.fromkeys(case_ids))
+    if unique_ids:
+        if conversation.collection_id is None:
+            raise HTTPException(
+                status_code=409,
+                detail="conversation_collection_required",
+            )
+        member_ids = set(
+            db.scalars(
+                select(CollectionCaseMembership.test_case_id).where(
+                    CollectionCaseMembership.collection_id
+                    == conversation.collection_id,
+                    CollectionCaseMembership.test_case_id.in_(unique_ids),
+                )
+            )
+        )
+        if member_ids != set(unique_ids):
+            raise HTTPException(status_code=422, detail="target_collection_mismatch")
+    return payload.model_copy(
+        update={
+            "target_case_ids": unique_ids,
+            "target_candidate_snapshots": candidate_snapshots,
+        }
+    )
+
+
 @router.post(
     "/conversations/{conversation_id}/messages",
     response_model=ConversationTurnView,
@@ -1675,6 +2273,28 @@ def send_message(
     db: DbSession,
 ) -> ConversationTurnView:
     conversation = _ensure_conversation(db, account.id, conversation_id)
+    context = dict(conversation.context)
+    payload = payload.model_copy(
+        update={
+            "knowledge_source_ids": list(
+                dict.fromkeys(
+                    [
+                        *payload.knowledge_source_ids,
+                        *(UUID(str(item)) for item in context.get("knowledge_source_ids", [])),
+                    ]
+                )
+            ),
+            "document_ids": list(
+                dict.fromkeys(
+                    [
+                        *payload.document_ids,
+                        *(UUID(str(item)) for item in context.get("document_ids", [])),
+                    ]
+                )
+            ),
+        }
+    )
+    payload = _expand_conversation_targets(db, conversation, payload)
     if not settings.is_agent_model_allowed(payload.model_id):
         raise HTTPException(status_code=422, detail="generation_model_not_configured")
     conversation.context = {
@@ -1699,15 +2319,64 @@ def send_message(
             account,
             db,
         )
-    intent, confidence = (
-        (payload.intent_override, 1.0)
-        if payload.intent_override
-        else classify_intent(
-            payload.content,
-            bool(payload.target_case_ids or payload.target_candidate_snapshots),
-            phase,
-        )
+    has_targets = bool(
+        payload.target_case_ids
+        or payload.target_candidate_snapshots
+        or payload.targets
     )
+    if payload.intent_override:
+        operation_drafts = [
+            {
+                "intent": payload.intent_override,
+                "instruction": payload.content,
+                "confidence": 1.0,
+                "target_kind": "case" if has_targets else "none",
+                "requires_confirmation": payload.intent_override == "CASE_DELETE",
+            }
+        ]
+    else:
+        active_operation_context = [
+            {
+                "id": str(item.id),
+                "intent": item.intent,
+                "status": item.status,
+                "target": dict(item.target),
+                "result": dict(item.result),
+            }
+            for item in db.scalars(
+                select(ConversationOperation)
+                .where(
+                    ConversationOperation.conversation_id == conversation.id,
+                    ConversationOperation.status.not_in(
+                        {"completed", "failed", "cancelled", "skipped"}
+                    ),
+                )
+                .order_by(
+                    ConversationOperation.created_at,
+                    ConversationOperation.sequence,
+                )
+            )
+        ]
+        operation_drafts = [
+            item.model_dump(mode="json")
+            for item in plan_intents(
+                payload.content,
+                lambda clause: classify_intent(clause, has_targets, phase),
+                has_targets=has_targets,
+                phase=phase,
+                target_context=[item.model_dump(mode="json") for item in payload.targets],
+                conversation_memory=_agent_conversation_memory(db, conversation.id),
+                active_operations=active_operation_context,
+                provider=settings.agent_provider,
+                model_name=settings.agent_model,
+                base_url=settings.agent_base_url,
+                api_key=settings.agent_api_key,
+                timeout_seconds=settings.agent_timeout_seconds,
+                tracing_enabled=settings.agent_tracing_enabled,
+            ).operations
+        ]
+    intent = str(operation_drafts[0]["intent"])
+    confidence = float(operation_drafts[0]["confidence"])
     if intent not in INTENTS:
         raise HTTPException(status_code=422, detail="invalid_conversation_intent")
     request_metadata = {"request": payload.model_dump(mode="json")}
@@ -1717,12 +2386,52 @@ def send_message(
         content=payload.content.strip(),
         intent=intent,
         intent_confidence=confidence,
-        status="awaiting_intent" if confidence < 0.8 else "completed",
+        status=(
+            "awaiting_intent"
+            if needs_intent_confirmation(intent, confidence)
+            else "completed"
+        ),
         target_case_ids=[str(item) for item in payload.target_case_ids],
         citations=[],
         message_metadata=request_metadata,
     )
     db.add(user_message)
+    db.flush()
+    operations: list[ConversationOperation] = []
+    for sequence, draft in enumerate(operation_drafts):
+        operation = ConversationOperation(
+            conversation_id=conversation.id,
+            message_id=user_message.id,
+            sequence=sequence,
+            intent=str(draft["intent"]),
+            confidence=float(draft["confidence"]),
+            status=(
+                "awaiting_intent"
+                if needs_intent_confirmation(
+                    str(draft["intent"]), float(draft["confidence"])
+                )
+                else "queued"
+            ),
+            target={
+                "kind": draft.get("target_kind", "none"),
+                "selectors": [
+                    item.model_dump(mode="json") for item in payload.targets
+                ],
+                "case_ids": [str(item) for item in payload.target_case_ids],
+                "candidate_refs": [
+                    item.ref for item in payload.target_candidate_snapshots
+                ],
+            },
+            payload={
+                "instruction": str(draft["instruction"]),
+                "action": str(draft.get("action") or ""),
+                "reason_codes": list(draft.get("reason_codes") or []),
+                "depends_on": draft.get("depends_on"),
+            },
+            requires_confirmation=bool(draft.get("requires_confirmation")),
+        )
+        db.add(operation)
+        operations.append(operation)
     db.flush()
     if not bool(dict(conversation.context).get("title_initialized")):
         conversation.title = summarize_conversation_title(payload.content)
@@ -1732,16 +2441,22 @@ def send_message(
         }
     assistant: ConversationMessage | None = None
     action: dict[str, Any] = {}
-    if confidence >= 0.8:
+    if not needs_intent_confirmation(intent, confidence):
+        operations[0].status = "running"
+        operation_payload = payload.model_copy(
+            update={"content": str(operation_drafts[0]["instruction"])}
+        )
         assistant, action, task_name = _start_action(
             db,
             account,
             conversation,
             user_message,
-            payload,
+            operation_payload,
             intent,
             confidence,
+            operations[0].id,
         )
+        _operation_runtime_status(operations[0], assistant, action)
     else:
         task_name = None
     conversation.updated_at = datetime.now(UTC)
@@ -1761,8 +2476,9 @@ def send_message(
         assistant_message=_message_view(assistant) if assistant else None,
         intent=intent,
         intent_confidence=confidence,
-        requires_intent_confirmation=confidence < 0.8,
+        requires_intent_confirmation=needs_intent_confirmation(intent, confidence),
         action=action,
+        operation_plan=_operation_plan_view(operations),
     )
 
 
@@ -1789,6 +2505,18 @@ def confirm_message_intent(
     user_message.intent = payload.intent
     user_message.intent_confidence = 1.0
     user_message.status = "completed"
+    operation = db.scalar(
+        select(ConversationOperation)
+        .where(
+            ConversationOperation.message_id == user_message.id,
+            ConversationOperation.status == "awaiting_intent",
+        )
+        .order_by(ConversationOperation.sequence)
+    )
+    if operation is not None:
+        operation.intent = payload.intent
+        operation.confidence = 1.0
+        operation.status = "running"
     assistant, action, task_name = _start_action(
         db,
         account,
@@ -1797,7 +2525,10 @@ def confirm_message_intent(
         message_input,
         payload.intent,
         1.0,
+        operation.id if operation else None,
     )
+    if operation is not None:
+        _operation_runtime_status(operation, assistant, action)
     db.commit()
     db.refresh(user_message)
     db.refresh(assistant)
@@ -1814,6 +2545,336 @@ def confirm_message_intent(
         intent=payload.intent,
         intent_confidence=1.0,
         action=action,
+        operation_plan=_operation_plan_view(
+            list(
+                db.scalars(
+                    select(ConversationOperation)
+                    .where(ConversationOperation.message_id == user_message.id)
+                    .order_by(ConversationOperation.sequence)
+                )
+            )
+        ),
+    )
+
+
+@router.post(
+    "/conversation-operations/{operation_id}/confirm-collection",
+    response_model=ConversationTurnView,
+    status_code=202,
+)
+def confirm_conversation_operation_collection(
+    operation_id: UUID,
+    payload: ConversationOperationCollectionConfirmRequest,
+    account: CurrentAccount,
+    db: DbSession,
+) -> ConversationTurnView:
+    operation = db.scalar(
+        select(ConversationOperation)
+        .where(ConversationOperation.id == operation_id)
+        .with_for_update()
+    )
+    if operation is None:
+        raise HTTPException(status_code=404, detail="conversation_operation_not_found")
+    conversation = _ensure_conversation(db, account.id, operation.conversation_id)
+    if operation.status != "awaiting_collection":
+        raise HTTPException(
+            status_code=409,
+            detail="conversation_operation_not_awaiting_collection",
+        )
+    predecessors = list(
+        db.scalars(
+            select(ConversationOperation).where(
+                ConversationOperation.message_id == operation.message_id,
+                ConversationOperation.sequence < operation.sequence,
+            )
+        )
+    )
+    if any(item.status not in {"completed", "skipped"} for item in predecessors):
+        raise HTTPException(
+            status_code=409,
+            detail="conversation_operation_predecessor_pending",
+        )
+    if payload.collection_id is not None:
+        collection = ensure_collection(db, account, payload.collection_id)
+        if collection.space_id != conversation.space_id:
+            raise HTTPException(status_code=422, detail="collection_space_mismatch")
+    else:
+        if operation.intent != "CASE_GENERATE":
+            raise HTTPException(
+                status_code=422,
+                detail="collection_create_only_allowed_for_generation",
+            )
+        collection = CaseCollection(
+            space_id=conversation.space_id,
+            name=str(payload.create_collection_name).strip(),
+            description="由 CasePilot 对话创建",
+        )
+        db.add(collection)
+        db.flush()
+        write_audit(
+            db,
+            space_id=conversation.space_id,
+            actor_id=account.id,
+            action="collection.created",
+            resource_type="case_collection",
+            resource_id=collection.id,
+        )
+    if (
+        conversation.collection_id is not None
+        and conversation.collection_id != collection.id
+    ):
+        raise HTTPException(status_code=409, detail="conversation_collection_locked")
+    conversation.collection_id = collection.id
+    conversation.context = {
+        **dict(conversation.context),
+        "phase": "maintenance",
+        "bound_collection_confirmed": True,
+    }
+    operation.status = "queued"
+    operation.result = {
+        **dict(operation.result),
+        "confirmed_collection_id": str(collection.id),
+    }
+    db.flush()
+    return resume_conversation_operation(
+        operation.id,
+        ConversationOperationResumeRequest(),
+        account,
+        db,
+    )
+
+
+@router.post(
+    "/conversation-operations/{operation_id}/continue-in-new-conversation",
+    response_model=ConversationView,
+    status_code=201,
+)
+def continue_operation_in_new_conversation(
+    operation_id: UUID,
+    payload: ConversationOperationContinueRequest,
+    account: CurrentAccount,
+    db: DbSession,
+) -> ConversationView:
+    operation = db.scalar(
+        select(ConversationOperation)
+        .where(ConversationOperation.id == operation_id)
+        .with_for_update()
+    )
+    if operation is None:
+        raise HTTPException(status_code=404, detail="conversation_operation_not_found")
+    source = _ensure_conversation(db, account.id, operation.conversation_id)
+    if operation.status != "awaiting_confirmation":
+        raise HTTPException(
+            status_code=409,
+            detail="conversation_operation_not_awaiting_cross_collection",
+        )
+    requested_collection_id = dict(operation.result).get("requested_collection_id")
+    if requested_collection_id and str(payload.collection_id) != str(requested_collection_id):
+        raise HTTPException(status_code=422, detail="requested_collection_mismatch")
+    collection = ensure_collection(db, account, payload.collection_id)
+    if collection.space_id != source.space_id:
+        raise HTTPException(status_code=422, detail="collection_space_mismatch")
+    if source.collection_id == collection.id:
+        raise HTTPException(status_code=409, detail="collection_already_bound")
+    source_message = db.get(ConversationMessage, operation.message_id)
+    instruction = str(
+        source_message.content
+        if source_message is not None
+        else operation.payload.get("instruction") or ""
+    ).strip()
+    conversation = Conversation(
+        space_id=source.space_id,
+        collection_id=collection.id,
+        account_id=account.id,
+        title=(instruction[:80] or f"{collection.name} · 新对话"),
+        status="active",
+        context={
+            "knowledge_source_ids": [],
+            "document_ids": [],
+            "use_space_knowledge": True,
+            "phase": "maintenance",
+            "draft_text": instruction,
+            "active_view": "list",
+            "search_query": "",
+            "filters": {},
+            "chat_width": 360,
+            "inspector_width": 360,
+            "selected_brief_version": None,
+            "title_initialized": bool(instruction),
+            "bound_collection_confirmed": True,
+        },
+    )
+    db.add(conversation)
+    db.flush()
+    operation.status = "skipped"
+    operation.completed_at = datetime.now(UTC)
+    operation.result = {
+        **dict(operation.result),
+        "requested_collection_id": str(collection.id),
+        "continued_in_conversation_id": str(conversation.id),
+    }
+    source.updated_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(conversation)
+    return _conversation_view(db, conversation)
+
+
+@router.post(
+    "/conversation-operations/{operation_id}/cancel",
+    response_model=ConversationOperationView,
+)
+def cancel_conversation_operation(
+    operation_id: UUID,
+    account: CurrentAccount,
+    db: DbSession,
+) -> ConversationOperationView:
+    operation = db.scalar(
+        select(ConversationOperation)
+        .where(ConversationOperation.id == operation_id)
+        .with_for_update()
+    )
+    if operation is None:
+        raise HTTPException(status_code=404, detail="conversation_operation_not_found")
+    _ensure_conversation(db, account.id, operation.conversation_id)
+    if operation.status in {"completed", "skipped", "cancelled"}:
+        return _operation_view(operation)
+    if not operation.status.startswith("awaiting_"):
+        raise HTTPException(
+            status_code=409,
+            detail="conversation_operation_not_cancellable",
+        )
+    operation.status = "cancelled"
+    operation.completed_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(operation)
+    return _operation_view(operation)
+
+
+@router.post(
+    "/conversation-operations/{operation_id}/resume",
+    response_model=ConversationTurnView,
+    status_code=202,
+)
+def resume_conversation_operation(
+    operation_id: UUID,
+    supplement: ConversationOperationResumeRequest,
+    account: CurrentAccount,
+    db: DbSession,
+) -> ConversationTurnView:
+    operation = db.scalar(
+        select(ConversationOperation)
+        .where(ConversationOperation.id == operation_id)
+        .with_for_update()
+    )
+    if operation is None:
+        raise HTTPException(status_code=404, detail="conversation_operation_not_found")
+    conversation = _ensure_conversation(db, account.id, operation.conversation_id)
+    if operation.status not in {
+        "queued",
+        "awaiting_intent",
+        "awaiting_target",
+        "failed",
+    }:
+        raise HTTPException(status_code=409, detail="conversation_operation_not_resumable")
+    if operation.status == "awaiting_intent" and supplement.intent is None:
+        raise HTTPException(status_code=422, detail="conversation_operation_intent_required")
+    predecessors = list(
+        db.scalars(
+            select(ConversationOperation).where(
+                ConversationOperation.message_id == operation.message_id,
+                ConversationOperation.sequence < operation.sequence,
+            )
+        )
+    )
+    if any(item.status not in {"completed", "skipped"} for item in predecessors):
+        raise HTTPException(status_code=409, detail="conversation_operation_predecessor_pending")
+    user_message = db.get(ConversationMessage, operation.message_id)
+    if user_message is None:
+        raise HTTPException(status_code=404, detail="conversation_message_not_found")
+    resume_targets = list(supplement.targets)
+    if (
+        not resume_targets
+        and str(dict(operation.target).get("kind")) == "previous_result"
+        and predecessors
+    ):
+        ordered_predecessors = sorted(
+            predecessors,
+            key=lambda item: item.sequence,
+            reverse=True,
+        )
+        source = next(
+            (
+                item
+                for item in ordered_predecessors
+                if dict(item.result).get("candidate_ids")
+            ),
+            ordered_predecessors[0],
+        )
+        resume_targets = [
+            ConversationTarget(
+                kind="previous_result",
+                source_operation_id=source.id,
+            )
+        ]
+    request_data = dict(user_message.message_metadata).get("request", {})
+    request_data.update(
+        {
+            "content": str(operation.payload.get("instruction") or user_message.content),
+            "intent_override": operation.intent,
+            "targets": [item.model_dump(mode="json") for item in resume_targets],
+            "target_case_ids": [str(item) for item in supplement.target_case_ids],
+            "target_candidate_snapshots": [
+                item.model_dump(mode="json")
+                for item in supplement.target_candidate_snapshots
+            ],
+        }
+    )
+    message_input = ConversationMessageCreate.model_validate(request_data)
+    message_input = _expand_conversation_targets(db, conversation, message_input)
+    if supplement.intent is not None:
+        operation.intent = supplement.intent
+        operation.confidence = 1.0
+        user_message.status = "completed"
+    operation.status = "running"
+    assistant, action, task_name = _start_action(
+        db,
+        account,
+        conversation,
+        user_message,
+        message_input,
+        operation.intent,
+        operation.confidence,
+        operation.id,
+    )
+    _operation_runtime_status(operation, assistant, action)
+    conversation.context = {
+        **dict(conversation.context),
+        "active_operation_id": str(operation.id),
+    }
+    conversation.updated_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(assistant)
+    if task_name and assistant.related_job_id:
+        task_client.send_task(
+            task_name,
+            args=[str(assistant.related_job_id)],
+            task_id=str(assistant.related_job_id),
+        )
+    operations = list(
+        db.scalars(
+            select(ConversationOperation)
+            .where(ConversationOperation.message_id == operation.message_id)
+            .order_by(ConversationOperation.sequence)
+        )
+    )
+    return ConversationTurnView(
+        conversation_id=conversation.id,
+        user_message=_message_view(user_message),
+        assistant_message=_message_view(assistant),
+        intent=operation.intent,
+        intent_confidence=operation.confidence,
+        action=action,
+        operation_plan=_operation_plan_view(operations),
     )
 
 
@@ -2105,6 +3166,18 @@ def apply_change_set(
     change_set.items = updated_items
     change_set.status = "applied"
     change_set.applied_at = datetime.now(UTC)
+    operation = db.scalar(
+        select(ConversationOperation).where(
+            ConversationOperation.related_change_set_id == change_set.id
+        )
+    )
+    if operation is not None:
+        operation.status = "completed"
+        operation.result = {
+            "change_set_id": str(change_set.id),
+            "updated_refs": [str(item["ref"]) for item in updated_items],
+        }
+        operation.completed_at = datetime.now(UTC)
     deleted_count = sum(
         item.get("operation") == "delete" and item.get("status") == "applied"
         for item in updated_items
@@ -2125,7 +3198,7 @@ def apply_change_set(
             conversation_id=change_set.conversation_id,
             role="assistant",
             content=result_message,
-            intent="CASE_MODIFY",
+            intent=operation.intent if operation is not None else "CASE_MODIFY",
             intent_confidence=1.0,
             status="completed",
             target_case_ids=[str(item["ref"]) for item in updated_items],
@@ -2158,6 +3231,14 @@ def reject_change_set(
     change_set = _ensure_change_set(db, account.id, change_set_id)
     if change_set.status in {"generating", "ready"}:
         change_set.status = "rejected"
+        operation = db.scalar(
+            select(ConversationOperation).where(
+                ConversationOperation.related_change_set_id == change_set.id
+            )
+        )
+        if operation is not None:
+            operation.status = "cancelled"
+            operation.completed_at = datetime.now(UTC)
         for item in change_set.items:
             candidate_id = item.get("candidate_revision_id")
             if candidate_id:

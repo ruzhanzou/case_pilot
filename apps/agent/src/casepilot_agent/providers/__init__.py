@@ -1,11 +1,11 @@
 from casepilot_agent.config import get_settings
 from casepilot_agent.contracts import AgentProvider, EmbeddingProvider
+from casepilot_agent.providers.agents_sdk import AgentsSdkProvider
 from casepilot_agent.providers.embeddings import (
     DeterministicEmbeddingProvider,
     OpenAICompatibleEmbeddingProvider,
 )
 from casepilot_agent.providers.mock import MockProvider
-from casepilot_agent.providers.openai_compatible import OpenAICompatibleProvider
 
 
 def create_provider(name: str) -> AgentProvider:
@@ -13,7 +13,7 @@ def create_provider(name: str) -> AgentProvider:
         return MockProvider()
     if name == "openai_compatible":
         settings = get_settings()
-        return OpenAICompatibleProvider(
+        return AgentsSdkProvider(
             base_url=settings.base_url,
             api_key=settings.api_key,
             model=settings.model,
@@ -21,6 +21,7 @@ def create_provider(name: str) -> AgentProvider:
             local_model=settings.local_model,
             timeout=settings.timeout_seconds,
             available_models=settings.available_models,
+            tracing_enabled=settings.tracing_enabled,
         )
     raise ValueError(f"unsupported_agent_provider:{name}")
 

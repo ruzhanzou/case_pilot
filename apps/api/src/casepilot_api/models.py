@@ -342,10 +342,10 @@ class Conversation(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    collection_id: Mapped[UUID] = mapped_column(
+    collection_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("case_collections.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("case_collections.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     account_id: Mapped[UUID | None] = mapped_column(
@@ -379,6 +379,11 @@ class WorkspaceTestBrief(TimestampMixin, Base):
         PGUUID(as_uuid=True),
         ForeignKey("conversations.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
+    )
+    source_operation_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("conversation_operations.id", ondelete="SET NULL"),
         index=True,
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -465,6 +470,51 @@ class ConversationMessage(TimestampMixin, Base):
         default=dict,
         nullable=False,
     )
+
+
+class ConversationOperation(TimestampMixin, Base):
+    __tablename__ = "conversation_operations"
+    __table_args__ = (
+        UniqueConstraint(
+            "message_id",
+            "sequence",
+            name="uq_conversation_operation_sequence",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    message_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("conversation_messages.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    intent: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    confidence: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False)
+    target: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    result: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    requires_confirmation: Mapped[bool] = mapped_column(default=False, nullable=False)
+    related_job_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("generation_jobs.id", ondelete="SET NULL"),
+        index=True,
+    )
+    related_change_set_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("case_change_sets.id", ondelete="SET NULL"),
+        index=True,
+    )
+    error_code: Mapped[str | None] = mapped_column(String(120))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class CaseChangeSet(TimestampMixin, Base):

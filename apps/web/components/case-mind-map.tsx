@@ -2,6 +2,7 @@
 
 import type {
   CaseCollectionDto,
+  ConversationTarget,
   TestCaseDto,
 } from "@/lib/casepilot-api";
 import {
@@ -47,6 +48,7 @@ type MindMapNodeData = {
   eyebrow: string;
   caseId?: string;
   module?: string;
+  condition?: string;
   priority?: TestCaseDto["priority"];
   tags?: string[];
   leavesHidden?: boolean;
@@ -248,6 +250,7 @@ type CaseMindMapProps = {
   onSelectCase: (caseId: string) => void;
   onCreateCase: (module?: string) => void;
   onEditCase: (testCase: TestCaseDto) => void;
+  onSelectTarget?: (target: ConversationTarget, label: string) => void;
 };
 
 export function CaseMindMap({
@@ -257,6 +260,7 @@ export function CaseMindMap({
   onSelectCase,
   onCreateCase,
   onEditCase,
+  onSelectTarget,
 }: CaseMindMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -500,6 +504,8 @@ export function CaseMindMap({
           data: {
             kind: "condition",
             title: condition,
+            module: moduleName === "未分类" ? "" : moduleName,
+            condition,
             eyebrow: `${groupCases.length} 条用例共同前置`,
             leavesHidden: conditionLeavesHidden,
             onCreateCase,
@@ -562,7 +568,27 @@ export function CaseMindMap({
         panOnDrag
         proOptions={{ hideAttribution: true }}
         onNodeClick={(_, node) => {
-          if (node.data.caseId) onSelectCase(node.data.caseId);
+          if (node.data.caseId) {
+            onSelectCase(node.data.caseId);
+            onSelectTarget?.(
+              { kind: "case", case_ids: [node.data.caseId] },
+              node.data.title,
+            );
+          } else if (node.data.kind === "module") {
+            onSelectTarget?.(
+              { kind: "module", module: node.data.module ?? "" },
+              `模块：${node.data.title}`,
+            );
+          } else if (node.data.kind === "condition") {
+            onSelectTarget?.(
+              {
+                kind: "condition",
+                module: node.data.module ?? "",
+                condition: node.data.condition ?? node.data.title,
+              },
+              `前置条件：${node.data.title}`,
+            );
+          }
         }}
       >
         <Background color="#cfdaea" gap={22} size={1} />

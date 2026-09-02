@@ -9856,12 +9856,24 @@ body.is-resizing-workbench {
 /* Conversation history and document-first CasePilot workspace */
 .management-stage {
   position: relative;
+  transition: padding-left .28s cubic-bezier(.22, 1, .36, 1);
 }
 
 .conversation-history-layer {
   position: absolute;
   inset: 0;
   z-index: 70;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .22s ease, visibility 0s linear .28s;
+}
+
+.conversation-history-layer.is-open {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transition-delay: 0s;
 }
 
 .conversation-history-backdrop {
@@ -9874,6 +9886,12 @@ body.is-resizing-workbench {
   background: rgb(15 23 42 / 22%);
   backdrop-filter: blur(1px);
   cursor: default;
+  opacity: 0;
+  transition: opacity .22s ease;
+}
+
+.conversation-history-layer.is-open .conversation-history-backdrop {
+  opacity: 1;
 }
 
 .conversation-history-drawer {
@@ -9887,6 +9905,33 @@ body.is-resizing-workbench {
   background: #fff;
   box-shadow: 18px 0 48px rgb(15 23 42 / 16%);
   color: #1e293b;
+  transform: translateX(-100%);
+  transition: transform .28s cubic-bezier(.22, 1, .36, 1);
+  will-change: transform;
+}
+
+.conversation-history-layer.is-open .conversation-history-drawer {
+  transform: translateX(0);
+}
+
+@media (min-width: 1100px) {
+  .management-stage--history-open {
+    box-sizing: border-box;
+    padding-left: 300px;
+  }
+
+  .management-stage--history-open .conversation-history-layer {
+    right: auto;
+    width: 300px;
+  }
+
+  .management-stage--history-open .conversation-history-backdrop {
+    display: none;
+  }
+
+  .management-stage--history-open .conversation-history-drawer {
+    box-shadow: none;
+  }
 }
 
 .conversation-history-drawer > header {
@@ -9983,6 +10028,11 @@ body.is-resizing-workbench {
   background: #f1f5f9;
 }
 
+.conversation-history-list > button.is-current {
+  background: #eff6ff;
+  box-shadow: inset 3px 0 #2563eb;
+}
+
 .conversation-history-list strong {
   overflow: hidden;
   color: #1e293b;
@@ -10063,6 +10113,154 @@ body.is-resizing-workbench {
   font-size: 14px;
   font-weight: 650;
   cursor: pointer;
+}
+
+.new-conversation__attachments,
+.principle-targets,
+.conversation-operation-plan {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.new-conversation__attachments span,
+.principle-targets button {
+  padding: 5px 9px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+}
+
+.principle-targets button {
+  cursor: pointer;
+}
+
+.conversation-operation-plan {
+  margin: 0 24px 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.conversation-operation-plan li {
+  display: grid;
+  grid-template-columns: 22px auto;
+  align-items: center;
+  gap: 1px 7px;
+  padding: 6px 9px;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.conversation-operation-plan li > span {
+  grid-row: span 2;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #e2e8f0;
+}
+
+.conversation-operation-plan li > strong {
+  color: #334155;
+  font-size: 12px;
+}
+
+.conversation-operation-plan li[data-status="running"],
+.conversation-operation-plan li[data-status^="awaiting_"] {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.conversation-operation-plan li[data-status="completed"] > span {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.conversation-operation-confirmation {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding-top: 4px;
+}
+
+.conversation-operation-confirmation button {
+  padding: 3px 7px;
+  border: 1px solid #93c5fd;
+  border-radius: 6px;
+  background: #fff;
+  color: #1d4ed8;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.conversation-collection-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  margin: 0 24px 12px;
+  padding: 12px;
+  border: 1px solid #93c5fd;
+  border-radius: 9px;
+  background: #eff6ff;
+  color: #1e3a8a;
+}
+
+.conversation-collection-picker p {
+  margin: 0;
+  color: #52647e;
+  font-size: 12px;
+}
+
+.conversation-collection-picker select,
+.conversation-collection-picker input {
+  min-width: 220px;
+  padding: 7px 9px;
+  border: 1px solid #bfdbfe;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.conversation-collection-picker > button,
+.conversation-cross-collection button {
+  align-self: flex-start;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: #2563eb;
+  color: #fff;
+  cursor: pointer;
+}
+
+.conversation-collection-picker > button:disabled,
+.conversation-cross-collection button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.conversation-cross-collection button.is-secondary {
+  border: 1px solid #d8a856;
+  background: transparent;
+  color: #754b12;
+}
+
+.conversation-cross-collection {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #f4bf64;
+  border-radius: 8px;
+  background: #fff8e8;
+  color: #754b12;
 }
 
 .principle-workbench {
@@ -10705,19 +10903,19 @@ body.is-resizing-workbench {
   padding: 36px 0 24px;
 }
 
-.new-conversation__thread > header {
+.new-conversation__thread-top > header {
   padding: 0 24px 22px;
   border-bottom: 1px solid #edf0f3;
 }
 
-.new-conversation__thread > header span {
+.new-conversation__thread-top > header span {
   color: #87909a;
   font-size: 10px;
   font-weight: 720;
   letter-spacing: .14em;
 }
 
-.new-conversation__thread > header h1 {
+.new-conversation__thread-top > header h1 {
   margin: 5px 0 0;
   color: #20242a;
   font-size: 23px;
@@ -10828,5 +11026,274 @@ body.is-resizing-workbench {
 
   .new-conversation__model {
     min-width: 92px;
+  }
+}
+
+/* Compact AI workbench density: preserve more room for case review and editing. */
+.management-topbar {
+  min-height: 60px;
+  padding-inline: 22px;
+}
+
+.principle-workbench {
+  grid-template-columns:
+    var(--chat-width, 320px) 8px minmax(500px, 1fr) 8px
+    var(--inspector-width, 340px);
+}
+
+.principle-workbench[data-inspector-collapsed="true"] {
+  grid-template-columns: var(--chat-width, 320px) 8px minmax(500px, 1fr);
+}
+
+.principle-workbench button,
+.principle-workbench input,
+.principle-workbench select,
+.principle-workbench textarea,
+.principle-workbench p,
+.principle-workbench li,
+.principle-workbench label {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.principle-resizer {
+  width: 8px;
+  min-width: 8px;
+}
+
+.principle-resizer i {
+  left: 3px;
+}
+
+.principle-context-card {
+  gap: 3px;
+  margin: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+}
+
+.principle-context-card strong {
+  font-size: 14px;
+}
+
+.principle-messages {
+  padding: 0 12px 10px;
+}
+
+.principle-agent-intro,
+.principle-message {
+  margin-bottom: 11px;
+}
+
+.principle-message p {
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+
+.principle-composer {
+  padding: 10px 11px 11px;
+}
+
+.principle-composer textarea {
+  min-height: 68px;
+  padding: 9px 10px;
+  border-radius: 10px;
+}
+
+.principle-composer > div:last-child {
+  margin-top: 7px;
+}
+
+.principle-composer select,
+.principle-composer button {
+  min-height: 36px;
+  height: 36px;
+}
+
+.principle-canvas > header {
+  min-height: 86px;
+  padding: 12px 18px;
+}
+
+.principle-canvas h1 {
+  margin: 2px 0;
+  font-size: 20px;
+}
+
+.principle-canvas-actions button {
+  min-height: 36px;
+  padding-inline: 10px;
+  font-size: 13px;
+}
+
+.principle-banner,
+.principle-progress {
+  margin: 9px 12px 0;
+  padding: 8px 10px;
+}
+
+.principle-brief,
+.principle-case-area {
+  margin: 10px 12px 12px;
+  border-radius: 11px;
+}
+
+.principle-viewbar {
+  min-height: 48px;
+  padding: 0 11px;
+}
+
+.principle-viewbar button {
+  min-height: 34px;
+  padding-inline: 9px;
+}
+
+.principle-case-row > button {
+  grid-template-columns: 76px minmax(150px, 1fr) minmax(76px, 120px) 36px;
+  gap: 9px;
+  min-height: 60px;
+  padding: 8px 11px;
+}
+
+.principle-case-list label {
+  padding-right: 11px;
+}
+
+.principle-inspector {
+  padding: 14px;
+}
+
+.principle-inspector > header button {
+  min-height: 34px;
+}
+
+.principle-inspector h2 {
+  margin: 16px 0 10px;
+  font-size: 18px;
+}
+
+.principle-inspector section {
+  margin-top: 18px;
+}
+
+.principle-inspector ul,
+.principle-inspector ol {
+  gap: 6px;
+  padding-left: 19px;
+}
+
+.principle-candidate-editor {
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.principle-candidate-editor input,
+.principle-candidate-editor select {
+  min-height: 36px;
+}
+
+.principle-brief-toolbar {
+  min-height: 54px;
+  padding: 8px 15px;
+}
+
+.principle-brief-toolbar select,
+.principle-brief-toolbar button {
+  min-height: 34px;
+  font-size: 13px;
+}
+
+.principle-brief-guidance {
+  margin: 11px 16px 0;
+  padding: 9px 11px;
+  font-size: 13px;
+}
+
+.principle-markdown {
+  width: min(900px, calc(100% - 32px));
+  padding: 17px 0 32px;
+}
+
+.principle-markdown h1 {
+  margin-bottom: 20px;
+  padding-bottom: 11px;
+  font-size: 23px;
+}
+
+.principle-markdown h2 {
+  margin: 21px 0 8px;
+  font-size: 16px;
+}
+
+.principle-markdown p,
+.principle-markdown li {
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.principle-case-area > .case-mind-map {
+  height: calc(100% - 48px);
+}
+
+.conversation-intent-confirmation {
+  display: grid;
+  width: min(100%, 440px);
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 9px;
+  background: #eff6ff;
+  color: #334155;
+  text-align: left;
+}
+
+.conversation-intent-confirmation > span {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.conversation-intent-confirmation > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.conversation-intent-confirmation button {
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid #bfdbfe;
+  border-radius: 7px;
+  background: #fff;
+  color: #1d4ed8;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.conversation-intent-confirmation button:first-child {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+
+.conversation-intent-confirmation button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.new-conversation__message--user .conversation-intent-confirmation {
+  background: #fff;
+}
+
+@media (max-width: 1440px) {
+  .principle-workbench {
+    grid-template-columns:
+      min(var(--chat-width, 320px), 300px) 8px minmax(480px, 1fr) 8px
+      min(var(--inspector-width, 340px), 320px);
+  }
+
+  .principle-workbench[data-inspector-collapsed="true"] {
+    grid-template-columns:
+      min(var(--chat-width, 320px), 300px) 8px minmax(480px, 1fr);
   }
 }

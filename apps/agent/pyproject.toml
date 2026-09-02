@@ -19,6 +19,8 @@ dependencies = [
   "pillow>=11,<13",
   "pytesseract>=0.3.13,<1",
   "jieba>=0.42,<1",
+  "openai-agents>=0.8,<0.9",
+  "openai==2.44.0",
 ]
 
 [project.optional-dependencies]

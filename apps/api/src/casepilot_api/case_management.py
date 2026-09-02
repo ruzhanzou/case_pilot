@@ -3,7 +3,7 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,7 @@ from casepilot_api.models import (
     AuditEvent,
     CaseCollection,
     CollectionCaseMembership,
+    Conversation,
     ExecutionRecord,
     ExecutionRun,
     ExecutionRunAssignee,
@@ -478,6 +479,11 @@ def delete_collection(
 ) -> Response:
     collection = ensure_collection(db, account, collection_id)
     collection.deleted_at = datetime.now(UTC)
+    db.execute(
+        update(Conversation)
+        .where(Conversation.collection_id == collection.id)
+        .values(collection_id=None, updated_at=datetime.now(UTC))
+    )
     write_audit(
         db,
         space_id=collection.space_id,

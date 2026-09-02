@@ -1,0 +1,6 @@
+interface:
+  display_name: "CasePilot Test Case Generation"
+  short_description: "Generate traceable, reviewable test-case candidates"
+  default_prompt: "Use $casepilot-test-case-generation to turn this requirement into reviewable test-case candidates."
+policy:
+  allow_implicit_invocation: true

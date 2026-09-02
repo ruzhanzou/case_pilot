@@ -9,3 +9,5 @@ redis>=6,<7
 celery[redis]>=5.6,<6
 python-multipart>=0.0.20,<1
 pgvector>=0.4,<1
+openai-agents>=0.8,<0.9
+openai==2.44.0

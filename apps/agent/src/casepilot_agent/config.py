@@ -70,6 +70,10 @@ class AgentSettings(BaseSettings):
         default=60,
         validation_alias="CASEPILOT_AGENT_TIMEOUT_SECONDS",
     )
+    tracing_enabled: bool = Field(
+        default=False,
+        validation_alias="CASEPILOT_AGENT_TRACING_ENABLED",
+    )
     database_url: str = Field(
         default="postgresql+psycopg://casepilot:casepilot-local@localhost:5432/casepilot",
         validation_alias="DATABASE_URL",

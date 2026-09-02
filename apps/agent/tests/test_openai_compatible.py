@@ -64,6 +64,26 @@ def test_provider_validates_structured_generation(monkeypatch: pytest.MonkeyPatc
     assert result.feature_points
 
 
+def test_provider_accepts_json_wrapped_in_markdown_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = MockProvider().generate(GenerationRequest(prompt="支付需求"))
+    calls = 0
+
+    def fake_post(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return FakeResponse(f"```json\n{expected.model_dump_json()}\n```")
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    result = provider().generate(GenerationRequest(prompt="支付需求"))
+
+    assert result.test_cases
+    assert result.feature_points
+    assert calls == 1
+
+
 def test_provider_includes_conversation_memory_in_agent_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

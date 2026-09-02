@@ -20,6 +20,90 @@ function resolveApiBaseUrl(): string {
 
 const apiBaseUrl = resolveApiBaseUrl();
 
+const STREAM_TYPEWRITER_FRAME_MS = 32;
+const STREAM_TYPEWRITER_DRAIN_MS = 2_200;
+
+function advanceByCodePoints(content: string, offset: number, count: number) {
+  let nextOffset = offset;
+  for (const character of content.slice(offset)) {
+    nextOffset += character.length;
+    count -= 1;
+    if (count <= 0) break;
+  }
+  return nextOffset;
+}
+
+function createStreamTypewriter(onDelta?: (content: string) => void) {
+  let targetContent = "";
+  let renderedOffset = 0;
+  let timer: number | null = null;
+  let finishing = false;
+  let finishStartedAt = 0;
+  const finishWaiters: Array<() => void> = [];
+
+  const completeFinish = () => {
+    if (!finishing || renderedOffset < targetContent.length) return;
+    finishWaiters.splice(0).forEach((resolve) => resolve());
+  };
+
+  const renderFrame = () => {
+    timer = null;
+    const remaining = Array.from(targetContent.slice(renderedOffset)).length;
+    if (!remaining) {
+      completeFinish();
+      return;
+    }
+
+    let characterCount = remaining > 160 ? 4 : remaining > 72 ? 3 : remaining > 24 ? 2 : 1;
+    if (finishing) {
+      const elapsed = window.performance.now() - finishStartedAt;
+      const framesLeft = Math.max(
+        1,
+        Math.ceil((STREAM_TYPEWRITER_DRAIN_MS - elapsed) / STREAM_TYPEWRITER_FRAME_MS),
+      );
+      characterCount = Math.max(
+        characterCount,
+        Math.min(12, Math.ceil(remaining / framesLeft)),
+      );
+    }
+
+    renderedOffset = advanceByCodePoints(
+      targetContent,
+      renderedOffset,
+      characterCount,
+    );
+    onDelta?.(targetContent.slice(0, renderedOffset));
+
+    if (renderedOffset < targetContent.length) {
+      timer = window.setTimeout(renderFrame, STREAM_TYPEWRITER_FRAME_MS);
+    } else {
+      completeFinish();
+    }
+  };
+
+  const scheduleFrame = (delay = STREAM_TYPEWRITER_FRAME_MS) => {
+    if (timer !== null || renderedOffset >= targetContent.length) return;
+    timer = window.setTimeout(renderFrame, delay);
+  };
+
+  return {
+    push(content: string) {
+      if (content.length < targetContent.length) return;
+      targetContent = content;
+      // Paint the first character immediately, then keep a stable visual cadence
+      // independent from the provider's irregular network chunk sizes.
+      scheduleFrame(renderedOffset === 0 ? 0 : STREAM_TYPEWRITER_FRAME_MS);
+    },
+    finish() {
+      finishing = true;
+      finishStartedAt = window.performance.now();
+      scheduleFrame(0);
+      if (renderedOffset >= targetContent.length) return Promise.resolve();
+      return new Promise<void>((resolve) => finishWaiters.push(resolve));
+    },
+  };
+}
+
 export type Account = {
   id: string;
   email: string;
@@ -208,6 +292,11 @@ export type KnowledgeSourceDto = {
   created_at: string;
 };
 
+export type KnowledgeUploadDto = {
+  source: KnowledgeSourceDto;
+  document_ids: string[];
+};
+
 export type GenerationStage = {
   name: string;
   progress: number;
@@ -220,7 +309,41 @@ export type ConversationIntent =
   | "CASE_DELETE"
   | "CASE_QUERY"
   | "KNOWLEDGE_QA"
-  | "SMALL_TALK";
+  | "SMALL_TALK"
+  | "UNRESOLVED";
+
+export type ConversationTarget = {
+  kind: "case" | "module" | "condition" | "previous_result";
+  collection_id?: string;
+  case_ids?: string[];
+  candidate_refs?: string[];
+  module?: string;
+  condition?: string;
+  source_operation_id?: string;
+};
+
+export type ConversationOperationDto = {
+  id: string;
+  sequence: number;
+  intent: ConversationIntent;
+  confidence: number;
+  status: string;
+  target: Record<string, unknown>;
+  payload: Record<string, unknown>;
+  result: Record<string, unknown>;
+  requires_confirmation: boolean;
+  related_job_id: string | null;
+  related_change_set_id: string | null;
+  error_code: string | null;
+  created_at: string;
+};
+
+export type ConversationOperationPlanDto = {
+  status: string;
+  source_message_id: string | null;
+  current_operation_id: string | null;
+  operations: ConversationOperationDto[];
+};
 
 export type ConversationMessageDto = {
   id: string;
@@ -234,6 +357,7 @@ export type ConversationMessageDto = {
     | "failed"
     | "cancelled"
     | "awaiting_intent"
+    | "awaiting_collection"
     | "awaiting_clarification"
     | "awaiting_confirmation";
   target_case_ids: string[];
@@ -246,7 +370,7 @@ export type ConversationMessageDto = {
 export type ConversationDto = {
   id: string;
   space_id: string;
-  collection_id: string;
+  collection_id: string | null;
   title: string;
   status: string;
   context: Record<string, unknown>;
@@ -254,6 +378,7 @@ export type ConversationDto = {
   test_briefs: WorkspaceTestBriefDto[];
   candidates: WorkspaceCandidateDto[];
   workflow_runs: ConversationWorkflowRunDto[];
+  operation_plan: ConversationOperationPlanDto | null;
   created_at: string;
   updated_at: string;
 };
@@ -283,9 +408,9 @@ export type ConversationWorkflowRunDto = {
 
 export type ConversationSummaryDto = {
   id: string;
-  collection_id: string;
+  collection_id: string | null;
   title: string;
-  collection_name: string;
+  collection_name: string | null;
   phase: string;
   last_message_preview: string;
   created_at: string;
@@ -318,6 +443,7 @@ export type TestBriefContentDto = {
 
 export type WorkspaceTestBriefDto = {
   id: string;
+  source_operation_id: string | null;
   version: number;
   content: TestBriefContentDto;
   markdown_content: string;
@@ -363,6 +489,7 @@ export type ConversationTurnDto = {
     job_id?: string;
     change_set_id?: string;
   };
+  operation_plan: ConversationOperationPlanDto | null;
 };
 
 export type CaseChangeItemDto = {
@@ -473,15 +600,36 @@ const publicErrors: Record<string, string> = {
   execution_run_has_no_cases: "空用例集合不能创建执行任务。",
   execution_run_assignees_required: "请至少选择一名执行人。",
   execution_record_not_assignee: "只有当前执行人可以修改这条执行结果。",
+  conversation_collection_locked: "当前对话已绑定其他集合，请新建对话后继续。",
+  target_collection_mismatch: "所选节点不属于当前对话绑定的集合。",
+  conversation_collection_required: "请先确认本对话要维护的用例集合。",
+  conversation_operation_not_awaiting_collection: "集合确认状态已变化，请刷新后重试。",
+  conversation_operation_predecessor_pending: "前一项操作尚未完成，请稍后继续。",
+  requested_collection_mismatch: "目标集合已变化，请刷新后重试。",
 };
 
-export function publicErrorMessage(code: string): string {
-  return (
-    publicErrors[code] ??
-    (code.startsWith("api_request_failed_")
-      ? "服务请求失败，请稍后重试。"
-      : /[\u3400-\u9fff]/u.test(code)
+export function publicErrorMessage(code: unknown): string {
+  const normalized =
+    typeof code === "string"
+      ? code
+      : Array.isArray(code)
         ? code
+            .map((item) =>
+              typeof item === "object" && item && "msg" in item
+                ? String(item.msg)
+                : "",
+            )
+            .filter(Boolean)
+            .join("；")
+        : "";
+  return (
+    publicErrors[normalized] ??
+    (normalized.startsWith("api_request_failed_")
+      ? "服务请求失败，请稍后重试。"
+      : /[\u3400-\u9fff]/u.test(normalized)
+        ? normalized
+        : normalized
+          ? `请求参数不符合要求：${normalized}`
         : "操作暂时未完成，请稍后重试。")
   );
 }
@@ -498,7 +646,7 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as
-      | { detail?: string }
+      | { detail?: unknown }
       | null;
     throw new Error(
       publicErrorMessage(
@@ -541,9 +689,12 @@ export function listGenerationModels(): Promise<GenerationModelsDto> {
 export function watchGeneration(
   jobId: string,
   onStage: (stage: GenerationStage) => void,
+  onDelta?: (content: string) => void,
 ): Promise<GenerationJobDetail> {
   return new Promise((resolve, reject) => {
     let settled = false;
+    let accumulated = "";
+    const typewriter = createStreamTypewriter(onDelta);
     const source = new EventSource(
       `${apiBaseUrl}/api/v1/generation-jobs/${jobId}/events`,
       { withCredentials: true },
@@ -581,7 +732,7 @@ export function watchGeneration(
       if (settled) return;
       settled = true;
       close();
-      callback();
+      void typewriter.finish().then(callback);
     };
     const handleStage = (event: Event) => {
       const payload = JSON.parse(
@@ -601,7 +752,35 @@ export function watchGeneration(
       "test_case.generated",
       "enhancement.completed",
       "quality.completed",
+      "knowledge.answered",
     ].forEach((eventName) => source.addEventListener(eventName, handleStage));
+    source.addEventListener("qa.delta", (rawEvent) => {
+      try {
+        const payload = JSON.parse((rawEvent as MessageEvent<string>).data) as {
+          delta?: string;
+        };
+        if (!payload.delta) return;
+        accumulated += payload.delta;
+        typewriter.push(accumulated);
+      } catch {
+        // Terminal polling remains authoritative if a transient event is malformed.
+      }
+    });
+    source.addEventListener("qa.completed", () => {
+      finish(() => {
+        void getGeneration(jobId).then(resolve, reject);
+      });
+    });
+    source.addEventListener("qa.failed", (event) => {
+      const payload = JSON.parse(
+        (event as MessageEvent<string>).data,
+      ) as { error_code?: string };
+      finish(() =>
+        reject(
+          new Error(publicErrorMessage(payload.error_code ?? "generation_failed")),
+        ),
+      );
+    });
     source.addEventListener("generation.completed", () => {
       finish(() => {
         void getGeneration(jobId).then(resolve, reject);
@@ -662,7 +841,8 @@ export function cancelGeneration(jobId: string): Promise<GenerationJobDetail> {
 }
 
 export function createConversation(input: {
-  collectionId: string;
+  spaceId?: string;
+  collectionId?: string;
   title?: string;
   knowledgeSourceIds?: string[];
   documentIds?: string[];
@@ -672,11 +852,34 @@ export function createConversation(input: {
     method: "POST",
     body: JSON.stringify({
       collection_id: input.collectionId,
+      space_id: input.spaceId,
       title: input.title ?? "AI 用例工作台对话",
       knowledge_source_ids: input.knowledgeSourceIds ?? [],
       document_ids: input.documentIds ?? [],
       use_space_knowledge: input.useSpaceKnowledge ?? true,
     }),
+  });
+}
+
+export function bindConversationCollection(
+  conversationId: string,
+  collectionId: string,
+): Promise<ConversationDto> {
+  return apiRequest(`/api/v1/conversations/${conversationId}/collection`, {
+    method: "PATCH",
+    body: JSON.stringify({ collection_id: collectionId }),
+  });
+}
+
+export async function uploadConversationAttachments(
+  conversationId: string,
+  files: File[],
+): Promise<KnowledgeUploadDto> {
+  const form = new FormData();
+  files.forEach((file) => form.append("files", file));
+  return apiRequest(`/api/v1/conversations/${conversationId}/attachments`, {
+    method: "POST",
+    body: form,
   });
 }
 
@@ -697,11 +900,13 @@ export function getOrCreateWorkspace(
 }
 
 export function listConversationHistory(input?: {
+  spaceId?: string;
   query?: string;
   cursor?: string;
   limit?: number;
 }): Promise<ConversationHistoryPageDto> {
   const parameters = new URLSearchParams();
+  if (input?.spaceId) parameters.set("space_id", input.spaceId);
   if (input?.query) parameters.set("q", input.query);
   if (input?.cursor) parameters.set("cursor", input.cursor);
   parameters.set("limit", String(input?.limit ?? 30));
@@ -714,6 +919,7 @@ export function updateWorkspaceState(
     draft_text?: string;
     model_id?: AgentModelId;
     selected_case_id?: string | null;
+    selected_targets?: { label: string; target: ConversationTarget }[];
     active_view?: "list" | "map";
     search_query?: string;
     filters?: Record<string, unknown>;
@@ -738,7 +944,7 @@ export async function downloadTestBrief(
   );
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as
-      | { detail?: string }
+      | { detail?: unknown }
       | null;
     throw new Error(
       publicErrorMessage(
@@ -817,6 +1023,7 @@ export function sendConversationMessage(
     documentIds?: string[];
     useSpaceKnowledge?: boolean;
     intentOverride?: ConversationIntent;
+    targets?: ConversationTarget[];
   },
 ): Promise<ConversationTurnDto> {
   return apiRequest(`/api/v1/conversations/${conversationId}/messages`, {
@@ -831,6 +1038,7 @@ export function sendConversationMessage(
       document_ids: input.documentIds ?? [],
       use_space_knowledge: input.useSpaceKnowledge ?? true,
       intent_override: input.intentOverride,
+      targets: input.targets ?? [],
     }),
   });
 }
@@ -846,6 +1054,63 @@ export function confirmConversationIntent(
       body: JSON.stringify({ intent }),
     },
   );
+}
+
+export function resumeConversationOperation(
+  operationId: string,
+  input?: {
+    intent?: ConversationIntent;
+    targets?: ConversationTarget[];
+    targetCaseIds?: string[];
+    targetCandidateSnapshots?: ConversationTargetSnapshot[];
+  },
+): Promise<ConversationTurnDto> {
+  return apiRequest(`/api/v1/conversation-operations/${operationId}/resume`, {
+    method: "POST",
+    body: JSON.stringify({
+      intent: input?.intent,
+      targets: input?.targets ?? [],
+      target_case_ids: input?.targetCaseIds ?? [],
+      target_candidate_snapshots: input?.targetCandidateSnapshots ?? [],
+    }),
+  });
+}
+
+export function confirmConversationOperationCollection(
+  operationId: string,
+  input: { collectionId?: string; createCollectionName?: string },
+): Promise<ConversationTurnDto> {
+  return apiRequest(
+    `/api/v1/conversation-operations/${operationId}/confirm-collection`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        collection_id: input.collectionId,
+        create_collection_name: input.createCollectionName,
+      }),
+    },
+  );
+}
+
+export function continueOperationInNewConversation(
+  operationId: string,
+  collectionId: string,
+): Promise<ConversationDto> {
+  return apiRequest(
+    `/api/v1/conversation-operations/${operationId}/continue-in-new-conversation`,
+    {
+      method: "POST",
+      body: JSON.stringify({ collection_id: collectionId }),
+    },
+  );
+}
+
+export function cancelConversationOperation(
+  operationId: string,
+): Promise<ConversationOperationDto> {
+  return apiRequest(`/api/v1/conversation-operations/${operationId}/cancel`, {
+    method: "POST",
+  });
 }
 
 export function retryConversationMessage(
@@ -874,28 +1139,75 @@ export async function waitForConversationJob(
   conversationId: string,
   jobId: string,
   timeoutMs = 900_000,
+  onDelta?: (content: string) => void,
 ): Promise<ConversationMessageDto> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    const conversation = await getConversation(conversationId);
-    const message = conversation.messages.find(
-      (item) => item.role === "assistant" && item.related_job_id === jobId,
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let accumulated = "";
+    const typewriter = createStreamTypewriter(onDelta);
+    const source = new EventSource(
+      `${apiBaseUrl}/api/v1/generation-jobs/${jobId}/events`,
+      { withCredentials: true },
     );
-    if (
-      message &&
-      [
-        "completed",
-        "failed",
-        "cancelled",
-        "awaiting_clarification",
-        "awaiting_confirmation",
-      ].includes(message.status)
-    ) {
-      return message;
-    }
-    await new Promise((resolve) => window.setTimeout(resolve, 1200));
-  }
-  throw new Error("对话任务超时，请稍后重试");
+    const close = () => {
+      window.clearTimeout(timeout);
+      window.clearInterval(poll);
+      source.close();
+    };
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      close();
+      void typewriter.finish().then(callback);
+    };
+    const resolveFromConversation = async () => {
+      const conversation = await getConversation(conversationId);
+      const message = conversation.messages.find(
+        (item) => item.role === "assistant" && item.related_job_id === jobId,
+      );
+      if (
+        message &&
+        [
+          "completed",
+          "failed",
+          "cancelled",
+          "awaiting_clarification",
+          "awaiting_confirmation",
+        ].includes(message.status)
+      ) {
+        finish(() => resolve(message));
+      }
+    };
+    source.addEventListener("qa.delta", (rawEvent) => {
+      const event = rawEvent as MessageEvent<string>;
+      try {
+        const payload = JSON.parse(event.data) as { delta?: string };
+        if (!payload.delta) return;
+        accumulated += payload.delta;
+        typewriter.push(accumulated);
+      } catch {
+        // Ignore malformed transient events; terminal polling remains authoritative.
+      }
+    });
+    source.addEventListener("qa.completed", () => {
+      void resolveFromConversation().catch((error) => {
+        finish(() => reject(error));
+      });
+    });
+    source.addEventListener("qa.failed", () => {
+      void resolveFromConversation().catch((error) => {
+        finish(() => reject(error));
+      });
+    });
+    const poll = window.setInterval(() => {
+      void resolveFromConversation().catch(() => {
+        // SSE remains primary; transient polling failures are ignored.
+      });
+    }, 1200);
+    const timeout = window.setTimeout(() => {
+      finish(() => reject(new Error("对话任务超时，请稍后重试")));
+    }, timeoutMs);
+  });
 }
 
 export function getCaseChangeSet(
