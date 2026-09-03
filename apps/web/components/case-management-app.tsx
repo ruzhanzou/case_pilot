@@ -47,7 +47,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type CaseManagementAppProps = {
   account: Account;
@@ -87,7 +87,13 @@ export function CaseManagementApp({
   account,
   onLogout,
 }: CaseManagementAppProps) {
-  const space = account.spaces[0];
+  const [selectedSpaceId, setSelectedSpaceId] = useState(
+    account.spaces[0]?.id ?? "",
+  );
+  const space =
+    account.spaces.find((item) => item.id === selectedSpaceId) ??
+    account.spaces[0];
+  const activeSpaceId = space?.id;
   const [page, setPage] = useState<ManagementPage>("workbench");
   const [workbenchMode, setWorkbenchMode] = useState<
     "create" | "workspace"
@@ -116,7 +122,6 @@ export function CaseManagementApp({
   const [collectionEditor, setCollectionEditor] = useState<
     { mode: "create" } | { mode: "edit"; collection: CaseCollectionDto } | null
   >(null);
-  const bootstrapped = useRef(false);
 
   const selectedCollection =
     collections.find((item) => item.id === selectedCollectionId) ?? null;
@@ -483,12 +488,9 @@ export function CaseManagementApp({
 
   useEffect(() => {
     let active = true;
-    if (!space || bootstrapped.current) return;
-    bootstrapped.current = true;
-    setLoading(true);
-    setError("");
+    if (!activeSpaceId) return;
     void (async () => {
-      const availableCollections = await listCollections(space.id);
+      const availableCollections = await listCollections(activeSpaceId);
       const initialCollection = availableCollections[0];
       const initialCases = initialCollection
         ? await listTestCases(initialCollection.id)
@@ -516,7 +518,23 @@ export function CaseManagementApp({
     return () => {
       active = false;
     };
-  }, [space]);
+  }, [activeSpaceId]);
+
+  const switchSpace = (spaceId: string) => {
+    if (spaceId === space?.id) return;
+    if (!confirmDiscardPageChanges()) return;
+    setLandingConversation(null);
+    setHistoryOpen(false);
+    setWorkbenchMode("create");
+    setPage("workbench");
+    setLoading(true);
+    setError("");
+    setCollections([]);
+    setSelectedCollectionId("");
+    setCases([]);
+    setSelectedCaseId("");
+    setSelectedSpaceId(spaceId);
+  };
 
   const openHistoryConversation = async (
     conversation: ConversationSummaryDto,
@@ -775,6 +793,22 @@ export function CaseManagementApp({
             </strong>
           </div>
           <div className="management-topbar__status">
+            {account.spaces.length > 1 && (
+              <label className="management-space-switcher">
+                <span className="sr-only">当前空间</span>
+                <select
+                  aria-label="切换质量空间"
+                  value={space?.id ?? ""}
+                  onChange={(event) => switchSpace(event.target.value)}
+                >
+                  {account.spaces.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name} · {item.role === "owner" ? "所有者" : "成员"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <span>{account.display_name}</span>
           </div>
         </header>

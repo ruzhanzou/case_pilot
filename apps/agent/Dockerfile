@@ -6,11 +6,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY apps/agent/requirements.txt /app/apps/agent/requirements.txt
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-chi-sim \
     && rm -rf /var/lib/apt/lists/*
-RUN pip install --no-cache-dir -r /app/apps/agent/requirements.txt
+COPY apps/agent/pyproject.toml /tmp/casepilot-agent/pyproject.toml
+RUN mkdir -p /tmp/casepilot-agent/src/casepilot_agent \
+    && touch /tmp/casepilot-agent/src/casepilot_agent/__init__.py \
+    && pip install --no-cache-dir /tmp/casepilot-agent
 
 COPY apps/agent /app/apps/agent
 

@@ -4,7 +4,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from redis import Redis
+from starlette.responses import Response
 
 from casepilot_api.auth import ensure_demo_account
 from casepilot_api.auth import router as auth_router
@@ -21,13 +23,14 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    await asyncio.to_thread(ensure_demo_account)
+    if settings.seed_demo_data:
+        await asyncio.to_thread(ensure_demo_account)
     yield
 
 
 app = FastAPI(
     title="CasePilot API",
-    version="0.1.0",
+    version="1.0.0",
     description="CasePilot 本地用例管理、AI 测试设计与 QA 执行 API。",
     lifespan=lifespan,
 )
@@ -55,8 +58,8 @@ async def live() -> dict[str, str]:
     }
 
 
-@app.get("/health/ready")
-async def ready() -> dict[str, str]:
+@app.get("/health/ready", response_model=None)
+async def ready() -> Response:
     checks: dict[str, str] = {}
     try:
         await asyncio.to_thread(check_database)
@@ -64,12 +67,20 @@ async def ready() -> dict[str, str]:
     except Exception as error:
         checks["postgres"] = f"unavailable: {error.__class__.__name__}"
 
+    redis_client = Redis.from_url(
+        settings.redis_url,
+        socket_connect_timeout=1,
+        socket_timeout=1,
+    )
     try:
-        redis_client = Redis.from_url(settings.redis_url, socket_timeout=1)
         await asyncio.to_thread(redis_client.ping)
         checks["redis"] = "ok"
     except Exception as error:
         checks["redis"] = f"unavailable: {error.__class__.__name__}"
 
-    overall = "ok" if all(value == "ok" for value in checks.values()) else "degraded"
-    return {"status": overall, **checks}
+    finally:
+        redis_client.close()
+
+    status_code = 200 if all(value == "ok" for value in checks.values()) else 503
+    status_text = "ok" if status_code == 200 else "degraded"
+    return JSONResponse(status_code=status_code, content={"status": status_text, **checks})

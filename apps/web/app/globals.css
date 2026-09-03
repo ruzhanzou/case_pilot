@@ -5359,6 +5359,17 @@ button.case-tag:hover {
   background: white;
 }
 
+.management-space-switcher select {
+  min-width: 180px;
+  max-width: 280px;
+  min-height: 36px;
+  padding: 0 32px 0 10px;
+  border: 1px solid var(--management-line);
+  border-radius: 8px;
+  color: #334155;
+  background: white;
+}
+
 .management-kicker {
   display: block;
   margin-bottom: 6px;

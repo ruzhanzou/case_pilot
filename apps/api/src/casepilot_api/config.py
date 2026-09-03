@@ -1,7 +1,7 @@
 from functools import lru_cache
 from urllib.parse import urlsplit
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     )
     agent_timeout_seconds: float = Field(
         default=60,
+        gt=0,
         validation_alias="CASEPILOT_AGENT_TIMEOUT_SECONDS",
     )
     agent_tracing_enabled: bool = Field(
@@ -83,6 +84,7 @@ class Settings(BaseSettings):
     )
     knowledge_max_file_bytes: int = Field(
         default=25 * 1024 * 1024,
+        gt=0,
         validation_alias="CASEPILOT_KNOWLEDGE_MAX_FILE_BYTES",
     )
     session_cookie_name: str = Field(
@@ -91,8 +93,21 @@ class Settings(BaseSettings):
     )
     session_ttl_hours: int = Field(
         default=168,
+        gt=0,
         validation_alias="CASEPILOT_SESSION_TTL_HOURS",
     )
+    seed_demo_data: bool = Field(
+        default=True,
+        validation_alias="CASEPILOT_SEED_DEMO_DATA",
+    )
+
+    @model_validator(mode="after")
+    def validate_production_safety(self) -> "Settings":
+        if self.env == "production" and self.seed_demo_data:
+            raise ValueError("CASEPILOT_SEED_DEMO_DATA must be false in production")
+        if self.ai_mode != "mock" and self.agent_provider != "mock" and not self.agent_api_key:
+            raise ValueError("CASEPILOT_AGENT_API_KEY is required for real AI mode")
+        return self
 
     @property
     def allowed_web_origins(self) -> tuple[str, ...]:

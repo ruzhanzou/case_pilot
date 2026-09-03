@@ -1,7 +1,7 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from casepilot_api import generation
+from casepilot_api import generation, main
 from casepilot_api.config import Settings, get_settings
 from casepilot_api.generation import list_generation_models
 from casepilot_api.main import app
@@ -17,6 +17,23 @@ async def test_live_health() -> None:
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
     assert response.json()["generation"] == get_settings().ai_mode
+
+
+@pytest.mark.asyncio
+async def test_readiness_returns_503_when_a_dependency_is_unavailable(monkeypatch) -> None:
+    class UnavailableRedis:
+        def ping(self) -> None:
+            raise ConnectionError("redis unavailable")
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(main, "check_database", lambda: None)
+    monkeypatch.setattr(main.Redis, "from_url", lambda *args, **kwargs: UnavailableRedis())
+
+    response = await main.ready()
+
+    assert response.status_code == 503
 
 
 def test_loopback_web_origin_accepts_localhost_and_ip_aliases() -> None:

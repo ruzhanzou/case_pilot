@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from math import sqrt
 from pathlib import Path
 from time import monotonic
@@ -41,6 +41,7 @@ from casepilot_agent.store import (
     knowledge_chunks,
     knowledge_documents,
     knowledge_sources,
+    task_outbox,
 )
 
 settings = get_settings()
@@ -55,13 +56,73 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="Asia/Shanghai",
     task_track_started=True,
+    task_ignore_result=True,
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
     beat_schedule={
         "cleanup-expired-temporary-knowledge": {
             "task": "casepilot.agent.cleanup_expired_knowledge",
             "schedule": 3600.0,
-        }
+        },
+        "dispatch-task-outbox": {
+            "task": "casepilot.agent.dispatch_task_outbox",
+            "schedule": 1.0,
+        },
     },
 )
+
+
+@celery_app.task(name="casepilot.agent.dispatch_task_outbox")
+def dispatch_task_outbox() -> dict[str, int]:
+    """Deliver committed outbox entries; failed deliveries remain retryable."""
+    store = JobStore(settings.database_url, settings.redis_url)
+    dispatched = 0
+    failed = 0
+    with store.connection() as connection:
+        cleaned = connection.execute(
+            delete(task_outbox).where(
+                task_outbox.c.status == "dispatched",
+                task_outbox.c.dispatched_at < datetime.now(UTC) - timedelta(days=7),
+            )
+        ).rowcount
+        rows = list(
+            connection.execute(
+                select(task_outbox)
+                .where(
+                    task_outbox.c.status == "pending",
+                    task_outbox.c.available_at <= datetime.now(UTC),
+                )
+                .order_by(task_outbox.c.created_at)
+                .limit(25)
+                .with_for_update(skip_locked=True)
+            ).mappings()
+        )
+        for row in rows:
+            try:
+                celery_app.send_task(
+                    row["task_name"],
+                    args=list(row["task_args"]),
+                    task_id=row["task_id"],
+                )
+                connection.execute(
+                    update(task_outbox)
+                    .where(task_outbox.c.id == row["id"])
+                    .values(status="dispatched", dispatched_at=datetime.now(UTC), last_error=None)
+                )
+                dispatched += 1
+            except Exception as error:
+                attempts = int(row["attempts"]) + 1
+                connection.execute(
+                    update(task_outbox)
+                    .where(task_outbox.c.id == row["id"])
+                    .values(
+                        attempts=attempts,
+                        last_error=error.__class__.__name__,
+                        available_at=datetime.now(UTC) + timedelta(seconds=min(300, 2**attempts)),
+                    )
+                )
+                failed += 1
+    return {"dispatched": dispatched, "failed": failed, "cleaned": cleaned}
 
 STAGE_PROGRESS = {
     "context.prepared": 10,
@@ -461,16 +522,9 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
         embedding_provider = None
     try:
         with store.connection() as connection:
-            job = store.get_job_for_update(connection, parsed_job_id)
-            if str(getattr(job["status"], "value", job["status"])) == "cancelled":
-                raise GenerationCancelled("generation_cancelled")
-            store.update_job(
-                connection,
-                parsed_job_id,
-                status="running",
-                stage="context.prepared",
-                error_code=None,
-            )
+            job = store.claim_job(connection, parsed_job_id, stage="context.prepared")
+        if job is None:
+            return {"job_id": job_id, "status": "duplicate_ignored"}
         context = _context_payload(store, job, embedding_provider)
         ensure_not_cancelled(store, parsed_job_id)
         payload = job["input_payload"]
@@ -594,12 +648,7 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
         raise
 
 
-@celery_app.task(
-    name="casepilot.agent.generate",
-    autoretry_for=(ConnectionError,),
-    retry_backoff=True,
-    retry_kwargs={"max_retries": 3},
-)
+@celery_app.task(name="casepilot.agent.generate")
 def generate_test_cases(job_id: str) -> dict[str, Any]:
     parsed_job_id = UUID(job_id)
     store = JobStore(settings.database_url, settings.redis_url)
@@ -613,15 +662,9 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
     partial_output: dict[str, Any] = {}
     try:
         with store.connection() as connection:
-            job = store.get_job_for_update(connection, parsed_job_id)
-            if str(getattr(job["status"], "value", job["status"])) == "cancelled":
-                raise GenerationCancelled("generation_cancelled")
-            store.update_job(
-                connection,
-                parsed_job_id,
-                status="running",
-                error_code=None,
-            )
+            job = store.claim_job(connection, parsed_job_id)
+        if job is None:
+            return {"job_id": job_id, "status": "duplicate_ignored"}
         payload = job["input_payload"]
         request = GenerationRequest(
             prompt=str(payload["prompt"]),
@@ -853,14 +896,15 @@ def rewrite_test_case(job_id: str) -> dict[str, Any]:
     store = JobStore(settings.database_url, settings.redis_url)
     try:
         with store.connection() as connection:
-            job = store.get_job(connection, parsed_job_id)
+            job = store.claim_job(connection, parsed_job_id, stage="rewriting")
+            if job is None:
+                return {"job_id": job_id, "status": "duplicate_ignored"}
             payload = job["input_payload"]
             snapshot = store.load_case_snapshot(
                 connection,
                 UUID(payload["case_id"]),
                 UUID(payload["base_revision_id"]),
             )
-            store.update_job(connection, parsed_job_id, status="running", stage="rewriting")
         pipeline = GenerationPipeline(create_provider(settings.provider))
         candidate = pipeline.rewrite(
                 RewriteRequest(
@@ -928,15 +972,10 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
     store = JobStore(settings.database_url, settings.redis_url)
     try:
         with store.connection() as connection:
-            job = store.get_job(connection, parsed_job_id)
+            job = store.claim_job(connection, parsed_job_id, stage="rewriting")
+            if job is None:
+                return {"job_id": job_id, "status": "duplicate_ignored"}
             payload = job["input_payload"]
-            store.update_job(
-                connection,
-                parsed_job_id,
-                status="running",
-                stage="rewriting",
-                error_code=None,
-            )
         pipeline = GenerationPipeline(create_provider(settings.provider))
         items: list[dict[str, Any]] = []
         instruction = str(payload["instruction"])
@@ -1075,14 +1114,9 @@ def answer_knowledge_question(job_id: str) -> dict[str, Any]:
         embedding_provider = None
     try:
         with store.connection() as connection:
-            job = store.get_job(connection, parsed_job_id)
-            store.update_job(
-                connection,
-                parsed_job_id,
-                status="running",
-                stage="context.prepared",
-                error_code=None,
-            )
+            job = store.claim_job(connection, parsed_job_id, stage="context.prepared")
+        if job is None:
+            return {"job_id": job_id, "status": "duplicate_ignored"}
         context = _context_payload(store, job, embedding_provider)
         payload = job["input_payload"]
         def publish_delta(delta: str) -> None:
@@ -1199,14 +1233,18 @@ def index_knowledge_source(source_id: str) -> dict[str, Any]:
         embedding_provider = None
     try:
         with store.connection() as connection:
-            store.get_source(connection, parsed_source_id)
-            documents = store.get_source_documents(connection, parsed_source_id)
-            store.update_source(
-                connection,
-                parsed_source_id,
-                status="parsing",
-                error_code=None,
+            claimed_source_id = connection.scalar(
+                update(knowledge_sources)
+                .where(
+                    knowledge_sources.c.id == parsed_source_id,
+                    knowledge_sources.c.status == "uploaded",
+                )
+                .values(status="parsing", error_code=None)
+                .returning(knowledge_sources.c.id)
             )
+            if claimed_source_id is None:
+                return {"source_id": source_id, "status": "duplicate_ignored"}
+            documents = store.get_source_documents(connection, parsed_source_id)
         source_degraded = embedding_provider is None
         for document in documents:
             with store.connection() as connection:

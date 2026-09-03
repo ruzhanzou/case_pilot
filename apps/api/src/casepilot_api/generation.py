@@ -19,6 +19,7 @@ from casepilot_api.models import (
     CaseCollection,
     Conversation,
     ConversationMessage,
+    ConversationOperation,
     GenerationJob,
     GenerationJobStage,
     KnowledgeDocument,
@@ -29,6 +30,7 @@ from casepilot_api.schemas import (
     GenerationJobView,
     GenerationStartRequest,
 )
+from casepilot_api.task_outbox import enqueue_task
 
 router = APIRouter(prefix="/api/v1", tags=["generation"])
 settings = get_settings()
@@ -222,13 +224,15 @@ def start_generation(
         output_payload={},
     )
     db.add(job)
+    db.flush()
+    enqueue_task(
+        db,
+        "casepilot.agent.generate",
+        [str(job.id)],
+        task_id=job.id,
+    )
     db.commit()
     db.refresh(job)
-    task_client.send_task(
-        "casepilot.agent.generate",
-        args=[str(job.id)],
-        task_id=str(job.id),
-    )
     return job_view(db, job)
 
 
@@ -265,14 +269,10 @@ def answer_generation_questions(
     job.status = "queued"
     job.stage = "requirement.analyzed"
     job.error_code = None
+    enqueue_task(db, "casepilot.agent.generate", [str(job.id)], task_id=job.id)
     db.commit()
     Redis.from_url(settings.redis_url).delete(
         f"casepilot:generation:{job.id}:events"
-    )
-    task_client.send_task(
-        "casepilot.agent.generate",
-        args=[str(job.id)],
-        task_id=str(job.id),
     )
     return job_view(db, job)
 
@@ -292,15 +292,22 @@ def retry_generation(
     if status != "failed":
         raise HTTPException(status_code=409, detail="only_failed_generation_can_retry")
     job.status = "queued"
+    job.stage = "queued"
     job.error_code = None
+    db.execute(
+        update(ConversationOperation)
+        .where(ConversationOperation.related_job_id == job.id)
+        .values(status="queued", error_code=None, completed_at=None)
+    )
+    db.execute(
+        update(ConversationMessage)
+        .where(ConversationMessage.related_job_id == job.id)
+        .values(status="running", content="", message_metadata={"retrying": True})
+    )
+    enqueue_task(db, "casepilot.agent.generate", [str(job.id)], task_id=job.id)
     db.commit()
     Redis.from_url(settings.redis_url).delete(
         f"casepilot:generation:{job.id}:events"
-    )
-    task_client.send_task(
-        "casepilot.agent.generate",
-        args=[str(job.id)],
-        task_id=str(job.id),
     )
     return job_view(db, job)
 

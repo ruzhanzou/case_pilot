@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from celery import Celery
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -18,16 +17,11 @@ from casepilot_api.schemas import (
     KnowledgeSourceView,
     KnowledgeUploadView,
 )
+from casepilot_api.task_outbox import enqueue_task
 
 router = APIRouter(prefix="/api/v1", tags=["knowledge"])
 settings = get_settings()
 DbSession = Annotated[Session, Depends(get_db_session)]
-task_client = Celery(
-    "casepilot-api-knowledge",
-    broker=settings.celery_broker_url,
-    backend=settings.celery_result_backend,
-)
-
 ALLOWED_EXTENSIONS = {
     ".pdf",
     ".docx",
@@ -135,35 +129,46 @@ def _store_uploads(
     storage_root = Path(settings.knowledge_storage_path)
     storage_root.mkdir(parents=True, exist_ok=True)
     documents: list[KnowledgeDocument] = []
-    for original_name, extension, mime_type, content in prepared:
-        document_id = uuid4()
-        storage_key = f"{document_id.hex}{extension}"
-        (storage_root / storage_key).write_bytes(content)
-        document = KnowledgeDocument(
-            id=document_id,
-            source_id=source.id,
-            space_id=space_id,
-            original_name=original_name[:300],
-            mime_type=mime_type,
-            storage_key=storage_key,
-            size_bytes=len(content),
-            checksum=sha256(content).hexdigest(),
-            version=1,
-            status="uploaded",
-            expires_at=(
-                datetime.now(UTC) + timedelta(days=7)
-                if persistence == "temporary"
-                else None
-            ),
+    written_paths: list[Path] = []
+    try:
+        for original_name, extension, mime_type, content in prepared:
+            document_id = uuid4()
+            storage_key = f"{document_id.hex}{extension}"
+            storage_path = storage_root / storage_key
+            storage_path.write_bytes(content)
+            written_paths.append(storage_path)
+            document = KnowledgeDocument(
+                id=document_id,
+                source_id=source.id,
+                space_id=space_id,
+                original_name=original_name[:300],
+                mime_type=mime_type,
+                storage_key=storage_key,
+                size_bytes=len(content),
+                checksum=sha256(content).hexdigest(),
+                version=1,
+                status="uploaded",
+                expires_at=(
+                    datetime.now(UTC) + timedelta(days=7)
+                    if persistence == "temporary"
+                    else None
+                ),
+            )
+            db.add(document)
+            documents.append(document)
+        enqueue_task(
+            db,
+            "casepilot.agent.index_knowledge_source",
+            [str(source.id)],
+            task_id=f"knowledge-index:{source.id}",
         )
-        db.add(document)
-        documents.append(document)
-    db.commit()
+        db.commit()
+    except Exception:
+        db.rollback()
+        for storage_path in written_paths:
+            storage_path.unlink(missing_ok=True)
+        raise
     db.refresh(source)
-    task_client.send_task(
-        "casepilot.agent.index_knowledge_source",
-        args=[str(source.id)],
-    )
     return KnowledgeUploadView(
         source=_source_view(db, source),
         document_ids=[document.id for document in documents],
@@ -254,11 +259,13 @@ def reindex_knowledge_source(
     ):
         document.status = "uploaded"
         document.error_code = None
-    db.commit()
-    task_client.send_task(
+    enqueue_task(
+        db,
         "casepilot.agent.index_knowledge_source",
-        args=[str(source.id)],
+        [str(source.id)],
+        task_id=f"knowledge-reindex:{source.id}:{uuid4()}",
     )
+    db.commit()
     return _source_view(db, source)
 
 
@@ -271,8 +278,10 @@ def delete_knowledge_source(
     source = _get_source(db, account.id, source_id)
     source.status = "deleted"
     source.deleted_at = datetime.now(UTC)
-    db.commit()
-    task_client.send_task(
+    enqueue_task(
+        db,
         "casepilot.agent.cleanup_knowledge_source",
-        args=[str(source.id)],
+        [str(source.id)],
+        task_id=f"knowledge-cleanup:{source.id}",
     )
+    db.commit()

@@ -187,6 +187,24 @@ def test_validator_accepts_localized_coverage_matrix_keys() -> None:
     }
 
 
+def test_validator_accepts_singular_coverage_matrix_keys() -> None:
+    result = MockProvider().generate(GenerationRequest(prompt="支付回调需求"))
+    requirement_ref = result.feature_points[0].requirement_refs[0]
+    result.coverage_matrix = [
+        {
+            "requirement_id": requirement_ref,
+            "feature_point_id": result.feature_points[0].id,
+            "test_point_id": result.test_points[0].id,
+        }
+    ]
+
+    report = validate_generation(result)
+
+    assert "requirement_coverage_gap" not in {
+        issue.code for issue in report.issues
+    }
+
+
 def test_rewrite_creates_candidate_without_mutating_source() -> None:
     provider = MockProvider()
     generated = provider.generate(GenerationRequest(prompt="支付回调需求"))

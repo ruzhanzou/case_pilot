@@ -9,6 +9,7 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -52,11 +53,36 @@ class TimestampMixin:
     )
 
 
-class Account(TimestampMixin, Base):
-    __tablename__ = "accounts"
+class TaskOutbox(TimestampMixin, Base):
+    """A Celery message committed atomically with the state that requires it."""
+
+    __tablename__ = "task_outbox"
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
-    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True, index=True)
+    task_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    task_args: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    task_id: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending", nullable=False, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(String(240))
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+        index=True,
+    )
+    dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Account(TimestampMixin, Base):
+    __tablename__ = "accounts"
+    __table_args__ = (
+        UniqueConstraint("email", name="uq_accounts_email"),
+        Index("ix_accounts_email", "email", unique=True),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
     display_name: Mapped[str] = mapped_column(String(120), nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
@@ -144,6 +170,13 @@ class TestCase(TimestampMixin, Base):
 
 class TestCaseRevision(TimestampMixin, Base):
     __tablename__ = "test_case_revisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "test_case_id",
+            "revision_number",
+            name="uq_test_case_revision_number",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     test_case_id: Mapped[UUID] = mapped_column(
@@ -563,18 +596,19 @@ class GenerationArtifact(TimestampMixin, Base):
 
 class KnowledgeSource(TimestampMixin, Base):
     __tablename__ = "knowledge_sources"
+    __table_args__ = (
+        Index("ix_knowledge_sources_space_status", "space_id", "status"),
+    )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("spaces.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     account_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("accounts.id", ondelete="SET NULL"),
-        index=True,
     )
     name: Mapped[str] = mapped_column(String(240), nullable=False)
     kind: Mapped[str] = mapped_column(String(32), default="upload", nullable=False)
@@ -586,19 +620,21 @@ class KnowledgeSource(TimestampMixin, Base):
 
 class KnowledgeDocument(TimestampMixin, Base):
     __tablename__ = "knowledge_documents"
+    __table_args__ = (
+        Index("ix_knowledge_documents_space_status", "space_id", "status"),
+        Index("ix_knowledge_documents_source_id", "source_id"),
+    )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     source_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("knowledge_sources.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("spaces.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     original_name: Mapped[str] = mapped_column(String(300), nullable=False)
     mime_type: Mapped[str] = mapped_column(String(160), nullable=False)
@@ -613,25 +649,37 @@ class KnowledgeDocument(TimestampMixin, Base):
 
 class KnowledgeChunk(TimestampMixin, Base):
     __tablename__ = "knowledge_chunks"
+    __table_args__ = (
+        Index("ix_knowledge_chunks_scope", "space_id", "source_id", "document_id"),
+        Index(
+            "ix_knowledge_chunks_search_trgm",
+            "search_text",
+            postgresql_using="gin",
+            postgresql_ops={"search_text": "gin_trgm_ops"},
+        ),
+        Index(
+            "ix_knowledge_chunks_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "halfvec_cosine_ops"},
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     document_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("knowledge_documents.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     source_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("knowledge_sources.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     space_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("spaces.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     parent_chunk_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
@@ -663,6 +711,11 @@ class GenerationJobStage(TimestampMixin, Base):
             "attempt",
             name="uq_generation_job_stage_attempt",
         ),
+        Index(
+            "ix_generation_job_stages_job_stage",
+            "generation_job_id",
+            "stage",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -670,7 +723,6 @@ class GenerationJobStage(TimestampMixin, Base):
         PGUUID(as_uuid=True),
         ForeignKey("generation_jobs.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     stage: Mapped[str] = mapped_column(String(80), nullable=False)
     attempt: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
@@ -687,13 +739,19 @@ class GenerationJobStage(TimestampMixin, Base):
 
 class GenerationEvidence(TimestampMixin, Base):
     __tablename__ = "generation_evidence"
+    __table_args__ = (
+        Index(
+            "ix_generation_evidence_job_stage",
+            "generation_job_id",
+            "stage",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     generation_job_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("generation_jobs.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     stage: Mapped[str] = mapped_column(String(80), nullable=False)
     chunk_id: Mapped[UUID | None] = mapped_column(

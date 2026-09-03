@@ -5,8 +5,8 @@ from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
 
-import fitz
 import jieba
+import pymupdf as fitz
 import pytesseract
 from docx import Document
 from openpyxl import load_workbook

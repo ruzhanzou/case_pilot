@@ -239,7 +239,7 @@ Docker、前端宿主机运行”的方式：
 docker compose up -d postgres redis migrate api agent cleanup
 pnpm --dir apps/web install
 NEXT_PUBLIC_CASEPILOT_API_URL=http://localhost:8000 \
-  pnpm --dir apps/web dev --host 127.0.0.1 --port 13000
+  pnpm --dir apps/web dev --hostname 127.0.0.1 --port 13000
 ```
 
 这只是本地开发兜底，不是生产部署方式。容器化 Web 恢复后应回到 Compose 默认的
@@ -378,8 +378,7 @@ CREATE DATABASE casepilot OWNER casepilot;
 
 ```bash
 python3.13 -m venv .venv
-.venv/bin/pip install -r apps/api/requirements-dev.txt
-.venv/bin/pip install -r apps/agent/requirements-dev.txt
+.venv/bin/pip install -e 'apps/api[dev]' -e 'apps/agent[dev]'
 
 export DATABASE_URL=postgresql+psycopg://casepilot:casepilot-local@127.0.0.1:5432/casepilot
 export REDIS_URL=redis://127.0.0.1:6379/0
@@ -572,6 +571,7 @@ Docker Desktop 部署可先执行 `docker compose ps -a`，再按“验收路径
 ```bash
 cd apps/web
 pnpm lint
+pnpm typecheck
 pnpm build
 CASEPILOT_E2E_BASE_URL=http://localhost:3000 pnpm exec playwright test
 ```

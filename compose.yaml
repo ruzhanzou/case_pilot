@@ -33,6 +33,7 @@ services:
     restart: unless-stopped
 
   api:
+    image: casepilot-api:local
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -56,9 +57,15 @@ services:
         condition: service_healthy
     volumes:
       - casepilot_knowledge:/var/lib/casepilot/knowledge
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
     restart: unless-stopped
 
   agent:
+    image: casepilot-agent:local
     build:
       context: .
       dockerfile: apps/agent/Dockerfile
@@ -85,9 +92,7 @@ services:
     restart: unless-stopped
 
   cleanup:
-    build:
-      context: .
-      dockerfile: apps/agent/Dockerfile
+    image: casepilot-agent:local
     command: ["celery", "-A", "casepilot_agent.tasks:celery_app", "beat", "--loglevel=INFO"]
     env_file:
       - path: .env
@@ -112,21 +117,22 @@ services:
   web:
     image: node:24-slim
     working_dir: /workspace/apps/web
-    command: ["sh", "-lc", "corepack enable && pnpm install --frozen-lockfile && pnpm dev --host 0.0.0.0"]
+    command: ["sh", "-lc", "corepack enable && pnpm install --frozen-lockfile && pnpm dev --hostname 0.0.0.0"]
     environment:
+      CI: "true"
       NEXT_PUBLIC_CASEPILOT_API_URL: http://localhost:8000
     ports:
       - "3000:3000"
     volumes:
       - .:/workspace
+      - casepilot_root_node_modules:/workspace/node_modules
       - casepilot_node_modules:/workspace/apps/web/node_modules
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
   migrate:
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
+    image: casepilot-api:local
     env_file:
       - path: .env
         required: false
@@ -141,5 +147,6 @@ services:
 volumes:
   casepilot_postgres:
   casepilot_redis:
+  casepilot_root_node_modules:
   casepilot_node_modules:
   casepilot_knowledge:

@@ -15,7 +15,7 @@
     "test:e2e": "playwright test",
     "test:e2e:conversation": "playwright test e2e/conversation-acceptance.spec.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "db:generate": "drizzle-kit generate"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@streamdown/cjk": "^1.0.3",
@@ -27,7 +27,6 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
-    "drizzle-orm": "0.45.2",
     "lucide-react": "^1.25.0",
     "motion": "^12.42.2",
     "nanoid": "^6.0.0",
@@ -43,6 +42,7 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",
+    "@cloudflare/workers-types": "^5.20260902.1",
     "@playwright/test": "^1.62.0",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
@@ -50,7 +50,6 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
     "@vitejs/plugin-rsc": "0.5.26",
-    "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.6",
     "react-server-dom-webpack": "19.2.6",

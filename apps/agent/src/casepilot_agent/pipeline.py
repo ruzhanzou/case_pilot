@@ -245,8 +245,16 @@ def validate_generation(result: GenerationResult) -> QualityReport:
             )
     covered_requirements: set[str] = set()
     for row in result.coverage_matrix:
-        test_point_refs = row.get("test_point_ids") or row.get("测试点编号")
-        requirement_refs = row.get("requirement_ref") or row.get("需求编号")
+        test_point_refs = (
+            row.get("test_point_ids")
+            or row.get("test_point_id")
+            or row.get("测试点编号")
+        )
+        requirement_refs = (
+            row.get("requirement_ref")
+            or row.get("requirement_id")
+            or row.get("需求编号")
+        )
         if not test_point_refs or not requirement_refs:
             continue
         if isinstance(requirement_refs, list):

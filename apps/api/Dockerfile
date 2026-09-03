@@ -6,8 +6,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY apps/api/requirements.txt /app/apps/api/requirements.txt
-RUN pip install --no-cache-dir -r /app/apps/api/requirements.txt
+COPY apps/api/pyproject.toml /tmp/casepilot-api/pyproject.toml
+RUN mkdir -p /tmp/casepilot-api/src/casepilot_api \
+    && touch /tmp/casepilot-api/src/casepilot_api/__init__.py \
+    && pip install --no-cache-dir /tmp/casepilot-api
 
 COPY apps/api /app/apps/api
 

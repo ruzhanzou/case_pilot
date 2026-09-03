@@ -265,7 +265,19 @@ def add_space_member(
         resource_id=member.id,
         payload={"email": member.email},
     )
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        existing = db.scalar(
+            select(SpaceMembership).where(
+                SpaceMembership.space_id == space_id,
+                SpaceMembership.account_id == member.id,
+            )
+        )
+        if existing is not None:
+            return space_member_view(member, existing)
+        raise HTTPException(status_code=409, detail="space_membership_conflict") from error
     db.refresh(membership)
     return space_member_view(member, membership)
 
@@ -384,6 +396,7 @@ def case_to_view(
         preconditions=list(revision.preconditions),
         steps=list(revision.steps),
         source=source,
+        source_refs=list(revision.source_refs),
         created_at=test_case.created_at,
     )
 
@@ -627,13 +640,35 @@ def update_test_case(
     db: DbSession,
 ) -> TestCaseView:
     test_case = ensure_case(db, account, case_id)
+    # The revision check and pointer update must share the same row lock. Without
+    # this, two editors can both pass the base revision check and race to create
+    # the same next revision number.
+    db.refresh(test_case, with_for_update=True)
     if test_case.current_revision_id != payload.base_revision_id:
         raise HTTPException(status_code=409, detail="revision_conflict")
+    current_revision = db.scalar(
+        select(TestCaseRevision).where(
+            TestCaseRevision.id == test_case.current_revision_id,
+            TestCaseRevision.test_case_id == test_case.id,
+        )
+    )
+    if current_revision is None:
+        raise HTTPException(status_code=409, detail="test_case_revision_not_found")
     latest_number = db.scalar(
         select(func.max(TestCaseRevision.revision_number)).where(
             TestCaseRevision.test_case_id == test_case.id
         )
     )
+    source_refs = (
+        [item.model_dump(mode="json") for item in payload.source_refs]
+        if payload.source_refs is not None
+        else [dict(item) for item in current_revision.source_refs]
+    )
+    source_label = payload.source.strip()
+    if source_refs:
+        source_refs[0] = {**source_refs[0], "label": source_label}
+    elif source_label:
+        source_refs = [{"label": source_label, "locator": "", "excerpt": ""}]
     revision = TestCaseRevision(
         test_case_id=test_case.id,
         revision_number=(latest_number or 0) + 1,
@@ -644,7 +679,7 @@ def update_test_case(
         tags=normalize_tags(payload.tags),
         preconditions=[item.strip() for item in payload.preconditions if item.strip()],
         steps=normalize_steps(payload.steps),
-        source_refs=[{"label": payload.source.strip()}],
+        source_refs=source_refs,
     )
     db.add(revision)
     db.flush()

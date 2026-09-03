@@ -8,14 +8,16 @@
     "dev": "pnpm dev:web",
     "dev:web": "pnpm --dir apps/web dev",
     "dev:api": ".venv/bin/uvicorn casepilot_api.main:app --app-dir apps/api/src --reload --host 127.0.0.1 --port 8000",
-    "dev:agent": "PYTHONPATH=apps/agent/src .venv/bin/celery -A casepilot_agent.tasks:celery_app worker --loglevel=INFO",
+    "dev:agent": "PYTHONPATH=apps/agent/src .venv/bin/celery -A casepilot_agent.tasks:celery_app worker --beat --loglevel=INFO",
     "build:web": "pnpm --dir apps/web build",
     "test:web": "pnpm --dir apps/web test",
     "lint:web": "pnpm --dir apps/web lint",
+    "typecheck:web": "pnpm --dir apps/web typecheck",
     "test:api": "PYTHONPATH=apps/api/src .venv/bin/pytest apps/api/tests",
     "test:agent": "PYTHONPATH=apps/agent/src .venv/bin/pytest apps/agent/tests",
     "accept:conversation": ".venv/bin/python scripts/casepilot_conversation_acceptance.py",
     "test:python": "pnpm test:api && pnpm test:agent",
-    "lint:python": ".venv/bin/ruff check apps/api apps/agent"
+    "lint:python": ".venv/bin/ruff check apps/api apps/agent",
+    "check": "pnpm lint:python && pnpm test:python && pnpm lint:web && pnpm typecheck:web && pnpm test:web"
   }
 }

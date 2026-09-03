@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from casepilot_api.config import get_settings
@@ -241,7 +242,11 @@ def register(
         ]
     )
     create_session(db, response, account)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="email_already_registered") from error
     return account_view(db, account)
 
 

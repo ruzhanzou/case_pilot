@@ -7,7 +7,6 @@ from typing import Annotated, Any
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
-from celery import Celery
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse
 from redis import Redis
@@ -76,16 +75,11 @@ from casepilot_api.schemas import (
     WorkspaceStateUpdate,
     WorkspaceTestBriefView,
 )
+from casepilot_api.task_outbox import enqueue_task
 
 router = APIRouter(prefix="/api/v1", tags=["conversations"])
 settings = get_settings()
 DbSession = Annotated[Session, Depends(get_db_session)]
-task_client = Celery(
-    "casepilot-api-conversations",
-    broker=settings.celery_broker_url,
-    backend=settings.celery_result_backend,
-)
-
 STAGE_PROGRESS = {
     "queued": 0,
     "context.prepared": 10,
@@ -1998,13 +1992,9 @@ def confirm_test_brief(
         "model_id": payload.model_id,
     }
     conversation.updated_at = datetime.now(UTC)
+    enqueue_task(db, "casepilot.agent.generate", [str(job.id)], task_id=job.id)
     db.commit()
     db.refresh(assistant)
-    task_client.send_task(
-        "casepilot.agent.generate",
-        args=[str(job.id)],
-        task_id=str(job.id),
-    )
     db.refresh(system_user)
     return ConversationTurnView(
         conversation_id=conversation.id,
@@ -2029,17 +2019,54 @@ def update_workspace_candidate(
     account: CurrentAccount,
     db: DbSession,
 ) -> WorkspaceCandidateView:
-    candidate = db.get(WorkspaceCandidate, candidate_id)
+    candidate = db.scalar(
+        select(WorkspaceCandidate)
+        .where(WorkspaceCandidate.id == candidate_id)
+        .with_for_update()
+    )
     if candidate is None:
         raise HTTPException(status_code=404, detail="workspace_candidate_not_found")
     _ensure_conversation(db, account.id, candidate.conversation_id)
     if candidate.status != "candidate":
         raise HTTPException(status_code=409, detail="workspace_candidate_not_editable")
+    if candidate.version != payload.base_version:
+        raise HTTPException(status_code=409, detail="candidate_changed")
     if payload.snapshot is not None:
-        candidate.snapshot = dict(payload.snapshot)
-        candidate.version += 1
+        snapshot = dict(payload.snapshot)
+        try:
+            validated = TestCaseCreate.model_validate(
+                {
+                    "title": snapshot.get("title", ""),
+                    "module": snapshot.get("module", ""),
+                    "priority": snapshot.get("priority", "P1"),
+                    "case_type": snapshot.get("case_type", "功能"),
+                    "tags": snapshot.get("tags", []),
+                    "preconditions": snapshot.get("preconditions", []),
+                    "steps": snapshot.get("steps", []),
+                    "source": snapshot.get("source", "CasePilot 工作区候选"),
+                    "source_refs": snapshot.get("source_refs", []),
+                }
+            )
+        except ValueError as error:
+            raise HTTPException(
+                status_code=422,
+                detail="invalid_workspace_candidate",
+            ) from error
+        normalized = validated.model_dump(mode="json")
+        candidate.snapshot = {
+            **snapshot,
+            "title": normalized["title"],
+            "module": normalized["module"],
+            "priority": normalized["priority"],
+            "case_type": normalized["case_type"],
+            "tags": normalized["tags"],
+            "preconditions": normalized["preconditions"],
+            "steps": normalized["steps"],
+            "source_refs": normalized["source_refs"],
+        }
     if payload.included is not None:
         candidate.included = payload.included
+    candidate.version += 1
     candidate.updated_at = datetime.now(UTC)
     db.commit()
     db.refresh(candidate)
@@ -2057,6 +2084,8 @@ def commit_workspace_candidates(
     db: DbSession,
 ) -> list[TestCaseView]:
     conversation = _ensure_conversation(db, account.id, conversation_id)
+    if conversation.collection_id is None:
+        raise HTTPException(status_code=409, detail="conversation_collection_required")
     query = select(WorkspaceCandidate).where(
         WorkspaceCandidate.conversation_id == conversation.id,
         WorkspaceCandidate.status == "candidate",
@@ -2065,7 +2094,10 @@ def commit_workspace_candidates(
     if payload.candidate_ids:
         query = query.where(WorkspaceCandidate.id.in_(payload.candidate_ids))
     candidates = list(
-        db.scalars(query.order_by(WorkspaceCandidate.position, WorkspaceCandidate.id))
+        db.scalars(
+            query.order_by(WorkspaceCandidate.position, WorkspaceCandidate.id)
+            .with_for_update()
+        )
     )
     if not candidates:
         raise HTTPException(status_code=409, detail="no_included_workspace_candidates")
@@ -2111,12 +2143,13 @@ def commit_workspace_candidates(
         )
         .values(status="excluded")
     )
+    active_operation_id = dict(conversation.context).get("active_operation_id")
     conversation.context = {
         **dict(conversation.context),
         "phase": "maintenance",
         "active_job_id": None,
+        "active_operation_id": None,
     }
-    active_operation_id = dict(conversation.context).get("active_operation_id")
     if active_operation_id:
         operation = db.get(ConversationOperation, UUID(str(active_operation_id)))
         if operation is not None:
@@ -2460,16 +2493,17 @@ def send_message(
     else:
         task_name = None
     conversation.updated_at = datetime.now(UTC)
+    if task_name and assistant and assistant.related_job_id:
+        enqueue_task(
+            db,
+            task_name,
+            [str(assistant.related_job_id)],
+            task_id=assistant.related_job_id,
+        )
     db.commit()
     db.refresh(user_message)
     if assistant is not None:
         db.refresh(assistant)
-    if task_name and assistant and assistant.related_job_id:
-        task_client.send_task(
-            task_name,
-            args=[str(assistant.related_job_id)],
-            task_id=str(assistant.related_job_id),
-        )
     return ConversationTurnView(
         conversation_id=conversation.id,
         user_message=_message_view(user_message),
@@ -2529,15 +2563,16 @@ def confirm_message_intent(
     )
     if operation is not None:
         _operation_runtime_status(operation, assistant, action)
+    if task_name and assistant.related_job_id:
+        enqueue_task(
+            db,
+            task_name,
+            [str(assistant.related_job_id)],
+            task_id=assistant.related_job_id,
+        )
     db.commit()
     db.refresh(user_message)
     db.refresh(assistant)
-    if task_name and assistant.related_job_id:
-        task_client.send_task(
-            task_name,
-            args=[str(assistant.related_job_id)],
-            task_id=str(assistant.related_job_id),
-        )
     return ConversationTurnView(
         conversation_id=conversation.id,
         user_message=_message_view(user_message),
@@ -2852,14 +2887,15 @@ def resume_conversation_operation(
         "active_operation_id": str(operation.id),
     }
     conversation.updated_at = datetime.now(UTC)
+    if task_name and assistant.related_job_id:
+        enqueue_task(
+            db,
+            task_name,
+            [str(assistant.related_job_id)],
+            task_id=assistant.related_job_id,
+        )
     db.commit()
     db.refresh(assistant)
-    if task_name and assistant.related_job_id:
-        task_client.send_task(
-            task_name,
-            args=[str(assistant.related_job_id)],
-            task_id=str(assistant.related_job_id),
-        )
     operations = list(
         db.scalars(
             select(ConversationOperation)
@@ -2924,15 +2960,16 @@ def retry_conversation_message(
         user_message.intent,
         1.0,
     )
+    if task_name and assistant.related_job_id:
+        enqueue_task(
+            db,
+            task_name,
+            [str(assistant.related_job_id)],
+            task_id=assistant.related_job_id,
+        )
     db.commit()
     db.refresh(user_message)
     db.refresh(assistant)
-    if task_name and assistant.related_job_id:
-        task_client.send_task(
-            task_name,
-            args=[str(assistant.related_job_id)],
-            task_id=str(assistant.related_job_id),
-        )
     return ConversationTurnView(
         conversation_id=conversation.id,
         user_message=_message_view(user_message),
@@ -2998,13 +3035,9 @@ def answer_conversation_generation(
         assistant.status = "running"
         assistant.content = "已收到澄清信息，正在从需求分析阶段继续原任务。"
     conversation.updated_at = datetime.now(UTC)
+    enqueue_task(db, "casepilot.agent.generate", [str(job.id)], task_id=job.id)
     db.commit()
     Redis.from_url(settings.redis_url).delete(f"casepilot:generation:{job.id}:events")
-    task_client.send_task(
-        "casepilot.agent.generate",
-        args=[str(job.id)],
-        task_id=str(job.id),
-    )
     db.refresh(conversation)
     return _conversation_view(db, conversation)
 
@@ -3049,7 +3082,11 @@ def apply_change_set(
     formal_items = [item for item in change_set.items if item["target_type"] == "formal"]
     formal_cases: dict[str, TestCase] = {}
     for item in formal_items:
-        test_case = db.get(TestCase, UUID(item["test_case_id"]))
+        test_case = db.scalar(
+            select(TestCase)
+            .where(TestCase.id == UUID(item["test_case_id"]))
+            .with_for_update()
+        )
         if (
             test_case is None
             or str(test_case.current_revision_id) != item["base_revision_id"]

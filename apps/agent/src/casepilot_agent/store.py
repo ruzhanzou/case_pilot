@@ -2,6 +2,7 @@ import json
 import re
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from functools import lru_cache
 from hashlib import sha256
 from typing import Any
 from uuid import UUID, uuid4
@@ -32,6 +33,21 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.engine import Connection
 
 metadata = MetaData()
+
+
+@lru_cache
+def _get_engine(database_url: str):
+    return create_engine(database_url, pool_pre_ping=True, pool_recycle=300)
+
+
+@lru_cache
+def _get_redis(redis_url: str) -> Redis:
+    return Redis.from_url(
+        redis_url,
+        decode_responses=True,
+        socket_connect_timeout=2,
+        socket_timeout=5,
+    )
 generation_status = ENUM(
     "queued",
     "running",
@@ -112,6 +128,20 @@ generation_jobs = Table(
     Column("input_payload", JSONB),
     Column("output_payload", JSONB),
     Column("error_code", String),
+)
+task_outbox = Table(
+    "task_outbox",
+    metadata,
+    Column("id", PGUUID(as_uuid=True), primary_key=True),
+    Column("task_name", String),
+    Column("task_args", JSONB),
+    Column("task_id", String),
+    Column("status", String),
+    Column("attempts", Integer),
+    Column("last_error", String),
+    Column("available_at", DateTime(timezone=True)),
+    Column("dispatched_at", DateTime(timezone=True)),
+    Column("created_at", DateTime(timezone=True)),
 )
 test_cases = Table(
     "test_cases",
@@ -363,8 +393,8 @@ audit_events = Table(
 
 class JobStore:
     def __init__(self, database_url: str, redis_url: str) -> None:
-        self.engine = create_engine(database_url, pool_pre_ping=True)
-        self.redis = Redis.from_url(redis_url, decode_responses=True)
+        self.engine = _get_engine(database_url)
+        self.redis = _get_redis(redis_url)
 
     @contextmanager
     def connection(self):
@@ -392,6 +422,24 @@ class JobStore:
         if row is None:
             raise ValueError("generation_job_not_found")
         return dict(row)
+
+    def claim_job(
+        self,
+        connection: Connection,
+        job_id: UUID,
+        **values: Any,
+    ) -> dict[str, Any] | None:
+        """Atomically claim a queued job; duplicate deliveries become no-ops."""
+        claimed = connection.execute(
+            update(generation_jobs)
+            .where(
+                generation_jobs.c.id == job_id,
+                generation_jobs.c.status == "queued",
+            )
+            .values(status="running", error_code=None, **values)
+            .returning(*generation_jobs.c)
+        ).mappings().one_or_none()
+        return dict(claimed) if claimed is not None else None
 
     def update_job(self, connection: Connection, job_id: UUID, **values: Any) -> None:
         connection.execute(
@@ -437,6 +485,10 @@ class JobStore:
             if job_status == "failed":
                 operation_values["error_code"] = values.get("error_code")
                 operation_values["completed_at"] = datetime.now(UTC)
+            else:
+                operation_values["error_code"] = None
+                if operation_status in {"queued", "running"}:
+                    operation_values["completed_at"] = None
             connection.execute(
                 update(conversation_operations)
                 .where(conversation_operations.c.id == UUID(str(operation_id)))

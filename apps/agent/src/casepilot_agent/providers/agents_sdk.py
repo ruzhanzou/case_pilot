@@ -65,7 +65,13 @@ class AgentsSdkProvider:
         result_type: type[ResultT],
         model_id: str,
     ) -> tuple[ResultT, UsageMetadata]:
-        from agents import Agent, OpenAIChatCompletionsModel, Runner, set_tracing_disabled
+        from agents import (
+            Agent,
+            AgentOutputSchema,
+            OpenAIChatCompletionsModel,
+            Runner,
+            set_tracing_disabled,
+        )
         from openai import AsyncOpenAI
 
         set_tracing_disabled(not self.tracing_enabled)
@@ -110,7 +116,10 @@ class AgentsSdkProvider:
                 f"JSON Schema: {output_schema}"
             ),
             model=model,
-            output_type=result_type,
+            # Several domain contracts intentionally contain defaults and optional
+            # fields that are valid Pydantic schemas but not strict JSON schemas.
+            # Keep SDK-side parsing/validation without rejecting those contracts.
+            output_type=AgentOutputSchema(result_type, strict_json_schema=False),
         )
         started_at = monotonic()
         prompt = json.dumps(

@@ -168,6 +168,7 @@ function candidateToCase(candidate: WorkspaceCandidateDto): TestCaseDto {
       expected: step.expected,
     })),
     source: snapshot.source_refs[0]?.label ?? "CasePilot 候选",
+    source_refs: snapshot.source_refs,
     created_at: candidate.updated_at,
   };
 }
@@ -759,7 +760,10 @@ export function CaseWorkbench({
     included: boolean,
   ) => {
     try {
-      await updateWorkspaceCandidate(candidate.id, { included });
+      await updateWorkspaceCandidate(candidate.id, {
+        baseVersion: candidate.version,
+        included,
+      });
       await refreshWorkspace();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "候选状态保存失败");
@@ -770,6 +774,7 @@ export function CaseWorkbench({
     if (!candidateDraft) return;
     try {
       await updateWorkspaceCandidate(candidateDraft.id, {
+        baseVersion: candidateDraft.version,
         snapshot: candidateDraft.snapshot as unknown as Record<string, unknown>,
       });
       await refreshWorkspace();

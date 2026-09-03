@@ -10,6 +10,7 @@ from casepilot_api.schemas import (
     ExecutionRunUpdate,
     ExecutionStatus,
     GenerationStartRequest,
+    WorkspaceCandidateUpdate,
     WorkspaceStateUpdate,
 )
 from casepilot_api.schemas import (
@@ -17,6 +18,9 @@ from casepilot_api.schemas import (
 )
 from casepilot_api.schemas import (
     TestCaseCreate as CaseCreateSchema,
+)
+from casepilot_api.schemas import (
+    TestCaseUpdate as CaseUpdateSchema,
 )
 
 
@@ -109,6 +113,37 @@ def test_batch_case_create_requires_at_least_one_case() -> None:
     assert len(
         BatchCreateSchema.model_validate({"cases": [valid_case_payload()]}).cases
     ) == 1
+
+
+def test_case_update_can_preserve_structured_source_refs() -> None:
+    payload = valid_case_payload()
+    payload.pop("case_key")
+    payload["base_revision_id"] = "00000000-0000-0000-0000-000000000001"
+    payload["source_refs"] = [
+        {
+            "document_id": "00000000-0000-0000-0000-000000000002",
+            "label": "登录需求 V2",
+            "locator": "第 3 节",
+            "excerpt": "登录成功后进入工作台",
+        }
+    ]
+
+    update = CaseUpdateSchema.model_validate(payload)
+
+    assert update.source_refs is not None
+    assert update.source_refs[0].locator == "第 3 节"
+
+
+def test_workspace_candidate_update_requires_version_and_content() -> None:
+    update = WorkspaceCandidateUpdate.model_validate(
+        {"base_version": 2, "included": False}
+    )
+    assert update.base_version == 2
+
+    with pytest.raises(ValidationError):
+        WorkspaceCandidateUpdate.model_validate({"included": True})
+    with pytest.raises(ValidationError):
+        WorkspaceCandidateUpdate.model_validate({"base_version": 2})
 
 
 def test_generation_requests_accept_configured_model_names() -> None:

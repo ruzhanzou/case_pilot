@@ -146,6 +146,7 @@ export function CaseEditorDialog({
       preconditions: normalizedPreconditions,
       steps: normalizedSteps,
       source: source.trim() || "人工创建",
+      source_refs: testCase?.source_refs,
     });
   };
 

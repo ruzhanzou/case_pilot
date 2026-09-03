@@ -25,7 +25,7 @@ export default defineConfig({
     : {
         command:
           `NEXT_PUBLIC_CASEPILOT_API_URL=${apiUrl} pnpm build && ` +
-          `NEXT_PUBLIC_CASEPILOT_API_URL=${apiUrl} pnpm start --host localhost --port 3000`,
+          `NEXT_PUBLIC_CASEPILOT_API_URL=${apiUrl} pnpm start --hostname localhost --port 3000`,
         url: "http://localhost:3000",
         reuseExistingServer: true,
         timeout: 120_000,

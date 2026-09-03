@@ -1,7 +1,6 @@
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from celery import Celery
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -22,17 +21,11 @@ from casepilot_api.schemas import (
     CandidateView,
     TestCaseView,
 )
+from casepilot_api.task_outbox import enqueue_task
 
 router = APIRouter(prefix="/api/v1", tags=["candidate-revisions"])
 DbSession = Annotated[Session, Depends(get_db_session)]
 settings = get_settings()
-task_client = Celery(
-    "casepilot-api-candidates",
-    broker=settings.celery_broker_url,
-    backend=settings.celery_result_backend,
-)
-
-
 def get_current_revision(db: Session, test_case: TestCase) -> TestCaseRevision:
     if test_case.current_revision_id is None:
         raise HTTPException(status_code=409, detail="test_case_has_no_revision")
@@ -79,9 +72,10 @@ def create_candidate(
         output_payload={},
     )
     db.add(job)
+    db.flush()
+    enqueue_task(db, "casepilot.agent.rewrite", [str(job.id)], task_id=job.id)
     db.commit()
     db.refresh(job)
-    task_client.send_task("casepilot.agent.rewrite", args=[str(job.id)])
     return CandidateJobView(job_id=job.id)
 
 

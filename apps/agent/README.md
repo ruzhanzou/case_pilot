@@ -30,7 +30,7 @@ Celery 或平台页面逻辑，因此同一套生成能力可以被 Web、API �
 
 ```bash
 python3.13 -m venv .venv
-.venv/bin/pip install -r apps/agent/requirements-dev.txt
+.venv/bin/pip install -e 'apps/agent[dev]'
 ```
 
 运行不依赖数据库和 Redis 的 Agent 单元测试：

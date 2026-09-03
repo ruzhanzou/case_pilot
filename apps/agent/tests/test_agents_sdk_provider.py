@@ -26,6 +26,11 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
         def __init__(self, **kwargs) -> None:
             captured["agent"] = kwargs
 
+    class FakeAgentOutputSchema:
+        def __init__(self, output_type, *, strict_json_schema) -> None:
+            self.output_type = output_type
+            self.strict_json_schema = strict_json_schema
+
     class FakeRunner:
         @staticmethod
         def run_sync(agent, prompt, max_turns):
@@ -43,6 +48,7 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
             )
 
     agents.Agent = FakeAgent
+    agents.AgentOutputSchema = FakeAgentOutputSchema
     agents.OpenAIChatCompletionsModel = FakeModel
     agents.Runner = FakeRunner
     agents.set_tracing_disabled = lambda disabled: captured.update(
@@ -71,7 +77,9 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
     assert result.answer == "已回答"
     assert captured["client"]["base_url"] == "https://ark.example/v1"
     assert captured["model"]["model"] == "doubao-test"
-    assert captured["agent"]["output_type"] is KnowledgeAnswer
+    output_schema = captured["agent"]["output_type"]
+    assert output_schema.output_type is KnowledgeAnswer
+    assert output_schema.strict_json_schema is False
     assert captured["tracing_disabled"] is True
     assert usage.token_usage["total_tokens"] == 18
 

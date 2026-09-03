@@ -128,6 +128,7 @@ class TestCaseUpdate(BaseModel):
     preconditions: list[str] = Field(default_factory=list, max_length=50)
     steps: list[CaseStepInput] = Field(min_length=1, max_length=100)
     source: str = Field(default="人工编辑", max_length=500)
+    source_refs: list[SourceRefInput] | None = Field(default=None, max_length=30)
 
 
 class TestCaseView(BaseModel):
@@ -144,6 +145,7 @@ class TestCaseView(BaseModel):
     preconditions: list[str]
     steps: list[CaseStepInput]
     source: str
+    source_refs: list[SourceRefInput] = Field(default_factory=list)
     created_at: datetime
 
 
@@ -394,8 +396,15 @@ class TestBriefConfirmRequest(BaseModel):
 
 
 class WorkspaceCandidateUpdate(BaseModel):
+    base_version: int = Field(ge=1)
     snapshot: dict | None = None
     included: bool | None = None
+
+    @model_validator(mode="after")
+    def require_candidate_change(self) -> "WorkspaceCandidateUpdate":
+        if self.snapshot is None and self.included is None:
+            raise ValueError("candidate_update_required")
+        return self
 
 
 class WorkspaceCandidateCommitRequest(BaseModel):

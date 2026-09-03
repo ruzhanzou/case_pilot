@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_DB: casepilot
+          POSTGRES_USER: casepilot
+          POSTGRES_PASSWORD: casepilot-local
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U casepilot -d casepilot"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+psycopg://casepilot:casepilot-local@127.0.0.1:5432/casepilot
+      REDIS_URL: redis://127.0.0.1:6379/0
+      CASEPILOT_SEED_DEMO_DATA: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -e 'apps/api[dev]' -e 'apps/agent[dev]'
+      - run: ruff check apps/api apps/agent
+      - run: alembic -c apps/api/alembic.ini upgrade head
+      - run: alembic -c apps/api/alembic.ini check
+      - run: pytest -q apps/api/tests apps/agent/tests
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.13.0"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir apps/web lint
+      - run: pnpm --dir apps/web typecheck
+      - run: pnpm --dir apps/web test

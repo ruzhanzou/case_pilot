@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -56,10 +56,13 @@ class AgentSettings(BaseSettings):
     )
     embedding_dimensions: int = Field(
         default=2048,
+        ge=2048,
+        le=2048,
         validation_alias="CASEPILOT_EMBEDDING_DIMENSIONS",
     )
     embedding_timeout_seconds: float = Field(
         default=30,
+        gt=0,
         validation_alias="CASEPILOT_EMBEDDING_TIMEOUT_SECONDS",
     )
     embedding_fallback_enabled: bool = Field(
@@ -68,6 +71,7 @@ class AgentSettings(BaseSettings):
     )
     timeout_seconds: float = Field(
         default=60,
+        gt=0,
         validation_alias="CASEPILOT_AGENT_TIMEOUT_SECONDS",
     )
     tracing_enabled: bool = Field(
@@ -91,6 +95,14 @@ class AgentSettings(BaseSettings):
         default="/var/lib/casepilot/knowledge",
         validation_alias="CASEPILOT_KNOWLEDGE_STORAGE_PATH",
     )
+
+    @model_validator(mode="after")
+    def validate_provider_configuration(self) -> "AgentSettings":
+        if self.provider not in {"mock", "openai_compatible"}:
+            raise ValueError(f"unsupported_agent_provider:{self.provider}")
+        if self.provider != "mock" and not self.api_key:
+            raise ValueError("CASEPILOT_AGENT_API_KEY is required")
+        return self
 
     def resolve_model(self, model_id: str) -> str:
         if model_id in {"test-design-pro", "pro"}:
