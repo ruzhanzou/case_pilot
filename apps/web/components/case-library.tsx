@@ -169,7 +169,7 @@ export function CaseLibrary({
                   type="button"
                   onClick={onStartExecution}
                 >
-                  <Play size={16} /> 开始执行
+                  <Play size={16} /> 创建 Playlist 执行
                 </button>
                 <button
                   className="management-button"

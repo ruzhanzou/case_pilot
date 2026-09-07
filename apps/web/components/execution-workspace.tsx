@@ -1,10 +1,11 @@
 "use client";
 
 import { ExecutionNotes } from "@/components/execution-notes";
+import { PlaylistPicker } from "@/components/playlist-picker";
 import {
   closeExecutionRun,
   addSpaceMember,
-  createExecutionRun,
+  createPlaylistExecutionRun,
   getExecutionRun,
   listSpaceMembers,
   listSpaceExecutionRuns,
@@ -17,6 +18,7 @@ import {
   type ExecutionRunDto,
   type ExecutionRunSummaryDto,
   type ExecutionStatusApi,
+  type PlaylistDto,
   type SpaceMemberDto,
 } from "@/lib/casepilot-api";
 import {
@@ -116,9 +118,9 @@ export function ExecutionWorkspace({
   const [run, setRun] = useState<ExecutionRunDto | null>(null);
   const [runHistory, setRunHistory] = useState<ExecutionRunSummaryDto[]>([]);
   const [selectedRecordId, setSelectedRecordId] = useState("");
-  const [selectedCollectionId, setSelectedCollectionId] = useState(
-    preferredCollectionId,
-  );
+  const [selectedPlaylist, setSelectedPlaylist] = useState<PlaylistDto | null>(null);
+  const [createSeedCollectionId, setCreateSeedCollectionId] = useState("");
+  const [playlistRequestId, setPlaylistRequestId] = useState(0);
   const [description, setDescription] = useState("");
   const [descriptionError, setDescriptionError] = useState("");
   const [members, setMembers] = useState<SpaceMemberDto[]>([]);
@@ -207,9 +209,9 @@ export function ExecutionWorkspace({
         setRun(null);
         setSelectedRecordId("");
         setRecordDraft(null);
-        setSelectedCollectionId(
-          preferredCollectionId || collections[0]?.id || "",
-        );
+        setSelectedPlaylist(null);
+        setCreateSeedCollectionId(preferredCollectionId || "");
+        setPlaylistRequestId((current) => current + 1);
         setDescriptionError("");
         setView("create");
       } else {
@@ -312,8 +314,8 @@ export function ExecutionWorkspace({
   );
 
   const startRun = async () => {
-    if (!selectedCollectionId) {
-      setError("当前没有可执行的用例集合，请先创建用例集合。");
+    if (!selectedPlaylist) {
+      setError("请先选择或保存一个 Playlist。");
       return;
     }
     if (!description.trim()) {
@@ -321,11 +323,12 @@ export function ExecutionWorkspace({
       descriptionRef.current?.focus();
       return;
     }
-    const selectedCollection = collections.find(
-      (collection) => collection.id === selectedCollectionId,
-    );
-    if (!selectedCollection?.case_count) {
-      setError("空用例集合不能创建执行任务。");
+    if (!selectedPlaylist.case_count) {
+      setError("空 Playlist 不能创建执行任务。");
+      return;
+    }
+    if (selectedPlaylist.unavailable_case_ids.length) {
+      setError("Playlist 中存在不可用用例，请编辑并移除后再创建任务。");
       return;
     }
     if (!selectedAssigneeIds.length) {
@@ -336,7 +339,8 @@ export function ExecutionWorkspace({
     setError("");
     setDescriptionError("");
     try {
-      const result = await createExecutionRun(selectedCollectionId, {
+      const result = await createPlaylistExecutionRun(spaceId, {
+        playlist_id: selectedPlaylist.id,
         description: description.trim(),
         assignee_ids: selectedAssigneeIds,
       });
@@ -615,15 +619,38 @@ export function ExecutionWorkspace({
               type="button"
               className="management-button management-button--primary"
               onClick={() => {
-                setSelectedCollectionId(
-                  preferredCollectionId || collections[0]?.id || "",
-                );
+                setSelectedPlaylist(null);
+                setCreateSeedCollectionId("");
+                setPlaylistRequestId((current) => current + 1);
                 setView("create");
               }}
             >
-              <Plus size={16} /> 新建执行任务
+              <Plus size={16} /> 新建 Playlist 执行任务
             </button>
           </header>
+
+          <section className="execution-playlist-callout">
+            <div className="execution-playlist-callout__icon">
+              <ClipboardCheck size={22} />
+            </div>
+            <div>
+              <span className="management-kicker">Playlist 执行范围</span>
+              <strong>跨用例集合选择并复用执行用例</strong>
+              <p>支持完整加入单个或多个用例集合，也可搜索并逐条选择用例；重复用例会自动去重。</p>
+            </div>
+            <button
+              type="button"
+              className="management-button"
+              onClick={() => {
+                setSelectedPlaylist(null);
+                setCreateSeedCollectionId("");
+                setPlaylistRequestId((current) => current + 1);
+                setView("create");
+              }}
+            >
+              管理 Playlist
+            </button>
+          </section>
 
           <section className="execution-overview-metrics">
             <article>
@@ -680,7 +707,9 @@ export function ExecutionWorkspace({
                         <small>{formatTime(item.last_activity_at)} 更新</small>
                       </div>
                       <strong>{item.description}</strong>
-                      <span>{item.collection_name}</span>
+                      <span>
+                        {item.source_name} · 来自 {item.source_collection_count} 个集合 · {item.total_count} 条用例
+                      </span>
                       <div className="execution-task-card__progress">
                         <div>
                           <b>{percent}%</b>
@@ -723,31 +752,26 @@ export function ExecutionWorkspace({
               </button>
               <span className="management-kicker">新建执行任务</span>
               <h1>创建多人执行任务</h1>
-              <p>选择用例集合并填写任务描述，空间成员可共同执行。</p>
+              <p>选择可复用 Playlist 并填写任务描述，空间成员可共同执行。</p>
             </div>
           </header>
           <section className="execution-run-setup">
             <div>
               <span className="management-kicker">任务设置</span>
-              <h2>填写执行任务说明</h2>
+              <h2>选择执行范围并填写任务说明</h2>
               <p>创建时冻结当前用例修订；后续修改用例不会改变本任务记录。</p>
             </div>
             <div className="execution-run-setup__fields">
-              <label>
-                用例集合 *
-                <select
-                  value={selectedCollectionId}
-                  onChange={(event) =>
-                    setSelectedCollectionId(event.target.value)
-                  }
-                >
-                  {collections.map((collection) => (
-                    <option value={collection.id} key={collection.id}>
-                      {collection.name} · {collection.case_count} 条用例
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <PlaylistPicker
+                key={playlistRequestId}
+                spaceId={spaceId}
+                collections={collections}
+                seedCollectionId={createSeedCollectionId}
+                requestId={playlistRequestId}
+                selectedPlaylistId={selectedPlaylist?.id ?? ""}
+                onSelect={setSelectedPlaylist}
+                onError={setError}
+              />
               <label>
                 任务描述 *
                 <textarea
@@ -868,7 +892,8 @@ export function ExecutionWorkspace({
               <span className="management-kicker">QA 执行任务</span>
               <h1>{run.description}</h1>
               <p>
-                {run.collection_name} · {runStatusLabel[run.status] ?? run.status}
+                {run.source_name} · 来自 {run.source_collection_count} 个集合 · {run.records.length} 条用例
+                {" · "}{runStatusLabel[run.status] ?? run.status}
                 {" · "}创建人 {run.creator_name}
               </p>
             </div>

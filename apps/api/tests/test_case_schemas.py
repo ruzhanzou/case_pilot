@@ -10,6 +10,8 @@ from casepilot_api.schemas import (
     ExecutionRunUpdate,
     ExecutionStatus,
     GenerationStartRequest,
+    PlaylistExecutionRunCreate,
+    PlaylistWrite,
     WorkspaceCandidateUpdate,
     WorkspaceStateUpdate,
 )
@@ -91,6 +93,31 @@ def test_execution_run_requires_task_description() -> None:
         ).description
         == "Audio 回归测试"
     )
+
+
+def test_playlist_requires_cases_and_playlist_run_requires_playlist() -> None:
+    case_id = "00000000-0000-0000-0000-000000000010"
+    collection_id = "00000000-0000-0000-0000-000000000030"
+    assignee_id = "00000000-0000-0000-0000-000000000002"
+    playlist_id = "00000000-0000-0000-0000-000000000020"
+    playlist = PlaylistWrite.model_validate(
+        {
+            "name": "登录回归",
+            "case_ids": [case_id],
+            "source_collection_ids": [collection_id],
+        }
+    )
+    assert str(playlist.case_ids[0]) == case_id
+    with pytest.raises(ValidationError):
+        PlaylistWrite.model_validate({"name": "空清单", "case_ids": []})
+    run = PlaylistExecutionRunCreate.model_validate(
+        {
+            "playlist_id": playlist_id,
+            "description": "验证登录回归",
+            "assignee_ids": [assignee_id],
+        }
+    )
+    assert str(run.playlist_id) == playlist_id
 
 
 def test_execution_run_can_only_close_as_completed_or_aborted() -> None:

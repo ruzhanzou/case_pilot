@@ -530,6 +530,13 @@ AI 生成：
 
 执行：
 
+- `GET /api/v1/spaces/{space_id}/test-cases?q={query}`
+- `GET /api/v1/spaces/{space_id}/playlists`
+- `POST /api/v1/spaces/{space_id}/playlists`
+- `GET /api/v1/playlists/{playlist_id}`
+- `PATCH /api/v1/playlists/{playlist_id}`
+- `DELETE /api/v1/playlists/{playlist_id}`
+- `POST /api/v1/spaces/{space_id}/execution-runs`
 - `GET /api/v1/collections/{collection_id}/execution-runs`
 - `POST /api/v1/collections/{collection_id}/execution-runs`
 - `GET /api/v1/execution-runs/{run_id}`

@@ -3,7 +3,7 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -19,6 +19,9 @@ from casepilot_api.models import (
     ExecutionRun,
     ExecutionRunAssignee,
     ExecutionStatus,
+    Playlist,
+    PlaylistCaseMembership,
+    PlaylistSourceCollection,
     SpaceMembership,
     TestCase,
     TestCaseRevision,
@@ -34,6 +37,10 @@ from casepilot_api.schemas import (
     ExecutionRunSummaryView,
     ExecutionRunUpdate,
     ExecutionRunView,
+    PlaylistCaseView,
+    PlaylistExecutionRunCreate,
+    PlaylistView,
+    PlaylistWrite,
     SpaceMemberAdd,
     SpaceMemberView,
     TestCaseBatchCreate,
@@ -337,6 +344,19 @@ def ensure_case(db: Session, account: Account, case_id: UUID) -> TestCase:
     return test_case
 
 
+def ensure_playlist(db: Session, account: Account, playlist_id: UUID) -> Playlist:
+    playlist = db.scalar(
+        select(Playlist).where(
+            Playlist.id == playlist_id,
+            Playlist.deleted_at.is_(None),
+        )
+    )
+    if playlist is None:
+        raise HTTPException(status_code=404, detail="playlist_not_found")
+    require_space_membership(db, account.id, playlist.space_id)
+    return playlist
+
+
 def collection_to_view(db: Session, collection: CaseCollection) -> CaseCollectionView:
     case_count = db.scalar(
         select(func.count(CollectionCaseMembership.id))
@@ -534,6 +554,309 @@ def list_test_cases(
         )
     )
     return [case_to_view(db, test_case) for test_case in cases]
+
+
+@router.get(
+    "/spaces/{space_id}/test-cases",
+    response_model=list[TestCaseView],
+)
+def search_space_test_cases(
+    space_id: UUID,
+    account: CurrentAccount,
+    db: DbSession,
+    q: str = "",
+) -> list[TestCaseView]:
+    require_space_membership(db, account.id, space_id)
+    cases = list(
+        db.scalars(
+            select(TestCase)
+            .where(
+                TestCase.space_id == space_id,
+                TestCase.deleted_at.is_(None),
+                TestCase.current_revision_id.is_not(None),
+            )
+            .order_by(TestCase.created_at, TestCase.id)
+        )
+    )
+    views = [case_to_view(db, test_case) for test_case in cases]
+    normalized = q.strip().casefold()
+    if not normalized:
+        return views
+    return [
+        item
+        for item in views
+        if normalized
+        in " ".join(
+            [item.case_key, item.title, item.module, *item.tags]
+        ).casefold()
+    ]
+
+
+def playlist_to_view(db: Session, playlist: Playlist) -> PlaylistView:
+    source_links = list(
+        db.scalars(
+            select(PlaylistSourceCollection)
+            .where(PlaylistSourceCollection.playlist_id == playlist.id)
+            .order_by(PlaylistSourceCollection.position, PlaylistSourceCollection.id)
+        )
+    )
+    source_collections = [
+        db.get(CaseCollection, link.collection_id) for link in source_links
+    ]
+    case_links = list(
+        db.scalars(
+            select(PlaylistCaseMembership)
+            .where(PlaylistCaseMembership.playlist_id == playlist.id)
+            .order_by(PlaylistCaseMembership.position, PlaylistCaseMembership.id)
+        )
+    )
+    cases: list[PlaylistCaseView] = []
+    unavailable_case_ids: list[UUID] = []
+    for link in case_links:
+        test_case = db.get(TestCase, link.test_case_id)
+        available = bool(
+            test_case
+            and test_case.space_id == playlist.space_id
+            and test_case.deleted_at is None
+            and test_case.current_revision_id is not None
+        )
+        if not available:
+            unavailable_case_ids.append(link.test_case_id)
+        cases.append(
+            PlaylistCaseView(
+                case_id=link.test_case_id,
+                position=link.position,
+                available=available,
+                test_case=case_to_view(db, test_case) if available and test_case else None,
+            )
+        )
+    return PlaylistView(
+        id=playlist.id,
+        space_id=playlist.space_id,
+        name=playlist.name,
+        source_collection_ids=[item.collection_id for item in source_links],
+        source_collection_names=[
+            collection.name if collection else "已删除集合"
+            for collection in source_collections
+        ],
+        cases=cases,
+        case_count=len(cases),
+        unavailable_case_ids=unavailable_case_ids,
+        created_at=playlist.created_at,
+        updated_at=playlist.updated_at,
+    )
+
+
+def validate_playlist_write(
+    db: Session,
+    *,
+    space_id: UUID,
+    payload: PlaylistWrite,
+) -> tuple[list[UUID], list[UUID]]:
+    case_ids = list(dict.fromkeys(payload.case_ids))
+    source_collection_ids = list(dict.fromkeys(payload.source_collection_ids))
+    cases = list(db.scalars(select(TestCase).where(TestCase.id.in_(case_ids))))
+    valid_case_ids = {
+        item.id
+        for item in cases
+        if item.space_id == space_id
+        and item.deleted_at is None
+        and item.current_revision_id is not None
+    }
+    if valid_case_ids != set(case_ids):
+        raise HTTPException(status_code=422, detail="playlist_contains_invalid_cases")
+    if source_collection_ids:
+        collections = list(
+            db.scalars(
+                select(CaseCollection).where(
+                    CaseCollection.id.in_(source_collection_ids),
+                    CaseCollection.space_id == space_id,
+                    CaseCollection.deleted_at.is_(None),
+                )
+            )
+        )
+        if len(collections) != len(source_collection_ids):
+            raise HTTPException(
+                status_code=422,
+                detail="playlist_contains_invalid_source_collections",
+            )
+    return case_ids, source_collection_ids
+
+
+def replace_playlist_memberships(
+    db: Session,
+    *,
+    playlist: Playlist,
+    case_ids: list[UUID],
+    source_collection_ids: list[UUID],
+) -> None:
+    db.execute(
+        delete(PlaylistCaseMembership).where(
+            PlaylistCaseMembership.playlist_id == playlist.id
+        )
+    )
+    db.execute(
+        delete(PlaylistSourceCollection).where(
+            PlaylistSourceCollection.playlist_id == playlist.id
+        )
+    )
+    for position, case_id in enumerate(case_ids):
+        db.add(
+            PlaylistCaseMembership(
+                playlist_id=playlist.id,
+                test_case_id=case_id,
+                position=position,
+            )
+        )
+    for position, collection_id in enumerate(source_collection_ids):
+        db.add(
+            PlaylistSourceCollection(
+                playlist_id=playlist.id,
+                collection_id=collection_id,
+                position=position,
+            )
+        )
+
+
+def available_playlist_name(db: Session, space_id: UUID, preferred: str) -> str:
+    base = preferred.strip()
+    existing = set(
+        db.scalars(
+            select(Playlist.name).where(
+                Playlist.space_id == space_id,
+                Playlist.deleted_at.is_(None),
+            )
+        )
+    )
+    if base not in existing:
+        return base
+    suffix = 2
+    while f"{base} ({suffix})" in existing:
+        suffix += 1
+    return f"{base} ({suffix})"
+
+
+@router.get("/spaces/{space_id}/playlists", response_model=list[PlaylistView])
+def list_playlists(
+    space_id: UUID,
+    account: CurrentAccount,
+    db: DbSession,
+) -> list[PlaylistView]:
+    require_space_membership(db, account.id, space_id)
+    playlists = list(
+        db.scalars(
+            select(Playlist)
+            .where(Playlist.space_id == space_id, Playlist.deleted_at.is_(None))
+            .order_by(Playlist.updated_at.desc(), Playlist.created_at.desc())
+        )
+    )
+    return [playlist_to_view(db, playlist) for playlist in playlists]
+
+
+@router.post(
+    "/spaces/{space_id}/playlists",
+    response_model=PlaylistView,
+    status_code=201,
+)
+def create_playlist(
+    space_id: UUID,
+    payload: PlaylistWrite,
+    account: CurrentAccount,
+    db: DbSession,
+) -> PlaylistView:
+    require_space_membership(db, account.id, space_id)
+    case_ids, source_collection_ids = validate_playlist_write(
+        db, space_id=space_id, payload=payload
+    )
+    playlist = Playlist(
+        space_id=space_id,
+        creator_id=account.id,
+        name=available_playlist_name(db, space_id, payload.name),
+    )
+    db.add(playlist)
+    db.flush()
+    replace_playlist_memberships(
+        db,
+        playlist=playlist,
+        case_ids=case_ids,
+        source_collection_ids=source_collection_ids,
+    )
+    write_audit(
+        db,
+        space_id=space_id,
+        actor_id=account.id,
+        action="playlist.created",
+        resource_type="playlist",
+        resource_id=playlist.id,
+        payload={"name": playlist.name, "case_count": len(case_ids)},
+    )
+    db.commit()
+    db.refresh(playlist)
+    return playlist_to_view(db, playlist)
+
+
+@router.get("/playlists/{playlist_id}", response_model=PlaylistView)
+def get_playlist(
+    playlist_id: UUID,
+    account: CurrentAccount,
+    db: DbSession,
+) -> PlaylistView:
+    return playlist_to_view(db, ensure_playlist(db, account, playlist_id))
+
+
+@router.patch("/playlists/{playlist_id}", response_model=PlaylistView)
+def update_playlist(
+    playlist_id: UUID,
+    payload: PlaylistWrite,
+    account: CurrentAccount,
+    db: DbSession,
+) -> PlaylistView:
+    playlist = ensure_playlist(db, account, playlist_id)
+    case_ids, source_collection_ids = validate_playlist_write(
+        db, space_id=playlist.space_id, payload=payload
+    )
+    playlist.name = payload.name.strip()
+    playlist.updated_at = datetime.now(UTC)
+    replace_playlist_memberships(
+        db,
+        playlist=playlist,
+        case_ids=case_ids,
+        source_collection_ids=source_collection_ids,
+    )
+    write_audit(
+        db,
+        space_id=playlist.space_id,
+        actor_id=account.id,
+        action="playlist.updated",
+        resource_type="playlist",
+        resource_id=playlist.id,
+        payload={"name": playlist.name, "case_count": len(case_ids)},
+    )
+    db.commit()
+    db.refresh(playlist)
+    return playlist_to_view(db, playlist)
+
+
+@router.delete("/playlists/{playlist_id}", status_code=204)
+def delete_playlist(
+    playlist_id: UUID,
+    account: CurrentAccount,
+    db: DbSession,
+) -> Response:
+    playlist = ensure_playlist(db, account, playlist_id)
+    playlist.deleted_at = datetime.now(UTC)
+    playlist.updated_at = datetime.now(UTC)
+    write_audit(
+        db,
+        space_id=playlist.space_id,
+        actor_id=account.id,
+        action="playlist.deleted",
+        resource_type="playlist",
+        resource_id=playlist.id,
+        payload={"name": playlist.name},
+    )
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.get("/test-cases/{case_id}", response_model=TestCaseView)
@@ -756,7 +1079,7 @@ def execution_run_to_view(
     run: ExecutionRun,
     viewer_id: UUID | None = None,
 ) -> ExecutionRunView:
-    collection = db.get(CaseCollection, run.collection_id)
+    collection = db.get(CaseCollection, run.collection_id) if run.collection_id else None
     creator = db.get(Account, run.executor_id)
     records = list(
         db.scalars(
@@ -806,7 +1129,11 @@ def execution_run_to_view(
     return ExecutionRunView(
         id=run.id,
         collection_id=run.collection_id,
-        collection_name=collection.name if collection else "已删除集合",
+        collection_name=collection.name if collection else None,
+        playlist_id=run.playlist_id,
+        source_type=run.source_type,
+        source_name=run.source_name,
+        source_collection_count=run.source_collection_count,
         description=run.description,
         status=run.status,
         creator_name=creator.display_name if creator else "未知成员",
@@ -870,7 +1197,7 @@ def execution_run_to_summary(
     db: Session,
     run: ExecutionRun,
 ) -> ExecutionRunSummaryView:
-    collection = db.get(CaseCollection, run.collection_id)
+    collection = db.get(CaseCollection, run.collection_id) if run.collection_id else None
     creator = db.get(Account, run.executor_id)
     counts = dict(
         db.execute(
@@ -886,7 +1213,11 @@ def execution_run_to_summary(
     return ExecutionRunSummaryView(
         id=run.id,
         collection_id=run.collection_id,
-        collection_name=collection.name if collection else "已删除集合",
+        collection_name=collection.name if collection else None,
+        playlist_id=run.playlist_id,
+        source_type=run.source_type,
+        source_name=run.source_name,
+        source_collection_count=run.source_collection_count,
         description=run.description,
         status=run.status,
         creator_name=creator.display_name if creator else "未知成员",
@@ -983,17 +1314,6 @@ def create_execution_run(
     db: DbSession,
 ) -> ExecutionRunView:
     collection = ensure_collection(db, account, collection_id)
-    assignee_ids = list(dict.fromkeys(payload.assignee_ids))
-    memberships = list(
-        db.scalars(
-            select(SpaceMembership).where(
-                SpaceMembership.space_id == collection.space_id,
-                SpaceMembership.account_id.in_(assignee_ids),
-            )
-        )
-    )
-    if len(memberships) != len(assignee_ids):
-        raise HTTPException(status_code=422, detail="execution_assignee_not_space_member")
     cases = list(
         db.scalars(
             select(TestCase)
@@ -1005,18 +1325,57 @@ def create_execution_run(
                 CollectionCaseMembership.collection_id == collection.id,
                 TestCase.deleted_at.is_(None),
             )
-            .order_by(
-                CollectionCaseMembership.position,
-                TestCase.id,
-            )
+            .order_by(CollectionCaseMembership.position, TestCase.id)
         )
     )
     cases = [item for item in cases if item.current_revision_id is not None]
     if not cases:
         raise HTTPException(status_code=409, detail="empty_collection_cannot_execute")
-    run = ExecutionRun(
+    return create_execution_run_from_cases(
+        db,
+        account=account,
+        payload=payload,
         space_id=collection.space_id,
+        cases=cases,
         collection_id=collection.id,
+        playlist_id=None,
+        source_type="collection",
+        source_name=collection.name,
+        source_collection_count=1,
+    )
+
+
+def create_execution_run_from_cases(
+    db: Session,
+    *,
+    account: Account,
+    payload: ExecutionRunCreate,
+    space_id: UUID,
+    cases: list[TestCase],
+    collection_id: UUID | None,
+    playlist_id: UUID | None,
+    source_type: str,
+    source_name: str,
+    source_collection_count: int,
+) -> ExecutionRunView:
+    assignee_ids = list(dict.fromkeys(payload.assignee_ids))
+    memberships = list(
+        db.scalars(
+            select(SpaceMembership).where(
+                SpaceMembership.space_id == space_id,
+                SpaceMembership.account_id.in_(assignee_ids),
+            )
+        )
+    )
+    if len(memberships) != len(assignee_ids):
+        raise HTTPException(status_code=422, detail="execution_assignee_not_space_member")
+    run = ExecutionRun(
+        space_id=space_id,
+        collection_id=collection_id,
+        playlist_id=playlist_id,
+        source_type=source_type,
+        source_name=source_name,
+        source_collection_count=source_collection_count,
         executor_id=account.id,
         description=payload.description.strip(),
         status="active",
@@ -1032,7 +1391,7 @@ def create_execution_run(
         )
     write_audit(
         db,
-        space_id=collection.space_id,
+        space_id=space_id,
         actor_id=account.id,
         action="execution_run.started",
         resource_type="execution_run",
@@ -1040,6 +1399,8 @@ def create_execution_run(
         payload={
             "description": run.description,
             "assignee_ids": [str(item) for item in assignee_ids],
+            "source_type": source_type,
+            "source_name": source_name,
         },
     )
     for index, test_case in enumerate(cases):
@@ -1058,6 +1419,57 @@ def create_execution_run(
     db.commit()
     db.refresh(run)
     return execution_run_to_view(db, run, account.id)
+
+
+@router.post(
+    "/spaces/{space_id}/execution-runs",
+    response_model=ExecutionRunView,
+)
+def create_playlist_execution_run(
+    space_id: UUID,
+    payload: PlaylistExecutionRunCreate,
+    account: CurrentAccount,
+    db: DbSession,
+) -> ExecutionRunView:
+    require_space_membership(db, account.id, space_id)
+    playlist = ensure_playlist(db, account, payload.playlist_id)
+    if playlist.space_id != space_id:
+        raise HTTPException(status_code=404, detail="playlist_not_found")
+    links = list(
+        db.scalars(
+            select(PlaylistCaseMembership)
+            .where(PlaylistCaseMembership.playlist_id == playlist.id)
+            .order_by(PlaylistCaseMembership.position, PlaylistCaseMembership.id)
+        )
+    )
+    cases = [db.get(TestCase, link.test_case_id) for link in links]
+    if not cases:
+        raise HTTPException(status_code=409, detail="empty_playlist_cannot_execute")
+    if any(
+        test_case is None
+        or test_case.space_id != space_id
+        or test_case.deleted_at is not None
+        or test_case.current_revision_id is None
+        for test_case in cases
+    ):
+        raise HTTPException(status_code=409, detail="playlist_contains_unavailable_cases")
+    source_collection_count = db.scalar(
+        select(func.count(PlaylistSourceCollection.id)).where(
+            PlaylistSourceCollection.playlist_id == playlist.id
+        )
+    )
+    return create_execution_run_from_cases(
+        db,
+        account=account,
+        payload=payload,
+        space_id=space_id,
+        cases=[item for item in cases if item is not None],
+        collection_id=None,
+        playlist_id=playlist.id,
+        source_type="playlist",
+        source_name=playlist.name,
+        source_collection_count=source_collection_count or 0,
+    )
 
 
 @router.patch(

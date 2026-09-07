@@ -149,6 +149,32 @@ class TestCaseView(BaseModel):
     created_at: datetime
 
 
+class PlaylistWrite(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    case_ids: list[UUID] = Field(min_length=1, max_length=500)
+    source_collection_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+
+class PlaylistCaseView(BaseModel):
+    case_id: UUID
+    position: int
+    available: bool
+    test_case: TestCaseView | None = None
+
+
+class PlaylistView(BaseModel):
+    id: UUID
+    space_id: UUID
+    name: str
+    source_collection_ids: list[UUID]
+    source_collection_names: list[str]
+    cases: list[PlaylistCaseView]
+    case_count: int
+    unavailable_case_ids: list[UUID]
+    created_at: datetime
+    updated_at: datetime
+
+
 class GenerationStartRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=8000)
     markdown_content: str = Field(default="", max_length=100_000)
@@ -586,6 +612,10 @@ class ExecutionRunCreate(BaseModel):
     assignee_ids: list[UUID] = Field(min_length=1, max_length=100)
 
 
+class PlaylistExecutionRunCreate(ExecutionRunCreate):
+    playlist_id: UUID
+
+
 class ExecutionRunUpdate(BaseModel):
     status: str = Field(pattern=r"^(completed|aborted)$")
     allow_incomplete: bool = False
@@ -607,8 +637,12 @@ class ExecutionRecordView(BaseModel):
 
 class ExecutionRunSummaryView(BaseModel):
     id: UUID
-    collection_id: UUID
-    collection_name: str
+    collection_id: UUID | None
+    collection_name: str | None
+    playlist_id: UUID | None
+    source_type: str
+    source_name: str
+    source_collection_count: int
     description: str
     status: str
     creator_name: str
@@ -628,8 +662,12 @@ class ExecutionRunSummaryView(BaseModel):
 
 class ExecutionRunView(BaseModel):
     id: UUID
-    collection_id: UUID
-    collection_name: str
+    collection_id: UUID | None
+    collection_name: str | None
+    playlist_id: UUID | None
+    source_type: str
+    source_name: str
+    source_collection_count: int
     description: str
     status: str
     creator_name: str

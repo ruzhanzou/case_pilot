@@ -156,6 +156,32 @@ export type TestCaseDto = {
   created_at: string;
 };
 
+export type PlaylistCaseDto = {
+  case_id: string;
+  position: number;
+  available: boolean;
+  test_case: TestCaseDto | null;
+};
+
+export type PlaylistDto = {
+  id: string;
+  space_id: string;
+  name: string;
+  source_collection_ids: string[];
+  source_collection_names: string[];
+  cases: PlaylistCaseDto[];
+  case_count: number;
+  unavailable_case_ids: string[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type PlaylistInput = {
+  name: string;
+  case_ids: string[];
+  source_collection_ids: string[];
+};
+
 export type TestCaseInput = {
   case_key?: string;
   title: string;
@@ -546,8 +572,12 @@ export type ExecutionRecordDto = {
 
 export type ExecutionRunDto = {
   id: string;
-  collection_id: string;
-  collection_name: string;
+  collection_id: string | null;
+  collection_name: string | null;
+  playlist_id: string | null;
+  source_type: "collection" | "playlist";
+  source_name: string;
+  source_collection_count: number;
   description: string;
   status: string;
   creator_name: string;
@@ -604,6 +634,12 @@ const publicErrors: Record<string, string> = {
   no_included_workspace_candidates: "候选已被其他成员处理，请刷新工作区。",
   execution_run_has_no_cases: "空用例集合不能创建执行任务。",
   execution_run_assignees_required: "请至少选择一名执行人。",
+  empty_collection_cannot_execute: "空用例集合不能创建执行任务。",
+  empty_playlist_cannot_execute: "空 Playlist 不能创建执行任务。",
+  playlist_contains_invalid_cases: "Playlist 包含无效或不可执行的用例。",
+  playlist_contains_invalid_source_collections: "Playlist 包含无效的来源集合。",
+  playlist_contains_unavailable_cases: "Playlist 中存在已删除或不可执行的用例，请先移除。",
+  playlist_not_found: "Playlist 不存在或已删除。",
   execution_record_not_assignee: "只有当前执行人可以修改这条执行结果。",
   conversation_collection_locked: "当前对话已绑定其他集合，请新建对话后继续。",
   target_collection_mismatch: "所选节点不属于当前对话绑定的集合。",
@@ -1333,6 +1369,44 @@ export function listTestCases(collectionId: string): Promise<TestCaseDto[]> {
   return apiRequest(`/api/v1/collections/${collectionId}/test-cases`);
 }
 
+export function searchSpaceTestCases(
+  spaceId: string,
+  query = "",
+): Promise<TestCaseDto[]> {
+  const params = new URLSearchParams();
+  if (query.trim()) params.set("q", query.trim());
+  const suffix = params.size ? `?${params.toString()}` : "";
+  return apiRequest(`/api/v1/spaces/${spaceId}/test-cases${suffix}`);
+}
+
+export function listPlaylists(spaceId: string): Promise<PlaylistDto[]> {
+  return apiRequest(`/api/v1/spaces/${spaceId}/playlists`);
+}
+
+export function createPlaylist(
+  spaceId: string,
+  input: PlaylistInput,
+): Promise<PlaylistDto> {
+  return apiRequest(`/api/v1/spaces/${spaceId}/playlists`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function updatePlaylist(
+  playlistId: string,
+  input: PlaylistInput,
+): Promise<PlaylistDto> {
+  return apiRequest(`/api/v1/playlists/${playlistId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deletePlaylist(playlistId: string): Promise<void> {
+  return apiRequest(`/api/v1/playlists/${playlistId}`, { method: "DELETE" });
+}
+
 export function createTestCase(
   collectionId: string,
   input: TestCaseInput,
@@ -1374,6 +1448,16 @@ export function createExecutionRun(
   input: { description: string; assignee_ids: string[] },
 ): Promise<ExecutionRunDto> {
   return apiRequest(`/api/v1/collections/${collectionId}/execution-runs`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function createPlaylistExecutionRun(
+  spaceId: string,
+  input: { playlist_id: string; description: string; assignee_ids: string[] },
+): Promise<ExecutionRunDto> {
+  return apiRequest(`/api/v1/spaces/${spaceId}/execution-runs`, {
     method: "POST",
     body: JSON.stringify(input),
   });

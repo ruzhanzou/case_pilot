@@ -222,6 +222,78 @@ class CollectionCaseMembership(TimestampMixin, Base):
     position: Mapped[int] = mapped_column(default=0, nullable=False)
 
 
+class Playlist(TimestampMixin, Base):
+    __tablename__ = "playlists"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    space_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    creator_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("accounts.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+
+class PlaylistCaseMembership(TimestampMixin, Base):
+    __tablename__ = "playlist_case_memberships"
+    __table_args__ = (
+        UniqueConstraint("playlist_id", "test_case_id", name="uq_playlist_case"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    playlist_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("playlists.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    test_case_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("test_cases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    position: Mapped[int] = mapped_column(nullable=False)
+
+
+class PlaylistSourceCollection(TimestampMixin, Base):
+    __tablename__ = "playlist_source_collections"
+    __table_args__ = (
+        UniqueConstraint(
+            "playlist_id", "collection_id", name="uq_playlist_source_collection"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    playlist_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("playlists.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    collection_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("case_collections.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    position: Mapped[int] = mapped_column(nullable=False)
+
+
 class ExecutionRun(TimestampMixin, Base):
     __tablename__ = "execution_runs"
 
@@ -232,12 +304,22 @@ class ExecutionRun(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    collection_id: Mapped[UUID] = mapped_column(
+    collection_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("case_collections.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
+    playlist_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("playlists.id", ondelete="SET NULL"),
+        index=True,
+    )
+    source_type: Mapped[str] = mapped_column(
+        String(24), default="collection", nullable=False
+    )
+    source_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    source_collection_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     executor_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("accounts.id", ondelete="RESTRICT"),

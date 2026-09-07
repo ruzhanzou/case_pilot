@@ -46,6 +46,7 @@ test("keeps the persisted case management and execution baseline", async () => {
     sampleCases,
     sampleAudioCases,
     executionWorkspace,
+    playlistPicker,
     newConversation,
     conversationExamples,
     conversationHistory,
@@ -62,6 +63,7 @@ test("keeps the persisted case management and execution baseline", async () => {
     readFile(new URL("../lib/sample-cases.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/sample-audio-cases.ts", import.meta.url), "utf8"),
     readFile(new URL("../components/execution-workspace.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/playlist-picker.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/new-conversation.tsx", import.meta.url), "utf8"),
     readFile(new URL("../content/conversation-examples.ts", import.meta.url), "utf8"),
     readFile(new URL("../components/conversation-history-drawer.tsx", import.meta.url), "utf8"),
@@ -195,13 +197,24 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(sampleCases, /case_key: "AUTH-012"/);
   assert.match(sampleAudioCases, /case_key: "AUDIO-001"/);
   assert.match(sampleAudioCases, /case_key: "AUDIO-018"/);
-  assert.match(executionWorkspace, /createExecutionRun/);
+  assert.match(executionWorkspace, /createPlaylistExecutionRun/);
+  assert.match(executionWorkspace, /PlaylistPicker/);
+  assert.match(playlistPicker, /已选择的用例/);
+  assert.match(playlistPicker, /搜索用例集合、名称、编号、模块或标签/);
+  assert.match(playlistPicker, /按一级用例集合、二级用例展示/);
+  assert.match(playlistPicker, /完整加入/);
+  assert.match(playlistPicker, /aria-expanded/);
+  assert.match(playlistPicker, /已自动去重/);
+  assert.match(playlistPicker, /复用.*Playlist/);
   assert.match(executionWorkspace, /completed_step_ids/);
   assert.match(executionWorkspace, /任务描述/);
   assert.match(executionWorkspace, /请填写本次执行任务的目标或范围/);
   assert.match(executionWorkspace, /descriptionRef\.current\?\.focus/);
   assert.doesNotMatch(executionWorkspace, /软件版本|构建号|测试环境/);
   assert.match(executionWorkspace, /新建执行任务/);
+  assert.match(executionWorkspace, /Playlist 执行范围/);
+  assert.match(executionWorkspace, /管理 Playlist/);
+  assert.match(caseLibrary, /创建 Playlist 执行/);
   assert.match(executionWorkspace, /任务历史/);
   assert.match(executionWorkspace, /执行人/);
   assert.match(executionWorkspace, /空间成员/);
