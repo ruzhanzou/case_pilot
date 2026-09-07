@@ -17,6 +17,7 @@ import {
   Sparkles,
   Tags,
   Trash2,
+  Upload,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -30,6 +31,7 @@ type CaseLibraryProps = {
   loading: boolean;
   onSelectCollection: (collectionId: string) => void;
   onCreateCollection: () => void;
+  onImportExcel: () => void;
   onEditCollection: () => void;
   onDeleteCollection: () => void;
   onCreateCase: (module?: string) => void;
@@ -48,6 +50,7 @@ export function CaseLibrary({
   loading,
   onSelectCollection,
   onCreateCollection,
+  onImportExcel,
   onEditCollection,
   onDeleteCollection,
   onCreateCase,
@@ -97,14 +100,27 @@ export function CaseLibrary({
             <span className="management-kicker">当前空间</span>
             <h2>用例集合</h2>
           </div>
-          <button
-            className="management-icon-button"
-            type="button"
-            onClick={onCreateCollection}
-            aria-label="创建用例集合"
-          >
-            <FolderPlus size={18} />
-          </button>
+          <div className="collection-sidebar__actions">
+            <button
+              className="management-icon-button"
+              type="button"
+              onClick={onImportExcel}
+              disabled={!selectedCollection}
+              aria-label="从 Excel 导入用例"
+              title="从 Excel 导入用例"
+            >
+              <Upload size={18} />
+            </button>
+            <button
+              className="management-icon-button"
+              type="button"
+              onClick={onCreateCollection}
+              aria-label="创建用例集合"
+              title="创建用例集合"
+            >
+              <FolderPlus size={18} />
+            </button>
+          </div>
         </div>
         <div className="collection-sidebar__list">
           {collections.map((collection) => (

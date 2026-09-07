@@ -42,6 +42,8 @@ test("keeps the persisted case management and execution baseline", async () => {
     caseMindMap,
     caseWorkbench,
     caseEditor,
+    caseImport,
+    excelParser,
     executionNotes,
     sampleCases,
     sampleAudioCases,
@@ -59,6 +61,8 @@ test("keeps the persisted case management and execution baseline", async () => {
     readFile(new URL("../components/case-mind-map.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/case-workbench.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/case-editor-dialog.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/case-import-dialog.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/test-case-excel.ts", import.meta.url), "utf8"),
     readFile(new URL("../components/execution-notes.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/sample-cases.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/sample-audio-cases.ts", import.meta.url), "utf8"),
@@ -215,6 +219,13 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(executionWorkspace, /Playlist 执行范围/);
   assert.match(executionWorkspace, /管理 Playlist/);
   assert.match(caseLibrary, /创建 Playlist 执行/);
+  assert.match(caseLibrary, /从 Excel 导入用例/);
+  assert.match(caseImport, /Test_Case_Name 必填/);
+  assert.match(caseImport, /Test Procedure 必填/);
+  assert.match(caseImport, /Test Validation 必填/);
+  assert.match(excelParser, /parseTestCaseExcel/);
+  assert.match(excelParser, /Test Setup/);
+  assert.match(excelParser, /Level/);
   assert.match(executionWorkspace, /任务历史/);
   assert.match(executionWorkspace, /执行人/);
   assert.match(executionWorkspace, /空间成员/);

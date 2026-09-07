@@ -1,6 +1,7 @@
 "use client";
 
 import { CaseEditorDialog } from "@/components/case-editor-dialog";
+import { CaseImportDialog } from "@/components/case-import-dialog";
 import { CaseLibrary } from "@/components/case-library";
 import { CaseWorkbench } from "@/components/case-workbench";
 import { CollectionEditorDialog } from "@/components/collection-editor-dialog";
@@ -122,6 +123,7 @@ export function CaseManagementApp({
   const [collectionEditor, setCollectionEditor] = useState<
     { mode: "create" } | { mode: "edit"; collection: CaseCollectionDto } | null
   >(null);
+  const [caseImportOpen, setCaseImportOpen] = useState(false);
 
   const selectedCollection =
     collections.find((item) => item.id === selectedCollectionId) ?? null;
@@ -676,7 +678,7 @@ export function CaseManagementApp({
               : caught.message
           : "候选用例写入失败";
       setError(message);
-      throw caught;
+      throw new Error(message);
     } finally {
       setSaving(false);
     }
@@ -900,6 +902,7 @@ export function CaseManagementApp({
             loading={loading}
             onSelectCollection={(collectionId) => void selectCollection(collectionId)}
             onCreateCollection={() => setCollectionEditor({ mode: "create" })}
+            onImportExcel={() => setCaseImportOpen(true)}
             onEditCollection={() =>
               selectedCollection &&
               setCollectionEditor({
@@ -953,6 +956,17 @@ export function CaseManagementApp({
           saving={saving}
           onClose={() => setCaseEditor(null)}
           onSave={saveCase}
+        />
+      )}
+      {caseImportOpen && selectedCollection && (
+        <CaseImportDialog
+          collectionName={selectedCollection.name}
+          saving={saving}
+          onClose={() => setCaseImportOpen(false)}
+          onImport={async (inputs) => {
+            await importGeneratedCases(selectedCollection.id, inputs);
+            setCaseImportOpen(false);
+          }}
         />
       )}
 
