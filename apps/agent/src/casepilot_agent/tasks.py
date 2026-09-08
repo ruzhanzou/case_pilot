@@ -6,6 +6,7 @@ from time import monotonic
 from typing import Any
 from uuid import UUID
 
+import httpx
 from celery import Celery
 from sqlalchemy import delete, select, update
 
@@ -37,6 +38,7 @@ from casepilot_agent.pipeline import (
 from casepilot_agent.providers import create_embedding_provider, create_provider
 from casepilot_agent.store import (
     JobStore,
+    callback_deliveries,
     case_change_sets,
     knowledge_chunks,
     knowledge_documents,
@@ -68,8 +70,72 @@ celery_app.conf.update(
             "task": "casepilot.agent.dispatch_task_outbox",
             "schedule": 1.0,
         },
+        "deliver-integration-callbacks": {
+            "task": "casepilot.agent.deliver_integration_callbacks",
+            "schedule": 2.0,
+        },
     },
 )
+
+
+@celery_app.task(name="casepilot.agent.deliver_integration_callbacks")
+def deliver_integration_callbacks() -> dict[str, int]:
+    """Deliver durable TestWeb callbacks with bounded exponential backoff."""
+    store = JobStore(settings.database_url, settings.redis_url)
+    delivered = 0
+    failed = 0
+    current = datetime.now(UTC)
+    with store.connection() as connection:
+        rows = list(
+            connection.execute(
+                select(callback_deliveries)
+                .where(
+                    callback_deliveries.c.status == "pending",
+                    callback_deliveries.c.next_attempt_at <= current,
+                )
+                .order_by(callback_deliveries.c.created_at)
+                .limit(25)
+                .with_for_update(skip_locked=True)
+            ).mappings()
+        )
+        for row in rows:
+            try:
+                response = httpx.post(
+                    row["callback_url"],
+                    json=row["payload"],
+                    headers={
+                        "Authorization": f"Bearer {settings.test_web_callback_token}",
+                        "Content-Type": "application/json",
+                        "X-Callback-Event-ID": str(row["event_id"]),
+                    },
+                    timeout=settings.callback_timeout_seconds,
+                )
+                response.raise_for_status()
+                connection.execute(
+                    update(callback_deliveries)
+                    .where(callback_deliveries.c.id == row["id"])
+                    .values(
+                        status="delivered",
+                        attempts=int(row["attempts"]) + 1,
+                        delivered_at=datetime.now(UTC),
+                        last_error=None,
+                    )
+                )
+                delivered += 1
+            except Exception as error:
+                attempts = int(row["attempts"]) + 1
+                delay = min(300, 2 ** min(attempts, 8))
+                connection.execute(
+                    update(callback_deliveries)
+                    .where(callback_deliveries.c.id == row["id"])
+                    .values(
+                        attempts=attempts,
+                        next_attempt_at=datetime.now(UTC) + timedelta(seconds=delay),
+                        last_error=f"{error.__class__.__name__}: {str(error)[:180]}",
+                    )
+                )
+                failed += 1
+    return {"delivered": delivered, "failed": failed}
 
 
 @celery_app.task(name="casepilot.agent.dispatch_task_outbox")
@@ -123,6 +189,7 @@ def dispatch_task_outbox() -> dict[str, int]:
                 )
                 failed += 1
     return {"dispatched": dispatched, "failed": failed, "cleaned": cleaned}
+
 
 STAGE_PROGRESS = {
     "context.prepared": 10,
@@ -280,9 +347,7 @@ def _context_payload(
                 query=query,
                 search_query=pretokenize(query),
                 query_embedding=query_embedding,
-                source_ids=[
-                    UUID(item) for item in payload.get("knowledge_source_ids", [])
-                ],
+                source_ids=[UUID(item) for item in payload.get("knowledge_source_ids", [])],
                 document_ids=[UUID(item) for item in payload.get("document_ids", [])],
                 use_space_knowledge=bool(payload.get("use_space_knowledge", True)),
             )
@@ -301,9 +366,7 @@ def _context_payload(
                 "scores": {
                     "rrf": float(row["rrf"]),
                     "vector": (
-                        1.0 - float(row["distance"])
-                        if row["distance"] is not None
-                        else 0.0
+                        1.0 - float(row["distance"]) if row["distance"] is not None else 0.0
                     ),
                     "lexical": float(row["lexical"] or 0.0),
                 },
@@ -322,8 +385,7 @@ def _context_payload(
                 {
                     "code": "embedding_retrieval_degraded",
                     "message": (
-                        "Embedding 暂不可用，本次已降级为全文与精确匹配检索；"
-                        "语义召回可能减少。"
+                        "Embedding 暂不可用，本次已降级为全文与精确匹配检索；语义召回可能减少。"
                     ),
                     "severity": "warning",
                     "diagnostic": embedding_error,
@@ -438,8 +500,7 @@ def _apply_persisted_asset_quality(
         existing_titles = [item["title"] for item in existing]
         generated_titles = [item.title for item in result.test_cases]
         normalized_existing = {
-            title.strip().casefold(): index
-            for index, title in enumerate(existing_titles)
+            title.strip().casefold(): index for index, title in enumerate(existing_titles)
         }
         exact_duplicate_ids: set[str] = set()
         for case in result.test_cases:
@@ -496,16 +557,13 @@ def _apply_persisted_asset_quality(
                     ),
                 )
             )
-    errors = [
-        issue for issue in result.quality.issues if issue.severity == "error"
-    ]
+    errors = [issue for issue in result.quality.issues if issue.severity == "error"]
     result.quality.passed = not errors
     result.quality.score = max(
         0,
         100
         - len(errors) * 25
-        - len([issue for issue in result.quality.issues if issue.severity != "error"])
-        * 8,
+        - len([issue for issue in result.quality.issues if issue.severity != "error"]) * 8,
     )
 
 
@@ -553,9 +611,7 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
             provided_test_object = extract_explicit_test_object(str(payload["prompt"]))
         requirement = enforce_test_object_clarification(
             requirement,
-            {"Q-TEST-OBJECT": provided_test_object}
-            if provided_test_object
-            else None,
+            {"Q-TEST-OBJECT": provided_test_object} if provided_test_object else None,
         )
         ensure_not_cancelled(store, parsed_job_id)
         raw = requirement.model_dump(mode="json")
@@ -583,9 +639,7 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
         }
         with store.connection() as connection:
             locked_job = store.get_job_for_update(connection, parsed_job_id)
-            if str(
-                getattr(locked_job["status"], "value", locked_job["status"])
-            ) == "cancelled":
+            if str(getattr(locked_job["status"], "value", locked_job["status"])) == "cancelled":
                 raise GenerationCancelled("generation_cancelled")
             store.record_stage(
                 connection,
@@ -608,9 +662,7 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                 output_payload=output,
                 error_code=None,
             )
-            blocker_count = sum(
-                bool(item.get("blocking")) for item in content["open_questions"]
-            )
+            blocker_count = sum(bool(item.get("blocking")) for item in content["open_questions"])
             store.complete_job_message(
                 connection,
                 job,
@@ -624,9 +676,7 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                 ),
                 metadata_values={
                     "brief_version": version,
-                    "brief_operation": str(
-                        payload.get("brief_operation", "draft")
-                    ),
+                    "brief_operation": str(payload.get("brief_operation", "draft")),
                     "artifact_type": "test_brief",
                     "blocking_question_count": blocker_count,
                 },
@@ -675,6 +725,13 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
         )
         ensure_not_cancelled(store, parsed_job_id)
         context = _context_payload(store, job, embedding_provider)
+        with store.connection() as connection:
+            store.update_integration_generation_progress(
+                connection,
+                job,
+                stage="context.prepared",
+                progress=STAGE_PROGRESS["context.prepared"],
+            )
         ensure_not_cancelled(store, parsed_job_id)
         partial_output["context"] = context
         pipeline = GenerationPipeline(provider)
@@ -733,6 +790,12 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
                     stage=stage,
                     output_payload=partial_output,
                 )
+                store.update_integration_generation_progress(
+                    connection,
+                    job,
+                    stage=stage,
+                    progress=STAGE_PROGRESS[stage],
+                )
             store.publish(
                 parsed_job_id,
                 {
@@ -769,9 +832,7 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
         }
         with store.connection() as connection:
             locked_job = store.get_job_for_update(connection, parsed_job_id)
-            if str(
-                getattr(locked_job["status"], "value", locked_job["status"])
-            ) == "cancelled":
+            if str(getattr(locked_job["status"], "value", locked_job["status"])) == "cancelled":
                 raise GenerationCancelled("generation_cancelled")
             store.record_stage(
                 connection,
@@ -782,12 +843,26 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
                 status="completed",
                 model="deterministic-rules-v1",
             )
-            case_ids = store.persist_generation(connection, job, output)
-            workspace_candidate_ids = store.persist_workspace_candidates(
+            store.update_integration_generation_progress(
                 connection,
                 job,
-                output["test_cases"],
+                stage="quality.completed",
+                progress=STAGE_PROGRESS["quality.completed"],
             )
+            if store.is_integration_generation(job):
+                case_ids = store.persist_integration_generation(
+                    connection,
+                    job,
+                    output,
+                )
+                workspace_candidate_ids = []
+            else:
+                case_ids = store.persist_generation(connection, job, output)
+                workspace_candidate_ids = store.persist_workspace_candidates(
+                    connection,
+                    job,
+                    output["test_cases"],
+                )
             completed = {
                 **output,
                 "case_ids": case_ids,
@@ -835,14 +910,20 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
         )
         return completed
     except GenerationCancelled:
+        if "job" in locals() and job is not None:
+            with store.connection() as connection:
+                store.finish_integration_generation(
+                    connection,
+                    job,
+                    status="cancelled",
+                    error_code="GenerationCancelled",
+                )
         return {"job_id": job_id, "status": "cancelled"}
     except AwaitingInput as awaiting:
         partial_output["requirement"] = awaiting.requirement.model_dump(mode="json")
         with store.connection() as connection:
             locked_job = store.get_job_for_update(connection, parsed_job_id)
-            if str(
-                getattr(locked_job["status"], "value", locked_job["status"])
-            ) == "cancelled":
+            if str(getattr(locked_job["status"], "value", locked_job["status"])) == "cancelled":
                 return {"job_id": job_id, "status": "cancelled"}
             store.update_job(
                 connection,
@@ -850,6 +931,11 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
                 status="awaiting_input",
                 stage="generation.awaiting_input",
                 output_payload=partial_output,
+            )
+            store.finish_integration_generation(
+                connection,
+                job,
+                status="awaiting_input",
             )
             store.complete_job_message(
                 connection,
@@ -870,8 +956,7 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
             "status": "awaiting_input",
             "progress": STAGE_PROGRESS["generation.awaiting_input"],
             "questions": [
-                item.model_dump(mode="json")
-                for item in awaiting.requirement.open_questions
+                item.model_dump(mode="json") for item in awaiting.requirement.open_questions
             ],
         }
         store.publish(parsed_job_id, event)
@@ -883,9 +968,23 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
                 parsed_job_id,
                 output_payload=error.result.model_dump(mode="json"),
             )
+            store.finish_integration_generation(
+                connection,
+                job,
+                status="failed",
+                error_code=error.__class__.__name__,
+            )
         fail_job(store, parsed_job_id, "generation.failed", error)
         raise
     except Exception as error:
+        if "job" in locals() and job is not None:
+            with store.connection() as connection:
+                store.finish_integration_generation(
+                    connection,
+                    job,
+                    status="failed",
+                    error_code=error.__class__.__name__,
+                )
         fail_job(store, parsed_job_id, "generation.failed", error)
         raise
 
@@ -907,12 +1006,12 @@ def rewrite_test_case(job_id: str) -> dict[str, Any]:
             )
         pipeline = GenerationPipeline(create_provider(settings.provider))
         candidate = pipeline.rewrite(
-                RewriteRequest(
-                    test_case=TestCaseDraft.model_validate(snapshot),
-                    instruction=payload["instruction"],
-                    conversation_memory=list(payload.get("conversation_memory", [])),
-                    model_id=payload.get("model_id", "auto"),
-                )
+            RewriteRequest(
+                test_case=TestCaseDraft.model_validate(snapshot),
+                instruction=payload["instruction"],
+                conversation_memory=list(payload.get("conversation_memory", [])),
+                model_id=payload.get("model_id", "auto"),
+            )
         )
         output = candidate.model_dump(mode="json")
         with store.connection() as connection:
@@ -1119,6 +1218,7 @@ def answer_knowledge_question(job_id: str) -> dict[str, Any]:
             return {"job_id": job_id, "status": "duplicate_ignored"}
         context = _context_payload(store, job, embedding_provider)
         payload = job["input_payload"]
+
         def publish_delta(delta: str) -> None:
             store.publish(
                 parsed_job_id,
@@ -1271,11 +1371,7 @@ def index_knowledge_source(source_id: str) -> dict[str, Any]:
                         raise
                     document_degraded = True
             source_degraded = source_degraded or document_degraded
-            degraded_code = (
-                "embedding_unavailable_lexical_only"
-                if document_degraded
-                else None
-            )
+            degraded_code = "embedding_unavailable_lexical_only" if document_degraded else None
             with store.connection() as connection:
                 store.replace_document_chunks(connection, document, chunks)
                 store.update_document(
@@ -1289,11 +1385,7 @@ def index_knowledge_source(source_id: str) -> dict[str, Any]:
                 connection,
                 parsed_source_id,
                 status="ready",
-                error_code=(
-                    "embedding_unavailable_lexical_only"
-                    if source_degraded
-                    else None
-                ),
+                error_code=("embedding_unavailable_lexical_only" if source_degraded else None),
             )
         return {
             "source_id": source_id,
@@ -1358,31 +1450,21 @@ def cleanup_expired_knowledge() -> dict[str, int]:
         document_ids = [row["id"] for row in rows]
         if document_ids:
             connection.execute(
-                delete(knowledge_chunks).where(
-                    knowledge_chunks.c.document_id.in_(document_ids)
-                )
+                delete(knowledge_chunks).where(knowledge_chunks.c.document_id.in_(document_ids))
             )
             connection.execute(
-                delete(knowledge_documents).where(
-                    knowledge_documents.c.id.in_(document_ids)
-                )
+                delete(knowledge_documents).where(knowledge_documents.c.id.in_(document_ids))
             )
         empty_sources = list(
             connection.scalars(
                 select(knowledge_sources.c.id)
                 .where(knowledge_sources.c.persistence == "temporary")
-                .where(
-                    ~knowledge_sources.c.id.in_(
-                        select(knowledge_documents.c.source_id)
-                    )
-                )
+                .where(~knowledge_sources.c.id.in_(select(knowledge_documents.c.source_id)))
             )
         )
         if empty_sources:
             connection.execute(
-                delete(knowledge_sources).where(
-                    knowledge_sources.c.id.in_(empty_sources)
-                )
+                delete(knowledge_sources).where(knowledge_sources.c.id.in_(empty_sources))
             )
     for row in rows:
         _unlink_storage_key(row["storage_key"])

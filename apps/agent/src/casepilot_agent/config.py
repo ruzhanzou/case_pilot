@@ -95,6 +95,15 @@ class AgentSettings(BaseSettings):
         default="/var/lib/casepilot/knowledge",
         validation_alias="CASEPILOT_KNOWLEDGE_STORAGE_PATH",
     )
+    test_web_callback_token: str = Field(
+        default="test-web-local",
+        validation_alias="TEST_WEB_CALLBACK_TOKEN",
+    )
+    callback_timeout_seconds: float = Field(
+        default=10,
+        gt=0,
+        validation_alias="CASE_SERVICE_CALLBACK_TIMEOUT_SECONDS",
+    )
 
     @model_validator(mode="after")
     def validate_provider_configuration(self) -> "AgentSettings":

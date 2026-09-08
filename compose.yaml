@@ -46,6 +46,12 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://casepilot:casepilot-local@postgres:5432/casepilot}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       CASEPILOT_KNOWLEDGE_STORAGE_PATH: ${CASEPILOT_KNOWLEDGE_STORAGE_PATH:-/var/lib/casepilot/knowledge}
+      CASE_SERVICE_MOCK_MODE: ${CASE_SERVICE_MOCK_MODE:-true}
+      CASE_SERVICE_API_TOKEN: ${CASE_SERVICE_API_TOKEN:-case-service-local}
+      TEST_TOOL_API_TOKEN: ${TEST_TOOL_API_TOKEN:-test-tool-local}
+      TEST_WEB_BASE_URL: ${TEST_WEB_BASE_URL:-http://127.0.0.1:8090}
+      TEST_WEB_CALLBACK_TOKEN: ${TEST_WEB_CALLBACK_TOKEN:-test-web-local}
+      CASE_PLATFORM_BASE_URL: ${CASE_PLATFORM_BASE_URL:-http://127.0.0.1:3000}
     ports:
       - "8000:8000"
     depends_on:
@@ -80,6 +86,7 @@ services:
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
       CASEPILOT_KNOWLEDGE_STORAGE_PATH: ${CASEPILOT_KNOWLEDGE_STORAGE_PATH:-/var/lib/casepilot/knowledge}
+      TEST_WEB_CALLBACK_TOKEN: ${TEST_WEB_CALLBACK_TOKEN:-test-web-local}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -105,6 +112,7 @@ services:
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
       CASEPILOT_KNOWLEDGE_STORAGE_PATH: ${CASEPILOT_KNOWLEDGE_STORAGE_PATH:-/var/lib/casepilot/knowledge}
+      TEST_WEB_CALLBACK_TOKEN: ${TEST_WEB_CALLBACK_TOKEN:-test-web-local}
     depends_on:
       migrate:
         condition: service_completed_successfully

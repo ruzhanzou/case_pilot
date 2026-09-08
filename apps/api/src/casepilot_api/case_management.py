@@ -122,6 +122,9 @@ def create_test_case_record(
             [item.model_dump(mode="json") for item in payload.source_refs]
             or [{"label": payload.source.strip(), "excerpt": ""}]
         ),
+        execution_level=payload.execution_level,
+        test_domains=normalize_tags(payload.test_domains),
+        automation_type=payload.automation_type,
     )
     db.add(revision)
     db.flush()
@@ -225,10 +228,7 @@ def list_space_members(
             Account.display_name,
         )
     ).all()
-    return [
-        space_member_view(member, membership)
-        for member, membership in rows
-    ]
+    return [space_member_view(member, membership) for member, membership in rows]
 
 
 @router.post(
@@ -243,9 +243,7 @@ def add_space_member(
     db: DbSession,
 ) -> SpaceMemberView:
     require_space_owner(db, account.id, space_id)
-    member = db.scalar(
-        select(Account).where(Account.email == normalize_email(payload.email))
-    )
+    member = db.scalar(select(Account).where(Account.email == normalize_email(payload.email)))
     if member is None or not member.is_active:
         raise HTTPException(status_code=404, detail="registered_account_not_found")
     existing = db.scalar(
@@ -417,6 +415,9 @@ def case_to_view(
         steps=list(revision.steps),
         source=source,
         source_refs=list(revision.source_refs),
+        execution_level=revision.execution_level,
+        test_domains=list(revision.test_domains),
+        automation_type=revision.automation_type,
         created_at=test_case.created_at,
     )
 
@@ -585,10 +586,7 @@ def search_space_test_cases(
     return [
         item
         for item in views
-        if normalized
-        in " ".join(
-            [item.case_key, item.title, item.module, *item.tags]
-        ).casefold()
+        if normalized in " ".join([item.case_key, item.title, item.module, *item.tags]).casefold()
     ]
 
 
@@ -600,9 +598,7 @@ def playlist_to_view(db: Session, playlist: Playlist) -> PlaylistView:
             .order_by(PlaylistSourceCollection.position, PlaylistSourceCollection.id)
         )
     )
-    source_collections = [
-        db.get(CaseCollection, link.collection_id) for link in source_links
-    ]
+    source_collections = [db.get(CaseCollection, link.collection_id) for link in source_links]
     case_links = list(
         db.scalars(
             select(PlaylistCaseMembership)
@@ -636,8 +632,7 @@ def playlist_to_view(db: Session, playlist: Playlist) -> PlaylistView:
         name=playlist.name,
         source_collection_ids=[item.collection_id for item in source_links],
         source_collection_names=[
-            collection.name if collection else "已删除集合"
-            for collection in source_collections
+            collection.name if collection else "已删除集合" for collection in source_collections
         ],
         cases=cases,
         case_count=len(cases),
@@ -691,14 +686,10 @@ def replace_playlist_memberships(
     source_collection_ids: list[UUID],
 ) -> None:
     db.execute(
-        delete(PlaylistCaseMembership).where(
-            PlaylistCaseMembership.playlist_id == playlist.id
-        )
+        delete(PlaylistCaseMembership).where(PlaylistCaseMembership.playlist_id == playlist.id)
     )
     db.execute(
-        delete(PlaylistSourceCollection).where(
-            PlaylistSourceCollection.playlist_id == playlist.id
-        )
+        delete(PlaylistSourceCollection).where(PlaylistSourceCollection.playlist_id == playlist.id)
     )
     for position, case_id in enumerate(case_ids):
         db.add(
@@ -916,8 +907,7 @@ def create_test_cases_batch(
 ) -> list[TestCaseView]:
     collection = ensure_collection(db, account, collection_id)
     case_keys = [
-        (item.case_key or f"CASE-{uuid4().hex[:6]}").strip().upper()
-        for item in payload.cases
+        (item.case_key or f"CASE-{uuid4().hex[:6]}").strip().upper() for item in payload.cases
     ]
     if len(case_keys) != len(set(case_keys)):
         raise HTTPException(status_code=409, detail="duplicate_case_key_in_batch")
@@ -1003,6 +993,13 @@ def update_test_case(
         preconditions=[item.strip() for item in payload.preconditions if item.strip()],
         steps=normalize_steps(payload.steps),
         source_refs=source_refs,
+        execution_level=payload.execution_level or current_revision.execution_level,
+        test_domains=(
+            normalize_tags(payload.test_domains)
+            if payload.test_domains is not None
+            else list(current_revision.test_domains)
+        ),
+        automation_type=payload.automation_type or current_revision.automation_type,
     )
     db.add(revision)
     db.flush()
@@ -1096,11 +1093,7 @@ def execution_run_to_view(
         updater = (
             db.get(Account, record.updated_by_id) if record.updated_by_id is not None else None
         )
-        assignee = (
-            db.get(Account, record.assignee_id)
-            if record.assignee_id is not None
-            else None
-        )
+        assignee = db.get(Account, record.assignee_id) if record.assignee_id is not None else None
         record_views.append(
             ExecutionRecordView(
                 id=record.id,
@@ -1140,10 +1133,7 @@ def execution_run_to_view(
         creator_id=run.executor_id,
         assignee_ids=[item.id for item in assignees],
         assignee_names=[item.display_name for item in assignees],
-        can_manage=bool(
-            viewer_id is not None
-            and can_manage_execution_run(db, run, viewer_id)
-        ),
+        can_manage=bool(viewer_id is not None and can_manage_execution_run(db, run, viewer_id)),
         contributor_names=contributors,
         created_at=run.created_at,
         last_activity_at=last_activity_at,
@@ -1357,6 +1347,7 @@ def create_execution_run_from_cases(
     source_type: str,
     source_name: str,
     source_collection_count: int,
+    revision_ids: dict[UUID, UUID] | None = None,
 ) -> ExecutionRunView:
     assignee_ids = list(dict.fromkeys(payload.assignee_ids))
     memberships = list(
@@ -1408,7 +1399,7 @@ def create_execution_run_from_cases(
             ExecutionRecord(
                 run_id=run.id,
                 test_case_id=test_case.id,
-                revision_id=test_case.current_revision_id,
+                revision_id=(revision_ids or {}).get(test_case.id, test_case.current_revision_id),
                 assignee_id=assignee_ids[index % len(assignee_ids)],
                 status=ExecutionStatus.NOT_RUN,
                 completed_step_ids=[],
@@ -1540,11 +1531,7 @@ def update_execution_record(
     revision = db.get(TestCaseRevision, record.revision_id)
     if revision is None:
         raise HTTPException(status_code=409, detail="test_case_revision_not_found")
-    valid_step_ids = {
-        str(step.get("id", ""))
-        for step in revision.steps
-        if str(step.get("id", ""))
-    }
+    valid_step_ids = {str(step.get("id", "")) for step in revision.steps if str(step.get("id", ""))}
     validate_execution_record_update(payload, valid_step_ids)
     actual_result = payload.actual_result.strip()
     record.status = ExecutionStatus(payload.status.value)

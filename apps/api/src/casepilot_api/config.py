@@ -61,9 +61,7 @@ class Settings(BaseSettings):
         validation_alias="CASEPILOT_AGENT_PROVIDER_LABEL",
     )
     database_url: str = Field(
-        default=(
-            "postgresql+psycopg://casepilot:casepilot-local@localhost:5432/casepilot"
-        ),
+        default=("postgresql+psycopg://casepilot:casepilot-local@localhost:5432/casepilot"),
         validation_alias="DATABASE_URL",
     )
     redis_url: str = Field(
@@ -100,6 +98,46 @@ class Settings(BaseSettings):
         default=True,
         validation_alias="CASEPILOT_SEED_DEMO_DATA",
     )
+    case_service_api_token: str = Field(
+        default="case-service-local",
+        validation_alias="CASE_SERVICE_API_TOKEN",
+    )
+    test_tool_api_token: str = Field(
+        default="test-tool-local",
+        validation_alias="TEST_TOOL_API_TOKEN",
+    )
+    test_web_base_url: str = Field(
+        default="http://127.0.0.1:8090",
+        validation_alias="TEST_WEB_BASE_URL",
+    )
+    test_web_callback_token: str = Field(
+        default="test-web-local",
+        validation_alias="TEST_WEB_CALLBACK_TOKEN",
+    )
+    case_platform_base_url: str = Field(
+        default="http://127.0.0.1:3000",
+        validation_alias="CASE_PLATFORM_BASE_URL",
+    )
+    integration_default_space_id: str = Field(
+        default="",
+        validation_alias="CASE_SERVICE_DEFAULT_SPACE_ID",
+    )
+    test_tool_lease_seconds: int = Field(
+        default=300,
+        gt=0,
+        validation_alias="TEST_TOOL_LEASE_SECONDS",
+    )
+    case_service_mock_mode: bool = Field(
+        default=True,
+        validation_alias="CASE_SERVICE_MOCK_MODE",
+    )
+    case_service_generation_prompt: str = Field(
+        default=(
+            "基于给定测试目标和上下文生成可执行测试用例。"
+            "至少覆盖核心路径、异常与恢复、稳定性与回归，输出不少于 6 条用例。"
+        ),
+        validation_alias="CASE_SERVICE_GENERATION_PROMPT",
+    )
 
     @model_validator(mode="after")
     def validate_production_safety(self) -> "Settings":
@@ -107,6 +145,12 @@ class Settings(BaseSettings):
             raise ValueError("CASEPILOT_SEED_DEMO_DATA must be false in production")
         if self.ai_mode != "mock" and self.agent_provider != "mock" and not self.agent_api_key:
             raise ValueError("CASEPILOT_AGENT_API_KEY is required for real AI mode")
+        if self.env == "production" and (
+            self.case_service_api_token == "case-service-local"
+            or self.test_tool_api_token == "test-tool-local"
+            or self.test_web_callback_token == "test-web-local"
+        ):
+            raise ValueError("integration tokens must be changed in production")
         return self
 
     @property
@@ -133,11 +177,7 @@ class Settings(BaseSettings):
 
     @property
     def available_agent_models(self) -> tuple[str, ...]:
-        models = [
-            model.strip()
-            for model in self.agent_models.split(",")
-            if model.strip()
-        ]
+        models = [model.strip() for model in self.agent_models.split(",") if model.strip()]
         if not models:
             models = [
                 self.agent_model,

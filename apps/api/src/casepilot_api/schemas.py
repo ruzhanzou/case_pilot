@@ -112,6 +112,9 @@ class TestCaseCreate(BaseModel):
     steps: list[CaseStepInput] = Field(min_length=1, max_length=100)
     source: str = Field(default="人工创建", max_length=500)
     source_refs: list[SourceRefInput] = Field(default_factory=list, max_length=30)
+    execution_level: str = Field(default="L0", pattern=r"^L(0|2|4)$")
+    test_domains: list[str] = Field(default_factory=list, max_length=20)
+    automation_type: str = Field(default="manual", pattern=r"^(manual|automated)$")
 
 
 class TestCaseBatchCreate(BaseModel):
@@ -129,6 +132,9 @@ class TestCaseUpdate(BaseModel):
     steps: list[CaseStepInput] = Field(min_length=1, max_length=100)
     source: str = Field(default="人工编辑", max_length=500)
     source_refs: list[SourceRefInput] | None = Field(default=None, max_length=30)
+    execution_level: str | None = Field(default=None, pattern=r"^L(0|2|4)$")
+    test_domains: list[str] | None = Field(default=None, max_length=20)
+    automation_type: str | None = Field(default=None, pattern=r"^(manual|automated)$")
 
 
 class TestCaseView(BaseModel):
@@ -146,6 +152,9 @@ class TestCaseView(BaseModel):
     steps: list[CaseStepInput]
     source: str
     source_refs: list[SourceRefInput] = Field(default_factory=list)
+    execution_level: str = "L0"
+    test_domains: list[str] = Field(default_factory=list)
+    automation_type: str = "manual"
     created_at: datetime
 
 

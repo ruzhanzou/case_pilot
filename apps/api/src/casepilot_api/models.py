@@ -26,6 +26,7 @@ class Base(DeclarativeBase):
 
 class ExecutionStatus(StrEnum):
     NOT_RUN = "not_run"
+    RUNNING = "running"
     PASSED = "passed"
     FAILED = "failed"
     SKIPPED = "skipped"
@@ -112,9 +113,7 @@ class Space(TimestampMixin, Base):
 
 class SpaceMembership(TimestampMixin, Base):
     __tablename__ = "space_memberships"
-    __table_args__ = (
-        UniqueConstraint("space_id", "account_id", name="uq_space_membership"),
-    )
+    __table_args__ = (UniqueConstraint("space_id", "account_id", name="uq_space_membership"),)
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     space_id: Mapped[UUID] = mapped_column(
@@ -149,9 +148,7 @@ class CaseCollection(TimestampMixin, Base):
 
 class TestCase(TimestampMixin, Base):
     __tablename__ = "test_cases"
-    __table_args__ = (
-        UniqueConstraint("space_id", "case_key", name="uq_test_case_space_key"),
-    )
+    __table_args__ = (UniqueConstraint("space_id", "case_key", name="uq_test_case_space_key"),)
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     space_id: Mapped[UUID] = mapped_column(
@@ -194,6 +191,9 @@ class TestCaseRevision(TimestampMixin, Base):
     preconditions: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
     steps: Mapped[list[dict[str, str]]] = mapped_column(JSONB, default=list, nullable=False)
     source_refs: Mapped[list[dict[str, str]]] = mapped_column(JSONB, default=list, nullable=False)
+    execution_level: Mapped[str] = mapped_column(String(4), default="L0", nullable=False)
+    test_domains: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    automation_type: Mapped[str] = mapped_column(String(24), default="manual", nullable=False)
 
 
 class CollectionCaseMembership(TimestampMixin, Base):
@@ -250,9 +250,7 @@ class Playlist(TimestampMixin, Base):
 
 class PlaylistCaseMembership(TimestampMixin, Base):
     __tablename__ = "playlist_case_memberships"
-    __table_args__ = (
-        UniqueConstraint("playlist_id", "test_case_id", name="uq_playlist_case"),
-    )
+    __table_args__ = (UniqueConstraint("playlist_id", "test_case_id", name="uq_playlist_case"),)
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     playlist_id: Mapped[UUID] = mapped_column(
@@ -273,9 +271,7 @@ class PlaylistCaseMembership(TimestampMixin, Base):
 class PlaylistSourceCollection(TimestampMixin, Base):
     __tablename__ = "playlist_source_collections"
     __table_args__ = (
-        UniqueConstraint(
-            "playlist_id", "collection_id", name="uq_playlist_source_collection"
-        ),
+        UniqueConstraint("playlist_id", "collection_id", name="uq_playlist_source_collection"),
     )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -315,9 +311,7 @@ class ExecutionRun(TimestampMixin, Base):
         ForeignKey("playlists.id", ondelete="SET NULL"),
         index=True,
     )
-    source_type: Mapped[str] = mapped_column(
-        String(24), default="collection", nullable=False
-    )
+    source_type: Mapped[str] = mapped_column(String(24), default="collection", nullable=False)
     source_name: Mapped[str] = mapped_column(String(160), nullable=False)
     source_collection_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     executor_id: Mapped[UUID] = mapped_column(
@@ -333,9 +327,7 @@ class ExecutionRun(TimestampMixin, Base):
 
 class ExecutionRunAssignee(TimestampMixin, Base):
     __tablename__ = "execution_run_assignees"
-    __table_args__ = (
-        UniqueConstraint("run_id", "account_id", name="uq_execution_run_assignee"),
-    )
+    __table_args__ = (UniqueConstraint("run_id", "account_id", name="uq_execution_run_assignee"),)
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     run_id: Mapped[UUID] = mapped_column(
@@ -354,9 +346,7 @@ class ExecutionRunAssignee(TimestampMixin, Base):
 
 class ExecutionRecord(TimestampMixin, Base):
     __tablename__ = "execution_records"
-    __table_args__ = (
-        UniqueConstraint("run_id", "test_case_id", name="uq_execution_run_case"),
-    )
+    __table_args__ = (UniqueConstraint("run_id", "test_case_id", name="uq_execution_run_case"),)
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     run_id: Mapped[UUID] = mapped_column(
@@ -400,12 +390,185 @@ class ExecutionRecord(TimestampMixin, Base):
     )
     actual_result: Mapped[str] = mapped_column(Text, default="", nullable=False)
     defect_ref: Mapped[str] = mapped_column(String(160), default="", nullable=False)
+    logs: Mapped[list[dict]] = mapped_column(JSONB, default=list, nullable=False)
+    artifacts: Mapped[list[dict]] = mapped_column(JSONB, default=list, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
+
+
+class CaseProject(TimestampMixin, Base):
+    __tablename__ = "case_projects"
+    __table_args__ = (
+        UniqueConstraint(
+            "space_id",
+            "source_system",
+            "target_type",
+            "target_id",
+            name="uq_case_project_external_target",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    public_id: Mapped[str] = mapped_column(String(24), unique=True, nullable=False, index=True)
+    space_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    account_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("accounts.id", ondelete="RESTRICT"), nullable=False
+    )
+    collection_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("case_collections.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+    )
+    source_system: Mapped[str] = mapped_column(String(40), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    target_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    target_key: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    linked_fr_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    linked_qpm_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    test_context: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+class CaseGenerationSession(TimestampMixin, Base):
+    __tablename__ = "case_generation_sessions"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    public_id: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
+    case_project_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("case_projects.id", ondelete="CASCADE"), nullable=False
+    )
+    generation_job_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("generation_jobs.id", ondelete="SET NULL"), unique=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), default="generating", nullable=False, index=True
+    )
+    error_code: Mapped[str | None] = mapped_column(String(120))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class CaseGenerationCase(TimestampMixin, Base):
+    __tablename__ = "case_generation_cases"
+    __table_args__ = (
+        UniqueConstraint(
+            "case_generation_id",
+            "test_case_id",
+            name="uq_case_generation_case",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    case_generation_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("case_generation_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    test_case_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("test_cases.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    revision_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("test_case_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class IntegrationTask(TimestampMixin, Base):
+    __tablename__ = "integration_tasks"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    public_id: Mapped[str] = mapped_column(String(24), unique=True, nullable=False, index=True)
+    task_request_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), unique=True, nullable=False)
+    case_project_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("case_projects.id", ondelete="CASCADE"), nullable=False
+    )
+    case_generation_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("case_generation_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    playlist_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("playlists.id", ondelete="CASCADE"), nullable=False
+    )
+    execution_run_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("execution_runs.id", ondelete="SET NULL"), unique=True
+    )
+    tester: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    execution_notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    task_context: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    selected_level: Mapped[str] = mapped_column(String(4), default="L4", nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), default="pending_confirmation", nullable=False, index=True
+    )
+    logs: Mapped[list[dict]] = mapped_column(JSONB, default=list, nullable=False)
+    artifacts: Mapped[list[dict]] = mapped_column(JSONB, default=list, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False, index=True
+    )
+
+
+class TestToolLease(TimestampMixin, Base):
+    __tablename__ = "test_tool_leases"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    integration_task_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("integration_tasks.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+    )
+    account_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    worker_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    lease_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class IntegrationUpdate(TimestampMixin, Base):
+    __tablename__ = "integration_updates"
+
+    update_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    integration_task_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("integration_tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    response_payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+class CallbackDelivery(TimestampMixin, Base):
+    __tablename__ = "callback_deliveries"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    event_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), unique=True, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    aggregate_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    callback_url: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="pending", nullable=False, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False, index=True
+    )
+    last_error: Mapped[str | None] = mapped_column(Text)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class GenerationJob(TimestampMixin, Base):
@@ -423,9 +586,7 @@ class GenerationJob(TimestampMixin, Base):
         ForeignKey("accounts.id", ondelete="SET NULL"),
         index=True,
     )
-    operation: Mapped[str] = mapped_column(
-        String(32), default="generate", nullable=False
-    )
+    operation: Mapped[str] = mapped_column(String(32), default="generate", nullable=False)
     collection_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("case_collections.id", ondelete="CASCADE"),
@@ -678,9 +839,7 @@ class GenerationArtifact(TimestampMixin, Base):
 
 class KnowledgeSource(TimestampMixin, Base):
     __tablename__ = "knowledge_sources"
-    __table_args__ = (
-        Index("ix_knowledge_sources_space_status", "space_id", "status"),
-    )
+    __table_args__ = (Index("ix_knowledge_sources_space_status", "space_id", "status"),)
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     space_id: Mapped[UUID] = mapped_column(

@@ -34,6 +34,23 @@ from sqlalchemy.engine import Connection
 
 metadata = MetaData()
 
+callback_deliveries = Table(
+    "callback_deliveries",
+    metadata,
+    Column("id", PGUUID(as_uuid=True), primary_key=True),
+    Column("event_id", PGUUID(as_uuid=True), nullable=False),
+    Column("event_type", String(40), nullable=False),
+    Column("aggregate_id", String(64), nullable=False),
+    Column("callback_url", Text, nullable=False),
+    Column("payload", JSONB, nullable=False),
+    Column("status", String(24), nullable=False),
+    Column("attempts", Integer, nullable=False),
+    Column("next_attempt_at", DateTime(timezone=True), nullable=False),
+    Column("last_error", Text),
+    Column("delivered_at", DateTime(timezone=True)),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
 
 @lru_cache
 def _get_engine(database_url: str):
@@ -48,6 +65,8 @@ def _get_redis(redis_url: str) -> Redis:
         socket_connect_timeout=2,
         socket_timeout=5,
     )
+
+
 generation_status = ENUM(
     "queued",
     "running",
@@ -150,6 +169,7 @@ test_cases = Table(
     Column("space_id", PGUUID(as_uuid=True)),
     Column("case_key", String),
     Column("current_revision_id", PGUUID(as_uuid=True)),
+    Column("deleted_at", DateTime(timezone=True)),
     Column("created_at", DateTime(timezone=True)),
 )
 test_case_revisions = Table(
@@ -166,6 +186,9 @@ test_case_revisions = Table(
     Column("preconditions", JSONB),
     Column("steps", JSONB),
     Column("source_refs", JSONB),
+    Column("execution_level", String),
+    Column("test_domains", JSONB),
+    Column("automation_type", String),
     Column("created_at", DateTime(timezone=True)),
 )
 collection_items = Table(
@@ -174,6 +197,40 @@ collection_items = Table(
     Column("id", PGUUID(as_uuid=True), primary_key=True),
     Column("collection_id", PGUUID(as_uuid=True)),
     Column("test_case_id", PGUUID(as_uuid=True)),
+    Column("position", Integer),
+    Column("created_at", DateTime(timezone=True)),
+)
+case_projects = Table(
+    "case_projects",
+    metadata,
+    Column("id", PGUUID(as_uuid=True), primary_key=True),
+    Column("public_id", String),
+    Column("space_id", PGUUID(as_uuid=True)),
+    Column("account_id", PGUUID(as_uuid=True)),
+    Column("collection_id", PGUUID(as_uuid=True)),
+    Column("target_type", String),
+    Column("target_id", Integer),
+    Column("target_key", String),
+    Column("title", String),
+)
+case_generation_sessions = Table(
+    "case_generation_sessions",
+    metadata,
+    Column("id", PGUUID(as_uuid=True), primary_key=True),
+    Column("public_id", String),
+    Column("case_project_id", PGUUID(as_uuid=True)),
+    Column("generation_job_id", PGUUID(as_uuid=True)),
+    Column("status", String),
+    Column("error_code", String),
+    Column("updated_at", DateTime(timezone=True)),
+)
+case_generation_cases = Table(
+    "case_generation_cases",
+    metadata,
+    Column("id", PGUUID(as_uuid=True), primary_key=True),
+    Column("case_generation_id", PGUUID(as_uuid=True)),
+    Column("test_case_id", PGUUID(as_uuid=True)),
+    Column("revision_id", PGUUID(as_uuid=True)),
     Column("position", Integer),
     Column("created_at", DateTime(timezone=True)),
 )
@@ -402,9 +459,11 @@ class JobStore:
             yield connection
 
     def get_job(self, connection: Connection, job_id: UUID) -> dict[str, Any]:
-        row = connection.execute(
-            select(generation_jobs).where(generation_jobs.c.id == job_id)
-        ).mappings().one_or_none()
+        row = (
+            connection.execute(select(generation_jobs).where(generation_jobs.c.id == job_id))
+            .mappings()
+            .one_or_none()
+        )
         if row is None:
             raise ValueError("generation_job_not_found")
         return dict(row)
@@ -414,11 +473,13 @@ class JobStore:
         connection: Connection,
         job_id: UUID,
     ) -> dict[str, Any]:
-        row = connection.execute(
-            select(generation_jobs)
-            .where(generation_jobs.c.id == job_id)
-            .with_for_update()
-        ).mappings().one_or_none()
+        row = (
+            connection.execute(
+                select(generation_jobs).where(generation_jobs.c.id == job_id).with_for_update()
+            )
+            .mappings()
+            .one_or_none()
+        )
         if row is None:
             raise ValueError("generation_job_not_found")
         return dict(row)
@@ -430,15 +491,19 @@ class JobStore:
         **values: Any,
     ) -> dict[str, Any] | None:
         """Atomically claim a queued job; duplicate deliveries become no-ops."""
-        claimed = connection.execute(
-            update(generation_jobs)
-            .where(
-                generation_jobs.c.id == job_id,
-                generation_jobs.c.status == "queued",
+        claimed = (
+            connection.execute(
+                update(generation_jobs)
+                .where(
+                    generation_jobs.c.id == job_id,
+                    generation_jobs.c.status == "queued",
+                )
+                .values(status="running", error_code=None, **values)
+                .returning(*generation_jobs.c)
             )
-            .values(status="running", error_code=None, **values)
-            .returning(*generation_jobs.c)
-        ).mappings().one_or_none()
+            .mappings()
+            .one_or_none()
+        )
         return dict(claimed) if claimed is not None else None
 
     def update_job(self, connection: Connection, job_id: UUID, **values: Any) -> None:
@@ -448,9 +513,7 @@ class JobStore:
         if "status" not in values:
             return
         job = self.get_job(connection, job_id)
-        operation_id = dict(job.get("input_payload") or {}).get(
-            "conversation_operation_id"
-        )
+        operation_id = dict(job.get("input_payload") or {}).get("conversation_operation_id")
         if not operation_id:
             return
         job_status = str(getattr(values["status"], "value", values["status"]))
@@ -520,9 +583,11 @@ class JobStore:
         )
 
     def get_source(self, connection: Connection, source_id: UUID) -> dict[str, Any]:
-        row = connection.execute(
-            select(knowledge_sources).where(knowledge_sources.c.id == source_id)
-        ).mappings().one_or_none()
+        row = (
+            connection.execute(select(knowledge_sources).where(knowledge_sources.c.id == source_id))
+            .mappings()
+            .one_or_none()
+        )
         if row is None:
             raise ValueError("knowledge_source_not_found")
         return dict(row)
@@ -548,9 +613,7 @@ class JobStore:
         **values: Any,
     ) -> None:
         connection.execute(
-            update(knowledge_sources)
-            .where(knowledge_sources.c.id == source_id)
-            .values(**values)
+            update(knowledge_sources).where(knowledge_sources.c.id == source_id).values(**values)
         )
 
     def update_document(
@@ -572,9 +635,7 @@ class JobStore:
         chunks: list[dict[str, Any]],
     ) -> None:
         connection.execute(
-            delete(knowledge_chunks).where(
-                knowledge_chunks.c.document_id == document["id"]
-            )
+            delete(knowledge_chunks).where(knowledge_chunks.c.document_id == document["id"])
         )
         now = datetime.now(UTC)
         parent_ids: dict[str, UUID] = {}
@@ -636,16 +697,20 @@ class JobStore:
                 separators=(",", ":"),
             ).encode("utf-8")
         ).hexdigest()
-        row = connection.execute(
-            select(generation_stages)
-            .where(
-                generation_stages.c.generation_job_id == job_id,
-                generation_stages.c.stage == stage,
-                generation_stages.c.status == "completed",
-                generation_stages.c.input_hash == input_hash,
+        row = (
+            connection.execute(
+                select(generation_stages)
+                .where(
+                    generation_stages.c.generation_job_id == job_id,
+                    generation_stages.c.stage == stage,
+                    generation_stages.c.status == "completed",
+                    generation_stages.c.input_hash == input_hash,
+                )
+                .order_by(generation_stages.c.attempt.desc())
             )
-            .order_by(generation_stages.c.attempt.desc())
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
         return dict(row) if row else None
 
     def record_stage(
@@ -735,25 +800,22 @@ class JobStore:
             else literal(None)
         )
         lexical_terms = lexical_search_terms(search_query)
-        lexical = (
-            sum(
-                (
-                    case(
-                        (
-                            knowledge_chunks.c.search_text.contains(
-                                term,
-                                autoescape=True,
-                            ),
-                            1.0,
+        lexical = sum(
+            (
+                case(
+                    (
+                        knowledge_chunks.c.search_text.contains(
+                            term,
+                            autoescape=True,
                         ),
-                        else_=0.0,
-                    )
-                    for term in lexical_terms
-                ),
-                literal(0.0),
-            )
-            / max(len(lexical_terms), 1)
-        )
+                        1.0,
+                    ),
+                    else_=0.0,
+                )
+                for term in lexical_terms
+            ),
+            literal(0.0),
+        ) / max(len(lexical_terms), 1)
         base = (
             select(
                 knowledge_chunks,
@@ -806,9 +868,7 @@ class JobStore:
                 if exact_terms and any(term in content_upper for term in exact_terms):
                     item["rrf"] += 1.0 / 30
                     item["ranks"]["exact"] = 1
-        return sorted(merged.values(), key=lambda item: item["rrf"], reverse=True)[
-            :limit
-        ]
+        return sorted(merged.values(), key=lambda item: item["rrf"], reverse=True)[:limit]
 
     def persist_evidence(
         self,
@@ -863,10 +923,7 @@ class JobStore:
             )
             .where(collection_items.c.collection_id == collection_id)
         ).mappings()
-        return [
-            {"case_key": row["case_key"], "title": row["title"]}
-            for row in rows
-        ]
+        return [{"case_key": row["case_key"], "title": row["title"]} for row in rows]
 
     def persist_generation(
         self,
@@ -968,11 +1025,14 @@ class JobStore:
         content: dict[str, Any],
     ) -> int:
         conversation_id = UUID(str(job["input_payload"]["conversation_id"]))
-        current_version = connection.scalar(
-            select(func.max(workspace_test_briefs.c.version)).where(
-                workspace_test_briefs.c.conversation_id == conversation_id
+        current_version = (
+            connection.scalar(
+                select(func.max(workspace_test_briefs.c.version)).where(
+                    workspace_test_briefs.c.conversation_id == conversation_id
+                )
             )
-        ) or 0
+            or 0
+        )
         connection.execute(
             update(workspace_test_briefs)
             .where(
@@ -1075,14 +1135,18 @@ class JobStore:
         case_id: UUID,
         revision_id: UUID,
     ) -> dict[str, Any]:
-        row = connection.execute(
-            select(test_case_revisions, test_cases.c.case_key)
-            .join(test_cases, test_cases.c.id == test_case_revisions.c.test_case_id)
-            .where(
-                test_case_revisions.c.id == revision_id,
-                test_case_revisions.c.test_case_id == case_id,
+        row = (
+            connection.execute(
+                select(test_case_revisions, test_cases.c.case_key)
+                .join(test_cases, test_cases.c.id == test_case_revisions.c.test_case_id)
+                .where(
+                    test_case_revisions.c.id == revision_id,
+                    test_case_revisions.c.test_case_id == case_id,
+                )
             )
-        ).mappings().one_or_none()
+            .mappings()
+            .one_or_none()
+        )
         if row is None:
             raise ValueError("base_revision_not_found")
         return {
@@ -1240,6 +1304,321 @@ class JobStore:
             )
         )
         return candidate_id
+
+    @staticmethod
+    def is_integration_generation(job: dict[str, Any]) -> bool:
+        return bool(job.get("input_payload", {}).get("integration_generation_id"))
+
+    def _integration_rows(
+        self,
+        connection: Connection,
+        job: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        payload = dict(job.get("input_payload") or {})
+        generation_id = payload.get("integration_generation_id")
+        project_id = payload.get("integration_case_project_id")
+        if not generation_id or not project_id:
+            return None
+        generation = (
+            connection.execute(
+                select(case_generation_sessions).where(
+                    case_generation_sessions.c.id == UUID(str(generation_id))
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        project = (
+            connection.execute(
+                select(case_projects).where(case_projects.c.id == UUID(str(project_id)))
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if generation is None or project is None:
+            raise RuntimeError("integration_generation_context_not_found")
+        return dict(generation), dict(project)
+
+    def _queue_integration_callback(
+        self,
+        connection: Connection,
+        job: dict[str, Any],
+        event_type: str,
+        aggregate_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        base_url = str(
+            job.get("input_payload", {}).get("integration_callback_base_url") or ""
+        ).rstrip("/")
+        if not base_url:
+            raise RuntimeError("integration_callback_base_url_missing")
+        event_time = datetime.now(UTC)
+        connection.execute(
+            insert(callback_deliveries).values(
+                id=uuid4(),
+                event_id=uuid4(),
+                event_type=event_type,
+                aggregate_id=aggregate_id,
+                callback_url=f"{base_url}/api/case-service/callbacks/{event_type}",
+                payload=payload,
+                status="pending",
+                attempts=0,
+                next_attempt_at=event_time,
+                created_at=event_time,
+            )
+        )
+
+    def update_integration_generation_progress(
+        self,
+        connection: Connection,
+        job: dict[str, Any],
+        *,
+        stage: str,
+        progress: int,
+    ) -> None:
+        rows = self._integration_rows(connection, job)
+        if rows is None:
+            return
+        generation, project = rows
+        event_time = datetime.now(UTC)
+        callback_status = "awaiting_review" if stage == "quality.completed" else "generating"
+        connection.execute(
+            update(case_generation_sessions)
+            .where(case_generation_sessions.c.id == generation["id"])
+            .values(status=callback_status, updated_at=event_time, error_code=None)
+        )
+        self._queue_integration_callback(
+            connection,
+            job,
+            "generation-status",
+            generation["public_id"],
+            {
+                "target_type": project["target_type"],
+                "target_id": project["target_id"],
+                "case_project_id": project["public_id"],
+                "case_generation_id": generation["public_id"],
+                "generation_status": callback_status,
+                "generation_stage": stage,
+                "generation_progress": progress,
+                "generation_updated_at": event_time.isoformat(),
+                "case_platform_url": job["input_payload"]["integration_case_platform_url"],
+            },
+        )
+
+    @staticmethod
+    def _integration_levels(drafts: list[dict[str, Any]]) -> list[str]:
+        risk_words = ("稳定", "性能", "压力", "长时间", "兼容", "隐私", "安全")
+        levels = []
+        for draft in drafts:
+            searchable = " ".join(
+                (
+                    str(draft.get("title", "")),
+                    str(draft.get("case_type", "")),
+                    " ".join(str(item) for item in draft.get("tags", [])),
+                )
+            )
+            if any(word in searchable for word in risk_words):
+                levels.append("L4")
+            elif str(draft.get("priority")) == "P0":
+                levels.append("L0")
+            else:
+                levels.append("L2")
+        if len(levels) >= 3:
+            levels[0] = "L0"
+            levels[len(levels) // 2] = "L2"
+            levels[-1] = "L4"
+        return levels
+
+    def persist_integration_generation(
+        self,
+        connection: Connection,
+        job: dict[str, Any],
+        output: dict[str, Any],
+    ) -> list[str]:
+        rows = self._integration_rows(connection, job)
+        if rows is None:
+            return []
+        generation, project = rows
+        event_time = datetime.now(UTC)
+        drafts = list(output.get("test_cases") or [])
+        levels = self._integration_levels(drafts)
+        existing_rows = list(
+            connection.execute(
+                select(test_cases, collection_items.c.position)
+                .join(
+                    collection_items,
+                    collection_items.c.test_case_id == test_cases.c.id,
+                )
+                .where(collection_items.c.collection_id == project["collection_id"])
+            ).mappings()
+        )
+        cases_by_key = {str(item["case_key"]): dict(item) for item in existing_rows}
+        if existing_rows:
+            connection.execute(
+                update(test_cases)
+                .where(test_cases.c.id.in_([item["id"] for item in existing_rows]))
+                .values(deleted_at=event_time)
+            )
+        case_ids: list[str] = []
+        summary_cases: dict[str, dict[str, Any]] = {}
+        for index, (draft, level) in enumerate(zip(drafts, levels, strict=True), 1):
+            case_key = f"{project['public_id']}-CASE-{index:03d}"
+            existing = cases_by_key.get(case_key)
+            case_id = UUID(str(existing["id"])) if existing else uuid4()
+            revision_id = uuid4()
+            if existing:
+                revision_number = (
+                    connection.scalar(
+                        select(func.max(test_case_revisions.c.revision_number)).where(
+                            test_case_revisions.c.test_case_id == case_id
+                        )
+                    )
+                    or 0
+                ) + 1
+            else:
+                revision_number = 1
+                connection.execute(
+                    insert(test_cases).values(
+                        id=case_id,
+                        space_id=project["space_id"],
+                        case_key=case_key,
+                        current_revision_id=None,
+                        deleted_at=None,
+                        created_at=event_time,
+                    )
+                )
+                connection.execute(
+                    insert(collection_items).values(
+                        id=uuid4(),
+                        collection_id=project["collection_id"],
+                        test_case_id=case_id,
+                        position=index - 1,
+                        created_at=event_time,
+                    )
+                )
+            test_domains = [
+                value
+                for value in (
+                    str(draft.get("case_type", "")).strip(),
+                    str(draft.get("module", "")).strip(),
+                )
+                if value
+            ][:2]
+            automation_type = "automated" if draft.get("automated") else "manual"
+            connection.execute(
+                insert(test_case_revisions).values(
+                    id=revision_id,
+                    test_case_id=case_id,
+                    revision_number=revision_number,
+                    title=draft["title"],
+                    module=draft.get("module", ""),
+                    case_type=draft.get("case_type", "功能"),
+                    priority=draft.get("priority", "P1"),
+                    tags=draft.get("tags", []),
+                    preconditions=draft.get("preconditions", []),
+                    steps=[
+                        {
+                            "id": str(step.get("id") or uuid4()),
+                            "action": step["action"],
+                            "expected": step["expected"],
+                        }
+                        for step in draft.get("steps", [])
+                    ],
+                    source_refs=draft.get("source_refs", []),
+                    execution_level=level,
+                    test_domains=test_domains,
+                    automation_type=automation_type,
+                    created_at=event_time,
+                )
+            )
+            connection.execute(
+                update(test_cases)
+                .where(test_cases.c.id == case_id)
+                .values(current_revision_id=revision_id, deleted_at=None)
+            )
+            connection.execute(
+                insert(case_generation_cases).values(
+                    id=uuid4(),
+                    case_generation_id=generation["id"],
+                    test_case_id=case_id,
+                    revision_id=revision_id,
+                    position=index - 1,
+                    created_at=event_time,
+                )
+            )
+            case_ids.append(str(case_id))
+            summary_cases[case_key] = {
+                "stage": level,
+                "test_domain": test_domains,
+                "title": draft["title"],
+                "automation_type": automation_type,
+            }
+        connection.execute(
+            update(case_generation_sessions)
+            .where(case_generation_sessions.c.id == generation["id"])
+            .values(status="approved", updated_at=event_time, error_code=None)
+        )
+        base_payload = {
+            "target_type": project["target_type"],
+            "target_id": project["target_id"],
+            "case_project_id": project["public_id"],
+            "case_generation_id": generation["public_id"],
+            "generation_status": "approved",
+            "generation_updated_at": event_time.isoformat(),
+            "case_platform_url": job["input_payload"]["integration_case_platform_url"],
+        }
+        self._queue_integration_callback(
+            connection,
+            job,
+            "generation-status",
+            generation["public_id"],
+            {**base_payload, "generation_stage": "completed", "generation_progress": 100},
+        )
+        self._queue_integration_callback(
+            connection,
+            job,
+            "case-summary",
+            generation["public_id"],
+            {**base_payload, "cases": summary_cases},
+        )
+        return case_ids
+
+    def finish_integration_generation(
+        self,
+        connection: Connection,
+        job: dict[str, Any],
+        *,
+        status: str,
+        error_code: str | None = None,
+    ) -> None:
+        rows = self._integration_rows(connection, job)
+        if rows is None:
+            return
+        generation, project = rows
+        event_time = datetime.now(UTC)
+        connection.execute(
+            update(case_generation_sessions)
+            .where(case_generation_sessions.c.id == generation["id"])
+            .values(status=status, updated_at=event_time, error_code=error_code)
+        )
+        self._queue_integration_callback(
+            connection,
+            job,
+            "generation-status",
+            generation["public_id"],
+            {
+                "target_type": project["target_type"],
+                "target_id": project["target_id"],
+                "case_project_id": project["public_id"],
+                "case_generation_id": generation["public_id"],
+                "generation_status": status,
+                "generation_stage": status,
+                "generation_progress": 100 if status in {"failed", "cancelled"} else 25,
+                "generation_updated_at": event_time.isoformat(),
+                "case_platform_url": job["input_payload"]["integration_case_platform_url"],
+                "error_code": error_code,
+            },
+        )
 
     def publish(self, job_id: UUID, event: dict[str, Any]) -> None:
         key = f"casepilot:generation:{job_id}:events"

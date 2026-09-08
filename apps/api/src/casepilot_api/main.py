@@ -16,6 +16,7 @@ from casepilot_api.config import get_settings
 from casepilot_api.conversations import router as conversation_router
 from casepilot_api.database import check_database
 from casepilot_api.generation import router as generation_router
+from casepilot_api.integrations import router as integrations_router
 from casepilot_api.knowledge import router as knowledge_router
 
 settings = get_settings()
@@ -47,6 +48,7 @@ app.include_router(generation_router)
 app.include_router(knowledge_router)
 app.include_router(candidate_router)
 app.include_router(conversation_router)
+app.include_router(integrations_router)
 
 
 @app.get("/health/live")
