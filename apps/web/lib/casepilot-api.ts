@@ -138,6 +138,21 @@ export type CaseCollectionDto = {
   created_at: string;
 };
 
+export type CaseProjectNavigationDto = {
+  case_project_id: string;
+  space_id: string;
+  collection_id: string;
+  title: string;
+  test_target: {
+    target_type: string;
+    target_id: number;
+    target_key: string;
+    title: string;
+    linked_fr_ids: Array<number | string>;
+    linked_qpm_ids: Array<number | string>;
+  };
+};
+
 export type TestCaseDto = {
   id: string;
   case_key: string;
@@ -688,6 +703,7 @@ const publicErrors: Record<string, string> = {
   conversation_operation_not_awaiting_collection: "集合确认状态已变化，请刷新后重试。",
   conversation_operation_predecessor_pending: "前一项操作尚未完成，请稍后继续。",
   requested_collection_mismatch: "目标集合已变化，请刷新后重试。",
+  space_access_denied: "当前账号无权访问该项目，请从 TestWeb 重新打开最新链接。",
 };
 
 export function publicErrorMessage(code: unknown): string {
@@ -1378,6 +1394,18 @@ export async function waitForKnowledgeSource(
 
 export function listCollections(spaceId: string): Promise<CaseCollectionDto[]> {
   return apiRequest(`/api/v1/spaces/${spaceId}/collections`);
+}
+
+export function getCaseProjectNavigation(
+  caseProjectId: string,
+  accessToken?: string,
+): Promise<CaseProjectNavigationDto> {
+  const query = accessToken
+    ? `?access_token=${encodeURIComponent(accessToken)}`
+    : "";
+  return apiRequest(
+    `/api/v1/case-projects/${encodeURIComponent(caseProjectId)}${query}`,
+  );
 }
 
 export function createCollection(

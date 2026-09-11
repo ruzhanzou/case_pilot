@@ -19,10 +19,12 @@ import {
   confirmConversationIntent,
   deleteCollection,
   deleteTestCase,
+  getCaseProjectNavigation,
   getConversation,
   getPlaylistCreationSession,
   listCollections,
   listTestCases,
+  publicErrorMessage,
   resumeConversationOperation,
   sendConversationMessage,
   updateCollection,
@@ -105,6 +107,7 @@ export function CaseManagementApp({
     mode: "overview" | "create";
   }>({ id: 0, mode: "overview" });
   const [playlistCreationId, setPlaylistCreationId] = useState("");
+  const [deepLinkedCollectionId, setDeepLinkedCollectionId] = useState("");
   const [collections, setCollections] = useState<CaseCollectionDto[]>([]);
   const [selectedCollectionId, setSelectedCollectionId] = useState("");
   const [cases, setCases] = useState<TestCaseDto[]>([]);
@@ -495,7 +498,10 @@ export function CaseManagementApp({
     if (!activeSpaceId) return;
     void (async () => {
       const availableCollections = await listCollections(activeSpaceId);
-      const initialCollection = availableCollections[0];
+      const initialCollection =
+        availableCollections.find(
+          (collection) => collection.id === deepLinkedCollectionId,
+        ) ?? availableCollections[0];
       const initialCases = initialCollection
         ? await listTestCases(initialCollection.id)
         : [];
@@ -522,32 +528,43 @@ export function CaseManagementApp({
     return () => {
       active = false;
     };
-  }, [activeSpaceId]);
+  }, [activeSpaceId, deepLinkedCollectionId]);
 
   useEffect(() => {
-    const creationId = new URLSearchParams(window.location.search).get(
-      "playlist_creation_id",
-    );
-    if (!creationId) return;
+    const searchParams = new URLSearchParams(window.location.search);
+    const creationId = searchParams.get("playlist_creation_id");
+    const caseProjectId = searchParams.get("case_project_id");
+    const caseProjectAccessToken = searchParams.get("access_token") ?? undefined;
+    if (!creationId && !caseProjectId) return;
     let active = true;
-    void getPlaylistCreationSession(creationId)
-      .then((creation) => {
-        if (!active) return;
-        setPlaylistCreationId(creationId);
-        setSelectedSpaceId(creation.space_id);
-        setHistoryOpen(false);
-        setExecutionNavigation((current) => ({
-          id: current.id + 1,
-          mode: "create",
-        }));
-        setPage("execution");
-      })
+    const request = creationId
+      ? getPlaylistCreationSession(creationId).then((creation) => {
+          if (!active) return;
+          setPlaylistCreationId(creationId);
+          setSelectedSpaceId(creation.space_id);
+          setHistoryOpen(false);
+          setExecutionNavigation((current) => ({
+            id: current.id + 1,
+            mode: "create",
+          }));
+          setPage("execution");
+        })
+      : getCaseProjectNavigation(caseProjectId!, caseProjectAccessToken).then((project) => {
+          if (!active) return;
+          setSelectedSpaceId(project.space_id);
+          setDeepLinkedCollectionId(project.collection_id);
+          setSelectedCollectionId(project.collection_id);
+          setSelectedCaseId("");
+          setHistoryOpen(false);
+          setPage("library");
+        });
+    void request
       .catch((caught) => {
         if (active) {
           setError(
             caught instanceof Error
-              ? `Playlist 创建会话加载失败：${caught.message}`
-              : "Playlist 创建会话加载失败",
+              ? `${creationId ? "Playlist 创建会话" : "用例项目"}加载失败：${publicErrorMessage(caught.message)}`
+              : `${creationId ? "Playlist 创建会话" : "用例项目"}加载失败`,
           );
         }
       });

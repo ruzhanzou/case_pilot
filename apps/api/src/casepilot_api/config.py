@@ -118,6 +118,11 @@ class Settings(BaseSettings):
         default="http://127.0.0.1:3000",
         validation_alias="CASE_PLATFORM_BASE_URL",
     )
+    case_platform_link_ttl_seconds: int = Field(
+        default=86_400,
+        gt=0,
+        validation_alias="CASE_PLATFORM_LINK_TTL_SECONDS",
+    )
     integration_default_space_id: str = Field(
         default="",
         validation_alias="CASE_SERVICE_DEFAULT_SPACE_ID",

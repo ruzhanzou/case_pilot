@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from urllib.parse import parse_qs, urlsplit
 from uuid import UUID, uuid4
 
 import pytest
@@ -29,6 +30,8 @@ async def test_testweb_mock_generation_and_testtool_execution_loop(
     token = uuid4().hex
     account_id: str | None = None
     space_id: str | None = None
+    visitor_account_id: str | None = None
+    visitor_space_id: str | None = None
     project_public_id: str | None = None
     generation_id: str | None = None
     regenerated_id: str | None = None
@@ -87,6 +90,46 @@ async def test_testweb_mock_generation_and_testtool_execution_loop(
             assert created.status_code == 201
             project_public_id = created.json()["case_project_id"]
             assert project_public_id.startswith("CP-")
+            project_url = urlsplit(created.json()["case_platform_url"])
+            assert project_url.path == f"/case-projects/{project_public_id}"
+            access_token = parse_qs(project_url.query)["access_token"][0]
+
+            navigation = await client.get(
+                f"/api/v1/case-projects/{project_public_id}"
+            )
+            assert navigation.status_code == 200
+            assert navigation.json()["case_project_id"] == project_public_id
+            assert navigation.json()["space_id"] == space_id
+            assert navigation.json()["collection_id"]
+            assert navigation.json()["test_target"] == target
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as visitor_client:
+                visitor_registration = await visitor_client.post(
+                    "/api/v1/auth/register",
+                    json={
+                        "email": f"case-link-visitor-{token}@casepilot.test",
+                        "display_name": "Case Link Visitor",
+                        "password": "CasePilot123!",
+                    },
+                )
+                assert visitor_registration.status_code == 201
+                visitor_account_id = visitor_registration.json()["id"]
+                visitor_space_id = visitor_registration.json()["spaces"][0]["id"]
+                denied_navigation = await visitor_client.get(
+                    f"/api/v1/case-projects/{project_public_id}"
+                )
+                assert denied_navigation.status_code == 403
+                granted_navigation = await visitor_client.get(
+                    f"/api/v1/case-projects/{project_public_id}",
+                    params={"access_token": access_token},
+                )
+                assert granted_navigation.status_code == 200
+                repeated_navigation = await visitor_client.get(
+                    f"/api/v1/case-projects/{project_public_id}"
+                )
+                assert repeated_navigation.status_code == 200
 
             duplicate = await client.post(
                 "/case-projects",
@@ -349,11 +392,19 @@ async def test_testweb_mock_generation_and_testtool_execution_loop(
                             CallbackDelivery.aggregate_id.in_(callback_aggregate_ids)
                         )
                     )
-                if space_id:
-                    db.execute(delete(ExecutionRun).where(ExecutionRun.space_id == UUID(space_id)))
-                    db.execute(delete(Space).where(Space.id == UUID(space_id)))
-                if account_id:
-                    db.execute(delete(Account).where(Account.id == UUID(account_id)))
+                for cleanup_space_id in (space_id, visitor_space_id):
+                    if cleanup_space_id:
+                        db.execute(
+                            delete(ExecutionRun).where(
+                                ExecutionRun.space_id == UUID(cleanup_space_id)
+                            )
+                        )
+                        db.execute(delete(Space).where(Space.id == UUID(cleanup_space_id)))
+                for cleanup_account_id in (account_id, visitor_account_id):
+                    if cleanup_account_id:
+                        db.execute(
+                            delete(Account).where(Account.id == UUID(cleanup_account_id))
+                        )
                 db.commit()
 
 

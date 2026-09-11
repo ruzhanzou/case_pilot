@@ -7,7 +7,9 @@ confirmed work assigned to the authenticated external user.
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
 import json
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -191,6 +193,14 @@ class CaseProjectResponse(BaseModel):
     case_platform_url: str
 
 
+class CaseProjectNavigationResponse(BaseModel):
+    case_project_id: str
+    space_id: UUID
+    collection_id: UUID
+    title: str
+    test_target: dict
+
+
 class GenerationResponse(BaseModel):
     case_generation_id: str
     case_generation_status: str
@@ -357,6 +367,44 @@ def next_public_id(db: Session, sequence: str, prefix: str, width: int = 5) -> s
 
 def platform_url(path: str) -> str:
     return f"{settings.case_platform_base_url.rstrip('/')}{path}"
+
+
+def case_project_access_token(project: CaseProject) -> str:
+    expires_at = int(
+        (datetime.now(UTC) + timedelta(seconds=settings.case_platform_link_ttl_seconds))
+        .timestamp()
+    )
+    message = f"{project.public_id}:{project.space_id}:{expires_at}".encode()
+    signature = hmac.new(
+        settings.case_service_api_token.encode(), message, hashlib.sha256
+    ).digest()
+    encoded_signature = base64.urlsafe_b64encode(signature).decode().rstrip("=")
+    return f"{expires_at}.{encoded_signature}"
+
+
+def validate_case_project_access_token(project: CaseProject, token: str) -> bool:
+    try:
+        expires_at_text, provided_signature = token.split(".", 1)
+        expires_at = int(expires_at_text)
+    except (TypeError, ValueError):
+        return False
+    if expires_at < int(datetime.now(UTC).timestamp()):
+        return False
+    message = f"{project.public_id}:{project.space_id}:{expires_at}".encode()
+    expected_signature = (
+        base64.urlsafe_b64encode(
+            hmac.new(settings.case_service_api_token.encode(), message, hashlib.sha256).digest()
+        )
+        .decode()
+        .rstrip("=")
+    )
+    return hmac.compare_digest(provided_signature, expected_signature)
+
+
+def case_project_platform_url(project: CaseProject) -> str:
+    return platform_url(
+        f"/case-projects/{project.public_id}?access_token={case_project_access_token(project)}"
+    )
 
 
 def choose_service_identity(db: Session, requested_space_id: UUID | None) -> tuple[UUID, UUID]:
@@ -633,7 +681,7 @@ def case_snapshot(db: Session, project: CaseProject, generation: CaseGenerationS
         "target_type": project.target_type,
         "target_id": project.target_id,
         "case_project_id": project.public_id,
-        "case_platform_url": platform_url(f"/case-projects/{project.public_id}"),
+        "case_platform_url": case_project_platform_url(project),
         "case_generation_id": generation.public_id,
         "generation_status": generation.status,
         "generation_updated_at": generation.updated_at.isoformat(),
@@ -794,7 +842,7 @@ def create_case_project(
     if existing is not None:
         return {
             "case_project_id": existing.public_id,
-            "case_platform_url": platform_url(f"/case-projects/{existing.public_id}"),
+            "case_platform_url": case_project_platform_url(existing),
         }
     public_id = next_public_id(db, "case_project_public_id_seq", "CP-")
     collection = CaseCollection(
@@ -826,7 +874,50 @@ def create_case_project(
         raise HTTPException(status_code=409, detail="case_project_conflict") from error
     return {
         "case_project_id": public_id,
-        "case_platform_url": platform_url(f"/case-projects/{public_id}"),
+        "case_platform_url": case_project_platform_url(project),
+    }
+
+
+@router.get(
+    "/api/v1/case-projects/{case_project_id}",
+    response_model=CaseProjectNavigationResponse,
+)
+def get_case_project_navigation(
+    case_project_id: str,
+    account: CurrentAccount,
+    db: DbSession,
+    access_token: str | None = Query(default=None, max_length=200),
+) -> dict:
+    project = get_project(db, case_project_id)
+    membership = db.scalar(
+        select(SpaceMembership).where(
+            SpaceMembership.account_id == account.id,
+            SpaceMembership.space_id == project.space_id,
+        )
+    )
+    if membership is None:
+        if not access_token or not validate_case_project_access_token(project, access_token):
+            raise HTTPException(status_code=403, detail="space_access_denied")
+        db.add(
+            SpaceMembership(
+                account_id=account.id,
+                space_id=project.space_id,
+                role="member",
+            )
+        )
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+    collection = db.get(CaseCollection, project.collection_id)
+    if collection is None or collection.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="case_project_collection_not_found")
+    return {
+        "case_project_id": project.public_id,
+        "space_id": project.space_id,
+        "collection_id": project.collection_id,
+        "title": project.title,
+        "test_target": project_target(project),
     }
 
 
@@ -922,7 +1013,7 @@ def start_case_generation(
             "case_generation_id": public_id,
             "generation_status": "generating",
             "generation_updated_at": generation.updated_at.isoformat(),
-            "case_platform_url": platform_url(f"/case-projects/{project.public_id}"),
+            "case_platform_url": case_project_platform_url(project),
         },
         destination_url=generation.callback_url,
         subscribed_events=generation.callback_events,
@@ -934,7 +1025,7 @@ def start_case_generation(
     return {
         "case_generation_id": public_id,
         "case_generation_status": "generating",
-        "case_platform_url": platform_url(f"/case-projects/{project.public_id}"),
+        "case_platform_url": case_project_platform_url(project),
         "callback_correlation_id": generation.callback_correlation_id,
     }
 
