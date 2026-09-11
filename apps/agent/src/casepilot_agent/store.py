@@ -1347,20 +1347,30 @@ class JobStore:
         aggregate_id: str,
         payload: dict[str, Any],
     ) -> None:
-        base_url = str(
-            job.get("input_payload", {}).get("integration_callback_base_url") or ""
-        ).rstrip("/")
-        if not base_url:
-            raise RuntimeError("integration_callback_base_url_missing")
+        input_payload = job.get("input_payload", {})
+        subscribed_events = input_payload.get("integration_callback_events")
+        if subscribed_events is not None and event_type not in subscribed_events:
+            return
+        callback_url = str(input_payload.get("integration_callback_url") or "").strip()
+        if not callback_url:
+            base_url = str(input_payload.get("integration_callback_base_url") or "").rstrip("/")
+            if not base_url:
+                raise RuntimeError("integration_callback_url_missing")
+            callback_url = f"{base_url}/api/case-service/callbacks/{event_type}"
         event_time = datetime.now(UTC)
+        event_id = uuid4()
+        callback_payload = {**payload, "event_id": str(event_id)}
+        correlation_id = input_payload.get("integration_callback_correlation_id")
+        if correlation_id:
+            callback_payload["callback_correlation_id"] = correlation_id
         connection.execute(
             insert(callback_deliveries).values(
                 id=uuid4(),
-                event_id=uuid4(),
+                event_id=event_id,
                 event_type=event_type,
                 aggregate_id=aggregate_id,
-                callback_url=f"{base_url}/api/case-service/callbacks/{event_type}",
-                payload=payload,
+                callback_url=callback_url,
+                payload=callback_payload,
                 status="pending",
                 attempts=0,
                 next_attempt_at=event_time,

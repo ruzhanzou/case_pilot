@@ -451,6 +451,9 @@ class CaseGenerationSession(TimestampMixin, Base):
         String(32), default="generating", nullable=False, index=True
     )
     error_code: Mapped[str | None] = mapped_column(String(120))
+    callback_url: Mapped[str | None] = mapped_column(Text)
+    callback_events: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    callback_correlation_id: Mapped[str | None] = mapped_column(String(200))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
@@ -509,6 +512,9 @@ class IntegrationTask(TimestampMixin, Base):
     tester: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
     execution_notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
     task_context: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    callback_url: Mapped[str | None] = mapped_column(Text)
+    callback_events: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    callback_correlation_id: Mapped[str | None] = mapped_column(String(200))
     selected_level: Mapped[str] = mapped_column(String(4), default="L4", nullable=False)
     status: Mapped[str] = mapped_column(
         String(32), default="pending_confirmation", nullable=False, index=True
@@ -517,6 +523,37 @@ class IntegrationTask(TimestampMixin, Base):
     artifacts: Mapped[list[dict]] = mapped_column(JSONB, default=list, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False, index=True
+    )
+
+
+class PlaylistCreationSession(TimestampMixin, Base):
+    __tablename__ = "playlist_creation_sessions"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    case_project_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("case_projects.id", ondelete="CASCADE"), nullable=False
+    )
+    creator_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("accounts.id", ondelete="RESTRICT"), nullable=False
+    )
+    playlist_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("playlists.id", ondelete="SET NULL"), unique=True
+    )
+    test_target: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    case_collections: Mapped[list[dict]] = mapped_column(JSONB, default=list, nullable=False)
+    playlist_draft: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    callback_url: Mapped[str] = mapped_column(Text, nullable=False)
+    callback_events: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    callback_correlation_id: Mapped[str | None] = mapped_column(String(200))
+    callback_context: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), default="pending_user_action", nullable=False, index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
 
 

@@ -49,6 +49,7 @@ type ExecutionWorkspaceProps = {
     id: number;
     mode: "overview" | "create";
   };
+  playlistCreationId?: string;
   onDirtyChange?: (dirty: boolean) => void;
 };
 
@@ -112,6 +113,7 @@ export function ExecutionWorkspace({
   collections,
   preferredCollectionId,
   navigationRequest,
+  playlistCreationId,
   onDirtyChange,
 }: ExecutionWorkspaceProps) {
   const [view, setView] = useState<ExecutionView>("overview");
@@ -768,6 +770,7 @@ export function ExecutionWorkspace({
                 collections={collections}
                 seedCollectionId={createSeedCollectionId}
                 requestId={playlistRequestId}
+                creationSessionId={playlistCreationId}
                 selectedPlaylistId={selectedPlaylist?.id ?? ""}
                 onSelect={setSelectedPlaylist}
                 onError={setError}

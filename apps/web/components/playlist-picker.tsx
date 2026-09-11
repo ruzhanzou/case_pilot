@@ -1,8 +1,10 @@
 "use client";
 
 import {
+  completePlaylistCreation,
   createPlaylist,
   deletePlaylist,
+  getPlaylistCreationSession,
   listPlaylists,
   listTestCases,
   publicErrorMessage,
@@ -36,6 +38,7 @@ type PlaylistPickerProps = {
   collections: CaseCollectionDto[];
   seedCollectionId: string;
   requestId: number;
+  creationSessionId?: string;
   selectedPlaylistId: string;
   onSelect: (playlist: PlaylistDto | null) => void;
   onError: (message: string) => void;
@@ -109,6 +112,7 @@ export function PlaylistPicker({
   collections,
   seedCollectionId,
   requestId,
+  creationSessionId,
   selectedPlaylistId,
   onSelect,
   onError,
@@ -127,6 +131,10 @@ export function PlaylistPicker({
   const [collapsedSearchCollectionIds, setCollapsedSearchCollectionIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [deduplicatedCount, setDeduplicatedCount] = useState(0);
+  const [creationDraft, setCreationDraft] = useState<{
+    description: string;
+    executionNotes: string;
+  }>({ description: "", executionNotes: "" });
 
   const matchingPlaylists = useMemo(
     () =>
@@ -233,12 +241,45 @@ export function PlaylistPicker({
 
   useEffect(() => {
     let ignored = false;
-    Promise.all([listPlaylists(spaceId), searchSpaceTestCases(spaceId)])
-      .then(([playlistItems, caseItems]) => {
+    Promise.all([
+      listPlaylists(spaceId),
+      searchSpaceTestCases(spaceId),
+      creationSessionId
+        ? getPlaylistCreationSession(creationSessionId)
+        : Promise.resolve(null),
+    ])
+      .then(([playlistItems, caseItems, creationSession]) => {
         if (ignored) return;
         setPlaylists(playlistItems);
         setAllCases(caseItems);
         resetDraft();
+        if (creationSession) {
+          if (creationSession.space_id !== spaceId) {
+            onError("Playlist 创建会话不属于当前空间。");
+            return;
+          }
+          const requestedCaseIds = new Set(creationSession.playlist.case_ids ?? []);
+          setName(creationSession.playlist.name ?? "");
+          setSelectedCaseIds(
+            caseItems
+              .filter(
+                (item) => requestedCaseIds.has(item.id) || requestedCaseIds.has(item.case_key),
+              )
+              .map((item) => item.id),
+          );
+          setSourceCollectionIds(
+            creationSession.case_collections.map((item) => item.collection_id),
+          );
+          setCreationDraft({
+            description: creationSession.playlist.description ?? "",
+            executionNotes: creationSession.playlist.execution_notes ?? "",
+          });
+          setEditing(true);
+          setEditingId(null);
+          setAwaitingSeedChoice(false);
+          onSelect(null);
+          return;
+        }
         const matching = seedCollectionId
           ? playlistItems.filter((item) =>
               item.source_collection_ids.includes(seedCollectionId),
@@ -265,7 +306,7 @@ export function PlaylistPicker({
     };
     // requestId intentionally resets the picker for each navigation request.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requestId, spaceId]);
+  }, [creationSessionId, requestId, spaceId]);
 
   const editPlaylist = (playlist: PlaylistDto) => {
     setEditing(true);
@@ -349,9 +390,25 @@ export function PlaylistPicker({
         case_ids: selectedCaseIds,
         source_collection_ids: resolvedSourceCollectionIds,
       };
-      const saved = editingId
-        ? await updatePlaylist(editingId, payload)
-        : await createPlaylist(spaceId, payload);
+      let saved: PlaylistDto;
+      if (creationSessionId && !editingId) {
+        const completed = await completePlaylistCreation(creationSessionId, {
+          name: name.trim(),
+          description: creationDraft.description,
+          execution_notes: creationDraft.executionNotes,
+          case_ids: selectedCaseIds,
+        });
+        const refreshed = await listPlaylists(spaceId);
+        const created = refreshed.find(
+          (item) => item.id === completed.playlist.playlist_id,
+        );
+        if (!created) throw new Error("playlist_not_found");
+        saved = created;
+      } else {
+        saved = editingId
+          ? await updatePlaylist(editingId, payload)
+          : await createPlaylist(spaceId, payload);
+      }
       const next = editingId
         ? playlists.map((item) => (item.id === saved.id ? saved : item))
         : [saved, ...playlists];

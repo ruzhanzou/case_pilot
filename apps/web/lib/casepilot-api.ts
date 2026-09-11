@@ -182,6 +182,47 @@ export type PlaylistInput = {
   source_collection_ids: string[];
 };
 
+export type PlaylistCreationSessionDto = {
+  playlist_creation_id: string;
+  space_id: string;
+  creation_status: string;
+  creator: {
+    id: string;
+    username: string;
+    email: string;
+    display_name: string;
+  };
+  test_target: Record<string, unknown>;
+  case_collections: {
+    collection_id: string;
+    name: string;
+    case_project_id: string | null;
+    case_generation_id: string | null;
+  }[];
+  playlist: {
+    name?: string;
+    description?: string;
+    execution_notes?: string;
+    case_ids?: string[];
+  };
+  callback_url: string;
+  callback_events: string[];
+  callback_correlation_id: string | null;
+  callback_context: Record<string, unknown>;
+  expires_at: string;
+};
+
+export type PlaylistCreationCompleteDto = {
+  playlist: {
+    playlist_id: string;
+    name: string;
+    case_count: number;
+  };
+  creation_status: "created";
+  created_at: string;
+  case_platform_url: string;
+};
+
 export type TestCaseInput = {
   case_key?: string;
   title: string;
@@ -1391,6 +1432,27 @@ export function createPlaylist(
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export function getPlaylistCreationSession(
+  playlistCreationId: string,
+): Promise<PlaylistCreationSessionDto> {
+  return apiRequest(`/api/v1/playlist-creation-sessions/${playlistCreationId}`);
+}
+
+export function completePlaylistCreation(
+  playlistCreationId: string,
+  input: {
+    name: string;
+    description?: string;
+    execution_notes?: string;
+    case_ids: string[];
+  },
+): Promise<PlaylistCreationCompleteDto> {
+  return apiRequest(
+    `/api/v1/playlist-creation-sessions/${playlistCreationId}/complete`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
 }
 
 export function updatePlaylist(

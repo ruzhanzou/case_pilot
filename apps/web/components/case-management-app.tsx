@@ -20,6 +20,7 @@ import {
   deleteCollection,
   deleteTestCase,
   getConversation,
+  getPlaylistCreationSession,
   listCollections,
   listTestCases,
   resumeConversationOperation,
@@ -103,6 +104,7 @@ export function CaseManagementApp({
     id: number;
     mode: "overview" | "create";
   }>({ id: 0, mode: "overview" });
+  const [playlistCreationId, setPlaylistCreationId] = useState("");
   const [collections, setCollections] = useState<CaseCollectionDto[]>([]);
   const [selectedCollectionId, setSelectedCollectionId] = useState("");
   const [cases, setCases] = useState<TestCaseDto[]>([]);
@@ -522,6 +524,38 @@ export function CaseManagementApp({
     };
   }, [activeSpaceId]);
 
+  useEffect(() => {
+    const creationId = new URLSearchParams(window.location.search).get(
+      "playlist_creation_id",
+    );
+    if (!creationId) return;
+    let active = true;
+    void getPlaylistCreationSession(creationId)
+      .then((creation) => {
+        if (!active) return;
+        setPlaylistCreationId(creationId);
+        setSelectedSpaceId(creation.space_id);
+        setHistoryOpen(false);
+        setExecutionNavigation((current) => ({
+          id: current.id + 1,
+          mode: "create",
+        }));
+        setPage("execution");
+      })
+      .catch((caught) => {
+        if (active) {
+          setError(
+            caught instanceof Error
+              ? `Playlist 创建会话加载失败：${caught.message}`
+              : "Playlist 创建会话加载失败",
+          );
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const switchSpace = (spaceId: string) => {
     if (spaceId === space?.id) return;
     if (!confirmDiscardPageChanges()) return;
@@ -937,6 +971,7 @@ export function CaseManagementApp({
             collections={collections}
             preferredCollectionId={selectedCollectionId}
             navigationRequest={executionNavigation}
+            playlistCreationId={playlistCreationId || undefined}
             onDirtyChange={setExecutionDirty}
           />
         )}

@@ -107,6 +107,7 @@ def deliver_integration_callbacks() -> dict[str, int]:
                         "Authorization": f"Bearer {settings.test_web_callback_token}",
                         "Content-Type": "application/json",
                         "X-Callback-Event-ID": str(row["event_id"]),
+                        "X-Callback-Event-Type": str(row["event_type"]),
                     },
                     timeout=settings.callback_timeout_seconds,
                 )

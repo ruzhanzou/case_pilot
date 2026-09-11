@@ -139,6 +139,9 @@ async def test_testweb_mock_generation_and_testtool_execution_loop(
                 },
                 "task_request_id": task_request_id,
                 "case_generation_id": generation_id,
+                "callback_url": "https://caller.example.test/hooks/task",
+                "callback_events": ["task-status", "case-execution-status"],
+                "callback_correlation_id": "task-correlation",
             }
             task_created = await client.post(
                 f"/case-projects/{project_public_id}/tasks",
@@ -262,6 +265,25 @@ async def test_testweb_mock_generation_and_testtool_execution_loop(
                     .where(CallbackDelivery.aggregate_id.in_([generation_id, task_id]))
                 )
                 assert callback_count >= 5
+                task_callbacks = list(
+                    db.scalars(
+                        select(CallbackDelivery).where(
+                            CallbackDelivery.aggregate_id == task_id
+                        )
+                    )
+                )
+                assert task_callbacks
+                assert {item.event_type for item in task_callbacks} == {
+                    "task-status",
+                    "case-execution-status",
+                }
+                assert {
+                    callback.callback_url for callback in task_callbacks
+                } == {"https://caller.example.test/hooks/task"}
+                assert {
+                    callback.payload["callback_correlation_id"]
+                    for callback in task_callbacks
+                } == {"task-correlation"}
 
             monkeypatch.setattr(integrations.settings, "case_service_mock_mode", False)
             real_generation = await client.post(
@@ -271,6 +293,9 @@ async def test_testweb_mock_generation_and_testtool_execution_loop(
                     "test_target": target,
                     "test_context": {"build_version": "real-queue-branch"},
                     "model_id": "auto",
+                    "callback_url": "https://caller.example.test/hooks/generation",
+                    "callback_events": ["generation-status", "case-summary"],
+                    "callback_correlation_id": "real-generation-correlation",
                 },
             )
             assert real_generation.status_code == 202
@@ -288,6 +313,18 @@ async def test_testweb_mock_generation_and_testtool_execution_loop(
                 assert job is not None
                 assert job.status.value == "queued"
                 assert job.input_payload["integration_generation_id"] == str(generation.id)
+                assert (
+                    job.input_payload["integration_callback_url"]
+                    == "https://caller.example.test/hooks/generation"
+                )
+                assert job.input_payload["integration_callback_events"] == [
+                    "generation-status",
+                    "case-summary",
+                ]
+                assert (
+                    job.input_payload["integration_callback_correlation_id"]
+                    == "real-generation-correlation"
+                )
                 outbox = db.scalar(
                     select(TaskOutbox).where(TaskOutbox.task_id == str(job.id))
                 )
@@ -314,6 +351,190 @@ async def test_testweb_mock_generation_and_testtool_execution_loop(
                     )
                 if space_id:
                     db.execute(delete(ExecutionRun).where(ExecutionRun.space_id == UUID(space_id)))
+                    db.execute(delete(Space).where(Space.id == UUID(space_id)))
+                if account_id:
+                    db.execute(delete(Account).where(Account.id == UUID(account_id)))
+                db.commit()
+
+
+@pytest.mark.asyncio
+async def test_v14_caller_callbacks_and_playlist_creation_flow() -> None:
+    token = uuid4().hex
+    account_id: str | None = None
+    space_id: str | None = None
+    generation_id: str | None = None
+    playlist_creation_id: str | None = None
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        try:
+            registered = await client.post(
+                "/api/v1/auth/register",
+                json={
+                    "email": f"playlist-creator-{token}@casepilot.test",
+                    "display_name": "Playlist Creator",
+                    "password": "CasePilot123!",
+                },
+            )
+            assert registered.status_code == 201
+            account = registered.json()
+            account_id = account["id"]
+            space_id = account["spaces"][0]["id"]
+            target = {
+                "target_type": "fr_test",
+                "target_id": int(token[:10], 16),
+                "target_key": f"FR-{token[:8]}",
+                "title": "Caller callback integration",
+                "linked_fr_ids": [],
+                "linked_qpm_ids": [],
+            }
+            created = await client.post(
+                "/case-projects",
+                headers=SERVICE_HEADERS,
+                json={
+                    "source_system": "test_web",
+                    "space_id": space_id,
+                    "test_target": target,
+                    "test_context": {},
+                },
+            )
+            assert created.status_code == 201
+            project_id = created.json()["case_project_id"]
+
+            callback_url = "https://caller.example/hooks/case-generation"
+            generated = await client.post(
+                f"/case-projects/{project_id}/case-generation-jobs",
+                headers=SERVICE_HEADERS,
+                json={
+                    "test_target": target,
+                    "callback_url": callback_url,
+                    "callback_events": ["generation-status"],
+                    "callback_correlation_id": f"generation-{token}",
+                },
+            )
+            assert generated.status_code == 202
+            assert generated.json()["callback_correlation_id"] == f"generation-{token}"
+            generation_id = generated.json()["case_generation_id"]
+            summary = await client.get(
+                f"/case-projects/{project_id}/case-summary", headers=SERVICE_HEADERS
+            )
+            assert summary.status_code == 200
+            case_ids = list(summary.json()["cases"])
+
+            with get_session_factory()() as db:
+                deliveries = list(
+                    db.scalars(
+                        select(CallbackDelivery).where(
+                            CallbackDelivery.aggregate_id == generation_id
+                        )
+                    )
+                )
+                assert deliveries
+                assert {item.event_type for item in deliveries} == {"generation-status"}
+                assert {item.callback_url for item in deliveries} == {callback_url}
+                assert all(
+                    item.payload["callback_correlation_id"] == f"generation-{token}"
+                    and item.payload["event_id"] == str(item.event_id)
+                    for item in deliveries
+                )
+
+            playlist_callback_url = "https://caller.example/hooks/playlist"
+            started = await client.post(
+                f"/case-projects/{project_id}/playlist-creation-sessions",
+                headers=SERVICE_HEADERS,
+                json={
+                    "creator": account["email"].split("@", 1)[0],
+                    "test_target": target,
+                    "case_collections": [
+                        {
+                            "case_project_id": project_id,
+                            "case_generation_id": generation_id,
+                        }
+                    ],
+                    "playlist": {
+                        "name": "Prefilled regression",
+                        "case_ids": case_ids[:2],
+                        "execution_notes": "Run the caller-selected scope",
+                    },
+                    "callback_url": playlist_callback_url,
+                    "callback_correlation_id": f"playlist-{token}",
+                    "callback_context": {"request_id": f"REQ-{token}"},
+                },
+            )
+            assert started.status_code == 201
+            playlist_creation_id = started.json()["playlist_creation_id"]
+            assert f"playlist_creation_id={playlist_creation_id}" in started.json()[
+                "case_platform_url"
+            ]
+
+            prefill = await client.get(
+                f"/api/v1/playlist-creation-sessions/{playlist_creation_id}"
+            )
+            assert prefill.status_code == 200
+            assert prefill.json()["creator"]["email"] == account["email"]
+            assert prefill.json()["playlist"]["case_ids"] == case_ids[:2]
+            collection_id = prefill.json()["case_collections"][0]["collection_id"]
+
+            completed = await client.post(
+                f"/api/v1/playlist-creation-sessions/{playlist_creation_id}/complete",
+                json={
+                    "name": "Caller regression playlist",
+                    "description": "Created from the TestWeb hand-off",
+                    "case_ids": case_ids[:2],
+                    "execution_notes": "Run the caller-selected scope",
+                },
+            )
+            assert completed.status_code == 201
+            playlist = completed.json()["playlist"]
+            assert completed.json()["creation_status"] == "created"
+            assert playlist["case_count"] == 2
+            assert playlist["creator"]["id"] == account_id
+
+            repeated = await client.post(
+                f"/api/v1/playlist-creation-sessions/{playlist_creation_id}/complete",
+                json={"name": "ignored", "case_ids": case_ids[:1]},
+            )
+            assert repeated.status_code == 201
+            assert repeated.json()["playlist"]["playlist_id"] == playlist["playlist_id"]
+
+            listed = await client.get(
+                f"/case-projects/{project_id}/playlist-tasks",
+                headers=SERVICE_HEADERS,
+                params={
+                    "creator": "Playlist Creator",
+                    "target_type": "fr_test",
+                    "target_id": target["target_id"],
+                    "collection_id": collection_id,
+                    "playlist_id": playlist["playlist_id"],
+                    "status": "ready",
+                },
+            )
+            assert listed.status_code == 200
+            assert [item["playlist_id"] for item in listed.json()["items"]] == [
+                playlist["playlist_id"]
+            ]
+            assert listed.json()["items"][0]["task"] is None
+
+            with get_session_factory()() as db:
+                callback = db.scalar(
+                    select(CallbackDelivery).where(
+                        CallbackDelivery.aggregate_id == playlist_creation_id,
+                        CallbackDelivery.event_type == "playlist-created",
+                    )
+                )
+                assert callback is not None
+                assert callback.callback_url == playlist_callback_url
+                assert callback.payload["event_id"] == str(callback.event_id)
+                assert callback.payload["callback_correlation_id"] == f"playlist-{token}"
+                assert callback.payload["callback_context"]["request_id"] == f"REQ-{token}"
+        finally:
+            with get_session_factory()() as db:
+                aggregate_ids = [value for value in (generation_id, playlist_creation_id) if value]
+                if aggregate_ids:
+                    db.execute(
+                        delete(CallbackDelivery).where(
+                            CallbackDelivery.aggregate_id.in_(aggregate_ids)
+                        )
+                    )
+                if space_id:
                     db.execute(delete(Space).where(Space.id == UUID(space_id)))
                 if account_id:
                     db.execute(delete(Account).where(Account.id == UUID(account_id)))

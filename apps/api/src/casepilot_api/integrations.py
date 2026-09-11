@@ -15,13 +15,17 @@ from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from casepilot_api.auth import CurrentAccount, require_space_membership
-from casepilot_api.case_management import create_execution_run_from_cases
+from casepilot_api.case_management import (
+    available_playlist_name,
+    create_execution_run_from_cases,
+    replace_playlist_memberships,
+)
 from casepilot_api.config import get_settings
 from casepilot_api.database import get_db_session, get_session_factory
 from casepilot_api.models import (
@@ -40,6 +44,7 @@ from casepilot_api.models import (
     IntegrationUpdate,
     Playlist,
     PlaylistCaseMembership,
+    PlaylistCreationSession,
     PlaylistSourceCollection,
     SpaceMembership,
     TestCase,
@@ -84,6 +89,11 @@ class GenerationStart(StrictModel):
         max_length=120,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
     )
+    callback_url: AnyHttpUrl | None = None
+    callback_events: list[Literal["generation-status", "case-summary"]] = Field(
+        default_factory=lambda: ["generation-status", "case-summary"]
+    )
+    callback_correlation_id: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class TaskContext(StrictModel):
@@ -98,6 +108,51 @@ class TaskCreate(StrictModel):
     task_context: TaskContext
     task_request_id: UUID
     case_generation_id: str = Field(min_length=1, max_length=32)
+    callback_url: AnyHttpUrl | None = None
+    callback_events: list[Literal["task-status", "case-execution-status"]] = Field(
+        default_factory=lambda: ["task-status", "case-execution-status"]
+    )
+    callback_correlation_id: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class CollectionSeed(StrictModel):
+    collection_id: UUID | None = None
+    case_project_id: str | None = Field(default=None, max_length=24)
+    case_generation_id: str | None = Field(default=None, max_length=32)
+
+    @model_validator(mode="after")
+    def require_collection_reference(self) -> CollectionSeed:
+        if self.collection_id is None and not self.case_project_id:
+            raise ValueError("collection_id_or_case_project_id_required")
+        return self
+
+
+class PlaylistDraft(StrictModel):
+    name: str = Field(default="", max_length=160)
+    description: str = Field(default="", max_length=2_000)
+    execution_notes: str = Field(default="", max_length=10_000)
+    case_ids: list[str] = Field(default_factory=list, max_length=500)
+
+
+class PlaylistCreationStart(StrictModel):
+    creator: str = Field(min_length=1, max_length=320)
+    test_target: TestTarget
+    case_collections: list[CollectionSeed] = Field(min_length=1, max_length=100)
+    playlist: PlaylistDraft = Field(default_factory=PlaylistDraft)
+    callback_url: AnyHttpUrl
+    callback_events: list[
+        Literal["playlist-created", "playlist-creation-cancelled", "playlist-creation-expired"]
+    ] = Field(default_factory=lambda: ["playlist-created"])
+    callback_correlation_id: str | None = Field(default=None, min_length=1, max_length=200)
+    callback_context: dict = Field(default_factory=dict)
+    expires_in_seconds: int = Field(default=3600, ge=300, le=86_400)
+
+
+class PlaylistCreationComplete(StrictModel):
+    name: str = Field(min_length=1, max_length=160)
+    description: str = Field(default="", max_length=2_000)
+    case_ids: list[str] = Field(min_length=1, max_length=500)
+    execution_notes: str = Field(default="", max_length=10_000)
 
 
 class TaskConfirm(StrictModel):
@@ -140,6 +195,41 @@ class GenerationResponse(BaseModel):
     case_generation_id: str
     case_generation_status: str
     case_platform_url: str
+    callback_correlation_id: str | None = None
+
+
+class PlaylistCreationResponse(BaseModel):
+    playlist_creation_id: UUID
+    creation_status: str
+    case_platform_url: str
+    expires_at: datetime
+
+
+class PlaylistCreationSessionView(BaseModel):
+    playlist_creation_id: UUID
+    space_id: UUID
+    creation_status: str
+    creator: dict
+    test_target: dict
+    case_collections: list[dict]
+    playlist: dict
+    callback_url: str
+    callback_events: list[str]
+    callback_correlation_id: str | None
+    callback_context: dict
+    expires_at: datetime
+
+
+class PlaylistCreationCompleteResponse(BaseModel):
+    playlist: dict
+    creation_status: str
+    created_at: datetime
+    case_platform_url: str
+
+
+class PlaylistTaskListResponse(BaseModel):
+    items: list[dict]
+    next_cursor: str | None
 
 
 class CaseSummaryItem(BaseModel):
@@ -311,23 +401,113 @@ def assert_target(project: CaseProject, target: TestTarget) -> None:
         raise HTTPException(status_code=422, detail="test_target_mismatch")
 
 
-def callback_url(name: str) -> str:
+def account_ref(account: Account) -> dict:
+    return {
+        "id": str(account.id),
+        "username": account.email.split("@", 1)[0],
+        "email": account.email,
+        "display_name": account.display_name,
+    }
+
+
+def project_target(project: CaseProject) -> dict:
+    return {
+        "target_type": project.target_type,
+        "target_id": project.target_id,
+        "target_key": project.target_key,
+        "title": project.title,
+        "linked_fr_ids": project.linked_fr_ids,
+        "linked_qpm_ids": project.linked_qpm_ids,
+    }
+
+
+def get_playlist_creation_session(db: Session, session_id: UUID) -> PlaylistCreationSession:
+    creation = db.get(PlaylistCreationSession, session_id)
+    if creation is None:
+        raise HTTPException(status_code=404, detail="playlist_creation_session_not_found")
+    return creation
+
+
+def resolve_collection_seeds(
+    db: Session, project: CaseProject, seeds: list[CollectionSeed]
+) -> list[dict]:
+    resolved: list[dict] = []
+    seen: set[UUID] = set()
+    for seed in seeds:
+        seed_project = get_project(db, seed.case_project_id) if seed.case_project_id else None
+        if seed_project is not None and seed_project.space_id != project.space_id:
+            raise HTTPException(status_code=422, detail="playlist_collection_space_mismatch")
+        collection_id = seed.collection_id or (seed_project.collection_id if seed_project else None)
+        if collection_id is None:
+            raise HTTPException(status_code=422, detail="playlist_collection_not_found")
+        collection = db.get(CaseCollection, collection_id)
+        if (
+            collection is None
+            or collection.space_id != project.space_id
+            or collection.deleted_at is not None
+        ):
+            raise HTTPException(status_code=422, detail="playlist_collection_not_found")
+        if seed_project is not None and seed_project.collection_id != collection.id:
+            raise HTTPException(status_code=422, detail="playlist_collection_project_mismatch")
+        generation: CaseGenerationSession | None = None
+        if seed.case_generation_id:
+            generation = db.scalar(
+                select(CaseGenerationSession)
+                .join(CaseProject, CaseProject.id == CaseGenerationSession.case_project_id)
+                .where(
+                    CaseGenerationSession.public_id == seed.case_generation_id,
+                    CaseProject.collection_id == collection.id,
+                )
+            )
+            if generation is None or generation.status != "approved":
+                raise HTTPException(status_code=422, detail="playlist_generation_not_approved")
+        if collection.id in seen:
+            continue
+        seen.add(collection.id)
+        resolved.append(
+            {
+                "collection_id": str(collection.id),
+                "name": collection.name,
+                "case_project_id": seed_project.public_id if seed_project else None,
+                "case_generation_id": generation.public_id if generation else None,
+            }
+        )
+    return resolved
+
+
+def default_callback_url(name: str) -> str:
     return f"{settings.test_web_base_url.rstrip('/')}/api/case-service/callbacks/{name}"
 
 
-def enqueue_callback(db: Session, event_type: str, aggregate_id: str, payload: dict) -> None:
+def enqueue_callback(
+    db: Session,
+    event_type: str,
+    aggregate_id: str,
+    payload: dict,
+    *,
+    destination_url: str | None = None,
+    subscribed_events: list[str] | None = None,
+    correlation_id: str | None = None,
+) -> UUID | None:
+    if subscribed_events is not None and event_type not in subscribed_events:
+        return None
+    event_id = uuid4()
+    callback_payload = {**payload, "event_id": str(event_id)}
+    if correlation_id is not None:
+        callback_payload["callback_correlation_id"] = correlation_id
     db.add(
         CallbackDelivery(
-            event_id=uuid4(),
+            event_id=event_id,
             event_type=event_type,
             aggregate_id=aggregate_id,
-            callback_url=callback_url(event_type),
-            payload=payload,
+            callback_url=destination_url or default_callback_url(event_type),
+            payload=callback_payload,
             status="pending",
             attempts=0,
             next_attempt_at=now(),
         )
     )
+    return event_id
 
 
 def case_rows(db: Session, project: CaseProject) -> list[tuple[TestCase, TestCaseRevision]]:
@@ -357,6 +537,86 @@ def generation_case_rows(
             .order_by(CaseGenerationCase.position, TestCase.case_key)
         ).all()
     )
+
+
+def playlist_contract_detail(
+    db: Session, playlist: Playlist, project: CaseProject, *, include_task: bool = True
+) -> dict:
+    creator = db.get(Account, playlist.creator_id)
+    source_links = list(
+        db.scalars(
+            select(PlaylistSourceCollection)
+            .where(PlaylistSourceCollection.playlist_id == playlist.id)
+            .order_by(PlaylistSourceCollection.position)
+        )
+    )
+    collections = [db.get(CaseCollection, link.collection_id) for link in source_links]
+    case_rows_for_playlist = list(
+        db.execute(
+            select(TestCase, TestCaseRevision)
+            .join(PlaylistCaseMembership, PlaylistCaseMembership.test_case_id == TestCase.id)
+            .join(TestCaseRevision, TestCaseRevision.id == TestCase.current_revision_id)
+            .where(PlaylistCaseMembership.playlist_id == playlist.id)
+            .order_by(PlaylistCaseMembership.position)
+        ).all()
+    )
+    task = None
+    if include_task:
+        task = db.scalar(
+            select(IntegrationTask)
+            .where(
+                IntegrationTask.case_project_id == project.id,
+                IntegrationTask.playlist_id == playlist.id,
+            )
+            .order_by(IntegrationTask.updated_at.desc())
+        )
+    task_summary = None
+    if task is not None:
+        detail = task_detail(db, task)
+        completed = sum(
+            item["status"] not in {"not_run", "running"} for item in detail["cases"].values()
+        )
+        total = len(detail["cases"])
+        task_summary = {
+            "test_task_id": task.public_id,
+            "assignee": task.tester,
+            "execution_status": task.status,
+            "updated_at": task.updated_at.isoformat(),
+            "progress": round(completed * 100 / total) if total else 0,
+        }
+    return {
+        "playlist_id": str(playlist.id),
+        "name": playlist.name,
+        "creator": account_ref(creator) if creator else {},
+        "test_target": project_target(project),
+        "case_collections": [
+            {
+                "collection_id": str(link.collection_id),
+                "name": collection.name if collection else "",
+                "case_project_id": project.public_id
+                if link.collection_id == project.collection_id
+                else None,
+                "case_generation_id": None,
+            }
+            for link, collection in zip(source_links, collections, strict=True)
+        ],
+        "cases": [
+            {
+                "case_id": test_case.case_key,
+                "title": revision.title,
+                "stage": revision.execution_level,
+                "test_domain": revision.test_domains,
+                "automation_type": revision.automation_type,
+                "revision_id": str(revision.id),
+            }
+            for test_case, revision in case_rows_for_playlist
+        ],
+        "case_count": len(case_rows_for_playlist),
+        "task": task_summary,
+        "created_at": playlist.created_at.isoformat(),
+        "updated_at": playlist.updated_at.isoformat(),
+        "case_platform_url": platform_url(f"/playlists/{playlist.id}"),
+    }
 
 
 def case_snapshot(db: Session, project: CaseProject, generation: CaseGenerationSession) -> dict:
@@ -490,8 +750,19 @@ def complete_mock_generation(generation_id: UUID) -> None:
                 "generation_updated_at": generation.updated_at.isoformat(),
                 "case_platform_url": snapshot["case_platform_url"],
             },
+            destination_url=generation.callback_url,
+            subscribed_events=generation.callback_events,
+            correlation_id=generation.callback_correlation_id,
         )
-        enqueue_callback(db, "case-summary", generation.public_id, snapshot)
+        enqueue_callback(
+            db,
+            "case-summary",
+            generation.public_id,
+            snapshot,
+            destination_url=generation.callback_url,
+            subscribed_events=generation.callback_events,
+            correlation_id=generation.callback_correlation_id,
+        )
         db.commit()
 
 
@@ -579,6 +850,9 @@ def start_case_generation(
         public_id=public_id,
         case_project_id=project.id,
         status="generating",
+        callback_url=str(payload.callback_url) if payload.callback_url else None,
+        callback_events=list(payload.callback_events),
+        callback_correlation_id=payload.callback_correlation_id,
         updated_at=now(),
     )
     db.add(generation)
@@ -624,7 +898,9 @@ def start_case_generation(
                 "integration_generation_id": str(generation.id),
                 "integration_case_project_id": str(project.id),
                 "integration_project_public_id": project.public_id,
-                "integration_callback_base_url": settings.test_web_base_url,
+                "integration_callback_url": generation.callback_url,
+                "integration_callback_events": generation.callback_events,
+                "integration_callback_correlation_id": generation.callback_correlation_id,
                 "integration_case_platform_url": platform_url(
                     f"/case-projects/{project.public_id}"
                 ),
@@ -648,6 +924,9 @@ def start_case_generation(
             "generation_updated_at": generation.updated_at.isoformat(),
             "case_platform_url": platform_url(f"/case-projects/{project.public_id}"),
         },
+        destination_url=generation.callback_url,
+        subscribed_events=generation.callback_events,
+        correlation_id=generation.callback_correlation_id,
     )
     db.commit()
     if settings.case_service_mock_mode:
@@ -656,6 +935,7 @@ def start_case_generation(
         "case_generation_id": public_id,
         "case_generation_status": "generating",
         "case_platform_url": platform_url(f"/case-projects/{project.public_id}"),
+        "callback_correlation_id": generation.callback_correlation_id,
     }
 
 
@@ -681,6 +961,316 @@ def get_case_summary(case_project_id: str, _: CaseServiceAuth, db: DbSession) ->
 )
 def post_case_summary(case_project_id: str, _: CaseServiceAuth, db: DbSession) -> dict:
     return get_case_summary(case_project_id, None, db)
+
+
+@router.get(
+    "/case-projects/{case_project_id}/playlist-tasks",
+    response_model=PlaylistTaskListResponse,
+)
+def list_playlist_tasks(
+    case_project_id: str,
+    _: CaseServiceAuth,
+    db: DbSession,
+    creator: str | None = None,
+    target_type: str | None = None,
+    target_id: int | None = Query(default=None, ge=1),
+    collection_ids: Annotated[list[UUID] | None, Query(alias="collection_id")] = None,
+    playlist_id: UUID | None = None,
+    status_filter: Annotated[list[str] | None, Query(alias="status")] = None,
+    cursor: UUID | None = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> dict:
+    project = get_project(db, case_project_id)
+    if target_type and target_type != project.target_type:
+        return {"items": [], "next_cursor": None}
+    if target_id is not None and target_id != project.target_id:
+        return {"items": [], "next_cursor": None}
+    query = (
+        select(Playlist)
+        .join(PlaylistSourceCollection, PlaylistSourceCollection.playlist_id == Playlist.id)
+        .where(
+            PlaylistSourceCollection.collection_id == project.collection_id,
+            Playlist.deleted_at.is_(None),
+        )
+        .order_by(Playlist.updated_at.desc(), Playlist.id.desc())
+    )
+    if playlist_id:
+        query = query.where(Playlist.id == playlist_id)
+    if cursor:
+        query = query.where(Playlist.id < cursor)
+    if creator:
+        try:
+            creator_id = UUID(creator)
+            query = query.where(Playlist.creator_id == creator_id)
+        except ValueError:
+            normalized_creator = creator.strip().lower()
+            matching_creators = select(Account.id).where(
+                or_(
+                    func.lower(Account.email) == normalized_creator,
+                    func.lower(Account.display_name) == normalized_creator,
+                    func.lower(func.split_part(Account.email, "@", 1))
+                    == normalized_creator,
+                )
+            )
+            query = query.where(Playlist.creator_id.in_(matching_creators))
+    if collection_ids:
+        matching_playlist_ids = select(PlaylistSourceCollection.playlist_id).where(
+            PlaylistSourceCollection.collection_id.in_(collection_ids)
+        )
+        query = query.where(Playlist.id.in_(matching_playlist_ids))
+    if status_filter:
+        latest_task_status = (
+            select(IntegrationTask.status)
+            .where(IntegrationTask.playlist_id == Playlist.id)
+            .order_by(IntegrationTask.updated_at.desc(), IntegrationTask.id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        status_conditions = []
+        requested_statuses = [status for status in status_filter if status != "ready"]
+        if requested_statuses:
+            status_conditions.append(latest_task_status.in_(requested_statuses))
+        if "ready" in status_filter:
+            status_conditions.append(latest_task_status.is_(None))
+        query = query.where(or_(*status_conditions))
+    playlists = list(db.scalars(query.limit(limit + 1)).unique())
+    details = [playlist_contract_detail(db, playlist, project) for playlist in playlists]
+    has_more = len(details) > limit
+    details = details[:limit]
+    return {
+        "items": details,
+        "next_cursor": details[-1]["playlist_id"] if has_more and details else None,
+    }
+
+
+@router.post(
+    "/case-projects/{case_project_id}/playlist-creation-sessions",
+    status_code=201,
+    response_model=PlaylistCreationResponse,
+)
+def start_playlist_creation(
+    case_project_id: str,
+    payload: PlaylistCreationStart,
+    _: CaseServiceAuth,
+    db: DbSession,
+) -> dict:
+    project = get_project(db, case_project_id)
+    assert_target(project, payload.test_target)
+    creator = resolve_tester(db, payload.creator, project.space_id)
+    creation = PlaylistCreationSession(
+        case_project_id=project.id,
+        creator_id=creator.id,
+        test_target=payload.test_target.model_dump(mode="json"),
+        case_collections=resolve_collection_seeds(db, project, payload.case_collections),
+        playlist_draft=payload.playlist.model_dump(mode="json"),
+        callback_url=str(payload.callback_url),
+        callback_events=list(payload.callback_events),
+        callback_correlation_id=payload.callback_correlation_id,
+        callback_context=payload.callback_context,
+        status="pending_user_action",
+        expires_at=now() + timedelta(seconds=payload.expires_in_seconds),
+        updated_at=now(),
+    )
+    db.add(creation)
+    db.commit()
+    return {
+        "playlist_creation_id": creation.id,
+        "creation_status": creation.status,
+        "case_platform_url": platform_url(f"/?playlist_creation_id={creation.id}"),
+        "expires_at": creation.expires_at,
+    }
+
+
+def playlist_creation_view(
+    db: Session, creation: PlaylistCreationSession
+) -> dict:
+    creator = db.get(Account, creation.creator_id)
+    project = db.get(CaseProject, creation.case_project_id)
+    return {
+        "playlist_creation_id": creation.id,
+        "space_id": project.space_id,
+        "creation_status": creation.status,
+        "creator": account_ref(creator) if creator else {},
+        "test_target": creation.test_target,
+        "case_collections": creation.case_collections,
+        "playlist": creation.playlist_draft,
+        "callback_url": creation.callback_url,
+        "callback_events": creation.callback_events,
+        "callback_correlation_id": creation.callback_correlation_id,
+        "callback_context": creation.callback_context,
+        "expires_at": creation.expires_at,
+    }
+
+
+@router.get(
+    "/api/v1/playlist-creation-sessions/{playlist_creation_id}",
+    response_model=PlaylistCreationSessionView,
+)
+def read_playlist_creation(
+    playlist_creation_id: UUID, account: CurrentAccount, db: DbSession
+) -> dict:
+    creation = get_playlist_creation_session(db, playlist_creation_id)
+    project = db.get(CaseProject, creation.case_project_id)
+    require_space_membership(db, account.id, project.space_id)
+    if creation.creator_id != account.id:
+        raise HTTPException(status_code=403, detail="playlist_creator_mismatch")
+    if creation.status == "pending_user_action" and creation.expires_at <= now():
+        creation.status = "expired"
+        creation.updated_at = now()
+        enqueue_callback(
+            db,
+            "playlist-creation-expired",
+            str(creation.id),
+            {
+                "playlist_creation_id": str(creation.id),
+                "case_project_id": project.public_id,
+                "test_target": creation.test_target,
+                "expired_at": creation.updated_at.isoformat(),
+                "callback_context": creation.callback_context,
+            },
+            destination_url=creation.callback_url,
+            subscribed_events=creation.callback_events,
+            correlation_id=creation.callback_correlation_id,
+        )
+        db.commit()
+        raise HTTPException(status_code=410, detail="playlist_creation_session_expired")
+    return playlist_creation_view(db, creation)
+
+
+def resolve_playlist_case_ids(
+    db: Session, creation: PlaylistCreationSession, case_ids: list[str]
+) -> list[UUID]:
+    source_collection_ids = {
+        UUID(item["collection_id"]) for item in creation.case_collections
+    }
+    generation_ids = {
+        item["case_generation_id"]
+        for item in creation.case_collections
+        if item.get("case_generation_id")
+    }
+    resolved: list[UUID] = []
+    for case_id in dict.fromkeys(case_ids):
+        try:
+            test_case = db.get(TestCase, UUID(case_id))
+        except ValueError:
+            test_case = db.scalar(select(TestCase).where(TestCase.case_key == case_id))
+        if (
+            test_case is None
+            or test_case.deleted_at is not None
+            or test_case.current_revision_id is None
+        ):
+            raise HTTPException(status_code=422, detail=f"playlist_case_not_available:{case_id}")
+        belongs_to_collection = db.scalar(
+            select(CollectionCaseMembership.id).where(
+                CollectionCaseMembership.test_case_id == test_case.id,
+                CollectionCaseMembership.collection_id.in_(source_collection_ids),
+            )
+        )
+        if belongs_to_collection is None:
+            raise HTTPException(status_code=422, detail=f"playlist_case_out_of_scope:{case_id}")
+        if generation_ids:
+            in_snapshot = db.scalar(
+                select(CaseGenerationCase.id)
+                .join(
+                    CaseGenerationSession,
+                    CaseGenerationSession.id == CaseGenerationCase.case_generation_id,
+                )
+                .where(
+                    CaseGenerationCase.test_case_id == test_case.id,
+                    CaseGenerationSession.public_id.in_(generation_ids),
+                )
+            )
+            if in_snapshot is None:
+                raise HTTPException(
+                    status_code=422, detail=f"playlist_case_outside_approved_snapshot:{case_id}"
+                )
+        resolved.append(test_case.id)
+    return resolved
+
+
+@router.post(
+    "/api/v1/playlist-creation-sessions/{playlist_creation_id}/complete",
+    status_code=201,
+    response_model=PlaylistCreationCompleteResponse,
+)
+def complete_playlist_creation(
+    playlist_creation_id: UUID,
+    payload: PlaylistCreationComplete,
+    account: CurrentAccount,
+    db: DbSession,
+) -> dict:
+    creation = get_playlist_creation_session(db, playlist_creation_id)
+    project = db.get(CaseProject, creation.case_project_id)
+    require_space_membership(db, account.id, project.space_id)
+    if creation.creator_id != account.id:
+        raise HTTPException(status_code=403, detail="playlist_creator_mismatch")
+    if creation.playlist_id is not None:
+        playlist = db.get(Playlist, creation.playlist_id)
+        detail = playlist_contract_detail(db, playlist, project, include_task=False)
+        return {
+            "playlist": detail,
+            "creation_status": "created",
+            "created_at": playlist.created_at,
+            "case_platform_url": detail["case_platform_url"],
+        }
+    if creation.expires_at <= now():
+        creation.status = "expired"
+        creation.updated_at = now()
+        db.commit()
+        raise HTTPException(status_code=410, detail="playlist_creation_session_expired")
+    case_ids = resolve_playlist_case_ids(db, creation, payload.case_ids)
+    source_collection_ids = [
+        UUID(item["collection_id"]) for item in creation.case_collections
+    ]
+    playlist = Playlist(
+        space_id=project.space_id,
+        creator_id=account.id,
+        name=available_playlist_name(db, project.space_id, payload.name),
+    )
+    db.add(playlist)
+    db.flush()
+    replace_playlist_memberships(
+        db,
+        playlist=playlist,
+        case_ids=case_ids,
+        source_collection_ids=source_collection_ids,
+    )
+    creation.playlist_id = playlist.id
+    creation.status = "created"
+    creation.updated_at = now()
+    creation.playlist_draft = {
+        "name": playlist.name,
+        "description": payload.description,
+        "execution_notes": payload.execution_notes,
+        "case_ids": payload.case_ids,
+    }
+    db.flush()
+    detail = playlist_contract_detail(db, playlist, project, include_task=False)
+    callback_payload = {
+        "playlist_creation_id": str(creation.id),
+        "case_project_id": project.public_id,
+        "test_target": creation.test_target,
+        "playlist": detail,
+        "created_at": playlist.created_at.isoformat(),
+        "case_platform_url": detail["case_platform_url"],
+        "callback_context": creation.callback_context,
+    }
+    enqueue_callback(
+        db,
+        "playlist-created",
+        str(creation.id),
+        callback_payload,
+        destination_url=creation.callback_url,
+        subscribed_events=creation.callback_events,
+        correlation_id=creation.callback_correlation_id,
+    )
+    db.commit()
+    return {
+        "playlist": detail,
+        "creation_status": "created",
+        "created_at": playlist.created_at,
+        "case_platform_url": detail["case_platform_url"],
+    }
 
 
 @router.post(
@@ -736,6 +1326,9 @@ def create_task_request(
         tester=payload.task_context.tester.strip().lower(),
         execution_notes=payload.task_context.execution_notes,
         task_context={**payload.test_context},
+        callback_url=str(payload.callback_url) if payload.callback_url else None,
+        callback_events=list(payload.callback_events),
+        callback_correlation_id=payload.callback_correlation_id,
         selected_level=payload.task_context.execution_level,
         status="pending_confirmation",
         updated_at=now(),
@@ -844,7 +1437,21 @@ def resolve_tester(db: Session, tester: str, space_id: UUID) -> Account:
     try:
         account = db.get(Account, UUID(tester))
     except ValueError:
-        account = db.scalar(select(Account).where(func.lower(Account.email) == tester.lower()))
+        normalized_tester = tester.strip().lower()
+        account = db.scalar(
+            select(Account)
+            .join(SpaceMembership, SpaceMembership.account_id == Account.id)
+            .where(
+                SpaceMembership.space_id == space_id,
+                or_(
+                    func.lower(Account.email) == normalized_tester,
+                    func.lower(Account.display_name) == normalized_tester,
+                    func.lower(func.split_part(Account.email, "@", 1)) == normalized_tester,
+                ),
+            )
+            .order_by(Account.email)
+            .limit(1)
+        )
     if account is None:
         raise HTTPException(status_code=422, detail="tester_not_bound")
     require_space_membership(db, account.id, space_id)
@@ -908,7 +1515,25 @@ def confirm_integration_task(
     task.status = "confirmed"
     task.updated_at = now()
     db.flush()
-    enqueue_callback(db, "task-status", task.public_id, task_callback_payload(db, task))
+    callback_payload = task_callback_payload(db, task)
+    enqueue_callback(
+        db,
+        "task-status",
+        task.public_id,
+        callback_payload,
+        destination_url=task.callback_url,
+        subscribed_events=task.callback_events,
+        correlation_id=task.callback_correlation_id,
+    )
+    enqueue_callback(
+        db,
+        "case-execution-status",
+        task.public_id,
+        callback_payload,
+        destination_url=task.callback_url,
+        subscribed_events=task.callback_events,
+        correlation_id=task.callback_correlation_id,
+    )
     db.commit()
     return task_detail(db, task)
 
@@ -1059,7 +1684,15 @@ def claim_task(db: Session, task: IntegrationTask, account: Account, payload: Cl
     task.status = "running"
     task.updated_at = current
     db.flush()
-    enqueue_callback(db, "task-status", task.public_id, task_callback_payload(db, task))
+    enqueue_callback(
+        db,
+        "task-status",
+        task.public_id,
+        task_callback_payload(db, task),
+        destination_url=task.callback_url,
+        subscribed_events=task.callback_events,
+        correlation_id=task.callback_correlation_id,
+    )
     db.commit()
     return {**task_detail(db, task, include_lease=True), "lease_token": token}
 
@@ -1176,7 +1809,25 @@ def update_test_tool_task(
         run.status = payload.status
         run.completed_at = payload.updated_at
     db.flush()
-    enqueue_callback(db, "task-status", task.public_id, task_callback_payload(db, task))
+    callback_payload = task_callback_payload(db, task)
+    enqueue_callback(
+        db,
+        "task-status",
+        task.public_id,
+        callback_payload,
+        destination_url=task.callback_url,
+        subscribed_events=task.callback_events,
+        correlation_id=task.callback_correlation_id,
+    )
+    enqueue_callback(
+        db,
+        "case-execution-status",
+        task.public_id,
+        callback_payload,
+        destination_url=task.callback_url,
+        subscribed_events=task.callback_events,
+        correlation_id=task.callback_correlation_id,
+    )
     response = task_detail(db, task, include_lease=True)
     db.add(
         IntegrationUpdate(
