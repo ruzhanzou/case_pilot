@@ -20,6 +20,8 @@ def create_provider(name: str) -> AgentProvider:
             pro_model=settings.pro_model,
             local_model=settings.local_model,
             timeout=settings.timeout_seconds,
+            generation_timeout=settings.generation_timeout_seconds,
+            model_fallback_timeout=settings.model_fallback_timeout_seconds,
             available_models=settings.available_models,
             tracing_enabled=settings.tracing_enabled,
         )

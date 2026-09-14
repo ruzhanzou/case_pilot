@@ -2,6 +2,7 @@ import pytest
 
 from casepilot_agent.contracts import (
     EnhancementResult,
+    FeaturePlan,
     GenerationRequest,
     KnowledgeAnswer,
     RequirementAnalysis,
@@ -331,3 +332,32 @@ def test_pipeline_stops_enhancement_after_two_rounds() -> None:
 
     assert caught.value.report.repair_rounds == 2
     assert provider.enhancement_calls == 2
+
+
+def test_pipeline_repairs_missing_features_with_compact_delta_payload() -> None:
+    class MissingFeatureProvider(MockProvider):
+        enhancement_payload: dict | None = None
+
+        def complete(self, **kwargs):
+            result, usage = super().complete(**kwargs)
+            if kwargs["result_type"] is FeaturePlan:
+                result.feature_points = []
+            if kwargs["result_type"] is EnhancementResult:
+                self.enhancement_payload = kwargs["payload"]
+            return result, usage
+
+    provider = MissingFeatureProvider()
+    result = GenerationPipeline(provider).run(
+        GenerationRequest(prompt="为支付流程生成测试用例"),
+        context={"query": "支付", "evidence": []},
+        answers={},
+        execute_stage=executor(provider),
+    )
+
+    assert result.quality.passed
+    assert result.feature_points
+    assert provider.enhancement_payload is not None
+    assert "markdown_content" not in provider.enhancement_payload
+    assert "conversation_memory" not in provider.enhancement_payload
+    inventory_case = provider.enhancement_payload["current_inventory"]["test_cases"][0]
+    assert set(inventory_case) == {"id", "title", "test_point_ids"}

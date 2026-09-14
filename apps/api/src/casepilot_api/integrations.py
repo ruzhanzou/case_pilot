@@ -370,10 +370,7 @@ def platform_url(path: str) -> str:
 
 
 def case_project_access_token(project: CaseProject) -> str:
-    expires_at = int(
-        (datetime.now(UTC) + timedelta(seconds=settings.case_platform_link_ttl_seconds))
-        .timestamp()
-    )
+    expires_at = int(project.platform_link_expires_at.timestamp())
     message = f"{project.public_id}:{project.space_id}:{expires_at}".encode()
     signature = hmac.new(
         settings.case_service_api_token.encode(), message, hashlib.sha256
@@ -401,7 +398,12 @@ def validate_case_project_access_token(project: CaseProject, token: str) -> bool
     return hmac.compare_digest(provided_signature, expected_signature)
 
 
-def case_project_platform_url(project: CaseProject) -> str:
+def case_project_platform_url(db: Session, project: CaseProject) -> str:
+    if project.platform_link_expires_at <= now():
+        project.platform_link_expires_at = now() + timedelta(
+            seconds=settings.case_platform_link_ttl_seconds
+        )
+        db.commit()
     return platform_url(
         f"/case-projects/{project.public_id}?access_token={case_project_access_token(project)}"
     )
@@ -599,6 +601,15 @@ def playlist_contract_detail(
         )
     )
     collections = [db.get(CaseCollection, link.collection_id) for link in source_links]
+    creation = db.scalar(
+        select(PlaylistCreationSession).where(
+            PlaylistCreationSession.playlist_id == playlist.id
+        )
+    )
+    generation_by_collection = {
+        item["collection_id"]: item.get("case_generation_id")
+        for item in (creation.case_collections if creation else [])
+    }
     case_rows_for_playlist = list(
         db.execute(
             select(TestCase, TestCaseRevision)
@@ -644,7 +655,9 @@ def playlist_contract_detail(
                 "case_project_id": project.public_id
                 if link.collection_id == project.collection_id
                 else None,
-                "case_generation_id": None,
+                "case_generation_id": generation_by_collection.get(
+                    str(link.collection_id)
+                ),
             }
             for link, collection in zip(source_links, collections, strict=True)
         ],
@@ -681,7 +694,7 @@ def case_snapshot(db: Session, project: CaseProject, generation: CaseGenerationS
         "target_type": project.target_type,
         "target_id": project.target_id,
         "case_project_id": project.public_id,
-        "case_platform_url": case_project_platform_url(project),
+        "case_platform_url": case_project_platform_url(db, project),
         "case_generation_id": generation.public_id,
         "generation_status": generation.status,
         "generation_updated_at": generation.updated_at.isoformat(),
@@ -842,7 +855,7 @@ def create_case_project(
     if existing is not None:
         return {
             "case_project_id": existing.public_id,
-            "case_platform_url": case_project_platform_url(existing),
+            "case_platform_url": case_project_platform_url(db, existing),
         }
     public_id = next_public_id(db, "case_project_public_id_seq", "CP-")
     collection = CaseCollection(
@@ -865,6 +878,8 @@ def create_case_project(
         linked_fr_ids=payload.test_target.linked_fr_ids,
         linked_qpm_ids=payload.test_target.linked_qpm_ids,
         test_context=payload.test_context,
+        platform_link_expires_at=now()
+        + timedelta(seconds=settings.case_platform_link_ttl_seconds),
     )
     db.add(project)
     try:
@@ -874,7 +889,7 @@ def create_case_project(
         raise HTTPException(status_code=409, detail="case_project_conflict") from error
     return {
         "case_project_id": public_id,
-        "case_platform_url": case_project_platform_url(project),
+        "case_platform_url": case_project_platform_url(db, project),
     }
 
 
@@ -1013,7 +1028,7 @@ def start_case_generation(
             "case_generation_id": public_id,
             "generation_status": "generating",
             "generation_updated_at": generation.updated_at.isoformat(),
-            "case_platform_url": case_project_platform_url(project),
+            "case_platform_url": case_project_platform_url(db, project),
         },
         destination_url=generation.callback_url,
         subscribed_events=generation.callback_events,
@@ -1025,7 +1040,7 @@ def start_case_generation(
     return {
         "case_generation_id": public_id,
         "case_generation_status": "generating",
-        "case_platform_url": case_project_platform_url(project),
+        "case_platform_url": case_project_platform_url(db, project),
         "callback_correlation_id": generation.callback_correlation_id,
     }
 

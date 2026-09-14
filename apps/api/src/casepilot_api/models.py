@@ -434,6 +434,9 @@ class CaseProject(TimestampMixin, Base):
     linked_fr_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     linked_qpm_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     test_context: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    platform_link_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 class CaseGenerationSession(TimestampMixin, Base):

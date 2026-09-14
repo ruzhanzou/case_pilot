@@ -18,6 +18,14 @@ from casepilot_agent.skills import load_test_case_generation_skill
 
 ResultT = TypeVar("ResultT", bound=BaseModel)
 
+_STRUCTURED_GENERATION_STAGE_PREFIXES = (
+    "requirement.",
+    "feature.",
+    "test_point.",
+    "test_case.",
+    "enhancement.",
+)
+
 
 class AgentsSdkProvider:
     def __init__(
@@ -29,6 +37,8 @@ class AgentsSdkProvider:
         pro_model: str,
         local_model: str,
         timeout: float,
+        generation_timeout: float | None = None,
+        model_fallback_timeout: float | None = None,
         available_models: tuple[str, ...] = (),
         tracing_enabled: bool = False,
     ) -> None:
@@ -40,8 +50,11 @@ class AgentsSdkProvider:
         self.pro_model = pro_model
         self.local_model = local_model
         self.timeout = timeout
+        self.generation_timeout = generation_timeout or timeout
+        self.model_fallback_timeout = model_fallback_timeout or timeout
         self.available_models = frozenset(available_models)
         self.tracing_enabled = tracing_enabled
+        self._degraded_models: set[str] = set()
 
     @property
     def name(self) -> str:
@@ -64,22 +77,46 @@ class AgentsSdkProvider:
         payload: dict,
         result_type: type[ResultT],
         model_id: str,
+        allow_model_fallback: bool = True,
     ) -> tuple[ResultT, UsageMetadata]:
         from agents import (
             Agent,
             AgentOutputSchema,
+            ModelBehaviorError,
             OpenAIChatCompletionsModel,
             Runner,
             set_tracing_disabled,
         )
-        from openai import AsyncOpenAI
+        from openai import APITimeoutError, AsyncOpenAI
 
         set_tracing_disabled(not self.tracing_enabled)
         resolved_model = self.resolve_model(model_id)
+        if (
+            allow_model_fallback
+            and resolved_model in self._degraded_models
+            and stage.startswith(_STRUCTURED_GENERATION_STAGE_PREFIXES)
+        ):
+            resolved_model = self.model
+        stage_timeout = (
+            self.generation_timeout
+            if stage.startswith(("test_case.", "enhancement."))
+            else self.timeout
+        )
+        # A non-default model gets a short first chance on structured generation
+        # stages so a slow endpoint cannot consume the entire job budget before
+        # the proven default model is tried. The default keeps the full timeout.
+        timeout = (
+            min(stage_timeout, self.model_fallback_timeout)
+            if allow_model_fallback
+            and resolved_model != self.model
+            and stage.startswith(_STRUCTURED_GENERATION_STAGE_PREFIXES)
+            else stage_timeout
+        )
         client = AsyncOpenAI(
             api_key=self.api_key,
             base_url=self.base_url,
-            timeout=self.timeout,
+            timeout=timeout,
+            max_retries=0,
         )
         model = OpenAIChatCompletionsModel(
             model=resolved_model,
@@ -126,7 +163,35 @@ class AgentsSdkProvider:
             {"stage": stage, "task": instruction, "input": payload},
             ensure_ascii=False,
         )
-        result = Runner.run_sync(agent, prompt, max_turns=3)
+        try:
+            for attempt in range(2):
+                try:
+                    result = Runner.run_sync(agent, prompt, max_turns=3)
+                    break
+                except ModelBehaviorError:
+                    if attempt == 1 or (
+                        allow_model_fallback and resolved_model != self.model
+                    ):
+                        raise
+                    prompt += (
+                        "\n上一次输出未通过 JSON Schema 校验。请逐字段核对字段名、"
+                        "必填项与数据类型，并只返回修正后的完整 JSON 对象。"
+                    )
+        except (APITimeoutError, ModelBehaviorError):
+            if allow_model_fallback and resolved_model != self.model:
+                self._degraded_models.add(resolved_model)
+                fallback_result, fallback_usage = self._run(
+                    stage=stage,
+                    instruction=instruction,
+                    payload=payload,
+                    result_type=result_type,
+                    model_id=self.model,
+                    allow_model_fallback=False,
+                )
+                # Include the failed first model in the stage's wall-clock latency.
+                fallback_usage.latency_ms = int((monotonic() - started_at) * 1000)
+                return fallback_result, fallback_usage
+            raise
         usage = result.context_wrapper.usage
         token_usage = {
             "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),

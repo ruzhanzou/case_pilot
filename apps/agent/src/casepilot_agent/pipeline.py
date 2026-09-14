@@ -401,18 +401,67 @@ class GenerationPipeline:
                 for issue in report.issues
                 if issue.severity == "error"
             ]
+            affected_ids = {
+                str(item["object_id"])
+                for item in gaps
+                if item.get("object_id")
+            }
             enhancement = execute_stage(
                 "enhancement.completed",
-                "只修复质量报告指出的测试点或用例缺口，并定向补充边界、异常、"
-                "权限、状态、并发、幂等和历史缺陷场景；不要重做无关内容。",
+                "只返回质量报告要求新增或修改的对象，不得复制无关对象。可新增功能点"
+                "修复引用缺口；除整类对象缺失外，每类最多返回 3 项。定向修复边界、"
+                "异常、权限、状态、并发、幂等和历史缺陷场景。",
                 {
-                    **common,
-                    "current": enhanced.model_dump(mode="json"),
+                    "prompt": request.prompt,
+                    "requirement": enhanced.requirement.model_dump(mode="json"),
+                    "current_inventory": {
+                        "feature_points": [
+                            {
+                                "id": item.id,
+                                "name": item.name,
+                                "module": item.module,
+                                "requirement_refs": item.requirement_refs,
+                            }
+                            for item in enhanced.feature_points
+                        ],
+                        "test_points": [
+                            {
+                                "id": item.id,
+                                "title": item.title,
+                                "feature_point_ids": item.feature_point_ids,
+                            }
+                            for item in enhanced.test_points
+                        ],
+                        "test_cases": [
+                            {
+                                "id": item.id,
+                                "title": item.title,
+                                "test_point_ids": item.test_point_ids,
+                            }
+                            for item in enhanced.test_cases
+                        ],
+                    },
+                    "affected_objects": {
+                        "test_points": [
+                            item.model_dump(mode="json")
+                            for item in enhanced.test_points
+                            if item.id in affected_ids
+                        ],
+                        "test_cases": [
+                            item.model_dump(mode="json")
+                            for item in enhanced.test_cases
+                            if item.id in affected_ids
+                        ],
+                    },
                     "quality_gaps": gaps,
                     "round": repair_rounds + 1,
                 },
                 EnhancementResult,
                 request.model_id,
+            )
+            enhanced.feature_points = _merge_by_id(
+                enhanced.feature_points,
+                enhancement.feature_points,
             )
             enhanced.test_points = _merge_by_id(
                 enhanced.test_points,

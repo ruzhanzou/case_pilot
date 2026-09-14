@@ -538,6 +538,7 @@ async def test_v14_caller_callbacks_and_playlist_creation_flow() -> None:
             assert completed.json()["creation_status"] == "created"
             assert playlist["case_count"] == 2
             assert playlist["creator"]["id"] == account_id
+            assert playlist["case_collections"][0]["case_generation_id"] == generation_id
 
             repeated = await client.post(
                 f"/api/v1/playlist-creation-sessions/{playlist_creation_id}/complete",
@@ -576,6 +577,12 @@ async def test_v14_caller_callbacks_and_playlist_creation_flow() -> None:
                 assert callback.payload["event_id"] == str(callback.event_id)
                 assert callback.payload["callback_correlation_id"] == f"playlist-{token}"
                 assert callback.payload["callback_context"]["request_id"] == f"REQ-{token}"
+                assert (
+                    callback.payload["playlist"]["case_collections"][0][
+                        "case_generation_id"
+                    ]
+                    == generation_id
+                )
         finally:
             with get_session_factory()() as db:
                 aggregate_ids = [value for value in (generation_id, playlist_creation_id) if value]

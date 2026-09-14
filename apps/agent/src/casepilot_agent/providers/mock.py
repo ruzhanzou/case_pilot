@@ -269,6 +269,7 @@ class MockProvider:
             result = TestCaseBatch(test_cases=baseline.test_cases)
         elif result_type is EnhancementResult:
             result = EnhancementResult(
+                feature_points=baseline.feature_points,
                 test_points=baseline.test_points,
                 test_cases=baseline.test_cases,
                 enhanced_dimensions=["边界", "异常", "幂等"],

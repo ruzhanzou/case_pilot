@@ -140,8 +140,9 @@ class TestCaseBatch(BaseModel):
 
 
 class EnhancementResult(BaseModel):
-    test_points: list[TestPoint]
-    test_cases: list[TestCaseDraft]
+    feature_points: list[FeaturePoint] = Field(default_factory=list)
+    test_points: list[TestPoint] = Field(default_factory=list)
+    test_cases: list[TestCaseDraft] = Field(default_factory=list)
     enhanced_dimensions: list[str] = Field(default_factory=list)
 
 

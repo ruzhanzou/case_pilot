@@ -74,6 +74,16 @@ class AgentSettings(BaseSettings):
         gt=0,
         validation_alias="CASEPILOT_AGENT_TIMEOUT_SECONDS",
     )
+    generation_timeout_seconds: float = Field(
+        default=300,
+        gt=0,
+        validation_alias="CASEPILOT_AGENT_GENERATION_TIMEOUT_SECONDS",
+    )
+    model_fallback_timeout_seconds: float = Field(
+        default=45,
+        gt=0,
+        validation_alias="CASEPILOT_AGENT_MODEL_FALLBACK_TIMEOUT_SECONDS",
+    )
     tracing_enabled: bool = Field(
         default=False,
         validation_alias="CASEPILOT_AGENT_TRACING_ENABLED",

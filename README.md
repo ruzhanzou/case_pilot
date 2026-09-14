@@ -441,6 +441,10 @@ CASEPILOT_EMBEDDING_DIMENSIONS=2048
 CASEPILOT_EMBEDDING_TIMEOUT_SECONDS=60
 CASEPILOT_EMBEDDING_FALLBACK_ENABLED=true
 CASEPILOT_AGENT_TIMEOUT_SECONDS=120
+# 用例批量生成/增强输出更长，单独给予更充足的响应时间。
+CASEPILOT_AGENT_GENERATION_TIMEOUT_SECONDS=300
+# 非默认模型在结构化生成阶段超过此时间后，立即切换默认模型。
+CASEPILOT_AGENT_MODEL_FALLBACK_TIMEOUT_SECONDS=45
 # 豆包等非 OpenAI Provider 默认关闭 OpenAI tracing。
 CASEPILOT_AGENT_TRACING_ENABLED=false
 ```
@@ -453,6 +457,7 @@ CASEPILOT_AGENT_TRACING_ENABLED=false
 | `CASEPILOT_AGENT_MODEL` | 默认模型，也是未指定或旧任务模型无法解析时的回退模型 |
 | `CASEPILOT_AGENT_PRO_MODEL` | 兼容旧任务中的 `pro`、`test-design-pro` 模型别名 |
 | `CASEPILOT_AGENT_LOCAL_MODEL` | 兼容旧任务中的 `local` 模型别名 |
+| `CASEPILOT_AGENT_MODEL_FALLBACK_TIMEOUT_SECONDS` | 非默认模型在需求、功能点、测试点、用例与质量修复阶段的首选等待窗口；超时后切换默认模型 |
 | `CASEPILOT_AGENT_PROVIDER_LABEL` | 工作台中显示的 Provider 名称 |
 | `CASEPILOT_AGENT_TRACING_ENABLED` | 是否开启 Agents SDK tracing；非 OpenAI Provider 默认关闭 |
 | `CASEPILOT_EMBEDDING_MODEL` | 知识库索引和语义检索使用的向量模型 |
