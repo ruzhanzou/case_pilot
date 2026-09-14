@@ -135,6 +135,20 @@ export type CaseCollectionDto = {
   name: string;
   description: string;
   case_count: number;
+  creator?: {
+    id: string;
+    display_name: string;
+    email: string;
+  } | null;
+  test_target?: {
+    source_system: string;
+    target_type: string;
+    target_id: number;
+    target_key: string;
+    title: string;
+    linked_fr_ids: Array<number | string>;
+    linked_qpm_ids: Array<number | string>;
+  } | null;
   created_at: string;
 };
 
@@ -168,6 +182,20 @@ export type TestCaseDto = {
   steps: CaseStepDto[];
   source: string;
   source_refs: SourceRefDto[];
+  creator?: {
+    id: string;
+    display_name: string;
+    email: string;
+  } | null;
+  test_targets?: Array<{
+    source_system: string;
+    target_type: string;
+    target_id: number;
+    target_key: string;
+    title: string;
+    linked_fr_ids: Array<number | string>;
+    linked_qpm_ids: Array<number | string>;
+  }>;
   created_at: string;
 };
 

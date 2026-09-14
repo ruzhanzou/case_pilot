@@ -13,6 +13,7 @@ from casepilot_api.models import (
     Account,
     AuditEvent,
     CaseCollection,
+    CaseProject,
     CollectionCaseMembership,
     Conversation,
     ExecutionRecord,
@@ -364,14 +365,78 @@ def collection_to_view(db: Session, collection: CaseCollection) -> CaseCollectio
             TestCase.deleted_at.is_(None),
         )
     )
+    project = db.scalar(
+        select(CaseProject).where(CaseProject.collection_id == collection.id)
+    )
+    creator_id = db.scalar(
+        select(AuditEvent.actor_id)
+        .where(
+            AuditEvent.resource_type == "case_collection",
+            AuditEvent.resource_id == collection.id,
+            AuditEvent.action == "collection.created",
+            AuditEvent.actor_id.is_not(None),
+        )
+        .order_by(AuditEvent.created_at, AuditEvent.id)
+        .limit(1)
+    )
+    if creator_id is None and project is not None:
+        creator_id = project.account_id
+    creator = db.get(Account, creator_id) if creator_id else None
     return CaseCollectionView(
         id=collection.id,
         space_id=collection.space_id,
         name=collection.name,
         description=collection.description,
         case_count=case_count or 0,
+        creator=(
+            {
+                "id": creator.id,
+                "display_name": creator.display_name,
+                "email": creator.email,
+            }
+            if creator
+            else None
+        ),
+        test_target=(
+            {
+                "source_system": project.source_system,
+                "target_type": project.target_type,
+                "target_id": project.target_id,
+                "target_key": project.target_key,
+                "title": project.title,
+                "linked_fr_ids": list(project.linked_fr_ids),
+                "linked_qpm_ids": list(project.linked_qpm_ids),
+            }
+            if project
+            else None
+        ),
         created_at=collection.created_at,
     )
+
+
+def matches_collection_search(item: CaseCollectionView, query: str) -> bool:
+    target_values = (
+        [
+            item.test_target.source_system,
+            item.test_target.target_type,
+            str(item.test_target.target_id),
+            item.test_target.target_key,
+            item.test_target.title,
+            *(str(value) for value in item.test_target.linked_fr_ids),
+            *(str(value) for value in item.test_target.linked_qpm_ids),
+        ]
+        if item.test_target
+        else []
+    )
+    creator_values = (
+        [str(item.creator.id), item.creator.display_name, item.creator.email]
+        if item.creator
+        else []
+    )
+    document = " ".join(
+        [item.name, item.description, *creator_values, *target_values]
+    ).casefold()
+    return all(term in document for term in query.strip().casefold().split())
 
 
 def case_to_view(
@@ -397,6 +462,27 @@ def case_to_view(
             )
         )
     )
+    projects = list(
+        db.scalars(
+            select(CaseProject)
+            .where(CaseProject.collection_id.in_(collection_ids))
+            .order_by(CaseProject.created_at, CaseProject.id)
+        )
+    )
+    creator_id = db.scalar(
+        select(AuditEvent.actor_id)
+        .where(
+            AuditEvent.resource_type == "test_case",
+            AuditEvent.resource_id == test_case.id,
+            AuditEvent.action == "test_case.created",
+            AuditEvent.actor_id.is_not(None),
+        )
+        .order_by(AuditEvent.created_at, AuditEvent.id)
+        .limit(1)
+    )
+    if creator_id is None and projects:
+        creator_id = projects[0].account_id
+    creator = db.get(Account, creator_id) if creator_id else None
     source = ""
     if revision.source_refs:
         source = str(revision.source_refs[0].get("label", ""))
@@ -418,8 +504,66 @@ def case_to_view(
         execution_level=revision.execution_level,
         test_domains=list(revision.test_domains),
         automation_type=revision.automation_type,
+        creator=(
+            {
+                "id": creator.id,
+                "display_name": creator.display_name,
+                "email": creator.email,
+            }
+            if creator
+            else None
+        ),
+        test_targets=[
+            {
+                "source_system": project.source_system,
+                "target_type": project.target_type,
+                "target_id": project.target_id,
+                "target_key": project.target_key,
+                "title": project.title,
+                "linked_fr_ids": list(project.linked_fr_ids),
+                "linked_qpm_ids": list(project.linked_qpm_ids),
+            }
+            for project in projects
+        ],
         created_at=test_case.created_at,
     )
+
+
+def matches_case_search(item: TestCaseView, query: str) -> bool:
+    """Match every query term against searchable case-asset metadata."""
+    target_values = [
+        value
+        for target in item.test_targets
+        for value in (
+            target.source_system,
+            target.target_type,
+            str(target.target_id),
+            target.target_key,
+            target.title,
+            *(str(value) for value in target.linked_fr_ids),
+            *(str(value) for value in target.linked_qpm_ids),
+        )
+    ]
+    creator_values = (
+        [str(item.creator.id), item.creator.display_name, item.creator.email]
+        if item.creator
+        else []
+    )
+    document = " ".join(
+        [
+            item.case_key,
+            item.title,
+            item.module,
+            item.case_type,
+            item.priority,
+            item.source,
+            *item.tags,
+            *item.test_domains,
+            *creator_values,
+            *target_values,
+        ]
+    ).casefold()
+    return all(term in document for term in query.strip().casefold().split())
 
 
 @router.get(
@@ -430,6 +574,7 @@ def list_collections(
     space_id: UUID,
     account: CurrentAccount,
     db: DbSession,
+    q: str = "",
 ) -> list[CaseCollectionView]:
     require_space_membership(db, account.id, space_id)
     collections = list(
@@ -442,7 +587,8 @@ def list_collections(
             .order_by(CaseCollection.created_at)
         )
     )
-    return [collection_to_view(db, collection) for collection in collections]
+    views = [collection_to_view(db, collection) for collection in collections]
+    return [item for item in views if matches_collection_search(item, q)] if q.strip() else views
 
 
 @router.post(
@@ -538,6 +684,7 @@ def list_test_cases(
     collection_id: UUID,
     account: CurrentAccount,
     db: DbSession,
+    q: str = "",
 ) -> list[TestCaseView]:
     ensure_collection(db, account, collection_id)
     cases = list(
@@ -554,7 +701,8 @@ def list_test_cases(
             .order_by(CollectionCaseMembership.position, TestCase.created_at)
         )
     )
-    return [case_to_view(db, test_case) for test_case in cases]
+    views = [case_to_view(db, test_case) for test_case in cases]
+    return [item for item in views if matches_case_search(item, q)] if q.strip() else views
 
 
 @router.get(
@@ -580,14 +728,9 @@ def search_space_test_cases(
         )
     )
     views = [case_to_view(db, test_case) for test_case in cases]
-    normalized = q.strip().casefold()
-    if not normalized:
+    if not q.strip():
         return views
-    return [
-        item
-        for item in views
-        if normalized in " ".join([item.case_key, item.title, item.module, *item.tags]).casefold()
-    ]
+    return [item for item in views if matches_case_search(item, q)]
 
 
 def playlist_to_view(db: Session, playlist: Playlist) -> PlaylistView:

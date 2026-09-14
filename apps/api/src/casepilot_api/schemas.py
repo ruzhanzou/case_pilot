@@ -77,12 +77,30 @@ class CaseCollectionUpdate(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
 
 
+class CollectionCreatorView(BaseModel):
+    id: UUID
+    display_name: str
+    email: str
+
+
+class CollectionTargetView(BaseModel):
+    source_system: str
+    target_type: str
+    target_id: int
+    target_key: str
+    title: str
+    linked_fr_ids: list[int | str] = Field(default_factory=list)
+    linked_qpm_ids: list[int | str] = Field(default_factory=list)
+
+
 class CaseCollectionView(BaseModel):
     id: UUID
     space_id: UUID
     name: str
     description: str
     case_count: int
+    creator: CollectionCreatorView | None = None
+    test_target: CollectionTargetView | None = None
     created_at: datetime
 
 
@@ -137,6 +155,22 @@ class TestCaseUpdate(BaseModel):
     automation_type: str | None = Field(default=None, pattern=r"^(manual|automated)$")
 
 
+class TestCaseCreatorView(BaseModel):
+    id: UUID
+    display_name: str
+    email: str
+
+
+class TestCaseTargetView(BaseModel):
+    source_system: str
+    target_type: str
+    target_id: int
+    target_key: str
+    title: str
+    linked_fr_ids: list[int | str] = Field(default_factory=list)
+    linked_qpm_ids: list[int | str] = Field(default_factory=list)
+
+
 class TestCaseView(BaseModel):
     id: UUID
     case_key: str
@@ -155,6 +189,8 @@ class TestCaseView(BaseModel):
     execution_level: str = "L0"
     test_domains: list[str] = Field(default_factory=list)
     automation_type: str = "manual"
+    creator: TestCaseCreatorView | None = None
+    test_targets: list[TestCaseTargetView] = Field(default_factory=list)
     created_at: datetime
 
 

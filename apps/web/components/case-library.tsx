@@ -2,6 +2,7 @@
 
 import { CaseMindMap } from "@/components/case-mind-map";
 import type { CaseCollectionDto, TestCaseDto } from "@/lib/casepilot-api";
+import { matchesCaseSearch, matchesCollectionSearch } from "@/lib/case-search";
 import {
   Archive,
   ChevronLeft,
@@ -61,23 +62,19 @@ export function CaseLibrary({
   onDeleteCase,
 }: CaseLibraryProps) {
   const [query, setQuery] = useState("");
+  const [collectionQuery, setCollectionQuery] = useState("");
   const [viewMode, setViewMode] = useState<"list" | "mind-map">("list");
   const [currentPage, setCurrentPage] = useState(1);
   const filteredCases = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return cases;
-    return cases.filter((testCase) =>
-      [
-        testCase.case_key,
-        testCase.title,
-        testCase.module,
-        testCase.tags.join(" "),
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(normalized),
-    );
+    return cases.filter((testCase) => matchesCaseSearch(testCase, query));
   }, [cases, query]);
+  const filteredCollections = useMemo(
+    () =>
+      collections.filter((collection) =>
+        matchesCollectionSearch(collection, collectionQuery),
+      ),
+    [collectionQuery, collections],
+  );
   const pageCount = Math.max(
     1,
     Math.ceil(filteredCases.length / CASES_PER_PAGE),
@@ -122,8 +119,17 @@ export function CaseLibrary({
             </button>
           </div>
         </div>
+        <label className="collection-search">
+          <Search size={15} />
+          <input
+            value={collectionQuery}
+            onChange={(event) => setCollectionQuery(event.target.value)}
+            placeholder="搜索集合、test_target、创建人"
+            aria-label="搜索用例集合"
+          />
+        </label>
         <div className="collection-sidebar__list">
-          {collections.map((collection) => (
+          {filteredCollections.map((collection) => (
             <button
               type="button"
               key={collection.id}
@@ -147,6 +153,12 @@ export function CaseLibrary({
               <ChevronRight size={15} />
             </button>
           ))}
+          {!filteredCollections.length && (
+            <div className="collection-sidebar__empty">
+              <Search size={18} />
+              <span>没有匹配的用例集合</span>
+            </div>
+          )}
         </div>
       </aside>
 
@@ -222,7 +234,8 @@ export function CaseLibrary({
                 setQuery(event.target.value);
                 setCurrentPage(1);
               }}
-              placeholder="搜索用例名称、编号、模块或标签"
+              placeholder="搜索编号、标题、test_target、创建人等"
+              aria-label="搜索用例资产"
             />
           </label>
           <div className="case-library__view-controls">
@@ -272,6 +285,8 @@ export function CaseLibrary({
                 <tr>
                   <th>用例</th>
                   <th>模块</th>
+                  <th>Test target</th>
+                  <th>创建人</th>
                   <th>优先级</th>
                   <th>标签</th>
                   <th>版本</th>
@@ -294,6 +309,21 @@ export function CaseLibrary({
                       </button>
                     </td>
                     <td>{testCase.module || "未分类"}</td>
+                    <td>
+                      {testCase.test_targets?.length ? (
+                        <div className="case-target-list">
+                          {testCase.test_targets.slice(0, 2).map((target) => (
+                            <span key={`${target.target_type}:${target.target_id}`}>
+                              <strong>{target.target_key || target.title}</strong>
+                              <small>{target.target_type}:{target.target_id}</small>
+                            </span>
+                          ))}
+                        </div>
+                      ) : "—"}
+                    </td>
+                    <td title={testCase.creator?.email}>
+                      {testCase.creator?.display_name ?? "—"}
+                    </td>
                     <td>
                       <span className={`priority-badge priority-badge--${testCase.priority.toLowerCase()}`}>
                         {testCase.priority}

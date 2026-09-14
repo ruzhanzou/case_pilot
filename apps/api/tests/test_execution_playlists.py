@@ -82,6 +82,8 @@ async def test_playlist_crud_search_execution_and_snapshot_survival() -> None:
             )
             assert created_case.status_code == 201
             test_case = created_case.json()
+            assert test_case["creator"]["id"] == account_id
+            assert test_case["creator"]["display_name"] == "Playlist 验收"
 
             searched = await client.get(
                 f"/api/v1/spaces/{space_id}/test-cases",
@@ -89,6 +91,15 @@ async def test_playlist_crud_search_execution_and_snapshot_survival() -> None:
             )
             assert searched.status_code == 200
             assert [item["id"] for item in searched.json()] == [test_case["id"]]
+
+            searched_by_creator = await client.get(
+                f"/api/v1/spaces/{space_id}/test-cases",
+                params={"q": f"Playlist 验收 playlist-{token[:6]}"},
+            )
+            assert searched_by_creator.status_code == 200
+            assert [item["id"] for item in searched_by_creator.json()] == [
+                test_case["id"]
+            ]
 
             created_playlist = await client.post(
                 f"/api/v1/spaces/{space_id}/playlists",
