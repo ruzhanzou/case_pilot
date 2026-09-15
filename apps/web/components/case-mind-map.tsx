@@ -19,6 +19,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
+  Bot,
   Boxes,
   ClipboardCheck,
   Edit3,
@@ -43,14 +44,15 @@ import {
 } from "react";
 
 type MindMapNodeData = {
-  kind: "collection" | "module" | "condition" | "case";
+  kind: "collection" | "module" | "case" | "detail";
+  detailKind?: "setup" | "procedure" | "validation";
   title: string;
   eyebrow: string;
   caseId?: string;
   module?: string;
-  condition?: string;
   priority?: TestCaseDto["priority"];
   tags?: string[];
+  automationType?: TestCaseDto["automation_type"];
   leavesHidden?: boolean;
   onCreateCase: (module?: string) => void;
   onEditCase: (caseId: string) => void;
@@ -68,7 +70,7 @@ const MindMapCard = memo(function MindMapCard({
       ? FolderTree
       : data.kind === "module"
         ? Boxes
-        : data.kind === "condition"
+        : data.kind === "detail"
           ? ClipboardCheck
           : null;
 
@@ -77,6 +79,7 @@ const MindMapCard = memo(function MindMapCard({
       className={[
         "case-map-node",
         `case-map-node--${data.kind}`,
+        data.detailKind ? `case-map-node--${data.detailKind}` : "",
         selected ? "is-selected" : "",
       ]
         .filter(Boolean)
@@ -89,10 +92,37 @@ const MindMapCard = memo(function MindMapCard({
           {data.eyebrow}
         </span>
         {data.kind === "case" && data.caseId ? (
+          <div className="case-map-node__actions">
+            {data.onToggleLeaves && (
+              <button
+                type="button"
+                aria-label={`${data.leavesHidden ? "展开" : "收起"}${data.title}的结构节点`}
+                title={data.leavesHidden ? "展开用例结构" : "收起用例结构"}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  data.onToggleLeaves?.();
+                }}
+              >
+                {data.leavesHidden ? <Eye size={14} /> : <EyeOff size={14} />}
+              </button>
+            )}
+            <button
+              type="button"
+              aria-label={`修改用例标题 ${data.title}`}
+              title="修改用例"
+              onClick={(event) => {
+                event.stopPropagation();
+                data.onEditCase(data.caseId!);
+              }}
+            >
+              <Edit3 size={14} />
+            </button>
+          </div>
+        ) : data.kind === "detail" && data.caseId ? (
           <button
             type="button"
-            aria-label={`编辑用例 ${data.title}`}
-            title="编辑用例"
+            aria-label={`修改${data.eyebrow} ${data.title}`}
+            title="修改此节点"
             onClick={(event) => {
               event.stopPropagation();
               data.onEditCase(data.caseId!);
@@ -100,7 +130,7 @@ const MindMapCard = memo(function MindMapCard({
           >
             <Edit3 size={14} />
           </button>
-        ) : data.kind !== "condition" ? (
+        ) : (
           <div className="case-map-node__actions">
             {data.onToggleLeaves && (
               <button
@@ -127,19 +157,7 @@ const MindMapCard = memo(function MindMapCard({
               <PlusCircle size={15} />
             </button>
           </div>
-        ) : data.onToggleLeaves ? (
-          <button
-            type="button"
-            aria-label={`${data.leavesHidden ? "显示" : "隐藏"}此前置条件下的叶子用例`}
-            title={data.leavesHidden ? "显示叶子用例" : "隐藏叶子用例"}
-            onClick={(event) => {
-              event.stopPropagation();
-              data.onToggleLeaves?.();
-            }}
-          >
-            {data.leavesHidden ? <Eye size={14} /> : <EyeOff size={14} />}
-          </button>
-        ) : null}
+        )}
       </div>
       <strong title={data.title}>{data.title}</strong>
       {data.kind === "case" && (
@@ -150,6 +168,11 @@ const MindMapCard = memo(function MindMapCard({
             </span>
           )}
           {data.tags?.slice(0, 2).map((tag) => <span key={tag}>{tag}</span>)}
+          {data.automationType === "automated" && (
+            <span className="automation-badge" title="该用例已绑定自动化用例">
+              <Bot size={11} /> 已绑定自动化
+            </span>
+          )}
         </footer>
       )}
       <Handle type="source" position={Position.Right} />
@@ -267,7 +290,7 @@ export function CaseMindMap({
   const [hiddenLeafModules, setHiddenLeafModules] = useState<Set<string>>(
     () => new Set(),
   );
-  const [hiddenConditionGroups, setHiddenConditionGroups] = useState<Set<string>>(
+  const [hiddenCaseDetails, setHiddenCaseDetails] = useState<Set<string>>(
     () => new Set(),
   );
   const moduleNames = useMemo(
@@ -287,11 +310,11 @@ export function CaseMindMap({
     });
   }, []);
 
-  const toggleConditionLeaves = useCallback((conditionKey: string) => {
-    setHiddenConditionGroups((current) => {
+  const toggleCaseDetails = useCallback((caseId: string) => {
+    setHiddenCaseDetails((current) => {
       const next = new Set(current);
-      if (next.has(conditionKey)) next.delete(conditionKey);
-      else next.add(conditionKey);
+      if (next.has(caseId)) next.delete(caseId);
+      else next.add(caseId);
       return next;
     });
   }, []);
@@ -303,7 +326,7 @@ export function CaseMindMap({
         moduleNames.every((moduleName) => current.has(moduleName));
       return currentlyAllHidden ? new Set() : new Set(moduleNames);
     });
-    setHiddenConditionGroups(new Set());
+    setHiddenCaseDetails(new Set());
   }, [moduleNames]);
 
   useEffect(() => {
@@ -353,47 +376,24 @@ export function CaseMindMap({
 
     const nodes: MindMapNode[] = [];
     const edges: Edge[] = [];
-    const rowHeight = 132;
+    const rowHeight = 118;
     let row = 0;
     const moduleEntries = [...grouped.entries()];
-    const getSharedConditionGroups = (moduleCases: TestCaseDto[]) => {
-      const counts = new Map<string, number>();
-      moduleCases.forEach((testCase) => {
-        new Set(testCase.preconditions.map((item) => item.trim()).filter(Boolean))
-          .forEach((condition) => counts.set(condition, (counts.get(condition) ?? 0) + 1));
-      });
-      const sharedConditions = [...counts.entries()]
-        .filter(([, count]) => count >= 2)
-        .sort((a, b) => b[1] - a[1]);
-      const groups = new Map<string, TestCaseDto[]>();
-      const ungrouped: TestCaseDto[] = [];
-      moduleCases.forEach((testCase) => {
-        const matched = sharedConditions.find(([condition]) =>
-          testCase.preconditions.some((item) => item.trim() === condition),
-        );
-        if (!matched) {
-          ungrouped.push(testCase);
-          return;
-        }
-        groups.set(matched[0], [...(groups.get(matched[0]) ?? []), testCase]);
-      });
-      return { groups: [...groups.entries()], ungrouped };
-    };
     const moduleStructures = moduleEntries.map(([moduleName, moduleCases]) => ({
       moduleName,
       moduleCases,
-      ...getSharedConditionGroups(moduleCases),
     }));
     const totalRows = Math.max(
       moduleStructures.reduce((total, structure) => {
-        if (hiddenLeafModules.has(structure.moduleName)) {
-          return total + Math.max(structure.groups.length, 1);
-        }
-        const groupRows = structure.groups.reduce((rows, [condition, groupCases]) => {
-          const key = `${structure.moduleName}::${condition}`;
-          return rows + (hiddenConditionGroups.has(key) ? 1 : groupCases.length);
-        }, 0);
-        return total + groupRows + structure.ungrouped.length;
+        return total + structure.moduleCases.reduce(
+          (rows, testCase) =>
+            rows +
+            (hiddenLeafModules.has(structure.moduleName) ||
+            hiddenCaseDetails.has(testCase.id)
+              ? 1
+              : 3),
+          0,
+        );
       }, 0),
       1,
     );
@@ -434,16 +434,17 @@ export function CaseMindMap({
     }
 
     moduleStructures.forEach((structure, moduleIndex) => {
-      const { moduleName, moduleCases, groups, ungrouped } = structure;
+      const { moduleName, moduleCases } = structure;
       const moduleId = `module-${moduleIndex}`;
       const leavesHidden = hiddenLeafModules.has(moduleName);
       const moduleStartRow = row;
       const visibleRows = leavesHidden
-        ? Math.max(groups.length, 1)
-        : groups.reduce((rows, [condition, groupCases]) => {
-            const key = `${moduleName}::${condition}`;
-            return rows + (hiddenConditionGroups.has(key) ? 1 : groupCases.length);
-          }, 0) + ungrouped.length;
+        ? moduleCases.length
+        : moduleCases.reduce(
+            (rows, testCase) =>
+              rows + (hiddenCaseDetails.has(testCase.id) ? 1 : 3),
+            0,
+          );
       const moduleCenterRow = moduleStartRow + (visibleRows - 1) / 2;
       nodes.push({
         id: moduleId,
@@ -462,66 +463,97 @@ export function CaseMindMap({
       });
       edges.push(createEdge(`root-${moduleId}`, "collection-root", moduleId));
 
-      const addCaseNode = (testCase: TestCaseDto, parentId: string) => {
+      const addCaseNode = (testCase: TestCaseDto) => {
         const nodeId = `case-${testCase.id}`;
+        const detailsHidden = leavesHidden || hiddenCaseDetails.has(testCase.id);
+        const detailRows = detailsHidden ? 1 : 3;
+        const caseStartRow = row;
         nodes.push({
           id: nodeId,
           type: "casePilotNode",
-          position: { x: 1040, y: row * rowHeight },
+          position: {
+            x: 700,
+            y: (caseStartRow + (detailRows - 1) / 2) * rowHeight,
+          },
           selected: testCase.id === selectedCaseId,
           data: {
             kind: "case",
             title: testCase.title,
-            eyebrow: `${testCase.case_key} · V${testCase.revision_number}`,
+            eyebrow: `title · ${testCase.case_key} · V${testCase.revision_number}`,
             caseId: testCase.id,
             priority: testCase.priority,
             tags: testCase.tags,
+            automationType: testCase.automation_type,
+            leavesHidden: detailsHidden,
             onCreateCase,
             onEditCase: (caseId) => {
               const current = cases.find((item) => item.id === caseId);
               if (current) onEditCase(current);
             },
+            onToggleLeaves: () => toggleCaseDetails(testCase.id),
           },
         });
-        edges.push(createEdge(`${parentId}-${nodeId}`, parentId, nodeId));
-        row += 1;
+        edges.push(createEdge(`${moduleId}-${nodeId}`, moduleId, nodeId));
+
+        if (detailsHidden) {
+          row += 1;
+          return;
+        }
+
+        const details = [
+          {
+            kind: "setup" as const,
+            eyebrow: "test_setup",
+            title: testCase.preconditions.length
+              ? testCase.preconditions
+                  .map((item, index) => `${index + 1}. ${item}`)
+                  .join("\n")
+              : "无前置条件",
+          },
+          {
+            kind: "procedure" as const,
+            eyebrow: "test_procedure",
+            title: testCase.steps
+              .map((step, index) => `${index + 1}. ${step.action}`)
+              .join("\n"),
+          },
+          {
+            kind: "validation" as const,
+            eyebrow: "test_validation",
+            title: testCase.steps
+              .map((step, index) => `${index + 1}. ${step.expected}`)
+              .join("\n"),
+          },
+        ];
+        details.forEach((detail, detailIndex) => {
+          const detailId = `${nodeId}-${detail.kind}`;
+          nodes.push({
+            id: detailId,
+            type: "casePilotNode",
+            position: {
+              x: 1040,
+              y: (caseStartRow + detailIndex) * rowHeight,
+            },
+            data: {
+              kind: "detail",
+              detailKind: detail.kind,
+              title: detail.title,
+              eyebrow: detail.eyebrow,
+              caseId: testCase.id,
+              module: testCase.module,
+              onCreateCase,
+              onEditCase: (caseId) => {
+                const current = cases.find((item) => item.id === caseId);
+                if (current) onEditCase(current);
+              },
+            },
+          });
+          edges.push(createEdge(`${nodeId}-${detail.kind}`, nodeId, detailId));
+        });
+        row += 3;
       };
 
-      groups.forEach(([condition, groupCases], groupIndex) => {
-        const conditionKey = `${moduleName}::${condition}`;
-        const conditionId = `${moduleId}-condition-${groupIndex}`;
-        const conditionLeavesHidden =
-          leavesHidden || hiddenConditionGroups.has(conditionKey);
-        const conditionStartRow = row;
-        const conditionRows = conditionLeavesHidden ? 1 : groupCases.length;
-        nodes.push({
-          id: conditionId,
-          type: "casePilotNode",
-          position: {
-            x: 700,
-            y: (conditionStartRow + (conditionRows - 1) / 2) * rowHeight,
-          },
-          data: {
-            kind: "condition",
-            title: condition,
-            module: moduleName === "未分类" ? "" : moduleName,
-            condition,
-            eyebrow: `${groupCases.length} 条用例共同前置`,
-            leavesHidden: conditionLeavesHidden,
-            onCreateCase,
-            onEditCase: () => undefined,
-            onToggleLeaves: () => toggleConditionLeaves(conditionKey),
-          },
-        });
-        edges.push(createEdge(`${moduleId}-${conditionId}`, moduleId, conditionId));
-        if (conditionLeavesHidden) row += 1;
-        else groupCases.forEach((testCase) => addCaseNode(testCase, conditionId));
-      });
-      if (!leavesHidden) {
-        ungrouped.forEach((testCase) => addCaseNode(testCase, moduleId));
-      } else if (!groups.length) {
-        row += 1;
-      }
+      moduleCases.forEach(addCaseNode);
     });
 
     return {
@@ -538,12 +570,12 @@ export function CaseMindMap({
     collection.name,
     allLeavesHidden,
     hiddenLeafModules,
-    hiddenConditionGroups,
+    hiddenCaseDetails,
     onCreateCase,
     onEditCase,
     selectedCaseId,
     toggleAllLeaves,
-    toggleConditionLeaves,
+    toggleCaseDetails,
     toggleModuleLeaves,
   ]);
 
@@ -579,16 +611,12 @@ export function CaseMindMap({
               { kind: "module", module: node.data.module ?? "" },
               `模块：${node.data.title}`,
             );
-          } else if (node.data.kind === "condition") {
-            onSelectTarget?.(
-              {
-                kind: "condition",
-                module: node.data.module ?? "",
-                condition: node.data.condition ?? node.data.title,
-              },
-              `前置条件：${node.data.title}`,
-            );
           }
+        }}
+        onNodeDoubleClick={(_, node) => {
+          if (!node.data.caseId) return;
+          const testCase = cases.find((item) => item.id === node.data.caseId);
+          if (testCase) onEditCase(testCase);
         }}
       >
         <Background color="#cfdaea" gap={22} size={1} />

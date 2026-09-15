@@ -114,8 +114,12 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(caseMindMap, /requestFullscreen/);
   assert.match(caseMindMap, /toggleModuleLeaves/);
   assert.match(caseMindMap, /position: \{ x: 360, y: moduleCenterRow/);
-  assert.match(caseMindMap, /position: \{ x: 1040, y: row/);
-  assert.match(caseMindMap, /共同前置/);
+  assert.match(caseMindMap, /eyebrow: `title/);
+  assert.match(caseMindMap, /test_setup/);
+  assert.match(caseMindMap, /test_procedure/);
+  assert.match(caseMindMap, /test_validation/);
+  assert.match(caseMindMap, /已绑定自动化/);
+  assert.match(caseMindMap, /onNodeDoubleClick/);
   assert.match(caseWorkbench, /CasePilot/);
   assert.match(caseWorkbench, /结构化测试说明/);
   assert.match(caseWorkbench, /确认并生成用例/);

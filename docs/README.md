@@ -8,6 +8,7 @@
 
 - [产品设计](./product-design-v1.md)：定位、信息架构、界面与核心对象。
 - [产品规格](./product-spec-v1.md)：功能需求、数据对象、API、AI 流程与验收标准。
+- [用例生成规范](./test-case-generation-standard.md)：四段式用例结构、生成流程、兼容映射与发布门禁。
 - [V1.0 端到端交互规格](./product-interaction-design.md)：七个真实产品状态、异常分支与人工门禁。
 - [V1.0 发布与验收记录](./release-v1.0.0.md)：版本范围、自动化结果和 Figma 交付。
 - [产品逻辑 Review](./product-logic-review-v1.4.md)：本轮统一决策、端到端检查和未完成风险。
@@ -18,6 +19,7 @@
 
 ## 工程与验收
 
+- [四段式用例生成与脑图端到端验收（2026-09-15）](./acceptance-four-section-mind-map-2026-09-15.md)
 - [产品原则重构与端到端验收 V1](./casepilot-product-principles-acceptance-v1.md)
 - [开发基线](./development-baseline-v1.md)
 - [开发进度](./development-progress.md)

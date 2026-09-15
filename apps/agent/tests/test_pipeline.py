@@ -170,6 +170,20 @@ def test_validator_detects_empty_steps_and_invalid_reference() -> None:
     }
 
 
+def test_validator_enforces_four_section_case_quality() -> None:
+    result = MockProvider().generate(GenerationRequest(prompt="支付回调需求"))
+    result.test_cases[0].preconditions = []
+    result.test_cases[1].steps[0].expected = "符合预期"
+
+    report = validate_generation(result)
+
+    assert not report.passed
+    assert {issue.code for issue in report.issues} >= {
+        "empty_test_setup",
+        "vague_test_validation",
+    }
+
+
 def test_validator_accepts_localized_coverage_matrix_keys() -> None:
     result = MockProvider().generate(GenerationRequest(prompt="支付回调需求"))
     requirement_ref = result.feature_points[0].requirement_refs[0]

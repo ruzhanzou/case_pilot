@@ -75,21 +75,44 @@ class TestPoint(BaseModel):
 
 
 class TestStep(BaseModel):
-    action: str
-    expected: str
+    action: str = Field(
+        min_length=1,
+        max_length=4000,
+        description="test_procedure 中的一项，仅描述可执行操作，不混入预期结果。",
+    )
+    expected: str = Field(
+        min_length=1,
+        max_length=4000,
+        description="test_validation 中与操作同序对应的一项可观察断言。",
+    )
 
 
 class TestCaseDraft(BaseModel):
     id: str
-    title: str
+    title: str = Field(
+        min_length=1,
+        max_length=300,
+        description="四段式用例的 title：单一、明确、可辨识的测试目标。",
+    )
     module: str
     case_type: str
     priority: Priority
     tags: list[str] = Field(default_factory=list)
     automated: bool = False
     status: CaseStatus = CaseStatus.PENDING
-    preconditions: list[str]
-    steps: list[TestStep]
+    preconditions: list[str] = Field(
+        min_length=1,
+        max_length=50,
+        description="test_setup：环境、状态、身份、权限和测试数据前提；无前提时明确写无特殊前置条件。",
+    )
+    steps: list[TestStep] = Field(
+        min_length=1,
+        max_length=4,
+        description=(
+            "兼容存储结构：依次将 steps[].action 作为 test_procedure，"
+            "steps[].expected 作为同序 test_validation。"
+        ),
+    )
     test_point_ids: list[str]
     source_refs: list[SourceRef] = Field(default_factory=list)
 

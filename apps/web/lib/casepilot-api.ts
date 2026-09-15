@@ -180,6 +180,7 @@ export type TestCaseDto = {
   tags: string[];
   preconditions: string[];
   steps: CaseStepDto[];
+  automation_type?: "manual" | "automated";
   source: string;
   source_refs: SourceRefDto[];
   creator?: {

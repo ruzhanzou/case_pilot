@@ -15,3 +15,6 @@ def test_runtime_loads_the_repository_skill_as_its_single_source() -> None:
     assert skill_path.read_text(encoding="utf-8") in loaded
     assert "untrusted evidence" in loaded
     assert "candidate" in loaded
+    assert "test_setup" in loaded
+    assert "test_procedure" in loaded
+    assert "test_validation" in loaded

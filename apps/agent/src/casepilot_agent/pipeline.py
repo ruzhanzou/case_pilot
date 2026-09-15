@@ -207,6 +207,17 @@ def validate_generation(result: GenerationResult) -> QualityReport:
                 )
             )
         seen_titles.add(normalized)
+        if not case.preconditions or not any(
+            item.strip() for item in case.preconditions
+        ):
+            issues.append(
+                QualityIssue(
+                    code="empty_test_setup",
+                    message="test_setup 不能为空；无特殊前置条件时必须明确声明",
+                    object_id=case.id,
+                    severity="error",
+                )
+            )
         if not case.steps:
             issues.append(
                 QualityIssue(
@@ -222,6 +233,20 @@ def validate_generation(result: GenerationResult) -> QualityReport:
                     QualityIssue(
                         code="invalid_step",
                         message="步骤必须同时包含操作和可观察预期",
+                        object_id=case.id,
+                        severity="error",
+                    )
+                )
+            if step.expected.strip() in {
+                "正常",
+                "结果正常",
+                "符合预期",
+                "结果符合预期",
+            }:
+                issues.append(
+                    QualityIssue(
+                        code="vague_test_validation",
+                        message="test_validation 必须给出可观察、可判定的具体结果",
                         object_id=case.id,
                         severity="error",
                     )
@@ -355,8 +380,13 @@ class GenerationPipeline:
         )
         case_batch = execute_stage(
             "test_case.generated",
-            "按测试点生成 8 至 10 条可执行用例；每条用例保留 2 至 4 个关键步骤，"
-            "步骤必须有明确操作和可观察结果，补充必要前置条件和来源引用，避免重复背景描述。",
+            "按测试点生成 8 至 10 条可执行候选用例，严格遵循四段式用例规范："
+            "title 是单一测试目标；test_setup 是环境、状态、身份、权限和测试数据前提，"
+            "没有特殊前提时写‘无特殊前置条件’；test_procedure 保留 1 至 4 个按序、"
+            "可执行且不混入预期的操作；test_validation 提供数量完全相同、按索引一一对应、"
+            "可观察且可判定的断言。当前 JSON 兼容结构映射为 test_setup=preconditions、"
+            "test_procedure=steps[].action、test_validation=steps[].expected。"
+            "补充来源引用，避免重复背景和‘正常’‘符合预期’等模糊表达。",
             {
                 **common,
                 "requirement": requirement.model_dump(mode="json"),
