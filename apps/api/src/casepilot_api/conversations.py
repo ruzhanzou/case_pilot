@@ -838,6 +838,14 @@ def _ensure_conversation(
     return conversation
 
 
+def collection_workspace_context(context: dict[str, Any]) -> dict[str, Any]:
+    """Enter formal-case maintenance when opening a collection workspace."""
+    normalized = dict(context)
+    if str(normalized.get("phase", "idle")) == "idle":
+        normalized["phase"] = "maintenance"
+    return normalized
+
+
 def _change_set_view(change_set: CaseChangeSet) -> CaseChangeSetView:
     return CaseChangeSetView(
         id=change_set.id,
@@ -1466,17 +1474,25 @@ def get_or_create_workspace(
         )
         .order_by(Conversation.updated_at.desc())
     )
-    if existing is not None:
-        return _conversation_view(db, existing)
-    return create_conversation(
-        ConversationCreate(
-            space_id=collection.space_id,
-            collection_id=collection_id,
-            title="集合工作区",
-        ),
-        account,
-        db,
-    )
+    if existing is None:
+        created = create_conversation(
+            ConversationCreate(
+                space_id=collection.space_id,
+                collection_id=collection_id,
+                title="集合工作区",
+            ),
+            account,
+            db,
+        )
+        existing = _ensure_conversation(db, account.id, created.id)
+
+    normalized_context = collection_workspace_context(dict(existing.context))
+    if normalized_context != dict(existing.context):
+        existing.context = normalized_context
+        existing.updated_at = datetime.now(UTC)
+        db.commit()
+        db.refresh(existing)
+    return _conversation_view(db, existing)
 
 
 @router.patch(

@@ -52,6 +52,7 @@ const collection: CaseCollectionDto = {
   name: "统一登录搜索验收",
   description: "登录资产集合",
   case_count: 2,
+  lifecycle_status: "maintenance",
   creator: testCase.creator,
   test_target: testCase.test_targets?.[0],
   created_at: "2026-09-12T00:00:00Z",

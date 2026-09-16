@@ -2,6 +2,10 @@
 
 import { CaseMindMap } from "@/components/case-mind-map";
 import {
+  CollectionStatusBadge,
+  collectionStatusFromPhase,
+} from "@/components/collection-status-badge";
+import {
   applyCaseChangeSet,
   cancelGeneration,
   commitWorkspaceCandidates,
@@ -267,6 +271,7 @@ export function CaseWorkbench({
   } = useStickToBottom({ initial: "instant", resize: "smooth" });
 
   const phase = String(workspace?.context.phase ?? "idle");
+  const collectionStatus = collectionStatusFromPhase(phase, cases.length);
   const activeWorkspaceJobId = String(
     workspace?.context.active_job_id ?? "",
   );
@@ -536,8 +541,15 @@ export function CaseWorkbench({
   }, [applyWorkspaceResult, conversationId, selectedCollectionId]);
 
   useEffect(() => {
-    setSelectedTargets([]);
-    setRewriteTargets([]);
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      setSelectedTargets([]);
+      setRewriteTargets([]);
+    });
+    return () => {
+      active = false;
+    };
   }, [selectedCollectionId]);
 
   useEffect(() => {
@@ -1516,7 +1528,10 @@ export function CaseWorkbench({
         <header>
           <div>
             <small>用例集合 / 持续工作区</small>
-            <h1>{selectedCollection.name}</h1>
+            <div className="principle-title-row">
+              <h1>{selectedCollection.name}</h1>
+              <CollectionStatusBadge status={collectionStatus} />
+            </div>
             <p>
               {phaseLabels[phase] ?? "工作区已恢复"} · 本对话仅维护此集合
             </p>

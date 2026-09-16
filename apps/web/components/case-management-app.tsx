@@ -157,6 +157,7 @@ export function CaseManagementApp({
     { mode: "create" } | { mode: "edit"; collection: CaseCollectionDto } | null
   >(null);
   const [caseImportOpen, setCaseImportOpen] = useState(false);
+  const [importingCollectionId, setImportingCollectionId] = useState("");
 
   const selectedCollection =
     collections.find((item) => item.id === selectedCollectionId) ?? null;
@@ -1148,6 +1149,7 @@ export function CaseManagementApp({
             cases={cases}
             selectedCase={selectedCase}
             loading={loading}
+            importingCollectionId={importingCollectionId}
             onSelectCollection={(collectionId) => void selectCollection(collectionId)}
             onCreateCollection={() => setCollectionEditor({ mode: "create" })}
             onImportExcel={() => setCaseImportOpen(true)}
@@ -1214,8 +1216,15 @@ export function CaseManagementApp({
           saving={saving}
           onClose={() => setCaseImportOpen(false)}
           onImport={async (inputs) => {
-            await importGeneratedCases(selectedCollection.id, inputs);
-            setCaseImportOpen(false);
+            const collectionId = selectedCollection.id;
+            setImportingCollectionId(collectionId);
+            try {
+              await importGeneratedCases(collectionId, inputs);
+              await refreshCollections(collectionId);
+              setCaseImportOpen(false);
+            } finally {
+              setImportingCollectionId("");
+            }
           }}
         />
       )}

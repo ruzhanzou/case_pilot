@@ -26,6 +26,15 @@ class ConversationOperationStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+class CaseCollectionLifecycleStatus(StrEnum):
+    EMPTY = "empty"
+    BRIEF_DRAFTING = "brief_drafting"
+    BRIEF_REVIEW = "brief_review"
+    GENERATING = "generating"
+    CANDIDATE_REVIEW = "candidate_review"
+    MAINTENANCE = "maintenance"
+
+
 class AccountRegistration(BaseModel):
     email: str = Field(min_length=5, max_length=320, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     display_name: str = Field(min_length=2, max_length=120)
@@ -99,6 +108,7 @@ class CaseCollectionView(BaseModel):
     name: str
     description: str
     case_count: int
+    lifecycle_status: CaseCollectionLifecycleStatus
     creator: CollectionCreatorView | None = None
     test_target: CollectionTargetView | None = None
     created_at: datetime

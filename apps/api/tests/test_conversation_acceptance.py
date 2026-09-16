@@ -6,7 +6,10 @@ import pytest
 from pydantic import ValidationError
 
 from casepilot_api.agent_router import DEFAULT_ACTIONS, deterministic_plan
-from casepilot_api.conversations import classify_intent
+from casepilot_api.conversations import (
+    classify_intent,
+    collection_workspace_context,
+)
 from casepilot_api.schemas import ConversationOperationCollectionConfirmRequest
 
 FIXTURE = Path(__file__).parent / "fixtures" / "conversation_intent_acceptance.json"
@@ -117,3 +120,13 @@ def test_collection_confirmation_requires_exactly_one_choice() -> None:
     )
     assert str(existing.collection_id).endswith("0001")
     assert created.create_collection_name == "新验收集合"
+
+
+def test_collection_workspace_enters_formal_case_maintenance() -> None:
+    assert collection_workspace_context({"phase": "idle", "active_view": "map"}) == {
+        "phase": "maintenance",
+        "active_view": "map",
+    }
+    assert collection_workspace_context({"phase": "candidate_review"}) == {
+        "phase": "candidate_review"
+    }

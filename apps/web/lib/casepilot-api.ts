@@ -135,6 +135,13 @@ export type CaseCollectionDto = {
   name: string;
   description: string;
   case_count: number;
+  lifecycle_status:
+    | "empty"
+    | "brief_drafting"
+    | "brief_review"
+    | "generating"
+    | "candidate_review"
+    | "maintenance";
   creator?: {
     id: string;
     display_name: string;

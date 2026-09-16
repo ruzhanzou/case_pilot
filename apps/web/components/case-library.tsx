@@ -1,6 +1,9 @@
 "use client";
 
 import { CaseMindMap } from "@/components/case-mind-map";
+import {
+  CollectionStatusBadge,
+} from "@/components/collection-status-badge";
 import type {
   CaseCollectionDto,
   TestCaseDto,
@@ -34,6 +37,7 @@ type CaseLibraryProps = {
   cases: TestCaseDto[];
   selectedCase: TestCaseDto | null;
   loading: boolean;
+  importingCollectionId?: string;
   onSelectCollection: (collectionId: string) => void;
   onCreateCollection: () => void;
   onImportExcel: () => void;
@@ -54,6 +58,7 @@ export function CaseLibrary({
   cases,
   selectedCase,
   loading,
+  importingCollectionId,
   onSelectCollection,
   onCreateCollection,
   onImportExcel,
@@ -152,9 +157,19 @@ export function CaseLibrary({
               <span className="collection-item__icon">
                 <Archive size={17} />
               </span>
-              <span>
+              <span className="collection-item__content">
                 <strong>{collection.name}</strong>
-                <small>{collection.case_count} 条用例</small>
+                <small>
+                  {collection.case_count} 条用例
+                  <CollectionStatusBadge
+                    compact
+                    status={
+                      collection.id === importingCollectionId
+                        ? "importing"
+                        : collection.lifecycle_status
+                    }
+                  />
+                </small>
               </span>
               <ChevronRight size={15} />
             </button>
@@ -178,7 +193,18 @@ export function CaseLibrary({
         <header className="case-library__header">
           <div>
             <span className="management-kicker">用例管理</span>
-            <h1>{selectedCollection?.name ?? "请选择用例集合"}</h1>
+            <div className="case-library__title-row">
+              <h1>{selectedCollection?.name ?? "请选择用例集合"}</h1>
+              {selectedCollection && (
+                <CollectionStatusBadge
+                  status={
+                    selectedCollection.id === importingCollectionId
+                      ? "importing"
+                      : selectedCollection.lifecycle_status
+                  }
+                />
+              )}
+            </div>
             <p>{selectedCollection?.description || "管理当前空间中的结构化测试用例"}</p>
             {selectedCollection && (
               <div className="case-library__summary" aria-label="用例集合摘要">

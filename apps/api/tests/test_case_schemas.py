@@ -2,7 +2,10 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from casepilot_api.case_management import validate_execution_record_update
+from casepilot_api.case_management import (
+    collection_lifecycle_status,
+    validate_execution_record_update,
+)
 from casepilot_api.schemas import (
     CandidateCreate,
     ExecutionRecordUpdate,
@@ -240,3 +243,23 @@ def test_passed_execution_allows_optional_step_tracking() -> None:
         }
     )
     validate_execution_record_update(payload, {"first", "second"})
+
+
+@pytest.mark.parametrize(
+    ("context", "case_count", "expected"),
+    [
+        (None, 0, "empty"),
+        ({"phase": "idle"}, 3, "maintenance"),
+        ({"phase": "brief_drafting"}, 3, "brief_drafting"),
+        ({"phase": "brief_review"}, 3, "brief_review"),
+        ({"phase": "generating"}, 3, "generating"),
+        ({"phase": "candidate_review"}, 3, "candidate_review"),
+        ({"phase": "maintenance"}, 0, "empty"),
+    ],
+)
+def test_collection_lifecycle_status(
+    context: dict | None,
+    case_count: int,
+    expected: str,
+) -> None:
+    assert collection_lifecycle_status(context, case_count) == expected

@@ -29,6 +29,7 @@ from casepilot_api.models import (
 )
 from casepilot_api.schemas import (
     CaseCollectionCreate,
+    CaseCollectionLifecycleStatus,
     CaseCollectionUpdate,
     CaseCollectionView,
     ExecutionRecordReassign,
@@ -382,12 +383,25 @@ def collection_to_view(db: Session, collection: CaseCollection) -> CaseCollectio
     if creator_id is None and project is not None:
         creator_id = project.account_id
     creator = db.get(Account, creator_id) if creator_id else None
+    latest_workspace_context = db.scalar(
+        select(Conversation.context)
+        .where(
+            Conversation.collection_id == collection.id,
+            Conversation.status == "active",
+        )
+        .order_by(Conversation.updated_at.desc())
+        .limit(1)
+    )
     return CaseCollectionView(
         id=collection.id,
         space_id=collection.space_id,
         name=collection.name,
         description=collection.description,
         case_count=case_count or 0,
+        lifecycle_status=collection_lifecycle_status(
+            latest_workspace_context,
+            case_count or 0,
+        ),
         creator=(
             {
                 "id": creator.id,
@@ -411,6 +425,27 @@ def collection_to_view(db: Session, collection: CaseCollection) -> CaseCollectio
             else None
         ),
         created_at=collection.created_at,
+    )
+
+
+def collection_lifecycle_status(
+    workspace_context: dict | None,
+    case_count: int,
+) -> CaseCollectionLifecycleStatus:
+    phase = str((workspace_context or {}).get("phase", "idle"))
+    phase_statuses = {
+        "brief_drafting": CaseCollectionLifecycleStatus.BRIEF_DRAFTING,
+        "brief_review": CaseCollectionLifecycleStatus.BRIEF_REVIEW,
+        "generating": CaseCollectionLifecycleStatus.GENERATING,
+        "candidate_review": CaseCollectionLifecycleStatus.CANDIDATE_REVIEW,
+    }
+    return phase_statuses.get(
+        phase,
+        (
+            CaseCollectionLifecycleStatus.MAINTENANCE
+            if case_count
+            else CaseCollectionLifecycleStatus.EMPTY
+        ),
     )
 
 
