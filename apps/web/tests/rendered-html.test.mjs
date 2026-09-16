@@ -53,6 +53,8 @@ test("keeps the persisted case management and execution baseline", async () => {
     conversationExamples,
     conversationHistory,
     apiClient,
+    routeHelpers,
+    routePage,
     css,
   ] =
     await Promise.all([
@@ -72,6 +74,8 @@ test("keeps the persisted case management and execution baseline", async () => {
     readFile(new URL("../content/conversation-examples.ts", import.meta.url), "utf8"),
     readFile(new URL("../components/conversation-history-drawer.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/casepilot-api.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/casepilot-route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/[[...route]]/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
 
@@ -89,6 +93,12 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(managementApp, /"CASE_QUERY"/);
   assert.match(managementApp, /createConversation\(\{/);
   assert.match(managementApp, /spaceId: space\.id/);
+  assert.match(managementApp, /router\.push\(nextPath/);
+  assert.match(managementApp, /getConversation\(routeConversationId\)/);
+  assert.match(routeHelpers, /\/workbench\/conversations\//);
+  assert.match(routeHelpers, /\/cases\//);
+  assert.match(routeHelpers, /\/executions/);
+  assert.match(routePage, /parseCasePilotRoute/);
   assert.match(newConversation, /确认本对话维护的用例集合/);
   assert.match(newConversation, /confirmConversationOperationCollection/);
   assert.match(caseWorkbench, /本对话仅维护此集合/);

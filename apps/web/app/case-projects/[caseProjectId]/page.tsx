@@ -13,5 +13,5 @@ export default async function CaseProjectPage({
   const { access_token: accessToken } = await searchParams;
   const query = new URLSearchParams({ case_project_id: caseProjectId });
   if (accessToken) query.set("access_token", accessToken);
-  redirect(`/?${query.toString()}`);
+  redirect(`/workbench?${query.toString()}`);
 }

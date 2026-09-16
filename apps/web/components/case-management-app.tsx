@@ -41,6 +41,7 @@ import {
   type TestCaseDto,
   type TestCaseInput,
 } from "@/lib/casepilot-api";
+import { casePilotPath, type CasePilotRoute } from "@/lib/casepilot-route";
 import {
   BookOpen,
   Layers3,
@@ -51,11 +52,13 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type CaseManagementAppProps = {
   account: Account;
   onLogout: () => Promise<void>;
+  route: CasePilotRoute;
 };
 
 type ManagementPage = "workbench" | "knowledge" | "library" | "execution";
@@ -90,7 +93,17 @@ function shouldOpenWorkspace(
 export function CaseManagementApp({
   account,
   onLogout,
+  route,
 }: CaseManagementAppProps) {
+  const router = useRouter();
+  const applyingRouteRef = useRef(true);
+  const routePath = casePilotPath(route);
+  const routePage = route.page;
+  const routeConversationId =
+    route.page === "workbench" ? route.conversationId : undefined;
+  const routeCollectionId =
+    "collectionId" in route ? route.collectionId : undefined;
+  const routeCaseId = route.page === "library" ? route.caseId : undefined;
   const [selectedSpaceId, setSelectedSpaceId] = useState(
     account.spaces[0]?.id ?? "",
   );
@@ -98,25 +111,40 @@ export function CaseManagementApp({
     account.spaces.find((item) => item.id === selectedSpaceId) ??
     account.spaces[0];
   const activeSpaceId = space?.id;
-  const [page, setPage] = useState<ManagementPage>("workbench");
+  const [page, setPage] = useState<ManagementPage>(route.page);
   const [workbenchMode, setWorkbenchMode] = useState<
     "create" | "workspace"
-  >("create");
+  >(
+    route.page === "workbench" &&
+      (route.collectionId || route.conversationId)
+      ? "workspace"
+      : "create",
+  );
   const [executionNavigation, setExecutionNavigation] = useState<{
     id: number;
     mode: "overview" | "create";
   }>({ id: 0, mode: "overview" });
   const [playlistCreationId, setPlaylistCreationId] = useState("");
-  const [deepLinkedCollectionId, setDeepLinkedCollectionId] = useState("");
+  const [deepLinkedCollectionId, setDeepLinkedCollectionId] = useState(
+    "collectionId" in route ? (route.collectionId ?? "") : "",
+  );
   const [collections, setCollections] = useState<CaseCollectionDto[]>([]);
-  const [selectedCollectionId, setSelectedCollectionId] = useState("");
+  const [selectedCollectionId, setSelectedCollectionId] = useState(
+    "collectionId" in route ? (route.collectionId ?? "") : "",
+  );
   const [cases, setCases] = useState<TestCaseDto[]>([]);
-  const [selectedCaseId, setSelectedCaseId] = useState("");
+  const [selectedCaseId, setSelectedCaseId] = useState(
+    route.page === "library" ? (route.caseId ?? "") : "",
+  );
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [executionDirty, setExecutionDirty] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(true);
+  const [historyOpen, setHistoryOpen] = useState(
+    route.page === "workbench" &&
+      !route.conversationId &&
+      !route.collectionId,
+  );
   const [historyRevision, setHistoryRevision] = useState(0);
   const [landingConversation, setLandingConversation] =
     useState<ConversationDto | null>(null);
@@ -495,6 +523,135 @@ export function CaseManagementApp({
 
   useEffect(() => {
     let active = true;
+    applyingRouteRef.current = true;
+
+    if (routePage === "workbench" && routeConversationId) {
+      void getConversation(routeConversationId)
+        .then((conversation) => {
+          if (!active) return;
+          setHistoryOpen(false);
+          setLandingConversation(conversation);
+          setSelectedSpaceId(conversation.space_id);
+          setDeepLinkedCollectionId(conversation.collection_id ?? "");
+          setSelectedCollectionId(conversation.collection_id ?? "");
+          setSelectedCaseId("");
+          setWorkbenchMode(
+            conversation.collection_id ? "workspace" : "create",
+          );
+          setPage("workbench");
+        })
+        .catch((caught) => {
+          if (!active) return;
+          setHistoryOpen(false);
+          setError(
+            caught instanceof Error
+              ? `对话加载失败：${publicErrorMessage(caught.message)}`
+              : "对话加载失败",
+          );
+          setWorkbenchMode("create");
+          setPage("workbench");
+          router.replace("/workbench", { scroll: false });
+        })
+        .finally(() => {
+          if (active) applyingRouteRef.current = false;
+        });
+      return () => {
+        active = false;
+      };
+    }
+
+    queueMicrotask(() => {
+      if (!active) return;
+      setHistoryOpen(false);
+      setPage(routePage);
+      if (routePage === "workbench") {
+        setWorkbenchMode(routeCollectionId ? "workspace" : "create");
+        if (routeCollectionId) {
+          setDeepLinkedCollectionId(routeCollectionId);
+          setSelectedCollectionId(routeCollectionId);
+        }
+        setSelectedCaseId("");
+      } else if (routePage === "library") {
+        setWorkbenchMode("create");
+        setDeepLinkedCollectionId(routeCollectionId ?? "");
+        if (routeCollectionId) setSelectedCollectionId(routeCollectionId);
+        setSelectedCaseId(routeCaseId ?? "");
+      } else if (routePage === "execution") {
+        setWorkbenchMode("create");
+        setDeepLinkedCollectionId(routeCollectionId ?? "");
+        if (routeCollectionId) setSelectedCollectionId(routeCollectionId);
+        setSelectedCaseId("");
+      } else {
+        setWorkbenchMode("create");
+        setSelectedCaseId("");
+      }
+      applyingRouteRef.current = false;
+    });
+    return () => {
+      active = false;
+    };
+  }, [
+    routeCaseId,
+    routeCollectionId,
+    routeConversationId,
+    routePage,
+    routePath,
+    router,
+  ]);
+
+  const activeRoute = useMemo<CasePilotRoute>(() => {
+    if (page === "knowledge") return { page: "knowledge" };
+    if (page === "execution") {
+      return {
+        page: "execution",
+        collectionId: selectedCollectionId || undefined,
+      };
+    }
+    if (page === "library") {
+      return {
+        page: "library",
+        collectionId: selectedCollectionId || undefined,
+        caseId: selectedCaseId || undefined,
+      };
+    }
+    if (
+      landingConversation &&
+      (workbenchMode === "create" ||
+        landingConversation.collection_id === selectedCollectionId)
+    ) {
+      return {
+        page: "workbench",
+        conversationId: landingConversation.id,
+      };
+    }
+    if (workbenchMode === "workspace") {
+      return {
+        page: "workbench",
+        collectionId: selectedCollectionId || undefined,
+      };
+    }
+    return { page: "workbench" };
+  }, [
+    landingConversation,
+    page,
+    selectedCaseId,
+    selectedCollectionId,
+    workbenchMode,
+  ]);
+
+  useEffect(() => {
+    if (applyingRouteRef.current) return;
+    const nextPath = casePilotPath(activeRoute);
+    if (window.location.pathname === nextPath) return;
+    if (window.location.pathname === "/") {
+      router.replace(nextPath, { scroll: false });
+    } else {
+      router.push(nextPath, { scroll: false });
+    }
+  }, [activeRoute, router]);
+
+  useEffect(() => {
+    let active = true;
     if (!activeSpaceId) return;
     void (async () => {
       const availableCollections = await listCollections(activeSpaceId);
@@ -515,7 +672,12 @@ export function CaseManagementApp({
       );
       setSelectedCollectionId(initialCollection?.id ?? "");
       setCases(initialCases);
-      setSelectedCaseId("");
+      const routedCaseId =
+        routePage === "library" &&
+        initialCases.some((item) => item.id === routeCaseId)
+          ? routeCaseId
+          : "";
+      setSelectedCaseId(routedCaseId ?? "");
     })()
       .catch((caught) => {
         if (active) {
@@ -528,7 +690,13 @@ export function CaseManagementApp({
     return () => {
       active = false;
     };
-  }, [activeSpaceId, deepLinkedCollectionId]);
+  }, [
+    activeSpaceId,
+    deepLinkedCollectionId,
+    routeCaseId,
+    routePage,
+    routePath,
+  ]);
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search);

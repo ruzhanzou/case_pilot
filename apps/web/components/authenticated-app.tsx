@@ -8,6 +8,7 @@ import {
   registerAccount,
   type Account,
 } from "@/lib/casepilot-api";
+import type { CasePilotRoute } from "@/lib/casepilot-route";
 import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowRight,
@@ -25,7 +26,7 @@ const demoCredentials = {
   password: "CasePilot123!",
 };
 
-export function AuthenticatedApp() {
+export function AuthenticatedApp({ route }: { route: CasePilotRoute }) {
   const [account, setAccount] = useState<Account | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -88,7 +89,9 @@ export function AuthenticatedApp() {
   }
 
   if (account) {
-    return <CaseManagementApp account={account} onLogout={logout} />;
+    return (
+      <CaseManagementApp account={account} onLogout={logout} route={route} />
+    );
   }
 
   return (
