@@ -29,10 +29,10 @@ test("server-renders the CasePilot authentication shell", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>CasePilot — AI 用例工作台<\/title>/i);
+  assert.match(html, /<title>CasePilot — AI Test Case Workspace<\/title>/i);
   assert.match(html, /class="auth-loading"/);
-  assert.match(html, /正在连接本地工作区/);
-  assert.match(html, /lang="zh-CN"/);
+  assert.match(html, /Connecting to your local workspace/);
+  assert.match(html, /lang="en"/);
 });
 
 test("keeps the persisted case management and execution baseline", async () => {
@@ -55,6 +55,7 @@ test("keeps the persisted case management and execution baseline", async () => {
     apiClient,
     routeHelpers,
     routePage,
+    i18n,
     css,
   ] =
     await Promise.all([
@@ -76,8 +77,14 @@ test("keeps the persisted case management and execution baseline", async () => {
     readFile(new URL("../lib/casepilot-api.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/casepilot-route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/[[...route]]/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/i18n.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
+
+  assert.match(i18n, /useSyncExternalStore/);
+  assert.match(i18n, /casepilot\.locale\.v1/);
+  assert.match(i18n, /document\.documentElement\.lang = locale/);
+  assert.match(i18n, /function LanguageSwitcher/);
 
   assert.doesNotMatch(
     managementApp,
@@ -99,12 +106,12 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(routeHelpers, /\/cases\//);
   assert.match(routeHelpers, /\/executions/);
   assert.match(routePage, /parseCasePilotRoute/);
-  assert.match(newConversation, /确认本对话维护的用例集合/);
+  assert.match(newConversation, /conversation\.confirmCollection/);
   assert.match(newConversation, /confirmConversationOperationCollection/);
   assert.match(caseWorkbench, /本对话仅维护此集合/);
   assert.match(caseWorkbench, /新建对话并打开该集合/);
   assert.match(managementApp, /<ExecutionWorkspace/);
-  assert.match(managementApp, /AI 用例工作台/);
+  assert.match(managementApp, /page\.workbench/);
   assert.match(caseLibrary, /<CaseMindMap/);
   assert.match(caseLibrary, /onStartExecution/);
   assert.match(caseLibrary, /onOpenWorkbench/);
@@ -200,14 +207,14 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(caseWorkbench, /SMALL_TALK/);
   assert.match(caseWorkbench, /变更审阅/);
   assert.match(caseWorkbench, /确认软删除/);
-  assert.match(newConversation, /今天想测试什么/);
-  assert.match(newConversation, /自动识别意图/);
-  assert.match(newConversation, /正在识别并处理/);
+  assert.match(newConversation, /conversation\.hero/);
+  assert.match(newConversation, /conversation\.autoIntent/);
+  assert.match(newConversation, /conversation\.processing/);
   assert.match(newConversation, /awaiting_intent/);
   assert.match(managementApp, /confirmLandingConversationIntent/);
   assert.match(
     newConversation,
-    /仅在确认生成、修改、删除或查询用例时进入绑定集合工作台/,
+    /conversation\.routing/,
   );
   assert.match(newConversation, /accept="\.pdf,\.txt,application\/pdf,text\/plain"/);
   assert.match(caseWorkbench, /selectedTargets/);
@@ -216,7 +223,7 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(conversationExamples, /生成登录用例/);
   assert.match(conversationExamples, /梳理测试范围/);
   assert.match(conversationExamples, /局部修改用例/);
-  assert.match(newConversation, /历史对话/);
+  assert.match(newConversation, /conversation\.history/);
   assert.match(conversationHistory, /listConversationHistory/);
   assert.match(conversationHistory, /role="dialog"/);
   assert.match(conversationHistory, /event\.key === "Escape"/);
@@ -266,9 +273,9 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(executionWorkspace, /管理 Playlist/);
   assert.match(caseLibrary, /创建 Playlist 执行/);
   assert.match(caseLibrary, /从 Excel 导入用例/);
-  assert.match(caseImport, /Test_Case_Name 必填/);
-  assert.match(caseImport, /Test Procedure 必填/);
-  assert.match(caseImport, /Test Validation 必填/);
+  assert.match(caseImport, /Test_Case_Name \{pick\("required", "必填"\)\}/);
+  assert.match(caseImport, /Test Procedure \{pick\("required", "必填"\)\}/);
+  assert.match(caseImport, /Test Validation \{pick\("required", "必填"\)\}/);
   assert.match(excelParser, /parseTestCaseExcel/);
   assert.match(excelParser, /Test Setup/);
   assert.match(excelParser, /Level/);

@@ -42,6 +42,7 @@ import {
   type TestCaseInput,
 } from "@/lib/casepilot-api";
 import { casePilotPath, type CasePilotRoute } from "@/lib/casepilot-route";
+import { LanguageSwitcher, useI18n } from "@/lib/i18n";
 import {
   BookOpen,
   Layers3,
@@ -95,6 +96,7 @@ export function CaseManagementApp({
   onLogout,
   route,
 }: CaseManagementAppProps) {
+  const { t, pick } = useI18n();
   const router = useRouter();
   const applyingRouteRef = useRef(true);
   const routePath = casePilotPath(route);
@@ -167,7 +169,7 @@ export function CaseManagementApp({
     const dirty = page === "execution" && executionDirty;
     return (
       !dirty ||
-      window.confirm("当前页面有尚未保存的修改，离开将丢失这些内容。是否继续？")
+      window.confirm(t("common.unsaved"))
     );
   };
 
@@ -214,7 +216,7 @@ export function CaseManagementApp({
     try {
       await refreshCases(collectionId);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "用例加载失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to load test cases", "用例加载失败"));
     } finally {
       setLoading(false);
     }
@@ -233,7 +235,7 @@ export function CaseManagementApp({
       setPage("library");
     } catch (caught) {
       setError(
-        caught instanceof Error ? caught.message : "正式用例加载失败",
+        caught instanceof Error ? caught.message : pick("Failed to load official test cases", "正式用例加载失败"),
       );
     } finally {
       setLoading(false);
@@ -268,7 +270,7 @@ export function CaseManagementApp({
       if (!conversation) {
         conversation = await createConversation({
           spaceId: space.id,
-          title: "新对话",
+          title: pick("New conversation", "新对话"),
         });
         setLandingConversation(conversation);
       }
@@ -340,7 +342,7 @@ export function CaseManagementApp({
         setHistoryRevision((current) => current + 1);
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "消息处理失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to process message", "消息处理失败"));
       throw caught;
     } finally {
       setSaving(false);
@@ -356,7 +358,7 @@ export function CaseManagementApp({
       if (!conversation) {
         conversation = await createConversation({
           spaceId: space.id,
-          title: "新对话",
+          title: pick("New conversation", "新对话"),
         });
       }
       await uploadConversationAttachments(conversation.id, files);
@@ -364,7 +366,7 @@ export function CaseManagementApp({
       setLandingConversation(refreshed);
       setHistoryRevision((current) => current + 1);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "附件上传失败");
+      setError(caught instanceof Error ? caught.message : pick("Attachment upload failed", "附件上传失败"));
       throw caught;
     } finally {
       setSaving(false);
@@ -378,7 +380,7 @@ export function CaseManagementApp({
       const bound = await getConversation(turn.conversation_id);
       setLandingConversation(bound);
       setHistoryRevision((current) => current + 1);
-      if (!bound.collection_id) throw new Error("集合确认未生效");
+      if (!bound.collection_id) throw new Error(pick("Collection confirmation did not take effect", "集合确认未生效"));
       await refreshCollections(bound.collection_id);
       await selectCollection(bound.collection_id);
       setWorkbenchMode("workspace");
@@ -395,7 +397,7 @@ export function CaseManagementApp({
         });
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "集合绑定失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to bind collection", "集合绑定失败"));
       throw caught;
     } finally {
       setSaving(false);
@@ -420,7 +422,7 @@ export function CaseManagementApp({
       setPage("workbench");
       setHistoryRevision((current) => current + 1);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "新建对话失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to create conversation", "新建对话失败"));
       throw caught;
     } finally {
       setSaving(false);
@@ -436,7 +438,7 @@ export function CaseManagementApp({
       setLandingConversation(await getConversation(landingConversation.id));
       setHistoryRevision((current) => current + 1);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "取消操作失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to cancel operation", "取消操作失败"));
       throw caught;
     } finally {
       setSaving(false);
@@ -480,7 +482,7 @@ export function CaseManagementApp({
         setHistoryRevision((current) => current + 1);
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "意图确认失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to confirm action", "意图确认失败"));
       throw caught;
     } finally {
       setSaving(false);
@@ -515,7 +517,7 @@ export function CaseManagementApp({
         setLandingConversation(await getConversation(refreshed.id));
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "意图确认失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to confirm action", "意图确认失败"));
       throw caught;
     } finally {
       setSaving(false);
@@ -546,8 +548,8 @@ export function CaseManagementApp({
           setHistoryOpen(false);
           setError(
             caught instanceof Error
-              ? `对话加载失败：${publicErrorMessage(caught.message)}`
-              : "对话加载失败",
+              ? pick(`Failed to load conversation: ${publicErrorMessage(caught.message)}`, `对话加载失败：${publicErrorMessage(caught.message)}`)
+              : pick("Failed to load conversation", "对话加载失败"),
           );
           setWorkbenchMode("create");
           setPage("workbench");
@@ -598,6 +600,7 @@ export function CaseManagementApp({
     routePage,
     routePath,
     router,
+    pick,
   ]);
 
   const activeRoute = useMemo<CasePilotRoute>(() => {
@@ -683,7 +686,7 @@ export function CaseManagementApp({
       .catch((caught) => {
         if (active) {
           setError(
-            caught instanceof Error ? caught.message : "用例数据加载失败",
+            caught instanceof Error ? caught.message : pick("Failed to load test case data", "用例数据加载失败"),
           );
         }
       })
@@ -697,6 +700,7 @@ export function CaseManagementApp({
     routeCaseId,
     routePage,
     routePath,
+    pick,
   ]);
 
   useEffect(() => {
@@ -732,15 +736,15 @@ export function CaseManagementApp({
         if (active) {
           setError(
             caught instanceof Error
-              ? `${creationId ? "Playlist 创建会话" : "用例项目"}加载失败：${publicErrorMessage(caught.message)}`
-              : `${creationId ? "Playlist 创建会话" : "用例项目"}加载失败`,
+              ? pick(`${creationId ? "Playlist creation session" : "Test case project"} failed to load: ${publicErrorMessage(caught.message)}`, `${creationId ? "Playlist 创建会话" : "用例项目"}加载失败：${publicErrorMessage(caught.message)}`)
+              : pick(`${creationId ? "Playlist creation session" : "Test case project"} failed to load`, `${creationId ? "Playlist 创建会话" : "用例项目"}加载失败`),
           );
         }
       });
     return () => {
       active = false;
     };
-  }, []);
+  }, [pick]);
 
   const switchSpace = (spaceId: string) => {
     if (spaceId === space?.id) return;
@@ -800,7 +804,7 @@ export function CaseManagementApp({
       }
       setCollectionEditor(null);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "用例集合保存失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to save collection", "用例集合保存失败"));
     } finally {
       setSaving(false);
     }
@@ -810,7 +814,7 @@ export function CaseManagementApp({
     if (!selectedCollection) return;
     if (
       !window.confirm(
-        `确定删除用例集合“${selectedCollection.name}”吗？集合内用例仍保留在审计记录中。`,
+        pick(`Delete collection “${selectedCollection.name}”? Its cases will remain in the audit log.`, `确定删除用例集合“${selectedCollection.name}”吗？集合内用例仍保留在审计记录中。`),
       )
     ) {
       return;
@@ -826,7 +830,7 @@ export function CaseManagementApp({
         await selectCollection(remaining[0].id);
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "用例集合删除失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to delete collection", "用例集合删除失败"));
     } finally {
       setSaving(false);
     }
@@ -850,9 +854,9 @@ export function CaseManagementApp({
       setError(
         caught instanceof Error
           ? caught.message === "case_key_already_exists"
-            ? "当前空间中已存在相同用例编号"
+            ? pick("This case ID already exists in the current space", "当前空间中已存在相同用例编号")
             : caught.message
-          : "用例保存失败",
+          : pick("Failed to save test case", "用例保存失败"),
       );
     } finally {
       setSaving(false);
@@ -874,7 +878,7 @@ export function CaseManagementApp({
       await refreshCases(selectedCollection.id, result.id);
     } catch (caught) {
       const message =
-        caught instanceof Error ? caught.message : "节点保存失败，请重试";
+        caught instanceof Error ? caught.message : pick("Failed to save node. Try again.", "节点保存失败，请重试");
       setError(message);
       throw new Error(message);
     } finally {
@@ -884,14 +888,14 @@ export function CaseManagementApp({
 
   const removeCase = async (testCase: TestCaseDto) => {
     if (!selectedCollection) return;
-    if (!window.confirm(`确定删除用例 ${testCase.case_key} 吗？`)) return;
+    if (!window.confirm(pick(`Delete test case ${testCase.case_key}?`, `确定删除用例 ${testCase.case_key} 吗？`))) return;
     setSaving(true);
     setError("");
     try {
       await deleteTestCase(testCase.id);
       await refreshCases(selectedCollection.id);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "用例删除失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to delete test case", "用例删除失败"));
     } finally {
       setSaving(false);
     }
@@ -902,7 +906,7 @@ export function CaseManagementApp({
     inputs: TestCaseInput[],
   ) => {
     if (!collections.some((collection) => collection.id === collectionId)) {
-      throw new Error("请先选择目标用例集合");
+      throw new Error(pick("Select a target collection first", "请先选择目标用例集合"));
     }
     setSaving(true);
     setError("");
@@ -915,11 +919,11 @@ export function CaseManagementApp({
       const message =
         caught instanceof Error
           ? caught.message === "case_key_already_exists"
-            ? "候选用例编号已存在，请调整候选后再保存"
+            ? pick("A candidate case ID already exists. Update it before saving.", "候选用例编号已存在，请调整候选后再保存")
             : caught.message === "duplicate_case_key_in_batch"
-              ? "候选用例中存在重复编号，请调整后再保存"
+              ? pick("Candidate cases contain duplicate IDs. Update them before saving.", "候选用例中存在重复编号，请调整后再保存")
               : caught.message
-          : "候选用例写入失败";
+          : pick("Failed to save candidate cases", "候选用例写入失败");
       setError(message);
       throw new Error(message);
     } finally {
@@ -933,7 +937,7 @@ export function CaseManagementApp({
         <div className="management-brand" aria-label="CasePilot">
           <PencilLine size={21} />
         </div>
-        <nav aria-label="主导航">
+        <nav aria-label={t("nav.main")}>
           <button
             type="button"
             className={page === "knowledge" ? "is-active" : ""}
@@ -942,10 +946,10 @@ export function CaseManagementApp({
               setHistoryOpen(false);
               setPage("knowledge");
             }}
-            aria-label="空间知识库"
+            aria-label={t("page.knowledge")}
           >
             <BookOpen size={20} />
-            <span>知识库</span>
+            <span>{t("nav.knowledge")}</span>
           </button>
           <button
             type="button"
@@ -956,10 +960,10 @@ export function CaseManagementApp({
               setWorkbenchMode("create");
               setPage("workbench");
             }}
-            aria-label="AI 用例工作台"
+            aria-label={t("page.workbench")}
           >
             <Sparkles size={20} />
-            <span>AI 工作台</span>
+            <span>{t("nav.workbench")}</span>
           </button>
           <button
             type="button"
@@ -969,10 +973,10 @@ export function CaseManagementApp({
               setHistoryOpen(false);
               setPage("library");
             }}
-            aria-label="用例管理"
+            aria-label={t("page.library")}
           >
             <Layers3 size={20} />
-            <span>用例管理</span>
+            <span>{t("nav.cases")}</span>
           </button>
           <button
             type="button"
@@ -986,18 +990,19 @@ export function CaseManagementApp({
               }));
               setPage("execution");
             }}
-            aria-label="执行用例"
+            aria-label={t("page.execution")}
           >
             <PlayCircle size={20} />
-            <span>执行用例</span>
+            <span>{t("nav.execute")}</span>
           </button>
         </nav>
         <div className="management-nav__footer">
+          <LanguageSwitcher compact />
           <button
             type="button"
             className="management-avatar"
             title={account.display_name}
-            aria-label={`当前用户：${account.display_name}`}
+            aria-label={pick(`Current user: ${account.display_name}`, `当前用户：${account.display_name}`)}
           >
             {displayName}
           </button>
@@ -1007,8 +1012,8 @@ export function CaseManagementApp({
               if (!confirmDiscardPageChanges()) return;
               void onLogout();
             }}
-            aria-label="退出登录"
-            title="退出登录"
+            aria-label={t("nav.logout")}
+            title={t("nav.logout")}
           >
             <LogOut size={19} />
           </button>
@@ -1024,31 +1029,31 @@ export function CaseManagementApp({
       >
         <header className="management-topbar">
           <div>
-            <span>{space?.name ?? "本地质量空间"}</span>
+            <span>{space?.name ?? t("common.localSpace")}</span>
             <strong>
               {page === "workbench"
                 ? workbenchMode === "create"
-                  ? "AI 新对话"
-                  : "AI 用例工作台"
+                  ? t("page.newConversation")
+                  : t("page.workbench")
                 : page === "knowledge"
-                  ? "空间知识库"
+                  ? t("page.knowledge")
                 : page === "library"
-                  ? "用例资产管理"
-                  : "QA 用例执行"}
+                  ? t("page.library")
+                  : t("page.execution")}
             </strong>
           </div>
           <div className="management-topbar__status">
             {account.spaces.length > 1 && (
               <label className="management-space-switcher">
-                <span className="sr-only">当前空间</span>
+                <span className="sr-only">{pick("Current space", "当前空间")}</span>
                 <select
-                  aria-label="切换质量空间"
+                  aria-label={pick("Switch quality space", "切换质量空间")}
                   value={space?.id ?? ""}
                   onChange={(event) => switchSpace(event.target.value)}
                 >
                   {account.spaces.map((item) => (
                     <option key={item.id} value={item.id}>
-                      {item.name} · {item.role === "owner" ? "所有者" : "成员"}
+                      {item.name} · {item.role === "owner" ? t("common.owner") : t("common.member")}
                     </option>
                   ))}
                 </select>
@@ -1061,7 +1066,7 @@ export function CaseManagementApp({
         {error && (
           <div className="management-banner-error">
             <span>{error}</span>
-            <button type="button" onClick={() => setError("")} aria-label="关闭提示">
+            <button type="button" onClick={() => setError("")} aria-label={t("common.close")}>
               <X size={16} />
             </button>
           </div>
@@ -1084,11 +1089,11 @@ export function CaseManagementApp({
         {loading && !collections.length ? (
           <div className="management-loading management-loading--page">
             <LoaderCircle className="auth-spinner" size={24} />
-            正在准备工作区…
+            {t("common.loadingWorkspace")}
           </div>
         ) : page === "workbench" && workbenchMode === "create" ? (
           <NewConversation
-            spaceName={space?.name ?? "本地质量空间"}
+            spaceName={space?.name ?? t("common.localSpace")}
             saving={saving}
             conversation={landingConversation}
             collections={collections}
@@ -1105,7 +1110,7 @@ export function CaseManagementApp({
         ) : page === "workbench" ? (
           <CaseWorkbench
             spaceId={space?.id ?? ""}
-            spaceName={space?.name ?? "本地质量空间"}
+            spaceName={space?.name ?? t("common.localSpace")}
             selectedCollection={selectedCollection}
             cases={cases}
             loading={loading}

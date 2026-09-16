@@ -1,6 +1,7 @@
 "use client";
 
 import type { TestCaseDto, TestCaseInput } from "@/lib/casepilot-api";
+import { useI18n } from "@/lib/i18n";
 import { LoaderCircle, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -38,6 +39,7 @@ export function CaseEditorDialog({
   onClose,
   onSave,
 }: CaseEditorDialogProps) {
+  const { pick } = useI18n();
   const [caseKey, setCaseKey] = useState(testCase?.case_key ?? "");
   const [title, setTitle] = useState(testCase?.title ?? "");
   const [module, setModule] = useState(testCase?.module ?? initialModule ?? "");
@@ -106,7 +108,12 @@ export function CaseEditorDialog({
   const requestClose = () => {
     if (
       isDirty &&
-      !window.confirm("当前用例修改尚未保存，确认放弃这些修改吗？")
+      !window.confirm(
+        pick(
+          "This test case has unsaved changes. Discard them?",
+          "当前用例修改尚未保存，确认放弃这些修改吗？",
+        ),
+      )
     ) {
       return;
     }
@@ -127,11 +134,16 @@ export function CaseEditorDialog({
       }))
       .filter((step) => step.action && step.expected);
     if (!title.trim()) {
-      setError("请填写用例名称");
+      setError(pick("Enter a test case name", "请填写用例名称"));
       return;
     }
     if (!normalizedSteps.length) {
-      setError("至少需要一个包含操作和预期结果的执行步骤");
+      setError(
+        pick(
+          "Add at least one step with an action and expected result",
+          "至少需要一个包含操作和预期结果的执行步骤",
+        ),
+      );
       return;
     }
     await onSave({
@@ -162,17 +174,21 @@ export function CaseEditorDialog({
         <header className="management-modal__header">
           <div>
             <span className="management-kicker">
-              {testCase ? `修订版本 V${testCase.revision_number}` : "新建用例"}
+              {testCase
+                ? pick(`Revision V${testCase.revision_number}`, `修订版本 V${testCase.revision_number}`)
+                : pick("New test case", "新建用例")}
             </span>
             <h2 id="case-editor-title">
-              {testCase ? "编辑结构化测试用例" : "创建结构化测试用例"}
+              {testCase
+                ? pick("Edit structured test case", "编辑结构化测试用例")
+                : pick("Create structured test case", "创建结构化测试用例")}
             </h2>
           </div>
           <button
             className="management-icon-button"
             type="button"
             onClick={requestClose}
-            aria-label="关闭编辑窗口"
+            aria-label={pick("Close editor", "关闭编辑窗口")}
           >
             <X size={19} />
           </button>
@@ -181,73 +197,73 @@ export function CaseEditorDialog({
         <form className="case-editor__form" onSubmit={submit}>
           <div className="case-editor__grid">
             <label>
-              用例编号
+              {pick("Case ID", "用例编号")}
               <input
                 value={caseKey}
                 onChange={(event) => setCaseKey(event.target.value)}
-                placeholder="自动生成或输入 AUTH-001"
+                placeholder={pick("Auto-generated or enter AUTH-001", "自动生成或输入 AUTH-001")}
                 disabled={Boolean(testCase)}
               />
             </label>
             <label className="case-editor__wide">
-              用例名称
+              {pick("Test case name", "用例名称")}
               <input
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
-                placeholder="描述明确、可验证的测试目标"
+                placeholder={pick("Describe a clear, verifiable test objective", "描述明确、可验证的测试目标")}
                 autoFocus
               />
             </label>
             <label>
-              所属模块
+              {pick("Module", "所属模块")}
               <input
                 value={module}
                 onChange={(event) => setModule(event.target.value)}
-                placeholder="例如：账号与认证"
+                placeholder={pick("e.g. Accounts and authentication", "例如：账号与认证")}
               />
             </label>
             <label>
-              优先级
+              {pick("Priority", "优先级")}
               <select
                 value={priority}
                 onChange={(event) =>
                   setPriority(event.target.value as TestCaseInput["priority"])
                 }
               >
-                <option value="P0">P0 · 阻断主流程</option>
-                <option value="P1">P1 · 重要场景</option>
-                <option value="P2">P2 · 一般场景</option>
+                <option value="P0">{pick("P0 · Blocks critical flow", "P0 · 阻断主流程")}</option>
+                <option value="P1">{pick("P1 · Important scenario", "P1 · 重要场景")}</option>
+                <option value="P2">{pick("P2 · General scenario", "P2 · 一般场景")}</option>
               </select>
             </label>
             <label>
-              用例类型
+              {pick("Case type", "用例类型")}
               <input
                 value={caseType}
                 onChange={(event) => setCaseType(event.target.value)}
-                placeholder="功能 / 异常 / 边界"
+                placeholder={pick("Functional / Negative / Boundary", "功能 / 异常 / 边界")}
               />
             </label>
             <label>
-              标签
+              {pick("Tags", "标签")}
               <input
                 value={tags}
                 onChange={(event) => setTags(event.target.value)}
-                placeholder="多个标签以逗号分隔"
+                placeholder={pick("Separate tags with commas", "多个标签以逗号分隔")}
               />
             </label>
             <label className="case-editor__wide">
-              来源
+              {pick("Source", "来源")}
               <input
                 value={source}
                 onChange={(event) => setSource(event.target.value)}
-                placeholder="需求文档、人工创建或导入文件"
+                placeholder={pick("Requirement, manual entry, or imported file", "需求文档、人工创建或导入文件")}
               />
             </label>
           </div>
 
           <fieldset className="case-editor__section">
             <div className="case-editor__section-title">
-              <legend>前置条件</legend>
+              <legend>{pick("Preconditions", "前置条件")}</legend>
               <button
                 type="button"
                 onClick={() =>
@@ -260,7 +276,7 @@ export function CaseEditorDialog({
                   ])
                 }
               >
-                <Plus size={15} /> 添加条件
+                <Plus size={15} /> {pick("Add condition", "添加条件")}
               </button>
             </div>
             <div className="case-editor__rows">
@@ -278,11 +294,11 @@ export function CaseEditorDialog({
                         ),
                       )
                     }
-                    placeholder="执行前必须满足的环境、数据或账号条件"
+                    placeholder={pick("Environment, data, or account requirements", "执行前必须满足的环境、数据或账号条件")}
                   />
                   <button
                     type="button"
-                    aria-label={`删除第 ${index + 1} 条前置条件`}
+                    aria-label={pick(`Delete precondition ${index + 1}`, `删除第 ${index + 1} 条前置条件`)}
                     onClick={() =>
                       setPreconditions((items) =>
                         items.length === 1
@@ -300,7 +316,7 @@ export function CaseEditorDialog({
 
           <fieldset className="case-editor__section">
             <div className="case-editor__section-title">
-              <legend>执行步骤与预期结果</legend>
+              <legend>{pick("Steps and expected results", "执行步骤与预期结果")}</legend>
               <button
                 type="button"
                 onClick={() =>
@@ -310,7 +326,7 @@ export function CaseEditorDialog({
                   ])
                 }
               >
-                <Plus size={15} /> 添加步骤
+                <Plus size={15} /> {pick("Add step", "添加步骤")}
               </button>
             </div>
             <div className="case-editor__steps">
@@ -318,7 +334,7 @@ export function CaseEditorDialog({
                 <div className="case-editor__step" key={step.clientId}>
                   <span className="case-editor__step-index">{index + 1}</span>
                   <label>
-                    执行操作
+                    {pick("Action", "执行操作")}
                     <textarea
                       value={step.action}
                       onChange={(event) =>
@@ -330,12 +346,12 @@ export function CaseEditorDialog({
                           ),
                         )
                       }
-                      placeholder="QA 需要完成的具体操作"
+                      placeholder={pick("The exact action for QA to perform", "QA 需要完成的具体操作")}
                       rows={2}
                     />
                   </label>
                   <label>
-                    预期结果／校验点
+                    {pick("Expected result / Checkpoint", "预期结果／校验点")}
                     <textarea
                       value={step.expected}
                       onChange={(event) =>
@@ -347,13 +363,13 @@ export function CaseEditorDialog({
                           ),
                         )
                       }
-                      placeholder="可以观察和判断的明确结果"
+                      placeholder={pick("A clear, observable result", "可以观察和判断的明确结果")}
                       rows={2}
                     />
                   </label>
                   <button
                     type="button"
-                    aria-label={`删除第 ${index + 1} 个执行步骤`}
+                    aria-label={pick(`Delete step ${index + 1}`, `删除第 ${index + 1} 个执行步骤`)}
                     onClick={() =>
                       setSteps((items) =>
                         items.length === 1
@@ -375,7 +391,7 @@ export function CaseEditorDialog({
 
           <footer className="management-modal__footer">
             <button type="button" className="management-button" onClick={requestClose}>
-              取消
+              {pick("Cancel", "取消")}
             </button>
             <button
               type="submit"
@@ -383,7 +399,9 @@ export function CaseEditorDialog({
               disabled={saving}
             >
               {saving && <LoaderCircle className="auth-spinner" size={16} />}
-              {testCase ? "保存为新版本" : "创建用例"}
+              {testCase
+                ? pick("Save as new revision", "保存为新版本")
+                : pick("Create test case", "创建用例")}
             </button>
           </footer>
         </form>

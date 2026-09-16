@@ -10,6 +10,7 @@ import {
   type ConversationTurnDto,
 } from "@/lib/casepilot-api";
 import { conversationExamples } from "@/content/conversation-examples";
+import { useI18n, type TranslationKey } from "@/lib/i18n";
 import {
   ArrowUp,
   BookOpen,
@@ -59,15 +60,21 @@ type NewConversationProps = {
   ) => Promise<void>;
 };
 
-const coreIntentLabels: Record<ConversationIntent, string> = {
-  CASE_GENERATE: "生成用例",
-  CASE_MODIFY: "修改用例",
-  CASE_DELETE: "删除用例",
-  CASE_QUERY: "查询用例",
-  KNOWLEDGE_QA: "知识问答",
-  SMALL_TALK: "日常对话",
-  UNRESOLVED: "补充说明",
+const coreIntentLabelKeys: Record<ConversationIntent, TranslationKey> = {
+  CASE_GENERATE: "intent.generate",
+  CASE_MODIFY: "intent.modify",
+  CASE_DELETE: "intent.delete",
+  CASE_QUERY: "intent.query",
+  KNOWLEDGE_QA: "intent.knowledge",
+  SMALL_TALK: "intent.chat",
+  UNRESOLVED: "intent.clarify",
 };
+
+const exampleKeys = [
+  ["example.generate.title", "example.generate.description", "example.generate.prompt"],
+  ["example.scope.title", "example.scope.description", "example.scope.prompt"],
+  ["example.modify.title", "example.modify.description", "example.modify.prompt"],
+] as const;
 
 const coreIntents: ConversationIntent[] = [
   "CASE_GENERATE",
@@ -91,10 +98,11 @@ export function NewConversation({
   onConfirmIntent,
   onConfirmOperation,
 }: NewConversationProps) {
+  const { t, pick } = useI18n();
   const [prompt, setPrompt] = useState("");
   const [modelId, setModelId] = useState<AgentModelId>("auto");
   const [models, setModels] = useState([
-    { id: "auto" as AgentModelId, label: "自动选择模型" },
+    { id: "auto" as AgentModelId, label: t("model.auto") },
   ]);
   const messageEndRef = useRef<HTMLDivElement>(null);
   const streamScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -163,8 +171,8 @@ export function NewConversation({
   );
 
   const modelLabel = useMemo(
-    () => models.find((model) => model.id === modelId)?.label ?? "自动选择模型",
-    [modelId, models],
+    () => models.find((model) => model.id === modelId)?.label ?? t("model.auto"),
+    [modelId, models, t],
   );
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -209,8 +217,8 @@ export function NewConversation({
             event.currentTarget.form?.requestSubmit();
           }
         }}
-        placeholder="描述你的测试需求，或直接向 CasePilot 提问"
-        aria-label="写给 CasePilot"
+        placeholder={t("conversation.placeholder")}
+        aria-label={t("conversation.write")}
         rows={3}
         autoFocus={!hasConversation}
       />
@@ -237,8 +245,8 @@ export function NewConversation({
           type="button"
           className="new-conversation__add"
           onClick={() => fileRef.current?.click()}
-          aria-label="添加知识资料"
-          title="上传 PDF 或 TXT"
+          aria-label={t("conversation.addKnowledge")}
+          title={t("conversation.uploadHint")}
         >
           <Plus size={20} />
         </button>
@@ -248,12 +256,12 @@ export function NewConversation({
           ) : (
             <Sparkles size={15} />
           )}
-          {saving ? "正在识别并处理…" : "自动识别意图"}
+          {saving ? t("conversation.processing") : t("conversation.autoIntent")}
         </span>
         <label className="new-conversation__model">
-          <span className="sr-only">生成模型</span>
+          <span className="sr-only">{t("conversation.model")}</span>
           <select
-            aria-label="生成模型"
+            aria-label={t("conversation.model")}
             value={modelId}
             onChange={(event) => setModelId(event.target.value)}
             disabled={saving}
@@ -270,7 +278,7 @@ export function NewConversation({
           type="submit"
           className="new-conversation__send"
           disabled={!prompt.trim() || saving}
-          aria-label={saving ? "正在处理" : "发送"}
+          aria-label={saving ? t("conversation.sending") : t("conversation.send")}
         >
           {saving ? (
             <LoaderCircle className="auth-spinner" size={19} />
@@ -285,10 +293,10 @@ export function NewConversation({
             <BookOpen size={17} />
             {spaceName}
           </span>
-          <span>空间知识已启用</span>
+          <span>{t("conversation.knowledgeEnabled")}</span>
           <button type="button" onClick={onOpenLibrary}>
             <Library size={16} />
-            用例管理
+            {t("nav.cases")}
           </button>
         </div>
       )}
@@ -307,7 +315,7 @@ export function NewConversation({
         onClick={onOpenHistory}
       >
         <History size={17} />
-        历史对话
+        {t("conversation.history")}
       </button>
 
       {hasConversation && conversation ? (
@@ -319,11 +327,11 @@ export function NewConversation({
             </header>
             {conversation.operation_plan &&
               conversation.operation_plan.operations.length > 1 && (
-              <ol className="conversation-operation-plan" aria-label="多意图执行进度">
+              <ol className="conversation-operation-plan" aria-label={pick("Multi-action progress", "多意图执行进度")}>
                 {conversation.operation_plan.operations.map((operation) => (
                   <li key={operation.id} data-status={operation.status}>
                     <span>{operation.sequence + 1}</span>
-                    <strong>{coreIntentLabels[operation.intent]}</strong>
+                    <strong>{t(coreIntentLabelKeys[operation.intent])}</strong>
                     <small>{operation.status}</small>
                     {operation.status === "awaiting_intent" && (
                       <div className="conversation-operation-confirmation">
@@ -334,7 +342,7 @@ export function NewConversation({
                             disabled={saving}
                             onClick={() => void onConfirmOperation(operation.id, intent)}
                           >
-                            {coreIntentLabels[intent]}
+                            {t(coreIntentLabelKeys[intent])}
                           </button>
                         ))}
                       </div>
@@ -351,8 +359,8 @@ export function NewConversation({
                 submitCollectionChoice();
               }}
             >
-              <strong>确认本对话维护的用例集合</strong>
-              <p>确认后本对话只能维护这一集合，不能在当前对话中切换。</p>
+              <strong>{t("conversation.confirmCollection")}</strong>
+              <p>{t("conversation.collectionLocked")}</p>
               <select
                 value={effectiveCollectionChoice}
                 disabled={saving || confirmingCollection}
@@ -361,7 +369,7 @@ export function NewConversation({
                   setNewCollectionName("");
                 }}
               >
-                <option value="" disabled>请选择集合</option>
+                <option value="" disabled>{t("conversation.chooseCollection")}</option>
                 {collections.map((collection) => (
                   <option key={collection.id} value={collection.id}>
                     {collection.name}（{collection.case_count}）
@@ -371,7 +379,7 @@ export function NewConversation({
               {allowCreateCollection && (
                 <input
                   value={newCollectionName}
-                  placeholder="或输入新集合名称"
+                  placeholder={t("conversation.newCollection")}
                   maxLength={160}
                   disabled={saving || confirmingCollection}
                   onChange={(event) => {
@@ -391,7 +399,7 @@ export function NewConversation({
                   submitCollectionChoice();
                 }}
               >
-                确认并进入工作台
+                {t("conversation.enterWorkbench")}
               </button>
               </form>
             )}
@@ -414,7 +422,7 @@ export function NewConversation({
                   {message.status === "running" && !message.content ? (
                     <span className="new-conversation__thinking">
                       <LoaderCircle className="auth-spinner" size={15} />
-                      正在思考…
+                      {t("conversation.thinking")}
                     </span>
                   ) : (
                     <Streamdown
@@ -433,7 +441,7 @@ export function NewConversation({
                   )}
                   {message.status === "awaiting_intent" && (
                     <div className="conversation-intent-confirmation">
-                      <span>我还不能确定你的意图，请选择本次希望我执行的操作：</span>
+                      <span>{t("conversation.intentUnknown")}</span>
                       <div>
                         {[
                           message.intent,
@@ -455,7 +463,7 @@ export function NewConversation({
                                 void onConfirmIntent(message.id, intent)
                               }
                             >
-                              {coreIntentLabels[intent]}
+                              {t(coreIntentLabelKeys[intent])}
                             </button>
                           ))}
                       </div>
@@ -463,7 +471,7 @@ export function NewConversation({
                   )}
                   {message.metadata.action === "new_conversation_required" && (
                     <div className="conversation-cross-collection">
-                      <span>当前对话不会执行这条跨集合指令。</span>
+                      <span>{t("conversation.crossCollection")}</span>
                       <button
                         type="button"
                         disabled={saving}
@@ -479,7 +487,7 @@ export function NewConversation({
                           }
                         }}
                       >
-                        新建对话并打开该集合
+                        {t("conversation.openCollection")}
                       </button>
                       <button
                         type="button"
@@ -492,7 +500,7 @@ export function NewConversation({
                           if (operationId) void onCancelOperation(operationId);
                         }}
                       >
-                        取消本次操作
+                        {t("conversation.cancel")}
                       </button>
                     </div>
                   )}
@@ -508,7 +516,7 @@ export function NewConversation({
                   <strong>CasePilot</strong>
                   <span className="new-conversation__thinking">
                     <LoaderCircle className="auth-spinner" size={15} />
-                    正在识别意图并准备响应…
+                    {t("conversation.preparing")}
                   </span>
                 </div>
               </article>
@@ -520,24 +528,24 @@ export function NewConversation({
       ) : (
         <div className="new-conversation__landing">
           <div className="new-conversation__hero">
-            <h1>今天想测试什么？</h1>
-            <p>直接描述需求或提问，CasePilot 会先理解你的意图。</p>
+            <h1>{t("conversation.hero")}</h1>
+            <p>{t("conversation.heroHint")}</p>
           </div>
           {composer}
           <p className="new-conversation__routing-note">
-            仅在确认生成、修改、删除或查询用例时进入绑定集合工作台
+            {t("conversation.routing")}
           </p>
           <div className="new-conversation__examples">
-            <span>你可以这样开始</span>
+            <span>{t("conversation.examples")}</span>
             <div>
-              {conversationExamples.map((example) => (
+              {conversationExamples.map((example, index) => (
                 <button
                   type="button"
                   key={example.title}
-                  onClick={() => setPrompt(example.prompt)}
+                  onClick={() => setPrompt(t(exampleKeys[index][2]))}
                 >
-                  <strong>{example.title}</strong>
-                  <small>{example.description}</small>
+                  <strong>{t(exampleKeys[index][0])}</strong>
+                  <small>{t(exampleKeys[index][1])}</small>
                 </button>
               ))}
             </div>

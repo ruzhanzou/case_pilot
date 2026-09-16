@@ -21,6 +21,7 @@ import {
   type PlaylistDto,
   type SpaceMemberDto,
 } from "@/lib/casepilot-api";
+import { useI18n } from "@/lib/i18n";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -57,29 +58,16 @@ type ExecutionView = "overview" | "create" | "detail";
 
 const executionOptions: {
   value: ExecutionStatusApi;
-  label: string;
+  en: string;
+  zh: string;
   icon: typeof Circle;
 }[] = [
-  { value: "not_run", label: "未执行", icon: Circle },
-  { value: "passed", label: "通过", icon: CheckCircle2 },
-  { value: "failed", label: "不通过", icon: XCircle },
-  { value: "skipped", label: "跳过", icon: SkipForward },
-  { value: "blocked", label: "堵塞", icon: AlertTriangle },
+  { value: "not_run", en: "Not run", zh: "未执行", icon: Circle },
+  { value: "passed", en: "Passed", zh: "通过", icon: CheckCircle2 },
+  { value: "failed", en: "Failed", zh: "不通过", icon: XCircle },
+  { value: "skipped", en: "Skipped", zh: "跳过", icon: SkipForward },
+  { value: "blocked", en: "Blocked", zh: "堵塞", icon: AlertTriangle },
 ];
-
-const runStatusLabel: Record<string, string> = {
-  active: "执行中",
-  completed: "已完成",
-  aborted: "已终止",
-};
-
-const executionStatusLabel: Record<ExecutionStatusApi, string> = {
-  not_run: "未执行",
-  passed: "通过",
-  failed: "不通过",
-  skipped: "跳过",
-  blocked: "堵塞",
-};
 
 type ExecutionRecordDraft = {
   recordId: string;
@@ -97,8 +85,8 @@ function draftFromRecord(record: ExecutionRecordDto): ExecutionRecordDraft {
   };
 }
 
-function formatTime(value: string) {
-  return new Intl.DateTimeFormat("zh-CN", {
+function formatTime(value: string, locale: string) {
+  return new Intl.DateTimeFormat(locale, {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -116,6 +104,15 @@ export function ExecutionWorkspace({
   playlistCreationId,
   onDirtyChange,
 }: ExecutionWorkspaceProps) {
+  const { locale, pick } = useI18n();
+  const runStatusLabel: Record<string, string> = {
+    active: pick("Active", "执行中"),
+    completed: pick("Completed", "已完成"),
+    aborted: pick("Aborted", "已终止"),
+  };
+  const executionStatusLabel = Object.fromEntries(
+    executionOptions.map((option) => [option.value, pick(option.en, option.zh)]),
+  ) as Record<ExecutionStatusApi, string>;
   const [view, setView] = useState<ExecutionView>("overview");
   const [run, setRun] = useState<ExecutionRunDto | null>(null);
   const [runHistory, setRunHistory] = useState<ExecutionRunSummaryDto[]>([]);
@@ -167,7 +164,7 @@ export function ExecutionWorkspace({
             setError(
               caught instanceof Error
                 ? publicErrorMessage(caught.message)
-                : "执行任务加载失败",
+                : pick("Failed to load execution runs", "执行任务加载失败"),
             );
           }
         });
@@ -178,7 +175,7 @@ export function ExecutionWorkspace({
       ignored = true;
       window.clearInterval(timer);
     };
-  }, [spaceId]);
+  }, [pick, spaceId]);
 
   useEffect(() => {
     let ignored = false;
@@ -195,14 +192,14 @@ export function ExecutionWorkspace({
           setError(
             caught instanceof Error
               ? publicErrorMessage(caught.message)
-              : "空间成员加载失败",
+              : pick("Failed to load space members", "空间成员加载失败"),
           );
         }
       });
     return () => {
       ignored = true;
     };
-  }, [spaceId]);
+  }, [pick, spaceId]);
 
   useEffect(() => {
     if (navigationRequest.id === 0) return;
@@ -317,24 +314,24 @@ export function ExecutionWorkspace({
 
   const startRun = async () => {
     if (!selectedPlaylist) {
-      setError("请先选择或保存一个 Playlist。");
+      setError(pick("Select or save a Playlist first.", "请先选择或保存一个 Playlist。"));
       return;
     }
     if (!description.trim()) {
-      setDescriptionError("请填写本次执行任务的目标或范围。");
+      setDescriptionError(pick("Describe the objective or scope of this run.", "请填写本次执行任务的目标或范围。"));
       descriptionRef.current?.focus();
       return;
     }
     if (!selectedPlaylist.case_count) {
-      setError("空 Playlist 不能创建执行任务。");
+      setError(pick("An empty Playlist cannot start an execution run.", "空 Playlist 不能创建执行任务。"));
       return;
     }
     if (selectedPlaylist.unavailable_case_ids.length) {
-      setError("Playlist 中存在不可用用例，请编辑并移除后再创建任务。");
+      setError(pick("The Playlist contains unavailable cases. Remove them before creating the run.", "Playlist 中存在不可用用例，请编辑并移除后再创建任务。"));
       return;
     }
     if (!selectedAssigneeIds.length) {
-      setError("请至少选择一名执行人。");
+      setError(pick("Select at least one assignee.", "请至少选择一名执行人。"));
       return;
     }
     setLoading(true);
@@ -358,7 +355,7 @@ export function ExecutionWorkspace({
       setError(
         caught instanceof Error
           ? publicErrorMessage(caught.message)
-          : "执行任务创建失败",
+          : pick("Failed to create execution run", "执行任务创建失败"),
       );
     } finally {
       setLoading(false);
@@ -380,7 +377,7 @@ export function ExecutionWorkspace({
       setError(
         caught instanceof Error
           ? publicErrorMessage(caught.message)
-          : "执行任务加载失败",
+          : pick("Failed to load execution run", "执行任务加载失败"),
       );
     } finally {
       setLoading(false);
@@ -390,13 +387,13 @@ export function ExecutionWorkspace({
   const finishRun = async () => {
     if (!run || readOnly || !run.can_manage) return;
     if (recordDraftDirty) {
-      setRecordValidationError("请先保存或放弃当前用例的执行记录，再结束任务。");
+      setRecordValidationError(pick("Save or discard the current result before ending the run.", "请先保存或放弃当前用例的执行记录，再结束任务。"));
       return;
     }
     const remaining = progress.total - progress.done;
     const message = remaining
-      ? `仍有 ${remaining} 条用例未执行。确认结束后任务将变为只读，是否继续？`
-      : "结束后任务将变为只读，无法继续修改执行结果。确认结束任务吗？";
+      ? pick(`${remaining} test cases have not been run. Ending the run makes it read-only. Continue?`, `仍有 ${remaining} 条用例未执行。确认结束后任务将变为只读，是否继续？`)
+      : pick("Ending the run makes it read-only and results can no longer be changed. Continue?", "结束后任务将变为只读，无法继续修改执行结果。确认结束任务吗？");
     if (!window.confirm(message)) return;
     setSaving(true);
     setError("");
@@ -412,7 +409,7 @@ export function ExecutionWorkspace({
       setError(
         caught instanceof Error
           ? publicErrorMessage(caught.message)
-          : "执行任务结束失败",
+          : pick("Failed to end execution run", "执行任务结束失败"),
       );
     } finally {
       setSaving(false);
@@ -467,12 +464,12 @@ export function ExecutionWorkspace({
           const latestRun = await getExecutionRun(run.id);
           setRun(latestRun);
         }
-        setError("该用例刚被其他成员更新，已为你加载最新结果，请确认后重试。");
+        setError(pick("Another member just updated this case. The latest result has been loaded; review it and try again.", "该用例刚被其他成员更新，已为你加载最新结果，请确认后重试。"));
       } else {
         setError(
           caught instanceof Error
             ? publicErrorMessage(caught.message)
-            : "执行记录保存失败",
+            : pick("Failed to save execution result", "执行记录保存失败"),
         );
       }
       return null;
@@ -488,7 +485,7 @@ export function ExecutionWorkspace({
 
   const confirmDiscardRecordDraft = () =>
     !recordDraftDirty ||
-    window.confirm("当前执行结果尚未保存，离开将丢失这些修改。是否继续？");
+    window.confirm(pick("The current result is unsaved and will be lost. Continue?", "当前执行结果尚未保存，离开将丢失这些修改。是否继续？"));
 
   const selectExecutionRecord = (recordId: string) => {
     if (!confirmDiscardRecordDraft()) return;
@@ -507,10 +504,10 @@ export function ExecutionWorkspace({
     ) {
       setRecordValidationError(
         recordDraft.status === "failed"
-          ? "标记不通过时必须填写实际结果。"
+          ? pick("Enter the actual result when marking a case as failed.", "标记不通过时必须填写实际结果。")
           : recordDraft.status === "skipped"
-            ? "标记跳过时必须填写跳过原因。"
-            : "标记堵塞时必须填写原因、依赖和解除条件。",
+            ? pick("Enter a reason when marking a case as skipped.", "标记跳过时必须填写跳过原因。")
+            : pick("Enter the cause, dependency, and unblock condition when marking a case as blocked.", "标记堵塞时必须填写原因、依赖和解除条件。"),
       );
       actualResultRef.current?.focus();
       return;
@@ -536,7 +533,7 @@ export function ExecutionWorkspace({
       setError(
         caught instanceof Error
           ? publicErrorMessage(caught.message)
-          : "成员添加失败",
+          : pick("Failed to add member", "成员添加失败"),
       );
     } finally {
       setLoading(false);
@@ -553,7 +550,7 @@ export function ExecutionWorkspace({
       setError(
         caught instanceof Error
           ? publicErrorMessage(caught.message)
-          : "成员移除失败",
+          : pick("Failed to remove member", "成员移除失败"),
       );
     } finally {
       setLoading(false);
@@ -590,7 +587,7 @@ export function ExecutionWorkspace({
       setError(
         caught instanceof Error
           ? publicErrorMessage(caught.message)
-          : "重新分配失败",
+          : pick("Failed to reassign", "重新分配失败"),
       );
     } finally {
       setSaving(false);
@@ -613,9 +610,9 @@ export function ExecutionWorkspace({
         <>
           <header className="execution-header execution-header--overview">
             <div>
-              <span className="management-kicker">QA 执行任务</span>
-              <h1>执行任务</h1>
-              <p>查看所有任务的实时进度、执行结果和参与成员。</p>
+              <span className="management-kicker">{pick("QA EXECUTION", "QA 执行任务")}</span>
+              <h1>{pick("Execution runs", "执行任务")}</h1>
+              <p>{pick("Track live progress, results, and participants across all runs.", "查看所有任务的实时进度、执行结果和参与成员。")}</p>
             </div>
             <button
               type="button"
@@ -627,7 +624,7 @@ export function ExecutionWorkspace({
                 setView("create");
               }}
             >
-              <Plus size={16} /> 新建 Playlist 执行任务
+              <Plus size={16} /> {pick("New Playlist run", "新建 Playlist 执行任务")}
             </button>
           </header>
 
@@ -636,9 +633,9 @@ export function ExecutionWorkspace({
               <ClipboardCheck size={22} />
             </div>
             <div>
-              <span className="management-kicker">Playlist 执行范围</span>
-              <strong>跨用例集合选择并复用执行用例</strong>
-              <p>支持完整加入单个或多个用例集合，也可搜索并逐条选择用例；重复用例会自动去重。</p>
+              <span className="management-kicker">{pick("PLAYLIST SCOPE", "Playlist 执行范围")}</span>
+              <strong>{pick("Select and reuse cases across collections", "跨用例集合选择并复用执行用例")}</strong>
+              <p>{pick("Add one or more full collections, or search and select individual cases. Duplicates are removed automatically.", "支持完整加入单个或多个用例集合，也可搜索并逐条选择用例；重复用例会自动去重。")}</p>
             </div>
             <button
               type="button"
@@ -650,42 +647,42 @@ export function ExecutionWorkspace({
                 setView("create");
               }}
             >
-              管理 Playlist
+              {pick("Manage Playlists", "管理 Playlist")}
             </button>
           </section>
 
           <section className="execution-overview-metrics">
             <article>
               <History size={18} />
-              <div><strong>{overviewStats.total}</strong><span>全部任务</span></div>
+              <div><strong>{overviewStats.total}</strong><span>{pick("All runs", "全部任务")}</span></div>
             </article>
             <article>
               <Clock3 size={18} />
-              <div><strong>{overviewStats.active}</strong><span>执行中</span></div>
+              <div><strong>{overviewStats.active}</strong><span>{pick("Active", "执行中")}</span></div>
             </article>
             <article>
               <CheckCircle2 size={18} />
-              <div><strong>{overviewStats.completed}</strong><span>已完成</span></div>
+              <div><strong>{overviewStats.completed}</strong><span>{pick("Completed", "已完成")}</span></div>
             </article>
             <article>
               <Users size={18} />
-              <div><strong>{overviewStats.contributors}</strong><span>参与成员</span></div>
+              <div><strong>{overviewStats.contributors}</strong><span>{pick("Participants", "参与成员")}</span></div>
             </article>
           </section>
 
           <section className="execution-task-list">
             <div className="execution-task-list__head">
               <div>
-                <strong>任务历史</strong>
-                <span>每 5 秒自动同步多人执行进度</span>
+                <strong>{pick("Run history", "任务历史")}</strong>
+                <span>{pick("Multi-user progress syncs every 5 seconds", "每 5 秒自动同步多人执行进度")}</span>
               </div>
-              <span>{runHistory.length} 个任务</span>
+              <span>{pick(`${runHistory.length} runs`, `${runHistory.length} 个任务`)}</span>
             </div>
             {runHistory.length === 0 ? (
               <div className="management-empty management-empty--detail">
                 <ClipboardCheck size={30} />
-                <strong>暂无执行任务</strong>
-                <span>创建任务后即可邀请空间成员共同执行</span>
+                <strong>{pick("No execution runs", "暂无执行任务")}</strong>
+                <span>{pick("Create a run to execute cases with space members.", "创建任务后即可邀请空间成员共同执行")}</span>
               </div>
             ) : (
               <div className="execution-task-grid">
@@ -706,23 +703,23 @@ export function ExecutionWorkspace({
                         >
                           {runStatusLabel[item.status] ?? item.status}
                         </span>
-                        <small>{formatTime(item.last_activity_at)} 更新</small>
+                        <small>{pick(`Updated ${formatTime(item.last_activity_at, locale)}`, `${formatTime(item.last_activity_at, locale)} 更新`)}</small>
                       </div>
                       <strong>{item.description}</strong>
                       <span>
-                        {item.source_name} · 来自 {item.source_collection_count} 个集合 · {item.total_count} 条用例
+                        {item.source_name} · {pick(`from ${item.source_collection_count} collections · ${item.total_count} cases`, `来自 ${item.source_collection_count} 个集合 · ${item.total_count} 条用例`)}
                       </span>
                       <div className="execution-task-card__progress">
                         <div>
                           <b>{percent}%</b>
-                          <span>{done} / {item.total_count} 已执行</span>
+                          <span>{pick(`${done} / ${item.total_count} executed`, `${done} / ${item.total_count} 已执行`)}</span>
                         </div>
                         <i><em style={{ width: `${percent}%` }} /></i>
                       </div>
                       <div className="execution-task-card__results">
-                        <span>{item.passed_count} 通过</span>
-                        <span>{item.failed_count} 不通过</span>
-                        <span>{item.blocked_count} 堵塞</span>
+                        <span>{pick(`${item.passed_count} passed`, `${item.passed_count} 通过`)}</span>
+                        <span>{pick(`${item.failed_count} failed`, `${item.failed_count} 不通过`)}</span>
+                        <span>{pick(`${item.blocked_count} blocked`, `${item.blocked_count} 堵塞`)}</span>
                       </div>
                       <div className="execution-task-card__people">
                         <Users size={14} />
@@ -750,18 +747,18 @@ export function ExecutionWorkspace({
                 className="execution-back"
                 onClick={() => setView("overview")}
               >
-                <ArrowLeft size={15} /> 返回任务列表
+                <ArrowLeft size={15} /> {pick("Back to runs", "返回任务列表")}
               </button>
-              <span className="management-kicker">新建执行任务</span>
-              <h1>创建多人执行任务</h1>
-              <p>选择可复用 Playlist 并填写任务描述，空间成员可共同执行。</p>
+              <span className="management-kicker">{pick("NEW EXECUTION RUN", "新建执行任务")}</span>
+              <h1>{pick("Create a collaborative run", "创建多人执行任务")}</h1>
+              <p>{pick("Choose a reusable Playlist and describe the run for your team.", "选择可复用 Playlist 并填写任务描述，空间成员可共同执行。")}</p>
             </div>
           </header>
           <section className="execution-run-setup">
             <div>
-              <span className="management-kicker">任务设置</span>
-              <h2>选择执行范围并填写任务说明</h2>
-              <p>创建时冻结当前用例修订；后续修改用例不会改变本任务记录。</p>
+              <span className="management-kicker">{pick("RUN SETTINGS", "任务设置")}</span>
+              <h2>{pick("Choose scope and describe the run", "选择执行范围并填写任务说明")}</h2>
+              <p>{pick("Case revisions are frozen at creation; later edits do not change this run.", "创建时冻结当前用例修订；后续修改用例不会改变本任务记录。")}</p>
             </div>
             <div className="execution-run-setup__fields">
               <PlaylistPicker
@@ -776,7 +773,7 @@ export function ExecutionWorkspace({
                 onError={setError}
               />
               <label>
-                任务描述 *
+                {pick("Run description *", "任务描述 *")}
                 <textarea
                   ref={descriptionRef}
                   rows={4}
@@ -789,7 +786,7 @@ export function ExecutionWorkspace({
                     setDescription(event.target.value);
                     if (event.target.value.trim()) setDescriptionError("");
                   }}
-                  placeholder="例如：验证 Audio Feature 录音、转写与中断恢复主流程"
+                  placeholder={pick("e.g. Validate recording, transcription, and interruption recovery", "例如：验证 Audio Feature 录音、转写与中断恢复主流程")}
                 />
                 {descriptionError && (
                   <small
@@ -802,7 +799,7 @@ export function ExecutionWorkspace({
                 )}
               </label>
               <fieldset className="execution-assignee-picker">
-                <legend>执行人 *（用例将按稳定顺序平均分配）</legend>
+                <legend>{pick("Assignees * (cases are distributed evenly)", "执行人 *（用例将按稳定顺序平均分配）")}</legend>
                 {members.map((member) => (
                   <label key={member.account_id}>
                     <input
@@ -827,20 +824,20 @@ export function ExecutionWorkspace({
               </fieldset>
               {spaceRole === "owner" && (
                 <div className="execution-member-manager">
-                  <strong>空间成员管理</strong>
+                  <strong>{pick("Space members", "空间成员管理")}</strong>
                   <div>
                     <input
                       type="email"
                       value={memberEmail}
                       onChange={(event) => setMemberEmail(event.target.value)}
-                      placeholder="输入已注册邮箱"
+                      placeholder={pick("Enter a registered email", "输入已注册邮箱")}
                     />
                     <button
                       type="button"
                       disabled={!memberEmail.trim() || loading}
                       onClick={() => void addMember()}
                     >
-                      添加成员
+                      {pick("Add member", "添加成员")}
                     </button>
                   </div>
                   {members
@@ -852,7 +849,7 @@ export function ExecutionWorkspace({
                           type="button"
                           onClick={() => void removeMember(member.account_id)}
                         >
-                          移除
+                          {pick("Remove", "移除")}
                         </button>
                       </p>
                     ))}
@@ -870,7 +867,7 @@ export function ExecutionWorkspace({
               ) : (
                 <ClipboardCheck size={16} />
               )}
-              创建执行任务
+              {pick("Create execution run", "创建执行任务")}
             </button>
           </section>
         </>
@@ -890,21 +887,21 @@ export function ExecutionWorkspace({
                   void refreshHistory();
                 }}
               >
-                <ArrowLeft size={15} /> 返回任务列表
+                <ArrowLeft size={15} /> {pick("Back to runs", "返回任务列表")}
               </button>
-              <span className="management-kicker">QA 执行任务</span>
+              <span className="management-kicker">{pick("QA EXECUTION", "QA 执行任务")}</span>
               <h1>{run.description}</h1>
               <p>
-                {run.source_name} · 来自 {run.source_collection_count} 个集合 · {run.records.length} 条用例
+                {run.source_name} · {pick(`from ${run.source_collection_count} collections · ${run.records.length} cases`, `来自 ${run.source_collection_count} 个集合 · ${run.records.length} 条用例`)}
                 {" · "}{runStatusLabel[run.status] ?? run.status}
-                {" · "}创建人 {run.creator_name}
+                {" · "}{pick("Created by", "创建人")} {run.creator_name}
               </p>
             </div>
             <div className="execution-header__actions">
               <div className="execution-progress">
                 <div>
                   <strong>{progress.percent}%</strong>
-                  <span>{progress.done} / {progress.total} 已执行</span>
+                  <span>{pick(`${progress.done} / ${progress.total} executed`, `${progress.done} / ${progress.total} 已执行`)}</span>
                 </div>
                 <span className="execution-progress__track">
                   <i style={{ width: `${progress.percent}%` }} />
@@ -917,7 +914,7 @@ export function ExecutionWorkspace({
                   disabled={saving}
                   onClick={() => void finishRun()}
                 >
-                  <Square size={15} /> 结束任务
+                  <Square size={15} /> {pick("End run", "结束任务")}
                 </button>
               )}
             </div>
@@ -925,25 +922,25 @@ export function ExecutionWorkspace({
 
           <section className="execution-collaborators">
             <Users size={15} />
-            <strong>参与成员</strong>
+            <strong>{pick("Participants", "参与成员")}</strong>
             <span>
               {run.assignee_names.join("、")}
             </span>
-            <small>多人更新每 5 秒自动同步</small>
+            <small>{pick("Multi-user updates sync every 5 seconds", "多人更新每 5 秒自动同步")}</small>
           </section>
 
           {loading ? (
             <div className="management-loading">
               <LoaderCircle className="auth-spinner" size={22} />
-              正在加载执行任务…
+              {pick("Loading execution run…", "正在加载执行任务…")}
             </div>
           ) : (
             <div className="execution-layout">
               <aside className="execution-queue">
                 <div className="execution-queue__head">
-                  <strong>执行队列</strong>
+                  <strong>{pick("Execution queue", "执行队列")}</strong>
                   <select
-                    aria-label="按执行人筛选"
+                    aria-label={pick("Filter by assignee", "按执行人筛选")}
                     value={recordFilter}
                     onChange={(event) => {
                       const value = event.target.value;
@@ -966,8 +963,8 @@ export function ExecutionWorkspace({
                       }
                     }}
                   >
-                    <option value="all">全部 · {run.records.length}</option>
-                    <option value="mine">我的用例</option>
+                    <option value="all">{pick(`All · ${run.records.length}`, `全部 · ${run.records.length}`)}</option>
+                    <option value="mine">{pick("My cases", "我的用例")}</option>
                     {members.map((member) => (
                       <option
                         key={member.account_id}
@@ -977,7 +974,7 @@ export function ExecutionWorkspace({
                       </option>
                     ))}
                   </select>
-                  <span>{filteredRecords.length} 条</span>
+                  <span>{pick(`${filteredRecords.length} cases`, `${filteredRecords.length} 条`)}</span>
                 </div>
                 {filteredRecords.map((record, index) => (
                   <button
@@ -999,9 +996,9 @@ export function ExecutionWorkspace({
                       <code>{record.test_case.case_key}</code>
                       <strong>{record.test_case.title}</strong>
                       {record.updated_by_name && (
-                        <small>{record.updated_by_name} 最后更新</small>
+                        <small>{pick(`Last updated by ${record.updated_by_name}`, `${record.updated_by_name} 最后更新`)}</small>
                       )}
-                      <small>执行人：{record.assignee_name ?? "未分配"}</small>
+                      <small>{pick("Assignee", "执行人")}：{record.assignee_name ?? pick("Unassigned", "未分配")}</small>
                     </div>
                     <span
                       className={`execution-queue__status execution-queue__status--${record.status}`}
@@ -1019,7 +1016,7 @@ export function ExecutionWorkspace({
                     <header className="execution-case__header">
                       <div>
                         <span className="management-kicker">
-                          {selectedRecord.test_case.case_key} · 本任务执行结果
+                          {selectedRecord.test_case.case_key} · {pick("Result in this run", "本任务执行结果")}
                         </span>
                         <h2>{selectedRecord.test_case.title}</h2>
                         <p>
@@ -1027,12 +1024,12 @@ export function ExecutionWorkspace({
                           {selectedRecord.test_case.priority} · V
                           {selectedRecord.test_case.revision_number}
                           {selectedRecord.updated_by_name
-                            ? ` · ${selectedRecord.updated_by_name} 最后更新`
+                            ? pick(` · Last updated by ${selectedRecord.updated_by_name}`, ` · ${selectedRecord.updated_by_name} 最后更新`)
                             : ""}
                         </p>
                         {run.can_manage && !readOnly && (
                           <label className="execution-reassign">
-                            执行人
+                            {pick("Assignee", "执行人")}
                             <select
                               value={selectedRecord.assignee_id ?? ""}
                               onChange={(event) =>
@@ -1077,7 +1074,7 @@ export function ExecutionWorkspace({
                                 setRecordValidationError("");
                               }}
                             >
-                              <Icon size={15} /> {option.label}
+                              <Icon size={15} /> {pick(option.en, option.zh)}
                             </button>
                           );
                         })}
@@ -1090,7 +1087,7 @@ export function ExecutionWorkspace({
                     )}
 
                     <section className="execution-preconditions">
-                      <h3>执行前确认</h3>
+                      <h3>{pick("Pre-run checks", "执行前确认")}</h3>
                       <ul>
                         {selectedRecord.test_case.preconditions.map((item) => (
                           <li key={item}><Check size={14} /> {item}</li>
@@ -1100,8 +1097,8 @@ export function ExecutionWorkspace({
 
                     <section className="execution-steps">
                       <h3>
-                        执行步骤
-                        <span>可选记录，不影响执行结果</span>
+                        {pick("Execution steps", "执行步骤")}
+                        <span>{pick("Optional; does not affect the result", "可选记录，不影响执行结果")}</span>
                       </h3>
                       {selectedRecord.test_case.steps.map((step, index) => {
                         const completed =
@@ -1128,13 +1125,13 @@ export function ExecutionWorkspace({
                                   completed_step_ids: completedStepIds,
                                 });
                               }}
-                              aria-label={`${completed ? "取消完成" : "完成"}第 ${index + 1} 步`}
+                              aria-label={pick(`${completed ? "Unmark" : "Complete"} step ${index + 1}`, `${completed ? "取消完成" : "完成"}第 ${index + 1} 步`)}
                             >
                               {completed ? <Check size={15} /> : index + 1}
                             </button>
                             <div>
                               <strong>{step.action}</strong>
-                              <p><span>预期结果</span>{step.expected}</p>
+                              <p><span>{pick("Expected", "预期结果")}</span>{step.expected}</p>
                             </div>
                           </article>
                         );
@@ -1148,7 +1145,7 @@ export function ExecutionWorkspace({
                       saving={saving}
                       readOnly={recordReadOnly}
                       readOnlyLabel={
-                        readOnly ? "批次已结束" : "仅当前执行人可编辑"
+                        readOnly ? pick("Run ended", "批次已结束") : pick("Only the assignee can edit", "仅当前执行人可编辑")
                       }
                       actualResultRef={actualResultRef}
                       onActualResultChange={(value) => {
@@ -1170,7 +1167,7 @@ export function ExecutionWorkspace({
                 ) : (
                   <div className="management-empty management-empty--detail">
                     <ClipboardCheck size={28} />
-                    <strong>当前执行任务中没有用例</strong>
+                    <strong>{pick("This run has no cases", "当前执行任务中没有用例")}</strong>
                   </div>
                 )}
               </section>

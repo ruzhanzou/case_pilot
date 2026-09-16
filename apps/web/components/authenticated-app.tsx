@@ -9,6 +9,7 @@ import {
   type Account,
 } from "@/lib/casepilot-api";
 import type { CasePilotRoute } from "@/lib/casepilot-route";
+import { I18nProvider, LanguageSwitcher, useI18n } from "@/lib/i18n";
 import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowRight,
@@ -27,6 +28,15 @@ const demoCredentials = {
 };
 
 export function AuthenticatedApp({ route }: { route: CasePilotRoute }) {
+  return (
+    <I18nProvider>
+      <AuthenticatedAppContent route={route} />
+    </I18nProvider>
+  );
+}
+
+function AuthenticatedAppContent({ route }: { route: CasePilotRoute }) {
+  const { t } = useI18n();
   const [account, setAccount] = useState<Account | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -63,10 +73,10 @@ export function AuthenticatedApp({ route }: { route: CasePilotRoute }) {
       const code = caught instanceof Error ? caught.message : "";
       setError(
         code === "invalid_credentials"
-          ? "邮箱或密码不正确"
+          ? t("auth.error.invalid")
           : code === "email_already_registered"
-            ? "该邮箱已注册，请直接登录"
-            : "本地数据服务尚未就绪，请确认 PostgreSQL 和 API 已启动",
+            ? t("auth.error.exists")
+            : t("auth.error.offline"),
       );
     } finally {
       setSubmitting(false);
@@ -82,8 +92,9 @@ export function AuthenticatedApp({ route }: { route: CasePilotRoute }) {
   if (loading) {
     return (
       <main className="auth-loading">
+        <LanguageSwitcher />
         <LoaderCircle size={24} className="auth-spinner" />
-        <span>正在连接本地工作区…</span>
+        <span>{t("auth.loading")}</span>
       </main>
     );
   }
@@ -96,17 +107,18 @@ export function AuthenticatedApp({ route }: { route: CasePilotRoute }) {
 
   return (
     <main className="auth-shell">
+      <LanguageSwitcher />
       <section className="auth-story">
         <div className="auth-brand"><ClipboardCheck size={18} />CasePilot</div>
         <div>
-          <span className="eyebrow">TEST CASE MANAGEMENT WORKSPACE</span>
-          <h1>管理、评审并执行<br />结构化测试用例。</h1>
-          <p>登录后进入本地质量空间，维护用例集合、修订结构化用例，并记录每一次 QA 执行结果。</p>
+          <span className="eyebrow">{t("auth.eyebrow")}</span>
+          <h1>{t("auth.title.line1")}<br />{t("auth.title.line2")}</h1>
+          <p>{t("auth.description")}</p>
         </div>
         <div className="auth-flow">
-          <span><b>01</b>登录本地账号</span>
-          <span><b>02</b>管理用例资产</span>
-          <span><b>03</b>执行并留痕</span>
+          <span><b>01</b>{t("auth.step.login")}</span>
+          <span><b>02</b>{t("auth.step.manage")}</span>
+          <span><b>03</b>{t("auth.step.execute")}</span>
         </div>
       </section>
 
@@ -120,13 +132,13 @@ export function AuthenticatedApp({ route }: { route: CasePilotRoute }) {
           >
             <div className="auth-card__head">
               <span className="auth-card__mark"><CheckCircle2 size={20} /></span>
-              <h2 id="auth-title">{mode === "login" ? "欢迎回来" : "创建本地账号"}</h2>
-              <p>{mode === "login" ? "登录后继续用例管理与执行" : "账号与数据仅保存在本地环境"}</p>
+              <h2 id="auth-title">{mode === "login" ? t("auth.welcome") : t("auth.createAccount")}</h2>
+              <p>{mode === "login" ? t("auth.loginHint") : t("auth.registerHint")}</p>
             </div>
             <form action={submit} className="auth-form">
               {mode === "register" && (
                 <label>
-                  显示名称
+                  {t("auth.displayName")}
                   <input
                     name="display_name"
                     defaultValue={demoCredentials.display_name}
@@ -136,7 +148,7 @@ export function AuthenticatedApp({ route }: { route: CasePilotRoute }) {
                 </label>
               )}
               <label>
-                邮箱
+                {t("auth.email")}
                 <input
                   name="email"
                   type="email"
@@ -146,7 +158,7 @@ export function AuthenticatedApp({ route }: { route: CasePilotRoute }) {
                 />
               </label>
               <label>
-                密码
+                {t("auth.password")}
                 <input
                   name="password"
                   type="password"
@@ -159,7 +171,7 @@ export function AuthenticatedApp({ route }: { route: CasePilotRoute }) {
               {error && <div className="auth-error" role="alert">{error}</div>}
               <button className="auth-submit" type="submit" disabled={submitting}>
                 {submitting ? <LoaderCircle size={16} className="auth-spinner" /> : null}
-                {mode === "login" ? "登录并进入工作台" : "创建账号并进入"}
+                {mode === "login" ? t("auth.loginSubmit") : t("auth.registerSubmit")}
                 {!submitting && <ArrowRight size={16} />}
               </button>
             </form>
@@ -171,10 +183,10 @@ export function AuthenticatedApp({ route }: { route: CasePilotRoute }) {
                 setError("");
               }}
             >
-              {mode === "login" ? "第一次使用？创建本地账号" : "已有账号？返回登录"}
+              {mode === "login" ? t("auth.createPrompt") : t("auth.loginPrompt")}
             </button>
             <div className="auth-demo-note">
-              <strong>验收示例账号</strong>
+              <strong>{t("auth.demo")}</strong>
               <span>{demoCredentials.email} · {demoCredentials.password}</span>
             </div>
           </motion.div>

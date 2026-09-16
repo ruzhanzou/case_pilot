@@ -4,6 +4,7 @@ import {
   listConversationHistory,
   type ConversationSummaryDto,
 } from "@/lib/casepilot-api";
+import { useI18n } from "@/lib/i18n";
 import {
   Clock3,
   LoaderCircle,
@@ -47,6 +48,7 @@ export function ConversationHistoryDrawer({
   onNewConversation,
   onOpenConversation,
 }: ConversationHistoryDrawerProps) {
+  const { pick } = useI18n();
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<ConversationSummaryDto[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -83,7 +85,7 @@ export function ConversationHistoryDrawer({
         .catch((caught) => {
           if (active) {
             setError(
-              caught instanceof Error ? caught.message : "历史对话加载失败",
+              caught instanceof Error ? caught.message : pick("Failed to load conversations", "历史对话加载失败"),
             );
           }
         })
@@ -93,7 +95,7 @@ export function ConversationHistoryDrawer({
       active = false;
       window.clearTimeout(timer);
     };
-  }, [open, query, revision, spaceId]);
+  }, [open, pick, query, revision, spaceId]);
 
   const loadMore = async () => {
     if (!nextCursor || loadingMore) return;
@@ -109,7 +111,7 @@ export function ConversationHistoryDrawer({
       setNextCursor(result.next_cursor);
     } catch (caught) {
       setError(
-        caught instanceof Error ? caught.message : "更多历史对话加载失败",
+        caught instanceof Error ? caught.message : pick("Failed to load more conversations", "更多历史对话加载失败"),
       );
     } finally {
       setLoadingMore(false);
@@ -124,21 +126,21 @@ export function ConversationHistoryDrawer({
       <button
         type="button"
         className="conversation-history-backdrop"
-        aria-label="关闭历史对话"
+        aria-label={pick("Close conversation history", "关闭历史对话")}
         onClick={onClose}
       />
       <aside
         className="conversation-history-drawer"
         role="dialog"
         aria-modal={open ? "true" : undefined}
-        aria-label="我的历史对话"
+        aria-label={pick("My conversation history", "我的历史对话")}
       >
         <header>
           <div>
             <span>MY CONVERSATIONS</span>
-            <h2>历史对话</h2>
+            <h2>{pick("Conversation history", "历史对话")}</h2>
           </div>
-          <button type="button" onClick={onClose} aria-label="关闭历史对话">
+          <button type="button" onClick={onClose} aria-label={pick("Close conversation history", "关闭历史对话")}>
             <X size={18} />
           </button>
         </header>
@@ -152,7 +154,7 @@ export function ConversationHistoryDrawer({
           }}
         >
           <MessageSquarePlus size={17} />
-          新建对话
+          {pick("New conversation", "新建对话")}
         </button>
 
         <label className="conversation-history-search">
@@ -161,7 +163,8 @@ export function ConversationHistoryDrawer({
             ref={searchRef}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索对话或用例集合"
+            placeholder={pick("Search conversations or collections", "搜索对话或用例集合")}
+            aria-label={pick("Search conversations or collections", "搜索对话或用例集合")}
           />
         </label>
 
@@ -169,7 +172,7 @@ export function ConversationHistoryDrawer({
           {loading ? (
             <div className="conversation-history-state">
               <LoaderCircle className="auth-spinner" size={20} />
-              正在加载历史对话…
+              {pick("Loading conversation history…", "正在加载历史对话…")}
             </div>
           ) : error ? (
             <div className="conversation-history-state is-error">{error}</div>
@@ -193,7 +196,7 @@ export function ConversationHistoryDrawer({
                         setError(
                           caught instanceof Error
                             ? caught.message
-                            : "历史对话恢复失败",
+                            : pick("Failed to restore conversation", "历史对话恢复失败"),
                         );
                       });
                   }}
@@ -218,15 +221,15 @@ export function ConversationHistoryDrawer({
                   disabled={loadingMore}
                   onClick={() => void loadMore()}
                 >
-                  {loadingMore ? "正在加载…" : "加载更多"}
+                  {loadingMore ? pick("Loading…", "正在加载…") : pick("Load more", "加载更多")}
                 </button>
               )}
             </>
           ) : (
             <div className="conversation-history-state">
               <MessageSquarePlus size={22} />
-              <strong>{query ? "没有匹配的对话" : "还没有历史对话"}</strong>
-              <span>创建新对话后会自动显示在这里。</span>
+              <strong>{query ? pick("No matching conversations", "没有匹配的对话") : pick("No conversation history yet", "还没有历史对话")}</strong>
+              <span>{pick("New conversations will appear here automatically.", "创建新对话后会自动显示在这里。")}</span>
             </div>
           )}
         </div>

@@ -15,17 +15,17 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://casepilot-aicasegen.ruzhanzou.chatgpt.site"),
-  title: "CasePilot — AI 用例工作台",
-  description: "在本地质量空间中管理结构化测试用例并记录 QA 执行结果。",
+  title: "CasePilot — AI Test Case Workspace",
+  description: "Manage structured test cases and QA execution results in your local quality workspace.",
   openGraph: {
-    title: "CasePilot — AI 用例工作台",
-    description: "在本地质量空间中管理结构化测试用例并记录 QA 执行结果。",
-    images: [{ url: "/og.png", width: 1664, height: 936, alt: "CasePilot 蓝白主题产品预览" }],
+    title: "CasePilot — AI Test Case Workspace",
+    description: "Manage structured test cases and QA execution results in your local quality workspace.",
+    images: [{ url: "/og.png", width: 1664, height: 936, alt: "CasePilot product preview" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "CasePilot — AI 用例工作台",
-    description: "在本地质量空间中管理结构化测试用例并记录 QA 执行结果。",
+    title: "CasePilot — AI Test Case Workspace",
+    description: "Manage structured test cases and QA execution results in your local quality workspace.",
     images: ["/og.png"],
   },
   icons: {
@@ -40,7 +40,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN" className={`${geistSans.variable} ${geistMono.variable}`}>
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
       <body className="antialiased">
         <TooltipProvider>{children}</TooltipProvider>
       </body>

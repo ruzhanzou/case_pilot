@@ -1,6 +1,7 @@
 "use client";
 
 import type { TestCaseInput } from "@/lib/casepilot-api";
+import { useI18n } from "@/lib/i18n";
 import {
   MAX_EXCEL_IMPORT_ROWS,
   parseTestCaseExcel,
@@ -32,6 +33,7 @@ export function CaseImportDialog({
   onClose,
   onImport,
 }: CaseImportDialogProps) {
+  const { pick } = useI18n();
   const inputRef = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<ExcelCaseImportPreview | null>(null);
   const [parsing, setParsing] = useState(false);
@@ -44,14 +46,14 @@ export function CaseImportDialog({
     setPreview(null);
     try {
       if (!/\.xlsx?$/i.test(file.name)) {
-        throw new Error("请选择 .xlsx 或 .xls 文件");
+        throw new Error(pick("Choose an .xlsx or .xls file", "请选择 .xlsx 或 .xls 文件"));
       }
       if (file.size > 10 * 1024 * 1024) {
-        throw new Error("Excel 文件不能超过 10 MB");
+        throw new Error(pick("Excel files cannot exceed 10 MB", "Excel 文件不能超过 10 MB"));
       }
       setPreview(await parseTestCaseExcel(file));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Excel 文件解析失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to parse the Excel file", "Excel 文件解析失败"));
     } finally {
       setParsing(false);
       if (inputRef.current) inputRef.current.value = "";
@@ -73,14 +75,14 @@ export function CaseImportDialog({
         <header className="management-modal__header">
           <div>
             <span className="management-kicker">{collectionName}</span>
-            <h2 id="case-import-title">从 Excel 导入用例</h2>
+            <h2 id="case-import-title">{pick("Import test cases from Excel", "从 Excel 导入用例")}</h2>
           </div>
           <button
             type="button"
             className="management-icon-button"
             onClick={onClose}
             disabled={saving}
-            aria-label="关闭导入窗口"
+            aria-label={pick("Close import dialog", "关闭导入窗口")}
           >
             <X size={19} />
           </button>
@@ -103,8 +105,8 @@ export function CaseImportDialog({
             ) : (
               <FileSpreadsheet size={30} />
             )}
-            <strong>{parsing ? "正在解析工作簿…" : "选择或拖入 Excel 文件"}</strong>
-            <span>支持 .xlsx、.xls，文件不超过 10 MB；读取第一个工作表</span>
+            <strong>{parsing ? pick("Parsing workbook…", "正在解析工作簿…") : pick("Choose or drop an Excel file", "选择或拖入 Excel 文件")}</strong>
+            <span>{pick("Supports .xlsx and .xls up to 10 MB; reads the first worksheet", "支持 .xlsx、.xls，文件不超过 10 MB；读取第一个工作表")}</span>
           </button>
           <input
             ref={inputRef}
@@ -115,16 +117,19 @@ export function CaseImportDialog({
           />
 
           <div className="case-import__columns">
-            <strong>列要求</strong>
+            <strong>{pick("Required columns", "列要求")}</strong>
             <div>
-              <span className="is-required">Test_Case_Name 必填</span>
+              <span className="is-required">Test_Case_Name {pick("required", "必填")}</span>
               <span>Test Setup</span>
-              <span className="is-required">Test Procedure 必填</span>
-              <span className="is-required">Test Validation 必填</span>
+              <span className="is-required">Test Procedure {pick("required", "必填")}</span>
+              <span className="is-required">Test Validation {pick("required", "必填")}</span>
               <span>Level</span>
             </div>
             <p>
-              Level 支持 P0/P1/P2、0/1/2、High/Medium/Low 或高/中/低；留空按 P1 导入。单次最多 {MAX_EXCEL_IMPORT_ROWS} 条。
+              {pick(
+                `Level accepts P0/P1/P2, 0/1/2, High/Medium/Low, or 高/中/低. Blank values default to P1. Up to ${MAX_EXCEL_IMPORT_ROWS} rows per import.`,
+                `Level 支持 P0/P1/P2、0/1/2、High/Medium/Low 或高/中/低；留空按 P1 导入。单次最多 ${MAX_EXCEL_IMPORT_ROWS} 条。`,
+              )}
             </p>
           </div>
 
@@ -147,12 +152,15 @@ export function CaseImportDialog({
                   <span>
                     <strong>{preview.fileName}</strong>
                     <small>
-                      工作表“{preview.sheetName}” · {preview.totalRows} 行 · 可导入 {preview.cases.length} 条
+                      {pick(
+                        `Worksheet “${preview.sheetName}” · ${preview.totalRows} rows · ${preview.cases.length} ready`,
+                        `工作表“${preview.sheetName}” · ${preview.totalRows} 行 · 可导入 ${preview.cases.length} 条`,
+                      )}
                     </small>
                   </span>
                 </div>
                 <button type="button" onClick={() => inputRef.current?.click()}>
-                  重新选择
+                  {pick("Choose another", "重新选择")}
                 </button>
               </div>
 
@@ -162,7 +170,7 @@ export function CaseImportDialog({
                     <p key={item}>{item}</p>
                   ))}
                   {preview.errors.length > 8 && (
-                    <p>另有 {preview.errors.length - 8} 项错误，请修正文件后重新选择。</p>
+                    <p>{pick(`${preview.errors.length - 8} more errors. Fix the file and choose it again.`, `另有 ${preview.errors.length - 8} 项错误，请修正文件后重新选择。`)}</p>
                   )}
                 </div>
               )}
@@ -172,10 +180,10 @@ export function CaseImportDialog({
                   <table className="case-import__table">
                     <thead>
                       <tr>
-                        <th>用例名称</th>
+                        <th>{pick("Test case", "用例名称")}</th>
                         <th>Level</th>
-                        <th>前置条件</th>
-                        <th>步骤</th>
+                        <th>{pick("Preconditions", "前置条件")}</th>
+                        <th>{pick("Steps", "步骤")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -190,7 +198,7 @@ export function CaseImportDialog({
                     </tbody>
                   </table>
                   {preview.cases.length > 5 && (
-                    <p>仅预览前 5 条，其余 {preview.cases.length - 5} 条将在确认后一起导入。</p>
+                    <p>{pick(`Showing the first 5. The remaining ${preview.cases.length - 5} will be imported after confirmation.`, `仅预览前 5 条，其余 ${preview.cases.length - 5} 条将在确认后一起导入。`)}</p>
                   )}
                 </div>
               )}
@@ -205,7 +213,7 @@ export function CaseImportDialog({
             onClick={onClose}
             disabled={saving}
           >
-            取消
+            {pick("Cancel", "取消")}
           </button>
           <button
             type="button"
@@ -217,7 +225,7 @@ export function CaseImportDialog({
               try {
                 await onImport(preview.cases);
               } catch (caught) {
-                setError(caught instanceof Error ? caught.message : "用例导入失败");
+                setError(caught instanceof Error ? caught.message : pick("Failed to import test cases", "用例导入失败"));
               }
             }}
           >
@@ -226,7 +234,7 @@ export function CaseImportDialog({
             ) : (
               <Upload size={16} />
             )}
-            导入 {preview?.cases.length || 0} 条用例
+            {pick(`Import ${preview?.cases.length || 0} test cases`, `导入 ${preview?.cases.length || 0} 条用例`)}
           </button>
         </footer>
       </section>

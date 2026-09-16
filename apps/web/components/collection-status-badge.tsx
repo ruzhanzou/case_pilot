@@ -6,6 +6,7 @@ import {
   LoaderCircle,
   Sparkles,
 } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 
 export type CollectionLifecycleStatus =
   | "empty"
@@ -17,32 +18,32 @@ export type CollectionLifecycleStatus =
   | "importing";
 
 const statusDetails = {
-  empty: { label: "空集合", tone: "neutral", icon: CircleDashed },
+  empty: { en: "Empty", zh: "空集合", tone: "neutral", icon: CircleDashed },
   brief_drafting: {
-    label: "整理测试说明",
+    en: "Drafting brief", zh: "整理测试说明",
     tone: "processing",
     icon: LoaderCircle,
   },
   brief_review: {
-    label: "测试说明待确认",
+    en: "Brief awaiting review", zh: "测试说明待确认",
     tone: "attention",
     icon: FileSearch,
   },
-  generating: { label: "AI 生成中", tone: "processing", icon: Sparkles },
+  generating: { en: "AI generating", zh: "AI 生成中", tone: "processing", icon: Sparkles },
   candidate_review: {
-    label: "候选待评审",
+    en: "Candidates awaiting review", zh: "候选待评审",
     tone: "attention",
     icon: ClipboardCheck,
   },
   maintenance: {
-    label: "正式维护",
+    en: "Active", zh: "正式维护",
     tone: "ready",
     icon: CheckCircle2,
   },
-  importing: { label: "导入中", tone: "processing", icon: LoaderCircle },
+  importing: { en: "Importing", zh: "导入中", tone: "processing", icon: LoaderCircle },
 } satisfies Record<
   CollectionLifecycleStatus,
-  { label: string; tone: string; icon: typeof CircleDashed }
+  { en: string; zh: string; tone: string; icon: typeof CircleDashed }
 >;
 
 export function collectionStatusFromPhase(
@@ -67,7 +68,9 @@ export function CollectionStatusBadge({
   status: CollectionLifecycleStatus;
   compact?: boolean;
 }) {
+  const { pick } = useI18n();
   const details = statusDetails[status];
+  const label = pick(details.en, details.zh);
   const Icon = details.icon;
   const spinning = ["brief_drafting", "generating", "importing"].includes(
     status,
@@ -76,11 +79,11 @@ export function CollectionStatusBadge({
   return (
     <span
       className={`collection-status collection-status--${details.tone}${compact ? " is-compact" : ""}`}
-      aria-label={`用例集状态：${details.label}`}
-      title={`用例集状态：${details.label}`}
+      aria-label={pick(`Collection status: ${label}`, `用例集状态：${label}`)}
+      title={pick(`Collection status: ${label}`, `用例集状态：${label}`)}
     >
       <Icon size={compact ? 12 : 13} className={spinning ? "auth-spinner" : ""} />
-      {details.label}
+      {label}
     </span>
   );
 }

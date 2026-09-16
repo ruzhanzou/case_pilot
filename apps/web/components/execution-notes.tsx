@@ -1,6 +1,7 @@
 "use client";
 
 import { LoaderCircle, Save } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 import type { RefObject } from "react";
 
 type ExecutionNotesProps = {
@@ -22,33 +23,35 @@ export function ExecutionNotes({
   dirty,
   saving,
   readOnly = false,
-  readOnlyLabel = "批次已结束",
+  readOnlyLabel,
   actualResultRef,
   onActualResultChange,
   onDefectRefChange,
   onSave,
 }: ExecutionNotesProps) {
+  const { pick } = useI18n();
+  const effectiveReadOnlyLabel = readOnlyLabel ?? pick("Run ended", "批次已结束");
   return (
     <section className="execution-notes">
-      <h3>执行记录</h3>
+      <h3>{pick("Execution notes", "执行记录")}</h3>
       <label>
-        实际结果
+        {pick("Actual result", "实际结果")}
         <textarea
           ref={actualResultRef}
           rows={3}
           value={actualResult}
           disabled={readOnly}
           onChange={(event) => onActualResultChange(event.target.value)}
-          placeholder="记录与预期结果的差异、环境信息或补充说明"
+          placeholder={pick("Record differences, environment details, or notes", "记录与预期结果的差异、环境信息或补充说明")}
         />
       </label>
       <label>
-        缺陷编号或链接
+        {pick("Defect ID or link", "缺陷编号或链接")}
         <input
           value={defectRef}
           disabled={readOnly}
           onChange={(event) => onDefectRefChange(event.target.value)}
-          placeholder="例如 BUG-1024（可选）"
+          placeholder={pick("e.g. BUG-1024 (optional)", "例如 BUG-1024（可选）")}
         />
       </label>
       <button
@@ -62,7 +65,7 @@ export function ExecutionNotes({
         ) : (
           <Save size={16} />
         )}
-        {readOnly ? readOnlyLabel : dirty ? "保存执行记录" : "记录已保存"}
+        {readOnly ? effectiveReadOnlyLabel : dirty ? pick("Save notes", "保存执行记录") : pick("Notes saved", "记录已保存")}
       </button>
     </section>
   );

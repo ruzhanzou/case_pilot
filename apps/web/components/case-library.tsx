@@ -10,6 +10,7 @@ import type {
   TestCaseInput,
 } from "@/lib/casepilot-api";
 import { matchesCaseSearch, matchesCollectionSearch } from "@/lib/case-search";
+import { useI18n } from "@/lib/i18n";
 import {
   Archive,
   ChevronLeft,
@@ -72,6 +73,7 @@ export function CaseLibrary({
   onSaveCase,
   onDeleteCase,
 }: CaseLibraryProps) {
+  const { pick } = useI18n();
   const [query, setQuery] = useState("");
   const [collectionQuery, setCollectionQuery] = useState("");
   const [viewMode, setViewMode] = useState<"list" | "mind-map">("list");
@@ -105,8 +107,8 @@ export function CaseLibrary({
       <aside className="collection-sidebar">
         <div className="collection-sidebar__head">
           <div>
-            <span className="management-kicker">当前空间</span>
-            <h2>用例集合</h2>
+            <span className="management-kicker">{pick("Current space", "当前空间")}</span>
+            <h2>{pick("Collections", "用例集合")}</h2>
           </div>
           <div className="collection-sidebar__actions">
             <button
@@ -114,8 +116,8 @@ export function CaseLibrary({
               type="button"
               onClick={onImportExcel}
               disabled={!selectedCollection}
-              aria-label="从 Excel 导入用例"
-              title="从 Excel 导入用例"
+              aria-label={pick("Import cases from Excel", "从 Excel 导入用例")}
+              title={pick("Import cases from Excel", "从 Excel 导入用例")}
             >
               <Upload size={18} />
             </button>
@@ -123,8 +125,8 @@ export function CaseLibrary({
               className="management-icon-button"
               type="button"
               onClick={onCreateCollection}
-              aria-label="创建用例集合"
-              title="创建用例集合"
+              aria-label={pick("Create collection", "创建用例集合")}
+              title={pick("Create collection", "创建用例集合")}
             >
               <FolderPlus size={18} />
             </button>
@@ -135,8 +137,8 @@ export function CaseLibrary({
           <input
             value={collectionQuery}
             onChange={(event) => setCollectionQuery(event.target.value)}
-            placeholder="搜索集合、test_target、创建人"
-            aria-label="搜索用例集合"
+            placeholder={pick("Search collections", "搜索集合")}
+            aria-label={pick("Search case collections", "搜索用例集合")}
           />
         </label>
         <div className="collection-sidebar__list">
@@ -149,6 +151,7 @@ export function CaseLibrary({
                   ? "collection-item is-active"
                   : "collection-item"
               }
+              title={collection.name}
               onClick={() => {
                 setCurrentPage(1);
                 onSelectCollection(collection.id);
@@ -160,7 +163,7 @@ export function CaseLibrary({
               <span className="collection-item__content">
                 <strong>{collection.name}</strong>
                 <small>
-                  {collection.case_count} 条用例
+                  {pick(`${collection.case_count} cases`, `${collection.case_count} 条用例`)}
                   <CollectionStatusBadge
                     compact
                     status={
@@ -177,7 +180,7 @@ export function CaseLibrary({
           {!filteredCollections.length && (
             <div className="collection-sidebar__empty">
               <Search size={18} />
-              <span>没有匹配的用例集合</span>
+              <span>{pick("No matching collections", "没有匹配的用例集合")}</span>
             </div>
           )}
         </div>
@@ -192,9 +195,9 @@ export function CaseLibrary({
       >
         <header className="case-library__header">
           <div>
-            <span className="management-kicker">用例管理</span>
+            <span className="management-kicker">{pick("Test cases", "用例管理")}</span>
             <div className="case-library__title-row">
-              <h1>{selectedCollection?.name ?? "请选择用例集合"}</h1>
+              <h1>{selectedCollection?.name ?? pick("Choose a collection", "请选择用例集合")}</h1>
               {selectedCollection && (
                 <CollectionStatusBadge
                   status={
@@ -205,12 +208,12 @@ export function CaseLibrary({
                 />
               )}
             </div>
-            <p>{selectedCollection?.description || "管理当前空间中的结构化测试用例"}</p>
+            <p>{selectedCollection?.description || pick("Manage structured test cases in this space", "管理当前空间中的结构化测试用例")}</p>
             {selectedCollection && (
-              <div className="case-library__summary" aria-label="用例集合摘要">
-                <span><b>{cases.length}</b> 用例</span>
-                <span>工作区状态：持续 Session · 自动保存</span>
-                <span>执行结果请在 QA 执行批次中查看</span>
+              <div className="case-library__summary" aria-label={pick("Collection summary", "用例集合摘要")}>
+                <span><b>{cases.length}</b> {pick("cases", "用例")}</span>
+                <span>{pick("Workspace: persistent session · autosaved", "工作区状态：持续 Session · 自动保存")}</span>
+                <span>{pick("View results in QA execution runs", "执行结果请在 QA 执行批次中查看")}</span>
               </div>
             )}
           </div>
@@ -221,36 +224,40 @@ export function CaseLibrary({
                   className="management-button management-button--ai"
                   type="button"
                   onClick={onOpenWorkbench}
+                  title={pick("Open workspace", "进入/继续工作区")}
                 >
-                  <Sparkles size={16} /> 进入/继续工作区
+                  <Sparkles size={16} /> {pick("Open workspace", "进入/继续工作区")}
                 </button>
                 <button
                   className="management-button management-button--execution"
                   type="button"
                   onClick={onStartExecution}
+                  title={pick("Run a Playlist", "创建 Playlist 执行")}
                 >
-                  <Play size={16} /> 创建 Playlist 执行
+                  <Play size={16} /> {pick("Run a Playlist", "创建 Playlist 执行")}
                 </button>
                 <button
                   className="management-button"
                   type="button"
                   onClick={onEditCollection}
+                  title={pick("Edit collection", "编辑集合")}
                 >
-                  <Edit3 size={16} /> 编辑集合
+                  <Edit3 size={16} /> {pick("Edit collection", "编辑集合")}
                 </button>
                 <button
                   className="management-button management-button--danger-quiet"
                   type="button"
                   onClick={onDeleteCollection}
+                  title={pick("Delete collection", "删除集合")}
                 >
-                  <Trash2 size={16} /> 删除集合
+                  <Trash2 size={16} /> {pick("Delete collection", "删除集合")}
                 </button>
                 <button
                   className="management-button management-button--primary"
                   type="button"
                   onClick={() => onCreateCase()}
                 >
-                  <Plus size={17} /> 新建用例
+                  <Plus size={17} /> {pick("New case", "新建用例")}
                 </button>
               </>
             )}
@@ -266,28 +273,28 @@ export function CaseLibrary({
                 setQuery(event.target.value);
                 setCurrentPage(1);
               }}
-              placeholder="搜索编号、标题、test_target、创建人等"
-              aria-label="搜索用例资产"
+              placeholder={pick("Search ID, title, target, or creator", "搜索编号、标题、test_target、创建人等")}
+              aria-label={pick("Search test cases", "搜索用例资产")}
             />
           </label>
           <div className="case-library__view-controls">
-            <span>{loading ? "正在读取…" : `${filteredCases.length} 条用例`}</span>
-            <div className="view-segment" aria-label="用例视图">
+            <span>{loading ? pick("Loading…", "正在读取…") : pick(`${filteredCases.length} cases`, `${filteredCases.length} 条用例`)}</span>
+            <div className="view-segment" aria-label={pick("Case view", "用例视图")}>
               <button
                 type="button"
                 className={viewMode === "list" ? "is-active" : ""}
                 onClick={() => setViewMode("list")}
-                aria-label="用例列表"
+                aria-label={pick("Case list", "用例列表")}
               >
-                <List size={15} /> 列表
+                <List size={15} /> {pick("List", "列表")}
               </button>
               <button
                 type="button"
                 className={viewMode === "mind-map" ? "is-active" : ""}
                 onClick={() => setViewMode("mind-map")}
-                aria-label="用例脑图"
+                aria-label={pick("Case mind map", "用例脑图")}
               >
-                <GitFork size={15} /> 脑图
+                <GitFork size={15} /> {pick("Map", "脑图")}
               </button>
             </div>
           </div>
@@ -316,13 +323,13 @@ export function CaseLibrary({
                 <table className="case-table">
               <thead>
                 <tr>
-                  <th>用例</th>
-                  <th>模块</th>
+                  <th>{pick("Case", "用例")}</th>
+                  <th>{pick("Module", "模块")}</th>
                   <th>Test target</th>
-                  <th>创建人</th>
-                  <th>优先级</th>
-                  <th>标签</th>
-                  <th>版本</th>
+                  <th>{pick("Creator", "创建人")}</th>
+                  <th>{pick("Priority", "优先级")}</th>
+                  <th>{pick("Tags", "标签")}</th>
+                  <th>{pick("Version", "版本")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -341,7 +348,7 @@ export function CaseLibrary({
                         <strong>{testCase.title}</strong>
                       </button>
                     </td>
-                    <td>{testCase.module || "未分类"}</td>
+                    <td>{testCase.module || pick("Uncategorized", "未分类")}</td>
                     <td>
                       {testCase.test_targets?.length ? (
                         <div className="case-target-list">
@@ -375,26 +382,26 @@ export function CaseLibrary({
               </tbody>
                 </table>
                 {!!filteredCases.length && (
-                  <nav className="case-pagination" aria-label="用例列表分页">
+                  <nav className="case-pagination" aria-label={pick("Case list pagination", "用例列表分页")}>
                     <span>
-                      第 {effectivePage} / {pageCount} 页 · 每页 {CASES_PER_PAGE} 条
+                      {pick(`Page ${effectivePage} of ${pageCount} · ${CASES_PER_PAGE} per page`, `第 ${effectivePage} / ${pageCount} 页 · 每页 ${CASES_PER_PAGE} 条`)}
                     </span>
                     <div>
                       <button
                         type="button"
                         disabled={effectivePage === 1}
                         onClick={() => setCurrentPage(effectivePage - 1)}
-                        aria-label="上一页"
+                        aria-label={pick("Previous page", "上一页")}
                       >
-                        <ChevronLeft size={15} /> 上一页
+                        <ChevronLeft size={15} /> {pick("Previous", "上一页")}
                       </button>
                       <button
                         type="button"
                         disabled={effectivePage === pageCount}
                         onClick={() => setCurrentPage(effectivePage + 1)}
-                        aria-label="下一页"
+                        aria-label={pick("Next page", "下一页")}
                       >
-                        下一页 <ChevronRight size={15} />
+                        {pick("Next", "下一页")} <ChevronRight size={15} />
                       </button>
                     </div>
                   </nav>
@@ -402,14 +409,14 @@ export function CaseLibrary({
                 {!loading && !filteredCases.length && (
                   <div className="management-empty">
                     <ClipboardList size={28} />
-                    <strong>当前集合还没有匹配的用例</strong>
-                    <p>创建第一条结构化测试用例，或调整搜索条件。</p>
+                    <strong>{pick("No matching cases in this collection", "当前集合还没有匹配的用例")}</strong>
+                    <p>{pick("Create the first structured case or change your search.", "创建第一条结构化测试用例，或调整搜索条件。")}</p>
                     <button
                       type="button"
                       className="management-button management-button--primary"
                       onClick={() => onCreateCase()}
                     >
-                      <Plus size={16} /> 新建用例
+                      <Plus size={16} /> {pick("New case", "新建用例")}
                     </button>
                   </div>
                 )}
@@ -432,7 +439,8 @@ export function CaseLibrary({
                       className="management-icon-button"
                       type="button"
                       onClick={() => onEditCase(selectedCase)}
-                      aria-label="编辑当前用例"
+                      aria-label={pick("Edit current case", "编辑当前用例")}
+                      title={pick("Edit case", "编辑用例")}
                     >
                       <Edit3 size={17} />
                     </button>
@@ -440,7 +448,8 @@ export function CaseLibrary({
                       className="management-icon-button management-icon-button--danger"
                       type="button"
                       onClick={() => onDeleteCase(selectedCase)}
-                      aria-label="删除当前用例"
+                      aria-label={pick("Delete current case", "删除当前用例")}
+                      title={pick("Delete case", "删除用例")}
                     >
                       <Trash2 size={17} />
                     </button>
@@ -448,13 +457,13 @@ export function CaseLibrary({
                 </header>
 
                 <div className="case-detail__meta">
-                  <span>{selectedCase.module || "未分类"}</span>
+                  <span>{selectedCase.module || pick("Uncategorized", "未分类")}</span>
                   <span>{selectedCase.case_type}</span>
                   <span>{selectedCase.priority}</span>
                 </div>
 
                 <section className="case-detail__section">
-                  <h3>前置条件</h3>
+                  <h3>{pick("Preconditions", "前置条件")}</h3>
                   <ol>
                     {selectedCase.preconditions.map((item) => (
                       <li key={item}>{item}</li>
@@ -463,7 +472,7 @@ export function CaseLibrary({
                 </section>
 
                 <section className="case-detail__section">
-                  <h3>执行步骤与校验点</h3>
+                  <h3>{pick("Steps and validations", "执行步骤与校验点")}</h3>
                   <div className="case-detail__steps">
                     {selectedCase.steps.map((step, index) => (
                       <article key={step.id}>
@@ -479,13 +488,13 @@ export function CaseLibrary({
 
                 <section className="case-detail__source">
                   <Tags size={15} />
-                  <span>来源：{selectedCase.source || "未记录"}</span>
+                  <span>{pick("Source", "来源")}：{selectedCase.source || pick("Not recorded", "未记录")}</span>
                 </section>
               </>
             ) : (
               <div className="management-empty management-empty--detail">
                 <ClipboardList size={26} />
-                <strong>选择一条用例查看详情</strong>
+                <strong>{pick("Select a case to view details", "选择一条用例查看详情")}</strong>
               </div>
             )}
           </aside>

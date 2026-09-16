@@ -33,6 +33,7 @@ import {
   type TestCaseInput,
   type WorkspaceCandidateDto,
 } from "@/lib/casepilot-api";
+import { useI18n } from "@/lib/i18n";
 import {
   Bot,
   Check,
@@ -147,6 +148,41 @@ const operationStatusLabels: Record<string, string> = {
   cancelled: "已取消",
 };
 
+const englishIntentLabels: Record<ConversationIntent, string> = {
+  CASE_GENERATE: "Generate test cases",
+  CASE_MODIFY: "Modify test cases",
+  CASE_DELETE: "Delete test cases",
+  CASE_QUERY: "Query test cases",
+  KNOWLEDGE_QA: "Knowledge Q&A",
+  SMALL_TALK: "CasePilot",
+  UNRESOLVED: "More details needed",
+};
+const englishPhaseLabels: Record<string, string> = {
+  idle: "Waiting for requirements",
+  brief_drafting: "Drafting test brief",
+  brief_review: "Test brief awaiting confirmation",
+  generating: "Generating candidates",
+  candidate_review: "Candidates awaiting review",
+  maintenance: "Maintaining official test cases",
+};
+const englishWorkflowStageLabels: Record<string, string> = {
+  queued: "Task queued", "context.prepared": "Preparing context",
+  "requirement.analyzed": "Analyzing requirements",
+  "generation.awaiting_input": "Waiting for more details",
+  "feature.generated": "Organizing features",
+  "test_point.generated": "Planning test points",
+  "test_case.generated": "Generating candidate cases",
+  "enhancement.completed": "Adding boundary and negative scenarios",
+  "quality.completed": "Running quality checks",
+  "knowledge.answered": "Answering with workspace knowledge",
+  completed: "Completed", failed: "Failed", cancelled: "Stopped",
+};
+const englishOperationStatusLabels: Record<string, string> = {
+  queued: "Queued", running: "Running", awaiting_confirmation: "Awaiting confirmation",
+  awaiting_intent: "Choose an action", completed: "Completed", skipped: "Skipped",
+  failed: "Failed", cancelled: "Cancelled",
+};
+
 const terminalWorkflowStatuses = new Set(["completed", "failed", "cancelled"]);
 const terminalOperationStatuses = new Set(["completed", "skipped"]);
 
@@ -198,15 +234,18 @@ function messageLabel(
   role: "user" | "assistant",
   intent: ConversationIntent | null,
   metadata: Record<string, unknown>,
+  labels: Record<ConversationIntent, string>,
+  userLabel: string,
+  briefLabel: string,
 ): string {
-  if (role === "user") return "你";
+  if (role === "user") return userLabel;
   if (
     intent === "CASE_GENERATE" &&
     ["draft", "update"].includes(String(metadata.brief_operation ?? ""))
   ) {
-    return "测试说明";
+    return briefLabel;
   }
-  return intent ? intentLabels[intent] : "CasePilot";
+  return intent ? labels[intent] : "CasePilot";
 }
 
 export function CaseWorkbench({
@@ -228,6 +267,15 @@ export function CaseWorkbench({
   onOpenHistory,
   onDirtyChange,
 }: CaseWorkbenchProps) {
+  const { locale, pick } = useI18n();
+  const localizedIntentLabels = locale === "en" ? englishIntentLabels : intentLabels;
+  const localizedIntentActionLabels = locale === "en"
+    ? { ...englishIntentLabels, SMALL_TALK: "Conversation" }
+    : intentActionLabels;
+  const localizedPhaseLabels = locale === "en" ? englishPhaseLabels : phaseLabels;
+  const localizedWorkflowStageLabels = locale === "en" ? englishWorkflowStageLabels : workflowStageLabels;
+  const localizedOperationStatusLabels = locale === "en" ? englishOperationStatusLabels : operationStatusLabels;
+  const changeAppliedNotice = pick("Changes applied and recorded in the audit log", "变更已应用并记录审计");
   const [workspace, setWorkspace] = useState<ConversationDto | null>(null);
   const [prompt, setPrompt] = useState("");
   const [modelId, setModelId] = useState<AgentModelId>("auto");
@@ -315,7 +363,7 @@ export function CaseWorkbench({
         ? "review"
         : busy
           ? "running"
-          : notice === "变更已应用并记录审计"
+          : notice === changeAppliedNotice
             ? "applied"
             : "selected";
   const selectedRewriteTargets = useMemo(
@@ -489,7 +537,7 @@ export function CaseWorkbench({
           },
         );
         if (job.status === "failed") {
-          throw new Error(job.error_code ?? "任务处理失败，请稍后重试");
+          throw new Error(job.error_code ?? pick("Task failed. Try again later.", "任务处理失败，请稍后重试"));
         }
         await refreshWorkspace();
       } finally {
@@ -502,7 +550,7 @@ export function CaseWorkbench({
         setLiveStages([]);
       }
     },
-    [refreshWorkspace, workspace?.id],
+    [pick, refreshWorkspace, workspace?.id],
   );
 
   useEffect(() => {
@@ -516,9 +564,9 @@ export function CaseWorkbench({
         );
       })
       .catch(() => {
-        setModels([{ id: "auto", label: "默认模型" }]);
+        setModels([{ id: "auto", label: pick("Default model", "默认模型") }]);
       });
-  }, []);
+  }, [pick]);
 
   useEffect(() => {
     if (!selectedCollectionId) return;
@@ -533,12 +581,12 @@ export function CaseWorkbench({
         setNotice("");
       })
       .catch((caught) => {
-        setError(caught instanceof Error ? caught.message : "工作区恢复失败");
+        setError(caught instanceof Error ? caught.message : pick("Failed to restore workspace", "工作区恢复失败"));
       });
     return () => {
       ignored = true;
     };
-  }, [applyWorkspaceResult, conversationId, selectedCollectionId]);
+  }, [applyWorkspaceResult, conversationId, pick, selectedCollectionId]);
 
   useEffect(() => {
     let active = true;
@@ -561,9 +609,9 @@ export function CaseWorkbench({
       return;
     }
     void waitAndRefresh(activeWorkspaceJobId, workspace.id).catch((caught) => {
-      setError(caught instanceof Error ? caught.message : "任务恢复失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to restore task", "任务恢复失败"));
     });
-  }, [activeWorkspaceJobId, phase, waitAndRefresh, workspace]);
+  }, [activeWorkspaceJobId, phase, pick, waitAndRefresh, workspace]);
 
   useEffect(() => {
     onDirtyChange?.(false);
@@ -620,7 +668,7 @@ export function CaseWorkbench({
     try {
       const result = await uploadKnowledgeFiles(
         spaceId,
-        `工作区附件 ${new Date().toLocaleString("zh-CN")}`,
+        pick(`Workspace attachment ${new Date().toLocaleString("en-US")}`, `工作区附件 ${new Date().toLocaleString("zh-CN")}`),
         files,
         "temporary",
       );
@@ -629,9 +677,9 @@ export function CaseWorkbench({
         ...current,
         ...files.map((file) => file.name),
       ]);
-      setNotice("附件已自动保存到当前工作区");
+      setNotice(pick("Attachment saved to the current workspace", "附件已自动保存到当前工作区"));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "附件保存失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to save attachment", "附件保存失败"));
     } finally {
       setUploading(false);
     }
@@ -722,7 +770,7 @@ export function CaseWorkbench({
       }
     } catch (caught) {
       setPrompt(content);
-      setError(caught instanceof Error ? caught.message : "消息处理失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to process message", "消息处理失败"));
     } finally {
       setBusy(false);
     }
@@ -739,7 +787,7 @@ export function CaseWorkbench({
       if (turn.action.job_id) await waitAndRefresh(turn.action.job_id);
       else await refreshWorkspace();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "意图确认失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to confirm action", "意图确认失败"));
     } finally {
       setBusy(false);
     }
@@ -751,9 +799,9 @@ export function CaseWorkbench({
     try {
       await cancelGeneration(currentJobId);
       await refreshWorkspace();
-      setNotice("生成已停止，结构化测试说明仍保留");
+      setNotice(pick("Generation stopped. The structured test brief is still available.", "生成已停止，结构化测试说明仍保留"));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "停止生成失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to stop generation", "停止生成失败"));
     } finally {
       setBusy(false);
       setCurrentJobId("");
@@ -767,9 +815,9 @@ export function CaseWorkbench({
     setProgress({ name: "queued", progress: 0 });
     setLiveStages([]);
     setError("");
-    setNotice("已提交生成请求，正在启动 CasePilot 工作流…");
+    setNotice(pick("Generation requested. Starting the CasePilot workflow…", "已提交生成请求，正在启动 CasePilot 工作流…"));
     try {
-      if (!activeBrief) throw new Error("请先生成结构化测试说明");
+      if (!activeBrief) throw new Error(pick("Generate a structured test brief first", "请先生成结构化测试说明"));
       const turn = await confirmTestBrief(
         workspace.id,
         activeBrief.version,
@@ -806,7 +854,7 @@ export function CaseWorkbench({
         refreshed = await refreshWorkspace();
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "测试说明确认失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to confirm test brief", "测试说明确认失败"));
       setNotice("");
       setBusy(false);
       setProgress(null);
@@ -821,7 +869,7 @@ export function CaseWorkbench({
     if (!workspace || busy) return;
     setBusy(true);
     setError("");
-    setNotice("已确认意图，正在继续处理…");
+    setNotice(pick("Action confirmed. Continuing…", "已确认意图，正在继续处理…"));
     try {
       const turn = await confirmConversationIntent(messageId, intent);
       await refreshWorkspace();
@@ -841,7 +889,7 @@ export function CaseWorkbench({
         );
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "意图确认失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to confirm action", "意图确认失败"));
     } finally {
       setBusy(false);
     }
@@ -858,7 +906,7 @@ export function CaseWorkbench({
       });
       await refreshWorkspace();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "候选状态保存失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to save candidate status", "候选状态保存失败"));
     }
   };
 
@@ -870,9 +918,9 @@ export function CaseWorkbench({
         snapshot: candidateDraft.snapshot as unknown as Record<string, unknown>,
       });
       await refreshWorkspace();
-      setNotice("候选修改已自动保存");
+      setNotice(pick("Candidate changes saved automatically", "候选修改已自动保存"));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "候选保存失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to save candidate", "候选保存失败"));
     }
   };
 
@@ -881,7 +929,7 @@ export function CaseWorkbench({
     setBusy(true);
     try {
       const committed = await commitWorkspaceCandidates(workspace.id);
-      setNotice(`已纳入 ${committed.length} 条正式用例`);
+      setNotice(pick(`${committed.length} cases added to the official collection`, `已纳入 ${committed.length} 条正式用例`));
       let refreshed = await refreshWorkspace();
       const next = nextRunnableOperation(refreshed);
       if (next) {
@@ -892,7 +940,7 @@ export function CaseWorkbench({
         onOpenLibrary();
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "候选纳入失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to add candidates", "候选纳入失败"));
     } finally {
       setBusy(false);
     }
@@ -912,9 +960,9 @@ export function CaseWorkbench({
         if (resumed.action.job_id) await waitAndRefresh(resumed.action.job_id);
         else await refreshWorkspace();
       }
-      setNotice("变更已应用并记录审计");
+      setNotice(changeAppliedNotice);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "变更应用失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to apply changes", "变更应用失败"));
     } finally {
       setBusy(false);
     }
@@ -1022,9 +1070,9 @@ export function CaseWorkbench({
     if (!selectedBrief) return;
     try {
       await navigator.clipboard.writeText(selectedBrief.markdown_content);
-      setNotice(`已复制结构化测试说明 V${selectedBrief.version}`);
+      setNotice(pick(`Copied structured test brief V${selectedBrief.version}`, `已复制结构化测试说明 V${selectedBrief.version}`));
     } catch {
-      setError("复制失败，请检查浏览器剪贴板权限。");
+      setError(pick("Copy failed. Check browser clipboard permissions.", "复制失败，请检查浏览器剪贴板权限。"));
     }
   };
 
@@ -1038,17 +1086,17 @@ export function CaseWorkbench({
         selectedCollection.name.replace(/[\\/:*?"<>|]/g, "").trim() ||
         "CasePilot";
       anchor.href = url;
-      anchor.download = `${safeName}-结构化测试说明-V${selectedBrief.version}.md`;
+      anchor.download = `${safeName}-${pick("structured-test-brief", "结构化测试说明")}-V${selectedBrief.version}.md`;
       anchor.click();
       URL.revokeObjectURL(url);
-      setNotice(`已下载结构化测试说明 V${selectedBrief.version}`);
+      setNotice(pick(`Downloaded structured test brief V${selectedBrief.version}`, `已下载结构化测试说明 V${selectedBrief.version}`));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "下载测试说明失败");
+      setError(caught instanceof Error ? caught.message : pick("Failed to download test brief", "下载测试说明失败"));
     }
   };
 
   if (!selectedCollection) {
-    return <div className="principle-empty">请先选择一个用例集合</div>;
+    return <div className="principle-empty">{pick("Select a test case collection first", "请先选择一个用例集合")}</div>;
   }
 
   return (
@@ -1065,9 +1113,9 @@ export function CaseWorkbench({
     >
       <aside className="principle-chat">
         <div className="principle-context-card">
-          <span>当前工作区</span>
+          <span>{pick("Current workspace", "当前工作区")}</span>
           <strong>{selectedCollection.name}</strong>
-          <small>{spaceName} · 自动保存 · 本对话仅维护此集合</small>
+          <small>{pick(`${spaceName} · Autosaved · This conversation only maintains this collection`, `${spaceName} · 自动保存 · 本对话仅维护此集合`)}</small>
         </div>
 
         <div
@@ -1082,8 +1130,10 @@ export function CaseWorkbench({
                 <div>
                   <strong>CasePilot</strong>
                   <p>
-                    请先说明测试对象；其他测试内容由 CasePilot
-                    分析并整理为结构化测试说明。
+                    {pick(
+                      "Describe what you want to test. CasePilot will analyze the remaining context and organize it into a structured test brief.",
+                      "请先说明测试对象；其他测试内容由 CasePilot 分析并整理为结构化测试说明。",
+                    )}
                   </p>
                 </div>
               </div>
@@ -1115,6 +1165,9 @@ export function CaseWorkbench({
                     message.role,
                     message.intent,
                     message.metadata,
+                    localizedIntentLabels,
+                    pick("You", "你"),
+                    pick("Test brief", "测试说明"),
                   )}
                 </span>
                 {message.content && (
@@ -1134,7 +1187,7 @@ export function CaseWorkbench({
                 )}
                 {message.status === "awaiting_intent" && (
                   <div className="conversation-intent-confirmation">
-                    <span>请选择这句话希望 CasePilot 执行的操作：</span>
+                    <span>{pick("Choose what you want CasePilot to do:", "请选择这句话希望 CasePilot 执行的操作：")}</span>
                     <div>
                       {[
                         message.intent,
@@ -1160,7 +1213,7 @@ export function CaseWorkbench({
                               void confirmPendingIntent(message.id, intent)
                             }
                           >
-                            {intentActionLabels[intent]}
+                            {localizedIntentActionLabels[intent]}
                           </button>
                         ))}
                     </div>
@@ -1168,7 +1221,7 @@ export function CaseWorkbench({
                 )}
                 {message.metadata.action === "new_conversation_required" && (
                   <div className="conversation-cross-collection">
-                    <span>当前对话已锁定此集合，不会执行跨集合变更。</span>
+                    <span>{pick("This conversation is locked to this collection and cannot make cross-collection changes.", "当前对话已锁定此集合，不会执行跨集合变更。")}</span>
                     <button
                       type="button"
                       disabled={busy}
@@ -1187,7 +1240,7 @@ export function CaseWorkbench({
                         }
                       }}
                     >
-                      新建对话并打开该集合
+                      {pick("Start a conversation in that collection", "新建对话并打开该集合")}
                     </button>
                     <button
                       type="button"
@@ -1206,7 +1259,7 @@ export function CaseWorkbench({
                         }
                       }}
                     >
-                      取消本次操作
+                      {pick("Cancel this operation", "取消本次操作")}
                     </button>
                   </div>
                 )}
@@ -1216,7 +1269,7 @@ export function CaseWorkbench({
                     className="principle-workflow"
                     data-status={workflow?.status ?? "running"}
                   >
-                    <strong>CasePilot 工作流</strong>
+                    <strong>{pick("CasePilot workflow", "CasePilot 工作流")}</strong>
                     {renderedStages.map((stage, index) => (
                       <div
                         key={`${stage.stage}-${index}`}
@@ -1224,7 +1277,7 @@ export function CaseWorkbench({
                       >
                         <Check size={13} />
                         <span>
-                          {workflowStageLabels[stage.stage] ?? "处理任务"}
+                          {localizedWorkflowStageLabels[stage.stage] ?? pick("Processing task", "处理任务")}
                         </span>
                         <small>{stage.progress}%</small>
                       </div>
@@ -1233,7 +1286,7 @@ export function CaseWorkbench({
                       <div className="principle-workflow-stage is-running">
                         <LoaderCircle className="auth-spinner" size={13} />
                         <span>
-                          {workflowStageLabels[progress.name] ?? "正在处理"}
+                          {localizedWorkflowStageLabels[progress.name] ?? pick("Processing", "正在处理")}
                         </span>
                         <small>{progress.progress}%</small>
                       </div>
@@ -1244,10 +1297,10 @@ export function CaseWorkbench({
                           className={`principle-workflow-result is-${workflow.status}`}
                         >
                           {workflow.status === "completed"
-                            ? "处理完成"
+                            ? pick("Completed", "处理完成")
                             : workflow.status === "cancelled"
-                              ? "已停止，可继续修改或重新开始"
-                              : "处理未完成，请重试"}
+                              ? pick("Stopped. You can edit or start again.", "已停止，可继续修改或重新开始")
+                              : pick("Processing did not complete. Try again.", "处理未完成，请重试")}
                         </div>
                       )}
                   </div>
@@ -1259,12 +1312,12 @@ export function CaseWorkbench({
                     onClick={() => selectBriefVersion(artifactVersion)}
                   >
                     <FileUp size={14} />
-                    结构化测试说明 V{artifactVersion}.md
+                    {pick("Structured test brief", "结构化测试说明")} V{artifactVersion}.md
                   </button>
                 )}
                 {message.citations.length > 0 && (
                   <small>
-                    来源：
+                    {pick("Sources: ", "来源：")}
                     {message.citations.map((item) => item.label).join("、")}
                   </small>
                 )}
@@ -1276,7 +1329,7 @@ export function CaseWorkbench({
 
         {activeChangeSet && (
           <div className="principle-change-set">
-            <strong>变更审阅</strong>
+            <strong>{pick("Review changes", "变更审阅")}</strong>
             {activeChangeSet.items.map((item) => (
               <div key={item.ref}>
                 <span>
@@ -1300,7 +1353,7 @@ export function CaseWorkbench({
                           }))
                         }
                       />
-                      {diff.field === "delete" ? "确认软删除" : diff.field}
+                      {diff.field === "delete" ? pick("Confirm soft delete", "确认软删除") : diff.field}
                     </label>
                   );
                 })}
@@ -1308,10 +1361,10 @@ export function CaseWorkbench({
             ))}
             <div>
               <button type="button" onClick={() => setActiveChangeSet(null)}>
-                取消
+                {pick("Cancel", "取消")}
               </button>
               <button type="button" onClick={() => void applyChangeSet()}>
-                确认应用
+                {pick("Apply changes", "确认应用")}
               </button>
             </div>
           </div>
@@ -1319,13 +1372,13 @@ export function CaseWorkbench({
 
         <form className="principle-composer" onSubmit={submitMessage}>
           {showOperationPlan && operationPlan && (
-              <ol className="conversation-operation-plan" aria-label="多意图执行进度">
+              <ol className="conversation-operation-plan" aria-label={pick("Multi-action progress", "多意图执行进度")}>
                 {operationPlan.operations.map((operation) => (
                   <li key={operation.id} data-status={operation.status}>
                     <span>{operation.sequence + 1}</span>
-                    <strong>{intentActionLabels[operation.intent]}</strong>
+                    <strong>{localizedIntentActionLabels[operation.intent]}</strong>
                     <small>
-                      {operationStatusLabels[operation.status] ?? "处理中"}
+                      {localizedOperationStatusLabels[operation.status] ?? pick("Processing", "处理中")}
                     </small>
                     {operation.status === "awaiting_intent" && (
                       <div className="conversation-operation-confirmation">
@@ -1343,7 +1396,7 @@ export function CaseWorkbench({
                             disabled={busy}
                             onClick={() => void confirmOperation(operation.id, intent)}
                           >
-                            {intentActionLabels[intent]}
+                            {localizedIntentActionLabels[intent]}
                           </button>
                         ))}
                       </div>
@@ -1353,8 +1406,8 @@ export function CaseWorkbench({
               </ol>
             )}
           {displayedTargets.length > 0 && (
-            <div className="principle-target-context" aria-label="AI 修改目标">
-              <span><Sparkles size={14} /> 修改目标</span>
+            <div className="principle-target-context" aria-label={pick("AI rewrite targets", "AI 修改目标")}>
+              <span><Sparkles size={14} /> {pick("Rewrite targets", "修改目标")}</span>
               <div className="principle-targets">
                 {displayedTargets.map((item) => (
                   <button
@@ -1362,7 +1415,7 @@ export function CaseWorkbench({
                     key={item.key}
                     onClick={() => toggleTarget(item.target, item.label)}
                     title={item.label}
-                    aria-label={`移除修改目标：${item.label}`}
+                    aria-label={pick(`Remove rewrite target: ${item.label}`, `移除修改目标：${item.label}`)}
                     disabled={rewriteStatus === "running" || rewriteStatus === "review"}
                   >
                     <span>{item.label}</span>
@@ -1375,7 +1428,7 @@ export function CaseWorkbench({
           {rewriteStatus !== "idle" && rewriteStatus !== "selected" && (
             <div
               className={`principle-rewrite-status is-${rewriteStatus}`}
-              aria-label="AI 改写状态"
+              aria-label={pick("AI rewrite status", "AI 改写状态")}
               aria-live="polite"
             >
               <span className="principle-rewrite-status__icon">
@@ -1390,17 +1443,17 @@ export function CaseWorkbench({
               <span>
                 <strong>
                   {rewriteStatus === "running"
-                    ? "AI 正在改写"
+                    ? pick("AI is rewriting", "AI 正在改写")
                     : rewriteStatus === "review"
-                      ? "改写完成，等待审阅"
-                      : "修改已应用"}
+                      ? pick("Rewrite complete, awaiting review", "改写完成，等待审阅")
+                      : pick("Changes applied", "修改已应用")}
                 </strong>
                 <small>
                   {rewriteStatus === "running"
-                    ? `正在处理 ${activeRewriteTargets.length} 个目标并生成字段差异…`
+                    ? pick(`Processing ${activeRewriteTargets.length} targets and generating field-level differences…`, `正在处理 ${activeRewriteTargets.length} 个目标并生成字段差异…`)
                     : rewriteStatus === "review"
-                      ? "请检查字段差异，确认后再应用到正式用例"
-                      : "已保存为新 Revision，脑图内容已同步更新"}
+                      ? pick("Review the field differences before applying them to official test cases", "请检查字段差异，确认后再应用到正式用例")
+                      : pick("Saved as a new revision and synced to the mind map", "已保存为新 Revision，脑图内容已同步更新")}
                 </small>
               </span>
               {rewriteStatus === "running" && (
@@ -1420,14 +1473,14 @@ export function CaseWorkbench({
             onChange={(event) => setPrompt(event.target.value)}
             placeholder={
               pendingOperationId
-                ? "选择上方用例或脑图节点后，继续执行修改"
+                ? pick("Select a test case or mind map node above to continue", "选择上方用例或脑图节点后，继续执行修改")
                 : displayedTargets.length === 1
-                  ? `描述你希望如何修改「${displayedTargets[0].label}」…`
+                  ? pick(`Describe how you want to modify “${displayedTargets[0].label}”…`, `描述你希望如何修改「${displayedTargets[0].label}」…`)
                   : displayedTargets.length > 1
-                    ? `描述你希望如何修改这 ${displayedTargets.length} 个目标…`
-                : "继续修改测试说明、维护当前用例，或询问需求内容…"
+                    ? pick(`Describe how you want to modify these ${displayedTargets.length} targets…`, `描述你希望如何修改这 ${displayedTargets.length} 个目标…`)
+                : pick("Continue refining the test brief, maintain test cases, or ask about the requirements…", "继续修改测试说明、维护当前用例，或询问需求内容…")
             }
-            aria-label="用自然语言修改选中目标"
+            aria-label={pick("Modify selected targets with natural language", "用自然语言修改选中目标")}
             rows={4}
             disabled={busy}
           />
@@ -1444,7 +1497,7 @@ export function CaseWorkbench({
               className="is-icon"
               onClick={() => fileRef.current?.click()}
               disabled={uploading || busy}
-              aria-label="添加附件"
+              aria-label={pick("Add attachment", "添加附件")}
             >
               {uploading ? (
                 <LoaderCircle className="auth-spinner" size={18} />
@@ -1453,7 +1506,7 @@ export function CaseWorkbench({
               )}
             </button>
             <select
-              aria-label="生成模型"
+              aria-label={pick("Generation model", "生成模型")}
               value={modelId}
               onChange={(event) => {
                 const nextModelId = event.target.value;
@@ -1478,11 +1531,11 @@ export function CaseWorkbench({
                 className="principle-stop"
                 onClick={() => void stopGeneration()}
               >
-                <Square size={16} /> 停止生成
+                <Square size={16} /> {pick("Stop generation", "停止生成")}
               </button>
             ) : busy ? (
               <button type="button" disabled>
-                <LoaderCircle className="auth-spinner" size={16} /> 正在处理
+                <LoaderCircle className="auth-spinner" size={16} /> {pick("Processing", "正在处理")}
               </button>
             ) : (
               <button
@@ -1495,10 +1548,10 @@ export function CaseWorkbench({
                 }
               >
                 <Send size={16} /> {pendingOperationId
-                  ? "继续执行修改"
+                  ? pick("Continue changes", "继续执行修改")
                   : displayedTargets.length
-                    ? "让 AI 修改"
-                    : "发送"}
+                    ? pick("Rewrite with AI", "让 AI 修改")
+                    : pick("Send", "发送")}
               </button>
             )}
           </div>
@@ -1508,7 +1561,7 @@ export function CaseWorkbench({
       <div
         className="principle-resizer"
         role="separator"
-        aria-label="调整对话区域宽度"
+        aria-label={pick("Resize conversation panel", "调整对话区域宽度")}
         aria-orientation="vertical"
         aria-valuemin={380}
         aria-valuemax={640}
@@ -1527,19 +1580,19 @@ export function CaseWorkbench({
       <main className="principle-canvas">
         <header>
           <div>
-            <small>用例集合 / 持续工作区</small>
+            <small>{pick("Test case collection / Continuous workspace", "用例集合 / 持续工作区")}</small>
             <div className="principle-title-row">
               <h1>{selectedCollection.name}</h1>
               <CollectionStatusBadge status={collectionStatus} />
             </div>
             <p>
-              {phaseLabels[phase] ?? "工作区已恢复"} · 本对话仅维护此集合
+              {localizedPhaseLabels[phase] ?? pick("Workspace restored", "工作区已恢复")} · {pick("This conversation only maintains this collection", "本对话仅维护此集合")}
             </p>
           </div>
           <div className="principle-canvas-actions">
             <button type="button" onClick={onOpenHistory}>
               <History size={17} />
-              历史对话
+              {pick("Conversation history", "历史对话")}
             </button>
             <button
               type="button"
@@ -1547,7 +1600,7 @@ export function CaseWorkbench({
               onClick={onNewConversation}
             >
               <MessageSquarePlus size={17} />
-              创建新对话
+              {pick("New conversation", "创建新对话")}
             </button>
           </div>
         </header>
@@ -1560,7 +1613,7 @@ export function CaseWorkbench({
             <span>{error || notice}</span>
             <button
               type="button"
-              aria-label="关闭提示"
+              aria-label={pick("Dismiss notification", "关闭提示")}
               onClick={() => {
                 setError("");
                 setNotice("");
@@ -1579,20 +1632,20 @@ export function CaseWorkbench({
               <div className="principle-brief-identity">
                 <Sparkles size={19} />
                 <div>
-                  <strong>结构化测试说明</strong>
+                  <strong>{pick("Structured test brief", "结构化测试说明")}</strong>
                   <span>
                     {selectedBrief.status === "confirmed"
-                      ? "已确认"
+                      ? pick("Confirmed", "已确认")
                       : selectedBrief.status === "superseded"
-                        ? "历史版本 · 已失效"
-                        : "自动保存草稿"}
+                        ? pick("Previous version · Superseded", "历史版本 · 已失效")
+                        : pick("Autosaved draft", "自动保存草稿")}
                   </span>
                 </div>
               </div>
               <label>
-                <span>版本</span>
+                <span>{pick("Version", "版本")}</span>
                 <select
-                  aria-label="测试说明版本"
+                  aria-label={pick("Test brief version", "测试说明版本")}
                   value={selectedBrief.version}
                   onChange={(event) =>
                     selectBriefVersion(Number(event.target.value))
@@ -1605,25 +1658,25 @@ export function CaseWorkbench({
                       <option key={brief.id} value={brief.version}>
                         V{brief.version}
                         {brief.status === "confirmed"
-                          ? " · 已确认"
+                          ? pick(" · Confirmed", " · 已确认")
                           : brief.status === "superseded"
-                            ? " · 历史"
-                            : " · 草稿"}
+                            ? pick(" · Previous", " · 历史")
+                            : pick(" · Draft", " · 草稿")}
                       </option>
                     ))}
                 </select>
               </label>
               <button type="button" onClick={() => void copyBrief()}>
                 <Copy size={16} />
-                复制
+                {pick("Copy", "复制")}
               </button>
               <button type="button" onClick={() => void saveBriefFile()}>
                 <Download size={16} />
-                下载 .md
+                {pick("Download .md", "下载 .md")}
               </button>
               {["candidate_review", "maintenance"].includes(phase) && (
                 <button type="button" onClick={() => setArtifactOpen(false)}>
-                  返回用例
+                  {pick("Back to test cases", "返回用例")}
                 </button>
               )}
               {selectedBrief.version === activeBrief?.version &&
@@ -1640,15 +1693,14 @@ export function CaseWorkbench({
                     ) : (
                       <Check size={16} />
                     )}
-                    {busy ? "正在启动生成…" : "确认并生成用例"}
+                    {busy ? pick("Starting generation…", "正在启动生成…") : pick("Confirm and generate", "确认并生成用例")}
                   </button>
                 )}
             </header>
             <div className="principle-brief-guidance">
-              这是一份只读 Markdown 产物。如需调整，请在左侧与 CasePilot
-              对话。
+              {pick("This is a read-only Markdown artifact. Use the CasePilot conversation on the left to make changes.", "这是一份只读 Markdown 产物。如需调整，请在左侧与 CasePilot 对话。")}
             </div>
-            <article className="principle-markdown" aria-label="结构化测试说明">
+            <article className="principle-markdown" aria-label={pick("Structured test brief", "结构化测试说明")}>
               <Streamdown key={selectedBrief.id}>
                 {selectedBrief.markdown_content}
               </Streamdown>
@@ -1657,7 +1709,7 @@ export function CaseWorkbench({
               blockingQuestions.length > 0 && (
                 <div className="principle-brief-blocker">
                   <CircleAlert size={17} />
-                  尚未明确测试对象，请先通过对话补充，再生成用例。
+                  {pick("The test target is not clear yet. Add details in the conversation before generating test cases.", "尚未明确测试对象，请先通过对话补充，再生成用例。")}
                 </div>
               )}
           </section>
@@ -1677,7 +1729,7 @@ export function CaseWorkbench({
                     }
                   }}
                 >
-                  <GitFork size={17} /> 用例脑图
+                  <GitFork size={17} /> {pick("Mind map", "用例脑图")}
                 </button>
                 <button
                   type="button"
@@ -1691,12 +1743,14 @@ export function CaseWorkbench({
                     }
                   }}
                 >
-                  <List size={17} /> 用例列表
+                  <List size={17} /> {pick("Test case list", "用例列表")}
                 </button>
               </div>
               <span>
-                {visibleCases.length} 条用例 ·{" "}
-                {new Set(visibleCases.map((item) => item.module)).size} 个模块
+                {pick(
+                  `${visibleCases.length} test cases · ${new Set(visibleCases.map((item) => item.module)).size} modules`,
+                  `${visibleCases.length} 条用例 · ${new Set(visibleCases.map((item) => item.module)).size} 个模块`,
+                )}
               </span>
               {phase === "candidate_review" && (
                 <button
@@ -1705,7 +1759,7 @@ export function CaseWorkbench({
                   onClick={() => void commitCandidates()}
                   disabled={!candidates.some((item) => item.included) || busy}
                 >
-                  <Save size={16} /> 纳入正式集合
+                  <Save size={16} /> {pick("Add to official collection", "纳入正式集合")}
                 </button>
               )}
             </div>
@@ -1777,7 +1831,7 @@ export function CaseWorkbench({
                       >
                         <span>{testCase.case_key}</span>
                         <strong>{testCase.title}</strong>
-                        <small>{testCase.module || "未分类"}</small>
+                        <small>{testCase.module || pick("Uncategorized", "未分类")}</small>
                         <i
                           className={`priority-${testCase.priority.toLowerCase()}`}
                         >
@@ -1796,7 +1850,7 @@ export function CaseWorkbench({
                               )
                             }
                           />
-                          纳入
+                          {pick("Include", "纳入")}
                         </label>
                       )}
                       {!candidate && phase === "maintenance" && (
@@ -1815,7 +1869,7 @@ export function CaseWorkbench({
                               )
                             }
                           />
-                          选择
+                          {pick("Select", "选择")}
                         </label>
                       )}
                     </div>
@@ -1829,14 +1883,14 @@ export function CaseWorkbench({
             {loading || !workspace ? (
               <>
                 <LoaderCircle className="auth-spinner" size={24} />
-                <strong>正在恢复工作区</strong>
+                <strong>{pick("Restoring workspace", "正在恢复工作区")}</strong>
               </>
             ) : (
               <>
                 <FileUp size={30} />
-                <strong>脑图和用例列表保持空白</strong>
+                <strong>{pick("The mind map and test case list are empty", "脑图和用例列表保持空白")}</strong>
                 <p>
-                  输入生成需求后，先审阅并确认结构化测试说明；候选生成完成前不会展示旧用例。
+                  {pick("Enter your generation request, then review and confirm the structured test brief. Existing cases remain hidden until candidate generation is complete.", "输入生成需求后，先审阅并确认结构化测试说明；候选生成完成前不会展示旧用例。")}
                 </p>
               </>
             )}
@@ -1848,7 +1902,7 @@ export function CaseWorkbench({
         <div
           className="principle-resizer principle-resizer--inspector"
           role="separator"
-          aria-label="调整详情区域宽度"
+          aria-label={pick("Resize details panel", "调整详情区域宽度")}
           aria-orientation="vertical"
           aria-valuemin={280}
           aria-valuemax={520}
@@ -1870,17 +1924,17 @@ export function CaseWorkbench({
           {selectedCase ? (
             <>
               <header>
-                <span>CASE DETAILS</span>
+                <span>{pick("CASE DETAILS", "用例详情")}</span>
                 {phase === "maintenance" && (
                   <button type="button" onClick={() => onEditCase(selectedCase)}>
-                    <Pencil size={15} /> 编辑
+                    <Pencil size={15} /> {pick("Edit", "编辑")}
                   </button>
                 )}
               </header>
               {candidateDraft ? (
                 <div className="principle-candidate-editor">
                   <label>
-                    标题
+                    {pick("Title", "标题")}
                     <input
                       value={candidateDraft.snapshot.title}
                       onChange={(event) =>
@@ -1899,7 +1953,7 @@ export function CaseWorkbench({
                     />
                   </label>
                   <label>
-                    模块
+                    {pick("Module", "模块")}
                     <input
                       value={candidateDraft.snapshot.module}
                       onChange={(event) =>
@@ -1918,7 +1972,7 @@ export function CaseWorkbench({
                     />
                   </label>
                   <label>
-                    优先级
+                    {pick("Priority", "优先级")}
                     <select
                       value={candidateDraft.snapshot.priority}
                       onChange={(event) =>
@@ -1944,21 +1998,21 @@ export function CaseWorkbench({
                     </select>
                   </label>
                   <button type="button" onClick={() => void saveCandidate()}>
-                    <Save size={16} /> 保存候选修改
+                    <Save size={16} /> {pick("Save candidate changes", "保存候选修改")}
                   </button>
                 </div>
               ) : (
                 <>
                   <h2>{selectedCase.title}</h2>
                   <div className="principle-tags">
-                    <span>{selectedCase.module || "未分类"}</span>
+                    <span>{selectedCase.module || pick("Uncategorized", "未分类")}</span>
                     <span>{selectedCase.case_type}</span>
                     <span>{selectedCase.priority}</span>
                   </div>
                 </>
               )}
               <section>
-                <strong>前置条件</strong>
+                <strong>{pick("Preconditions", "前置条件")}</strong>
                 <ul>
                   {selectedCase.preconditions.map((item) => (
                     <li key={item}>{item}</li>
@@ -1966,7 +2020,7 @@ export function CaseWorkbench({
                 </ul>
               </section>
               <section>
-                <strong>执行步骤与检查点</strong>
+                <strong>{pick("Steps and checkpoints", "执行步骤与检查点")}</strong>
                 <ol>
                   {selectedCase.steps.map((step) => (
                     <li key={step.id}>
@@ -1980,8 +2034,8 @@ export function CaseWorkbench({
           ) : (
             <div className="principle-inspector-empty">
               <Sparkles size={24} />
-              <strong>CasePilot 工作区</strong>
-              <p>确认测试说明并完成候选生成后，可在这里审阅详细步骤。</p>
+              <strong>{pick("CasePilot workspace", "CasePilot 工作区")}</strong>
+              <p>{pick("Confirm the test brief and finish candidate generation to review detailed steps here.", "确认测试说明并完成候选生成后，可在这里审阅详细步骤。")}</p>
             </div>
           )}
         </aside>
