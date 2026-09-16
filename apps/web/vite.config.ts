@@ -5,6 +5,31 @@ import { sites } from "./build/sites-vite-plugin";
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
 
+// Vinext's development overlay treats Chrome's benign ResizeObserver delivery
+// notifications as fatal script errors. React Flow can legitimately produce one
+// while its container is resized, so filter only those browser notifications and
+// keep the overlay enabled for every real runtime error.
+const ignoreResizeObserverDeliveryOverlay = {
+  name: "casepilot-ignore-resize-observer-delivery-overlay",
+  apply: "serve" as const,
+  enforce: "pre" as const,
+  transform(code: string, id: string) {
+    if (!id.includes("vinext/dist/server/dev-error-overlay.js")) return null;
+    const marker =
+      'window.addEventListener("error", (event) => {\n\t\tconst err = event.error;';
+    if (!code.includes(marker)) return null;
+    return code.replace(
+      marker,
+      'window.addEventListener("error", (event) => {\n' +
+        '\t\tif (/^ResizeObserver loop (?:completed with undelivered notifications|limit exceeded)\\.?$/.test(event.message || "")) {\n' +
+        "\t\t\tevent.preventDefault();\n" +
+        "\t\t\treturn;\n" +
+        "\t\t}\n" +
+        "\t\tconst err = event.error;",
+    );
+  },
+};
+
 // CasePilot currently uses PostgreSQL and Redis, so no Cloudflare D1/R2
 // bindings are required for a clean public checkout.
 const d1: string | null = null;
@@ -50,6 +75,7 @@ export default defineConfig(async () => {
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,
     plugins: [
+      ignoreResizeObserverDeliveryOverlay,
       vinext(),
       sites(),
       cloudflare({

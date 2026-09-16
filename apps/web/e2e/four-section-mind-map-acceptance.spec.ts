@@ -12,7 +12,7 @@ const artifactDir = path.resolve(
 
 test.use({ viewport: { width: 1600, height: 1000 } });
 
-test("四段式脑图支持结构展示、节点编辑入口和自动化标签", async ({
+test("四段式脑图支持结构展示、原位编辑和快捷新增节点", async ({
   page,
 }) => {
   fs.mkdirSync(artifactDir, { recursive: true });
@@ -45,24 +45,19 @@ test("四段式脑图支持结构展示、节点编辑入口和自动化标签",
     path: path.join(artifactDir, "01-four-section-mind-map.png"),
   });
 
-  await page
-    .getByRole("button", {
-      name: /修改test_validation 1\. 登录成功且只创建一个有效会话（E2E验收已修改）/,
-    })
-    .click();
-  await page.getByRole("button", { name: "退出脑图全屏" }).click();
-  await expect(
-    page.getByRole("heading", { name: "编辑结构化测试用例" }),
-  ).toBeVisible();
-  await expect(page.getByRole("textbox", { name: "预期结果／校验点" })).toHaveValue(
-    "登录成功且只创建一个有效会话（E2E验收已修改）",
+  const inlineEditor = page.getByRole("textbox", {
+    name: "直接编辑test_validation",
+  });
+  await expect(inlineEditor).toHaveValue(
+    "1. 登录成功且只创建一个有效会话（E2E验收已修改）",
   );
   await page.screenshot({
     path: path.join(artifactDir, "02-edit-validation-node.png"),
   });
 
-  await page.getByRole("button", { name: "取消" }).click();
+  await inlineEditor.press("Escape");
   await page.getByRole("button", { name: /在身份认证下新增用例/ }).click();
+  await page.getByRole("button", { name: "退出脑图全屏" }).click();
   await expect(
     page.getByRole("heading", { name: "创建结构化测试用例" }),
   ).toBeVisible();

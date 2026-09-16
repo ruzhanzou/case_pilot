@@ -75,6 +75,8 @@ type CaseWorkbenchProps = {
   onSelectCase: (caseId: string) => void;
   onCreateCase: (module?: string) => void;
   onEditCase: (testCase: TestCaseDto) => void;
+  onSaveCase: (testCase: TestCaseDto, input: TestCaseInput) => Promise<void>;
+  onCasesChanged: () => Promise<void>;
   onImportCases: (
     collectionId: string,
     inputs: TestCaseInput[],
@@ -130,6 +132,17 @@ const workflowStageLabels: Record<string, string> = {
   cancelled: "已停止",
 };
 
+const operationStatusLabels: Record<string, string> = {
+  queued: "等待执行",
+  running: "正在执行",
+  awaiting_confirmation: "等待确认",
+  awaiting_intent: "等待选择操作",
+  completed: "已完成",
+  skipped: "已跳过",
+  failed: "执行失败",
+  cancelled: "已取消",
+};
+
 const terminalWorkflowStatuses = new Set(["completed", "failed", "cancelled"]);
 const terminalOperationStatuses = new Set(["completed", "skipped"]);
 
@@ -144,8 +157,12 @@ function nextRunnableOperation(conversation: ConversationDto | null) {
   );
 }
 
-function clampPanelWidth(value: number): number {
-  return Math.min(520, Math.max(280, Math.round(value)));
+function clampPanelWidth(
+  panel: "chat" | "inspector",
+  value: number,
+): number {
+  const [minimum, maximum] = panel === "chat" ? [380, 640] : [280, 480];
+  return Math.min(maximum, Math.max(minimum, Math.round(value)));
 }
 
 function candidateToCase(candidate: WorkspaceCandidateDto): TestCaseDto {
@@ -198,6 +215,8 @@ export function CaseWorkbench({
   pendingOperationId,
   onSelectCase,
   onEditCase,
+  onSaveCase,
+  onCasesChanged,
   onOpenLibrary,
   onNewConversation,
   onContinueInNewConversation,
@@ -214,6 +233,9 @@ export function CaseWorkbench({
   const [selectedTargets, setSelectedTargets] = useState<
     { key: string; label: string; target: ConversationTarget }[]
   >([]);
+  const [rewriteTargets, setRewriteTargets] = useState<
+    { key: string; label: string; target: ConversationTarget }[]
+  >([]);
   const [busy, setBusy] = useState(false);
   const [currentJobId, setCurrentJobId] = useState("");
   const [progress, setProgress] = useState<GenerationStage | null>(null);
@@ -222,8 +244,8 @@ export function CaseWorkbench({
   const [notice, setNotice] = useState("");
   const [selectedBriefVersion, setSelectedBriefVersion] = useState(0);
   const [artifactOpen, setArtifactOpen] = useState(false);
-  const [chatWidth, setChatWidth] = useState(320);
-  const [inspectorWidth, setInspectorWidth] = useState(340);
+  const [chatWidth, setChatWidth] = useState(400);
+  const [inspectorWidth, setInspectorWidth] = useState(300);
   const [activeChangeSet, setActiveChangeSet] =
     useState<CaseChangeSetDto | null>(null);
   const [acceptedFields, setAcceptedFields] = useState<
@@ -278,6 +300,26 @@ export function CaseWorkbench({
     null;
   const selectedCandidate =
     candidates.find((item) => item.id === selectedCase?.id) ?? null;
+  const activeRewriteTargets = rewriteTargets.length
+    ? rewriteTargets
+    : selectedTargets;
+  const rewriteStatus: "idle" | "selected" | "running" | "review" | "applied" =
+    !activeRewriteTargets.length
+      ? "idle"
+      : activeChangeSet
+        ? "review"
+        : busy
+          ? "running"
+          : notice === "变更已应用并记录审计"
+            ? "applied"
+            : "selected";
+  const selectedRewriteTargets = useMemo(
+    () => activeRewriteTargets.map((item) => item.target),
+    [activeRewriteTargets],
+  );
+  const displayedTargets = selectedTargets.length
+    ? selectedTargets
+    : rewriteTargets;
   const workflowByMessageId = useMemo(
     () =>
       new Map(
@@ -290,6 +332,12 @@ export function CaseWorkbench({
       (message) =>
         message.content.trim() || workflowByMessageId.has(message.id),
     ) ?? [];
+  const operationPlan = workspace?.operation_plan ?? null;
+  const showOperationPlan = Boolean(
+    operationPlan &&
+      operationPlan.operations.length > 1 &&
+      new Set(operationPlan.operations.map((item) => item.intent)).size > 1,
+  );
   const latestMessage = messages.at(-1);
   const inspectorCollapsed =
     artifactOpen ||
@@ -302,6 +350,7 @@ export function CaseWorkbench({
         const next = current.some((item) => item.key === key)
           ? current.filter((item) => item.key !== key)
           : [...current, { key, label, target }];
+        setRewriteTargets(next);
         if (workspace) {
           void updateWorkspaceState(workspace.id, {
             selected_targets: next.map((item) => ({
@@ -312,6 +361,20 @@ export function CaseWorkbench({
         }
         return next;
       });
+    },
+    [workspace],
+  );
+
+  const selectTarget = useCallback(
+    (target: ConversationTarget, label: string) => {
+      const next = [{ key: JSON.stringify(target), label, target }];
+      setSelectedTargets(next);
+      setRewriteTargets(next);
+      if (workspace) {
+        void updateWorkspaceState(workspace.id, {
+          selected_targets: [{ label, target }],
+        });
+      }
     },
     [workspace],
   );
@@ -335,10 +398,10 @@ export function CaseWorkbench({
       ),
     );
     setChatWidth(
-      clampPanelWidth(Number(result.context.chat_width ?? 320)),
+      clampPanelWidth("chat", Number(result.context.chat_width ?? 400)),
     );
     setInspectorWidth(
-      clampPanelWidth(Number(result.context.inspector_width ?? 340)),
+      clampPanelWidth("inspector", Number(result.context.inspector_width ?? 300)),
     );
     const restoredCaseId = String(result.context.selected_case_id ?? "");
     setSelectedCaseId(restoredCaseId);
@@ -348,11 +411,15 @@ export function CaseWorkbench({
           target: ConversationTarget;
         }[])
       : [];
-    setSelectedTargets(
-      restoredTargets.map((item) => ({
-        ...item,
-        key: JSON.stringify(item.target),
-      })),
+    const normalizedTargets = restoredTargets.map((item) => ({
+      ...item,
+      key: JSON.stringify(item.target),
+    }));
+    setSelectedTargets((current) =>
+      normalizedTargets.length ? normalizedTargets : current,
+    );
+    setRewriteTargets((current) =>
+      normalizedTargets.length ? normalizedTargets : current,
     );
     const activeJobId = String(result.context.active_job_id ?? "");
     setCurrentJobId(activeJobId);
@@ -469,6 +536,11 @@ export function CaseWorkbench({
   }, [applyWorkspaceResult, conversationId, selectedCollectionId]);
 
   useEffect(() => {
+    setSelectedTargets([]);
+    setRewriteTargets([]);
+  }, [selectedCollectionId]);
+
+  useEffect(() => {
     if (
       !workspace ||
       !activeWorkspaceJobId ||
@@ -562,6 +634,8 @@ export function CaseWorkbench({
       (pendingOperationId && !selectedTargets.length && !selectedCandidate)
     ) return;
     const content = prompt.trim();
+    setRewriteTargets(selectedTargets);
+    setBusy(true);
     setPrompt("");
     setError("");
     setNotice("");
@@ -602,6 +676,10 @@ export function CaseWorkbench({
       setWorkspace(
         await updateWorkspaceState(workspace.id, {
           draft_text: "",
+          selected_targets: selectedTargets.map((item) => ({
+            label: item.label,
+            target: item.target,
+          })),
         }),
       );
       const jobId = turn.action.job_id;
@@ -633,6 +711,8 @@ export function CaseWorkbench({
     } catch (caught) {
       setPrompt(content);
       setError(caught instanceof Error ? caught.message : "消息处理失败");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -812,6 +892,7 @@ export function CaseWorkbench({
     try {
       await applyCaseChangeSet(activeChangeSet.id, acceptedFields);
       setActiveChangeSet(null);
+      await onCasesChanged();
       const refreshed = await refreshWorkspace();
       const next = nextRunnableOperation(refreshed);
       if (next) {
@@ -851,15 +932,23 @@ export function CaseWorkbench({
     const startX = event.clientX;
     const startWidth = panel === "chat" ? chatWidth : inspectorWidth;
     let latestWidth = startWidth;
+    let previewOffset = 0;
+    let frameId: number | null = null;
+    const renderPreview = () => {
+      frameId = null;
+      separator.style.transform = `translateX(${previewOffset}px)`;
+    };
     const move = (pointerEvent: PointerEvent) => {
       const delta =
         panel === "chat"
           ? pointerEvent.clientX - startX
           : startX - pointerEvent.clientX;
-      const next = clampPanelWidth(startWidth + delta);
+      const next = clampPanelWidth(panel, startWidth + delta);
       latestWidth = next;
-      if (panel === "chat") setChatWidth(next);
-      else setInspectorWidth(next);
+      previewOffset = pointerEvent.clientX - startX;
+      if (frameId === null) {
+        frameId = window.requestAnimationFrame(renderPreview);
+      }
     };
     const stop = () => {
       window.removeEventListener("pointermove", move);
@@ -869,6 +958,13 @@ export function CaseWorkbench({
       if (separator.hasPointerCapture(pointerId)) {
         separator.releasePointerCapture(pointerId);
       }
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+        frameId = null;
+      }
+      separator.style.transform = "";
+      if (panel === "chat") setChatWidth(latestWidth);
+      else setInspectorWidth(latestWidth);
       persistPanelWidth(panel, latestWidth);
       document.documentElement.classList.remove("is-resizing-workbench");
     };
@@ -887,14 +983,14 @@ export function CaseWorkbench({
     const direction = key === "ArrowRight" ? 1 : -1;
     const delta = panel === "chat" ? direction * 16 : direction * -16;
     const current = panel === "chat" ? chatWidth : inspectorWidth;
-    const next = clampPanelWidth(current + delta);
+    const next = clampPanelWidth(panel, current + delta);
     if (panel === "chat") setChatWidth(next);
     else setInspectorWidth(next);
     persistPanelWidth(panel, next);
   };
 
   const resetPanelWidth = (panel: "chat" | "inspector") => {
-    const defaultWidth = panel === "chat" ? 320 : 340;
+    const defaultWidth = panel === "chat" ? 400 : 300;
     if (panel === "chat") setChatWidth(defaultWidth);
     else setInspectorWidth(defaultWidth);
     persistPanelWidth(panel, defaultWidth);
@@ -1102,7 +1198,8 @@ export function CaseWorkbench({
                     </button>
                   </div>
                 )}
-                {(workflow || isLiveWorkflow) && (
+                {!message.metadata.hidden_progress &&
+                  (workflow || isLiveWorkflow) && (
                   <div
                     className="principle-workflow"
                     data-status={workflow?.status ?? "running"}
@@ -1142,7 +1239,7 @@ export function CaseWorkbench({
                         </div>
                       )}
                   </div>
-                )}
+                  )}
                 {artifactVersion > 0 && (
                   <button
                     type="button"
@@ -1209,14 +1306,15 @@ export function CaseWorkbench({
         )}
 
         <form className="principle-composer" onSubmit={submitMessage}>
-          {workspace?.operation_plan &&
-            workspace.operation_plan.operations.length > 1 && (
+          {showOperationPlan && operationPlan && (
               <ol className="conversation-operation-plan" aria-label="多意图执行进度">
-                {workspace.operation_plan.operations.map((operation) => (
+                {operationPlan.operations.map((operation) => (
                   <li key={operation.id} data-status={operation.status}>
                     <span>{operation.sequence + 1}</span>
                     <strong>{intentActionLabels[operation.intent]}</strong>
-                    <small>{operation.status}</small>
+                    <small>
+                      {operationStatusLabels[operation.status] ?? "处理中"}
+                    </small>
                     {operation.status === "awaiting_intent" && (
                       <div className="conversation-operation-confirmation">
                         {(
@@ -1242,18 +1340,60 @@ export function CaseWorkbench({
                 ))}
               </ol>
             )}
-          {selectedTargets.length > 0 && (
-            <div className="principle-targets" aria-label="已选修改目标">
-              {selectedTargets.map((item) => (
-                <button
-                  type="button"
-                  key={item.key}
-                  onClick={() => toggleTarget(item.target, item.label)}
-                  title="移除此目标"
-                >
-                  {item.label} ×
-                </button>
-              ))}
+          {displayedTargets.length > 0 && (
+            <div className="principle-target-context" aria-label="AI 修改目标">
+              <span><Sparkles size={14} /> 修改目标</span>
+              <div className="principle-targets">
+                {displayedTargets.map((item) => (
+                  <button
+                    type="button"
+                    key={item.key}
+                    onClick={() => toggleTarget(item.target, item.label)}
+                    title={item.label}
+                    aria-label={`移除修改目标：${item.label}`}
+                    disabled={rewriteStatus === "running" || rewriteStatus === "review"}
+                  >
+                    <span>{item.label}</span>
+                    <X size={13} aria-hidden="true" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {rewriteStatus !== "idle" && rewriteStatus !== "selected" && (
+            <div
+              className={`principle-rewrite-status is-${rewriteStatus}`}
+              aria-label="AI 改写状态"
+              aria-live="polite"
+            >
+              <span className="principle-rewrite-status__icon">
+                {rewriteStatus === "running" ? (
+                  <LoaderCircle size={16} />
+                ) : rewriteStatus === "review" ? (
+                  <Sparkles size={16} />
+                ) : (
+                  <CheckCircle2 size={16} />
+                )}
+              </span>
+              <span>
+                <strong>
+                  {rewriteStatus === "running"
+                    ? "AI 正在改写"
+                    : rewriteStatus === "review"
+                      ? "改写完成，等待审阅"
+                      : "修改已应用"}
+                </strong>
+                <small>
+                  {rewriteStatus === "running"
+                    ? `正在处理 ${activeRewriteTargets.length} 个目标并生成字段差异…`
+                    : rewriteStatus === "review"
+                      ? "请检查字段差异，确认后再应用到正式用例"
+                      : "已保存为新 Revision，脑图内容已同步更新"}
+                </small>
+              </span>
+              {rewriteStatus === "running" && (
+                <i className="principle-rewrite-status__track" aria-hidden="true" />
+              )}
             </div>
           )}
           {attachmentLabels.length > 0 && (
@@ -1269,8 +1409,13 @@ export function CaseWorkbench({
             placeholder={
               pendingOperationId
                 ? "选择上方用例或脑图节点后，继续执行修改"
+                : displayedTargets.length === 1
+                  ? `描述你希望如何修改「${displayedTargets[0].label}」…`
+                  : displayedTargets.length > 1
+                    ? `描述你希望如何修改这 ${displayedTargets.length} 个目标…`
                 : "继续修改测试说明、维护当前用例，或询问需求内容…"
             }
+            aria-label="用自然语言修改选中目标"
             rows={4}
             disabled={busy}
           />
@@ -1337,7 +1482,11 @@ export function CaseWorkbench({
                     : !prompt.trim())
                 }
               >
-                <Send size={16} /> {pendingOperationId ? "继续执行修改" : "发送"}
+                <Send size={16} /> {pendingOperationId
+                  ? "继续执行修改"
+                  : displayedTargets.length
+                    ? "让 AI 修改"
+                    : "发送"}
               </button>
             )}
           </div>
@@ -1349,8 +1498,8 @@ export function CaseWorkbench({
         role="separator"
         aria-label="调整对话区域宽度"
         aria-orientation="vertical"
-        aria-valuemin={280}
-        aria-valuemax={520}
+        aria-valuemin={380}
+        aria-valuemax={640}
         aria-valuenow={chatWidth}
         tabIndex={0}
         onPointerDown={(event) => startPanelResize("chat", event)}
@@ -1563,7 +1712,10 @@ export function CaseWorkbench({
                   if (phase === "maintenance") onEditCase(testCase);
                   else setSelectedCaseId(testCase.id);
                 }}
-                onSelectTarget={toggleTarget}
+                onSaveCase={phase === "maintenance" ? onSaveCase : undefined}
+                onSelectTarget={selectTarget}
+                rewriteTargets={selectedRewriteTargets}
+                rewriteStatus={rewriteStatus}
               />
             ) : (
               <div className="principle-case-list">
@@ -1574,11 +1726,17 @@ export function CaseWorkbench({
                   return (
                     <div
                       key={testCase.id}
-                      className={
-                        selectedCase?.id === testCase.id
-                          ? "principle-case-row is-active"
-                          : "principle-case-row"
-                      }
+                      className={[
+                        "principle-case-row",
+                        selectedCase?.id === testCase.id ? "is-active" : "",
+                        activeRewriteTargets.some(
+                          (item) =>
+                            item.target.kind === "case" &&
+                            item.target.case_ids?.includes(testCase.id),
+                        )
+                          ? `is-ai-target is-ai-${rewriteStatus}`
+                          : "",
+                      ].filter(Boolean).join(" ")}
                     >
                       <button
                         type="button"
@@ -1593,6 +1751,12 @@ export function CaseWorkbench({
                             void updateWorkspaceState(workspace.id, {
                               selected_case_id: testCase.id,
                             });
+                          }
+                          if (phase === "maintenance") {
+                            selectTarget(
+                              { kind: "case", case_ids: [testCase.id] },
+                              testCase.title,
+                            );
                           }
                         }}
                       >

@@ -253,6 +253,51 @@ def test_rewrite_combines_custom_instruction_intents() -> None:
     assert {item.field for item in candidate.diff} == {"title", "steps"}
 
 
+def test_pipeline_rewrite_applies_explicit_field_assignments_without_model() -> None:
+    class ProviderThatMustNotRun(MockProvider):
+        def rewrite(self, request):
+            raise AssertionError("explicit field assignment should not call the model")
+
+    original = MockProvider().generate(
+        GenerationRequest(prompt="手机号验证码登录")
+    ).test_cases[0]
+    candidate = GenerationPipeline(ProviderThatMustNotRun()).rewrite(
+        RewriteRequest(
+            test_case=original,
+            instruction=(
+                "把这个用例的名称改为「登录令牌与会话唯一性」，"
+                "并把预期结果补充为“登录成功、返回有效认证令牌，且只创建一个会话”。"
+            ),
+        )
+    )
+
+    assert candidate.proposed.title == "登录令牌与会话唯一性"
+    assert candidate.proposed.steps[-1].expected == (
+        "登录成功、返回有效认证令牌，且只创建一个会话"
+    )
+    assert {item.field for item in candidate.diff} == {"title", "steps"}
+    assert candidate.quality.score == 100
+
+
+def test_pipeline_rewrite_uses_model_for_semantic_instruction() -> None:
+    class TrackingProvider(MockProvider):
+        rewrite_called = False
+
+        def rewrite(self, request):
+            self.rewrite_called = True
+            return super().rewrite(request)
+
+    provider = TrackingProvider()
+    original = provider.generate(
+        GenerationRequest(prompt="手机号验证码登录")
+    ).test_cases[0]
+    GenerationPipeline(provider).rewrite(
+        RewriteRequest(test_case=original, instruction="优化执行步骤，让表达更清晰")
+    )
+
+    assert provider.rewrite_called
+
+
 def test_mock_provider_answers_knowledge_question_with_citation() -> None:
     answer, _ = MockProvider().complete(
         stage="knowledge.answered",

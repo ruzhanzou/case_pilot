@@ -1,7 +1,11 @@
 "use client";
 
 import { CaseMindMap } from "@/components/case-mind-map";
-import type { CaseCollectionDto, TestCaseDto } from "@/lib/casepilot-api";
+import type {
+  CaseCollectionDto,
+  TestCaseDto,
+  TestCaseInput,
+} from "@/lib/casepilot-api";
 import { matchesCaseSearch, matchesCollectionSearch } from "@/lib/case-search";
 import {
   Archive,
@@ -40,6 +44,7 @@ type CaseLibraryProps = {
   onStartExecution: () => void;
   onSelectCase: (caseId: string) => void;
   onEditCase: (testCase: TestCaseDto) => void;
+  onSaveCase: (testCase: TestCaseDto, input: TestCaseInput) => Promise<void>;
   onDeleteCase: (testCase: TestCaseDto) => void;
 };
 
@@ -59,6 +64,7 @@ export function CaseLibrary({
   onStartExecution,
   onSelectCase,
   onEditCase,
+  onSaveCase,
   onDeleteCase,
 }: CaseLibraryProps) {
   const [query, setQuery] = useState("");
@@ -277,6 +283,7 @@ export function CaseLibrary({
                 onSelectCase={onSelectCase}
                 onCreateCase={onCreateCase}
                 onEditCase={onEditCase}
+                onSaveCase={onSaveCase}
               />
             ) : (
               <>

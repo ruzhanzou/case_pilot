@@ -475,6 +475,22 @@ def classify_intent(
     return "KNOWLEDGE_QA", 0.82
 
 
+def small_talk_response(content: str) -> str:
+    normalized = " ".join(content.strip().split()).casefold()
+    if any(term in normalized for term in ("谢谢", "辛苦了", "thank")):
+        return "不客气，有需要时继续告诉我即可。"
+    if any(term in normalized for term in ("再见", "晚安", "bye")):
+        return "再见，需要继续维护测试用例时随时回来。"
+    if any(term in normalized for term in CAPABILITY_TERMS) or any(
+        term in normalized for term in ("你是谁", "叫什么")
+    ):
+        return (
+            "我是 CasePilot，可以帮你生成、修改、删除和查询测试用例，"
+            "也可以回答测试与工程问题。"
+        )
+    return "你好！我是 CasePilot。你可以直接告诉我想生成、修改、删除或查询哪些测试用例。"
+
+
 def _looks_like_brief_confirmation(content: str) -> bool:
     normalized = " ".join(content.strip().split())
     return (
@@ -1031,6 +1047,24 @@ def _start_action(
         db.add(assistant)
         db.flush()
         return assistant, {"type": "clarification"}, None
+    if intent == "SMALL_TALK":
+        assistant = _new_assistant_message(
+            conversation.id,
+            content=small_talk_response(payload.content),
+            intent=intent,
+            confidence=confidence,
+            status="completed",
+            target_case_ids=[],
+            metadata={"instant_response": True},
+        )
+        db.add(assistant)
+        conversation.context = {
+            **dict(conversation.context),
+            "last_intent": intent,
+        }
+        conversation.updated_at = datetime.now(UTC)
+        db.flush()
+        return assistant, {"type": "small_talk"}, None
     target_ids = [str(item) for item in payload.target_case_ids]
     case_context: list[dict[str, Any]] = [
         {

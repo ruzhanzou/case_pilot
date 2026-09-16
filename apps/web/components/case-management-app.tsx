@@ -690,6 +690,29 @@ export function CaseManagementApp({
     }
   };
 
+  const saveCaseInline = async (
+    testCase: TestCaseDto,
+    input: TestCaseInput,
+  ) => {
+    if (!selectedCollection) return;
+    setSaving(true);
+    setError("");
+    try {
+      const result = await updateTestCase(testCase.id, {
+        ...input,
+        base_revision_id: testCase.current_revision_id,
+      });
+      await refreshCases(selectedCollection.id, result.id);
+    } catch (caught) {
+      const message =
+        caught instanceof Error ? caught.message : "节点保存失败，请重试";
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const removeCase = async (testCase: TestCaseDto) => {
     if (!selectedCollection) return;
     if (!window.confirm(`确定删除用例 ${testCase.case_key} 吗？`)) return;
@@ -932,6 +955,12 @@ export function CaseManagementApp({
             onEditCase={(testCase) =>
               setCaseEditor({ mode: "edit", testCase })
             }
+            onSaveCase={saveCaseInline}
+            onCasesChanged={async () => {
+              if (selectedCollection) {
+                await refreshCases(selectedCollection.id, selectedCaseId);
+              }
+            }}
             onImportCases={importGeneratedCases}
             onOpenLibrary={() => void openLibraryWithFreshCases()}
             onNewConversation={() => {
@@ -978,6 +1007,7 @@ export function CaseManagementApp({
             onEditCase={(testCase) =>
               setCaseEditor({ mode: "edit", testCase })
             }
+            onSaveCase={saveCaseInline}
             onDeleteCase={(testCase) => void removeCase(testCase)}
           />
         ) : (

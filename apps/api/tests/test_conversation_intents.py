@@ -11,6 +11,7 @@ from casepilot_api.conversations import (
     _test_object_from_messages,
     classify_intent,
     render_test_brief_markdown,
+    small_talk_response,
     summarize_conversation_title,
 )
 from casepilot_api.schemas import (
@@ -61,6 +62,14 @@ def test_ambiguous_modification_requires_confirmation() -> None:
     intent, confidence = classify_intent("优化一下", has_targets=True)
     assert intent == "CASE_MODIFY"
     assert confidence < 0.8
+
+
+def test_small_talk_uses_an_instant_context_free_response() -> None:
+    assert small_talk_response("你好").startswith("你好！我是 CasePilot")
+    assert small_talk_response("谢谢") == "不客气，有需要时继续告诉我即可。"
+    assert "生成、修改、删除和查询测试用例" in small_talk_response(
+        "CasePilot 可以帮我做什么？"
+    )
 
 
 def test_brief_review_does_not_treat_plain_statements_as_asset_writes() -> None:

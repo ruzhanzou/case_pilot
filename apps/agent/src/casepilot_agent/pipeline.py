@@ -5,6 +5,7 @@ from typing import Any
 from casepilot_agent.contracts import (
     AgentProvider,
     EnhancementResult,
+    FieldDiff,
     FeaturePlan,
     GenerationRequest,
     GenerationResult,
@@ -37,6 +38,73 @@ UNKNOWN_TEST_OBJECT_TERMS = (
     "是哪个",
     "不是明确",
 )
+
+
+def _explicit_rewrite_candidate(
+    request: RewriteRequest,
+) -> RewriteCandidate | None:
+    """Apply exact field assignments locally; leave semantic rewrites to the model."""
+    instruction = " ".join(request.instruction.strip().split())
+    unsupported_fields = ("前置条件", "执行步骤", "操作步骤", "标签", "自动化", "来源")
+    if any(field in instruction for field in unsupported_fields):
+        return None
+
+    def quoted_value(field_pattern: str) -> str:
+        match = re.search(
+            rf"(?:{field_pattern})[^。；;\n]{{0,18}}?[「“\"]([^」”\"]+)[」”\"]",
+            instruction,
+            flags=re.IGNORECASE,
+        )
+        return match.group(1).strip() if match else ""
+
+    mentioned = {
+        "title": any(field in instruction for field in ("用例名称", "名称", "标题")),
+        "module": any(field in instruction for field in ("所属模块", "模块")),
+        "case_type": any(field in instruction for field in ("用例类型", "类型")),
+        "priority": "优先级" in instruction,
+        "expected": any(field in instruction for field in ("预期结果", "校验点")),
+    }
+    values = {
+        "title": quoted_value(r"用例名称|名称|标题"),
+        "module": quoted_value(r"所属模块|模块"),
+        "case_type": quoted_value(r"用例类型|类型"),
+        "expected": quoted_value(r"预期结果|校验点"),
+    }
+    priority_match = re.search(r"优先级[^。；;\n]{0,12}?(P[012])", instruction, re.I)
+    values["priority"] = priority_match.group(1).upper() if priority_match else ""
+
+    if not any(values.values()):
+        return None
+    if any(mentioned[field] and not values[field] for field in mentioned):
+        return None
+
+    proposed = request.test_case.model_copy(deep=True)
+    before = proposed.model_dump(mode="json")
+    if values["title"]:
+        proposed.title = values["title"][:300]
+    if values["module"]:
+        proposed.module = values["module"]
+    if values["case_type"]:
+        proposed.case_type = values["case_type"]
+    if values["priority"]:
+        proposed.priority = values["priority"]  # type: ignore[assignment]
+    if values["expected"]:
+        proposed.steps[-1].expected = values["expected"][:4000]
+
+    after = proposed.model_dump(mode="json")
+    diff = [
+        FieldDiff(field=field, before=before[field], after=after[field])
+        for field in after
+        if before.get(field) != after[field]
+    ]
+    if not diff:
+        return None
+    return RewriteCandidate(
+        proposed=proposed,
+        diff=diff,
+        reason="按明确的字段赋值指令生成快速候选。",
+        quality=QualityReport(passed=True, score=100),
+    )
 
 
 def extract_explicit_test_object(content: str) -> str:
@@ -511,4 +579,5 @@ class GenerationPipeline:
         return enhanced
 
     def rewrite(self, request: RewriteRequest) -> RewriteCandidate:
-        return self.provider.rewrite(request)
+        explicit = _explicit_rewrite_candidate(request)
+        return explicit if explicit is not None else self.provider.rewrite(request)

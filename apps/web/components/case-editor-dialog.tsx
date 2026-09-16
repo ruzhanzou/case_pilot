@@ -3,6 +3,7 @@
 import type { TestCaseDto, TestCaseInput } from "@/lib/casepilot-api";
 import { LoaderCircle, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 type CaseEditorDialogProps = {
   testCase: TestCaseDto | null;
@@ -150,7 +151,7 @@ export function CaseEditorDialog({
     });
   };
 
-  return (
+  const dialog = (
     <div className="management-modal-backdrop" role="presentation">
       <section
         className="management-modal case-editor"
@@ -389,4 +390,10 @@ export function CaseEditorDialog({
       </section>
     </div>
   );
+
+  if (typeof document === "undefined") return null;
+  const fullscreenTarget =
+    document.fullscreenElement ??
+    document.querySelector<HTMLElement>(".case-mind-map.is-fullscreen");
+  return createPortal(dialog, fullscreenTarget ?? document.body);
 }

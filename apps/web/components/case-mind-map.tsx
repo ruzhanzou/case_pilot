@@ -4,11 +4,11 @@ import type {
   CaseCollectionDto,
   ConversationTarget,
   TestCaseDto,
+  TestCaseInput,
 } from "@/lib/casepilot-api";
 import {
   Background,
   Handle,
-  MarkerType,
   Position,
   ReactFlow,
   useReactFlow,
@@ -22,7 +22,6 @@ import {
   Bot,
   Boxes,
   ClipboardCheck,
-  Edit3,
   Eye,
   EyeOff,
   FolderTree,
@@ -33,6 +32,7 @@ import {
   Plus,
   PlusCircle,
   RotateCcw,
+  Sparkles,
 } from "lucide-react";
 import {
   memo,
@@ -54,17 +54,26 @@ type MindMapNodeData = {
   tags?: string[];
   automationType?: TestCaseDto["automation_type"];
   leavesHidden?: boolean;
+  isRewriteTarget?: boolean;
+  showRewriteBadge?: boolean;
+  rewriteStatus?: "selected" | "running" | "review" | "applied";
   onCreateCase: (module?: string) => void;
   onEditCase: (caseId: string) => void;
+  onSaveText?: (value: string) => Promise<void>;
   onToggleLeaves?: () => void;
 };
 
 type MindMapNode = Node<MindMapNodeData, "casePilotNode">;
+const emptyRewriteTargets: ConversationTarget[] = [];
 
 const MindMapCard = memo(function MindMapCard({
   data,
   selected,
 }: NodeProps<MindMapNode>) {
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const cancelingRef = useRef(false);
   const KindIcon =
     data.kind === "collection"
       ? FolderTree
@@ -74,6 +83,53 @@ const MindMapCard = memo(function MindMapCard({
           ? ClipboardCheck
           : null;
 
+  const cancelEditing = (editor: HTMLTextAreaElement) => {
+    cancelingRef.current = true;
+    editor.value = data.title;
+    setSaveError("");
+    editor.blur();
+    window.requestAnimationFrame(() => {
+      cancelingRef.current = false;
+    });
+  };
+
+  const saveText = async (draft: string) => {
+    if (saving || cancelingRef.current) return;
+    const value = draft.trim();
+    if (!value) {
+      setSaveError("内容不能为空");
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+      return;
+    }
+    if (value === data.title.trim()) {
+      return;
+    }
+    setSaving(true);
+    setSaveError("");
+    try {
+      await data.onSaveText?.(value);
+    } catch (caught) {
+      setSaveError(caught instanceof Error ? caught.message : "保存失败，请重试");
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const canQuickAdd = data.kind !== "detail";
+  const quickAddLabel =
+    data.kind === "case"
+      ? `在${data.title}后新增同模块用例`
+      : `在${data.title}下新增用例`;
+  const rewriteLabel =
+    data.rewriteStatus === "running"
+      ? "AI 改写中"
+      : data.rewriteStatus === "review"
+        ? "等待审阅"
+        : data.rewriteStatus === "applied"
+          ? "已更新"
+          : "已选目标";
+
   return (
     <article
       className={[
@@ -81,6 +137,8 @@ const MindMapCard = memo(function MindMapCard({
         `case-map-node--${data.kind}`,
         data.detailKind ? `case-map-node--${data.detailKind}` : "",
         selected ? "is-selected" : "",
+        data.isRewriteTarget ? "is-ai-target" : "",
+        data.rewriteStatus ? `is-ai-${data.rewriteStatus}` : "",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -90,6 +148,11 @@ const MindMapCard = memo(function MindMapCard({
         <span>
           {KindIcon && <KindIcon size={13} />}
           {data.eyebrow}
+          {data.showRewriteBadge && (
+            <em className="case-map-node__rewrite-state">
+              <Sparkles size={10} /> {rewriteLabel}
+            </em>
+          )}
         </span>
         {data.kind === "case" && data.caseId ? (
           <div className="case-map-node__actions">
@@ -106,31 +169,8 @@ const MindMapCard = memo(function MindMapCard({
                 {data.leavesHidden ? <Eye size={14} /> : <EyeOff size={14} />}
               </button>
             )}
-            <button
-              type="button"
-              aria-label={`修改用例标题 ${data.title}`}
-              title="修改用例"
-              onClick={(event) => {
-                event.stopPropagation();
-                data.onEditCase(data.caseId!);
-              }}
-            >
-              <Edit3 size={14} />
-            </button>
           </div>
-        ) : data.kind === "detail" && data.caseId ? (
-          <button
-            type="button"
-            aria-label={`修改${data.eyebrow} ${data.title}`}
-            title="修改此节点"
-            onClick={(event) => {
-              event.stopPropagation();
-              data.onEditCase(data.caseId!);
-            }}
-          >
-            <Edit3 size={14} />
-          </button>
-        ) : (
+        ) : data.kind !== "detail" ? (
           <div className="case-map-node__actions">
             {data.onToggleLeaves && (
               <button
@@ -145,21 +185,53 @@ const MindMapCard = memo(function MindMapCard({
                 {data.leavesHidden ? <Eye size={14} /> : <EyeOff size={14} />}
               </button>
             )}
-            <button
-              type="button"
-              aria-label={`在${data.title}下新增用例`}
-              title="新增用例"
-              onClick={(event) => {
-                event.stopPropagation();
-                data.onCreateCase(data.module);
-              }}
-            >
-              <PlusCircle size={15} />
-            </button>
           </div>
-        )}
+        ) : null}
       </div>
-      <strong title={data.title}>{data.title}</strong>
+      {data.onSaveText ? (
+        <div className="case-map-node__inline-editor nodrag nowheel">
+          <textarea
+            key={`${data.caseId}-${data.eyebrow}-${data.title}`}
+            ref={editorRef}
+            aria-label={`直接编辑${data.eyebrow}`}
+            defaultValue={data.title}
+            rows={data.kind === "detail" ? 3 : 1}
+            disabled={saving}
+            onClick={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === "Escape") {
+                event.preventDefault();
+                cancelEditing(event.currentTarget);
+              } else if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                event.currentTarget.blur();
+              }
+            }}
+            onBlur={(event) => void saveText(event.currentTarget.value)}
+          />
+          {saveError && <span role="alert">{saveError}</span>}
+          <small>{saving ? "正在保存…" : "直接输入 · Enter 保存 · Esc 取消"}</small>
+        </div>
+      ) : data.caseId ? (
+        <button
+          type="button"
+          className="case-map-node__text nodrag"
+          aria-label={`打开${data.title}的完整编辑器`}
+          title="打开完整编辑器"
+          onClick={(event) => {
+            event.stopPropagation();
+            data.onEditCase(data.caseId!);
+          }}
+        >
+          {data.title}
+        </button>
+      ) : (
+        <strong className="case-map-node__static-text" title={data.title}>
+          {data.title}
+        </strong>
+      )}
       {data.kind === "case" && (
         <footer>
           {data.priority && (
@@ -175,6 +247,20 @@ const MindMapCard = memo(function MindMapCard({
           )}
         </footer>
       )}
+      {canQuickAdd && (
+        <button
+          type="button"
+          className="case-map-node__quick-add nodrag"
+          aria-label={quickAddLabel}
+          title={data.kind === "case" ? "新增同级用例" : "新增用例"}
+          onClick={(event) => {
+            event.stopPropagation();
+            data.onCreateCase(data.module);
+          }}
+        >
+          <PlusCircle size={17} />
+        </button>
+      )}
       <Handle type="source" position={Position.Right} />
     </article>
   );
@@ -187,14 +273,7 @@ function createEdge(id: string, source: string, target: string): Edge {
     id,
     source,
     target,
-    type: "smoothstep",
-    markerEnd: {
-      type: MarkerType.ArrowClosed,
-      width: 14,
-      height: 14,
-      color: "#9db2cc",
-    },
-    style: { stroke: "#b8c8dc", strokeWidth: 1.4 },
+    style: { stroke: "#aebfd4", strokeWidth: 1.6 },
   };
 }
 
@@ -273,7 +352,10 @@ type CaseMindMapProps = {
   onSelectCase: (caseId: string) => void;
   onCreateCase: (module?: string) => void;
   onEditCase: (testCase: TestCaseDto) => void;
+  onSaveCase?: (testCase: TestCaseDto, input: TestCaseInput) => Promise<void>;
   onSelectTarget?: (target: ConversationTarget, label: string) => void;
+  rewriteTargets?: ConversationTarget[];
+  rewriteStatus?: "idle" | "selected" | "running" | "review" | "applied";
 };
 
 export function CaseMindMap({
@@ -283,7 +365,10 @@ export function CaseMindMap({
   onSelectCase,
   onCreateCase,
   onEditCase,
+  onSaveCase,
   onSelectTarget,
+  rewriteTargets = emptyRewriteTargets,
+  rewriteStatus = "idle",
 }: CaseMindMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -300,6 +385,25 @@ export function CaseMindMap({
   const allLeavesHidden =
     moduleNames.length > 0 &&
     moduleNames.every((moduleName) => hiddenLeafModules.has(moduleName));
+  const isModuleRewriteTarget = useCallback(
+    (moduleName: string) =>
+      rewriteTargets.some(
+        (target) =>
+          target.kind === "module" &&
+          (target.module ?? "") === (moduleName === "未分类" ? "" : moduleName),
+      ),
+    [rewriteTargets],
+  );
+  const isCaseRewriteTarget = useCallback(
+    (testCase: TestCaseDto) =>
+      rewriteTargets.some(
+        (target) =>
+          (target.kind === "case" && target.case_ids?.includes(testCase.id)) ||
+          (target.kind === "module" &&
+            (target.module ?? "") === (testCase.module.trim() || "")),
+      ),
+    [rewriteTargets],
+  );
 
   const toggleModuleLeaves = useCallback((moduleName: string) => {
     setHiddenLeafModules((current) => {
@@ -367,6 +471,46 @@ export function CaseMindMap({
     setIsFullscreen(true);
   }, [isFullscreen]);
 
+  const saveNodeText = useCallback(
+    async (
+      testCase: TestCaseDto,
+      field: "title" | "setup" | "procedure" | "validation",
+      value: string,
+    ) => {
+      if (!onSaveCase) return;
+      const lines = value
+        .split("\n")
+        .map((line) => line.replace(/^\s*\d+[.、]\s*/, "").trim())
+        .filter(Boolean);
+      if (field !== "title" && !lines.length) {
+        throw new Error("至少保留一条内容");
+      }
+      if (
+        (field === "procedure" || field === "validation") &&
+        lines.length !== testCase.steps.length
+      ) {
+        throw new Error("步骤数量需保持不变；增删步骤请打开完整编辑器");
+      }
+      await onSaveCase(testCase, {
+        case_key: testCase.case_key,
+        title: field === "title" ? value : testCase.title,
+        module: testCase.module,
+        priority: testCase.priority,
+        case_type: testCase.case_type,
+        tags: testCase.tags,
+        preconditions: field === "setup" ? lines : testCase.preconditions,
+        steps: testCase.steps.map((step, index) => ({
+          id: step.id,
+          action: field === "procedure" ? lines[index] : step.action,
+          expected: field === "validation" ? lines[index] : step.expected,
+        })),
+        source: testCase.source,
+        source_refs: testCase.source_refs,
+      });
+    },
+    [onSaveCase],
+  );
+
   const graph = useMemo(() => {
     const grouped = new Map<string, TestCaseDto[]>();
     cases.forEach((testCase) => {
@@ -376,7 +520,7 @@ export function CaseMindMap({
 
     const nodes: MindMapNode[] = [];
     const edges: Edge[] = [];
-    const rowHeight = 118;
+    const rowHeight = 144;
     let row = 0;
     const moduleEntries = [...grouped.entries()];
     const moduleStructures = moduleEntries.map(([moduleName, moduleCases]) => ({
@@ -446,6 +590,7 @@ export function CaseMindMap({
             0,
           );
       const moduleCenterRow = moduleStartRow + (visibleRows - 1) / 2;
+      const moduleTargeted = isModuleRewriteTarget(moduleName);
       nodes.push({
         id: moduleId,
         type: "casePilotNode",
@@ -456,6 +601,10 @@ export function CaseMindMap({
           eyebrow: `${moduleCases.length} 条用例`,
           module: moduleName === "未分类" ? "" : moduleName,
           leavesHidden,
+          isRewriteTarget: moduleTargeted,
+          showRewriteBadge: moduleTargeted,
+          rewriteStatus:
+            moduleTargeted && rewriteStatus !== "idle" ? rewriteStatus : undefined,
           onCreateCase,
           onEditCase: () => undefined,
           onToggleLeaves: () => toggleModuleLeaves(moduleName),
@@ -468,6 +617,11 @@ export function CaseMindMap({
         const detailsHidden = leavesHidden || hiddenCaseDetails.has(testCase.id);
         const detailRows = detailsHidden ? 1 : 3;
         const caseStartRow = row;
+        const caseTargeted = isCaseRewriteTarget(testCase);
+        const directCaseTargeted = rewriteTargets.some(
+          (target) =>
+            target.kind === "case" && target.case_ids?.includes(testCase.id),
+        );
         nodes.push({
           id: nodeId,
           type: "casePilotNode",
@@ -484,13 +638,21 @@ export function CaseMindMap({
             priority: testCase.priority,
             tags: testCase.tags,
             automationType: testCase.automation_type,
+            module: testCase.module,
             leavesHidden: detailsHidden,
+            isRewriteTarget: caseTargeted,
+            showRewriteBadge: directCaseTargeted,
+            rewriteStatus:
+              caseTargeted && rewriteStatus !== "idle" ? rewriteStatus : undefined,
             onCreateCase,
             onEditCase: (caseId) => {
               const current = cases.find((item) => item.id === caseId);
               if (current) onEditCase(current);
             },
             onToggleLeaves: () => toggleCaseDetails(testCase.id),
+            onSaveText: onSaveCase
+              ? (value) => saveNodeText(testCase, "title", value)
+              : undefined,
           },
         });
         edges.push(createEdge(`${moduleId}-${nodeId}`, moduleId, nodeId));
@@ -541,11 +703,19 @@ export function CaseMindMap({
               eyebrow: detail.eyebrow,
               caseId: testCase.id,
               module: testCase.module,
+              isRewriteTarget: caseTargeted,
+              rewriteStatus:
+                caseTargeted && rewriteStatus !== "idle"
+                  ? rewriteStatus
+                  : undefined,
               onCreateCase,
               onEditCase: (caseId) => {
                 const current = cases.find((item) => item.id === caseId);
                 if (current) onEditCase(current);
               },
+              onSaveText: onSaveCase
+                ? (value) => saveNodeText(testCase, detail.kind, value)
+                : undefined,
             },
           });
           edges.push(createEdge(`${nodeId}-${detail.kind}`, nodeId, detailId));
@@ -571,8 +741,14 @@ export function CaseMindMap({
     allLeavesHidden,
     hiddenLeafModules,
     hiddenCaseDetails,
+    isCaseRewriteTarget,
+    isModuleRewriteTarget,
     onCreateCase,
     onEditCase,
+    onSaveCase,
+    rewriteStatus,
+    rewriteTargets,
+    saveNodeText,
     selectedCaseId,
     toggleAllLeaves,
     toggleCaseDetails,
@@ -582,7 +758,13 @@ export function CaseMindMap({
   return (
     <div
       ref={mapRef}
-      className={isFullscreen ? "case-mind-map is-fullscreen" : "case-mind-map"}
+      className={[
+        "case-mind-map",
+        isFullscreen ? "is-fullscreen" : "",
+        rewriteStatus === "running" ? "is-ai-rewriting" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       aria-label={`${collection.name} 用例脑图`}
     >
       <ReactFlow
@@ -602,9 +784,12 @@ export function CaseMindMap({
         onNodeClick={(_, node) => {
           if (node.data.caseId) {
             onSelectCase(node.data.caseId);
+            const selectedCase = cases.find(
+              (item) => item.id === node.data.caseId,
+            );
             onSelectTarget?.(
               { kind: "case", case_ids: [node.data.caseId] },
-              node.data.title,
+              selectedCase?.title ?? node.data.title,
             );
           } else if (node.data.kind === "module") {
             onSelectTarget?.(
