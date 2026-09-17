@@ -546,15 +546,17 @@
 
 .principle-viewbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   min-height: 58px;
-  padding: 0 16px;
+  padding: 8px 16px;
   border-bottom: 1px solid #e2e8f0;
 }
 
 .principle-viewbar > div {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
 }
 
@@ -568,6 +570,7 @@
   border-radius: 8px;
   background: transparent;
   color: #64748b;
+  white-space: nowrap;
 }
 
 .principle-viewbar button.is-active {
@@ -578,10 +581,11 @@
 .principle-viewbar > span {
   margin-left: auto;
   color: #64748b;
+  white-space: nowrap;
 }
 
 .principle-viewbar button.is-primary {
-  margin-left: 8px;
+  margin-left: 0;
 }
 
 .principle-case-list {
@@ -598,9 +602,11 @@
 
 .principle-case-row > button {
   display: grid;
-  grid-template-columns: 88px minmax(180px, 1fr) minmax(90px, 150px) 44px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 140px) 44px;
   align-items: center;
   gap: 12px;
+  width: 100%;
+  min-width: 0;
   min-height: 76px;
   padding: 12px 16px;
   border: 0;
@@ -648,6 +654,30 @@
   color: #1e293b;
 }
 
+.principle-case-row__main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.principle-case-row__key {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.principle-case-row__main strong {
+  min-width: 0;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.principle-case-row > button > small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .principle-case-list i {
   font-style: normal;
   font-weight: 750;
@@ -658,6 +688,7 @@
   align-items: center;
   gap: 6px;
   padding-right: 16px;
+  white-space: nowrap;
 }
 
 .principle-case-area .case-map-node__actions button[aria-label*="新增用例"],
@@ -895,7 +926,7 @@
   }
 
   .principle-case-row > button {
-    grid-template-columns: 76px minmax(150px, 1fr) 100px 38px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 100px) 38px;
   }
 
   .principle-case-row {
@@ -12119,7 +12150,7 @@ body.is-resizing-workbench {
 }
 
 .principle-case-row > button {
-  grid-template-columns: 76px minmax(150px, 1fr) minmax(76px, 120px) 36px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 120px) 36px;
   gap: 9px;
   min-height: 60px;
   padding: 8px 11px;

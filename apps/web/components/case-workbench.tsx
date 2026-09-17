@@ -1952,8 +1952,10 @@ export function CaseWorkbench({
                           selectTarget(caseTarget(testCase), testCase.title);
                         }}
                       >
-                        <span>{testCase.case_key}</span>
-                        <strong>{testCase.title}</strong>
+                        <span className="principle-case-row__main">
+                          <span className="principle-case-row__key">{testCase.case_key}</span>
+                          <strong>{testCase.title}</strong>
+                        </span>
                         <small>{testCase.module || pick("Uncategorized", "未分类")}</small>
                         <i
                           className={`priority-${testCase.priority.toLowerCase()}`}
