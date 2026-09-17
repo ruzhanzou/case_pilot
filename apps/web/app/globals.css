@@ -11382,6 +11382,8 @@ body.is-resizing-workbench {
 
 .principle-brief-toolbar {
   display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   min-height: 66px;
@@ -11450,6 +11452,7 @@ body.is-resizing-workbench {
 }
 
 .principle-brief-guidance {
+  flex: 0 0 auto;
   margin: 16px 24px 0;
   border: 0;
   border-radius: 8px;
