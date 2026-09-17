@@ -886,6 +886,18 @@ export function CaseManagementApp({
     }
   };
 
+  const createCaseInline = async (input: TestCaseInput) => {
+    if (!selectedCollection) throw new Error(pick("Select a collection first", "请先选择用例集合"));
+    try {
+      const result = await createTestCase(selectedCollection.id, input);
+      await refreshCases(selectedCollection.id, result.id);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : pick("Failed to create case", "创建用例失败");
+      setError(message);
+      throw new Error(message);
+    }
+  };
+
   const removeCase = async (testCase: TestCaseDto) => {
     if (!selectedCollection) return;
     if (!window.confirm(pick(`Delete test case ${testCase.case_key}?`, `确定删除用例 ${testCase.case_key} 吗？`))) return;
@@ -1126,6 +1138,7 @@ export function CaseManagementApp({
             }
             onSelectCase={setSelectedCaseId}
             onCreateCase={(module) => setCaseEditor({ mode: "create", module })}
+            onCreateCaseInline={createCaseInline}
             onEditCase={(testCase) =>
               setCaseEditor({ mode: "edit", testCase })
             }
@@ -1167,6 +1180,7 @@ export function CaseManagementApp({
             }
             onDeleteCollection={() => void removeCollection()}
             onCreateCase={(module) => setCaseEditor({ mode: "create", module })}
+            onCreateCaseInline={createCaseInline}
             onOpenWorkbench={() => {
               setWorkbenchMode("workspace");
               setPage("workbench");

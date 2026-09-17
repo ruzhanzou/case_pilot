@@ -1,4 +1,5 @@
 import base64
+import copy
 import json
 import re
 from datetime import UTC, datetime
@@ -2293,6 +2294,32 @@ def _expand_conversation_targets(
             continue
         if target.kind not in {"module", "condition"}:
             continue
+        if str(dict(conversation.context).get("phase")) == "candidate_review":
+            for candidate in db.scalars(
+                select(WorkspaceCandidate).where(
+                    WorkspaceCandidate.conversation_id == conversation.id,
+                    WorkspaceCandidate.status == "candidate",
+                )
+            ):
+                snapshot = dict(candidate.snapshot)
+                matches_module = (
+                    target.kind == "module" and snapshot.get("module") == target.module
+                )
+                matches_condition = (
+                    target.kind == "condition"
+                    and target.condition in snapshot.get("preconditions", [])
+                    and (not target.module or snapshot.get("module") == target.module)
+                )
+                if (matches_module or matches_condition) and candidate.ref not in candidate_refs:
+                    candidate_snapshots.append(
+                        ConversationTargetSnapshot(
+                            ref=candidate.ref,
+                            version=candidate.version,
+                            snapshot=snapshot,
+                        )
+                    )
+                    candidate_refs.add(candidate.ref)
+            continue
         if conversation.collection_id is None:
             raise HTTPException(status_code=409, detail="conversation_collection_required")
         cases = list(
@@ -3104,6 +3131,31 @@ def _ensure_change_set(
     return change_set
 
 
+def _merge_change_fields(item: dict, accepted: set[str]) -> dict:
+    merged = copy.deepcopy(item["base_snapshot"])
+    proposed = item["proposed_snapshot"]
+    for field in accepted:
+        if field in CHANGE_FIELDS and field in proposed:
+            merged[field] = copy.deepcopy(proposed[field])
+            continue
+        step_match = re.fullmatch(r"steps\[(\d+)\]\.(action|expected)", field)
+        if step_match:
+            index = int(step_match.group(1))
+            part = step_match.group(2)
+            if index < len(merged.get("steps", [])) and index < len(proposed.get("steps", [])):
+                merged["steps"][index][part] = proposed["steps"][index][part]
+            continue
+        setup_match = re.fullmatch(r"preconditions\[(\d+)\]", field)
+        if setup_match:
+            index = int(setup_match.group(1))
+            if (
+                index < len(merged.get("preconditions", []))
+                and index < len(proposed.get("preconditions", []))
+            ):
+                merged["preconditions"][index] = proposed["preconditions"][index]
+    return merged
+
+
 @router.get("/case-change-sets/{change_set_id}", response_model=CaseChangeSetView)
 def get_change_set(
     change_set_id: UUID,
@@ -3146,6 +3198,25 @@ def apply_change_set(
             raise HTTPException(status_code=409, detail="revision_conflict")
         formal_cases[item["ref"]] = test_case
 
+    candidate_cases: dict[str, WorkspaceCandidate] = {}
+    for item in change_set.items:
+        if item["target_type"] != "candidate":
+            continue
+        candidate = db.scalar(
+            select(WorkspaceCandidate)
+            .where(
+                WorkspaceCandidate.conversation_id == change_set.conversation_id,
+                WorkspaceCandidate.ref == item["ref"],
+                WorkspaceCandidate.status == "candidate",
+            )
+            .with_for_update()
+        )
+        if candidate is None or candidate.version != int(item.get("base_version", 1)):
+            change_set.status = "conflict"
+            db.commit()
+            raise HTTPException(status_code=409, detail="candidate_changed")
+        candidate_cases[item["ref"]] = candidate
+
     created_cases: list[TestCase] = []
     candidate_snapshots: list[dict] = []
     updated_items: list[dict] = []
@@ -3153,11 +3224,7 @@ def apply_change_set(
         if item["ref"] in payload.accepted_fields:
             accepted = set(payload.accepted_fields[item["ref"]])
         else:
-            accepted = {
-                str(diff["field"])
-                for diff in item.get("field_diff", [])
-                if diff.get("field") in CHANGE_FIELDS
-            }
+            accepted = {str(diff["field"]) for diff in item.get("field_diff", [])}
         if item.get("operation") == "delete":
             test_case = formal_cases[item["ref"]]
             confirmed = "delete" in accepted
@@ -3182,16 +3249,17 @@ def apply_change_set(
                 }
             )
             continue
-        merged = dict(item["base_snapshot"])
-        for field in accepted & CHANGE_FIELDS:
-            if field in item["proposed_snapshot"]:
-                merged[field] = item["proposed_snapshot"][field]
+        merged = _merge_change_fields(item, accepted)
 
         if item["target_type"] == "candidate":
+            candidate = candidate_cases[item["ref"]]
+            candidate.snapshot = merged
+            candidate.version += 1
+            candidate.updated_at = datetime.now(UTC)
             candidate_snapshots.append(
                 {
                     "ref": item["ref"],
-                    "version": int(item.get("base_version", 1)) + 1,
+                    "version": candidate.version,
                     "snapshot": merged,
                 }
             )

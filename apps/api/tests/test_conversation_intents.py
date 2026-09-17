@@ -6,8 +6,10 @@ from casepilot_api.conversations import (
     AGENT_MEMORY_MESSAGE_LIMIT,
     _agent_conversation_memory,
     _collection_candidates,
+    _expand_conversation_targets,
     _extract_explicit_test_object,
     _looks_like_brief_confirmation,
+    _merge_change_fields,
     _test_object_from_messages,
     classify_intent,
     render_test_brief_markdown,
@@ -56,6 +58,56 @@ def test_intent_classifier_routes_generation_modification_and_qa() -> None:
     assert classify_intent(
         "把失败场景的预期结果改得更明确", has_targets=True
     )[0] == "CASE_MODIFY"
+
+
+def test_change_set_merges_selected_nested_step_without_touching_other_steps() -> None:
+    item = {
+        "base_snapshot": {
+            "title": "登录成功",
+            "steps": [
+                {"action": "输入账号", "expected": "信息显示"},
+                {"action": "点击登录", "expected": "登录成功"},
+            ],
+        },
+        "proposed_snapshot": {
+            "title": "新标题",
+            "steps": [
+                {"action": "输入账号", "expected": "信息显示"},
+                {"action": "点击登录", "expected": "登录成功且只有一个会话"},
+            ],
+        },
+    }
+    merged = _merge_change_fields(item, {"steps[1].expected"})
+    assert merged["title"] == "登录成功"
+    assert merged["steps"][0]["expected"] == "信息显示"
+    assert merged["steps"][1]["expected"] == "登录成功且只有一个会话"
+    assert item["base_snapshot"]["steps"][1]["expected"] == "登录成功"
+
+
+def test_module_target_expands_generated_candidates() -> None:
+    candidates = [
+        SimpleNamespace(ref="TC-1", version=2, snapshot={"module": "登录", "title": "正常登录"}),
+        SimpleNamespace(ref="TC-2", version=1, snapshot={"module": "支付", "title": "支付成功"}),
+    ]
+
+    class FakeDb:
+        def scalars(self, statement):
+            assert statement is not None
+            return candidates
+
+    conversation = SimpleNamespace(
+        id=uuid4(), collection_id=uuid4(), context={"phase": "candidate_review"}
+    )
+    payload = ConversationMessageCreate.model_validate(
+        {
+            "content": "修改登录模块的预期结果",
+            "targets": [{"kind": "module", "module": "登录"}],
+        }
+    )
+    expanded = _expand_conversation_targets(FakeDb(), conversation, payload)
+    assert [(item.ref, item.version) for item in expanded.target_candidate_snapshots] == [
+        ("TC-1", 2)
+    ]
 
 
 def test_ambiguous_modification_requires_confirmation() -> None:

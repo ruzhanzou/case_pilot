@@ -225,7 +225,7 @@
 .principle-change-set {
   display: grid;
   gap: 10px;
-  max-height: 230px;
+  max-height: min(420px, 50vh);
   margin: 0 18px 12px;
   padding: 12px;
   overflow-y: auto;
@@ -233,6 +233,12 @@
   border-radius: 10px;
   background: #fff7ed;
 }
+
+.principle-change-set__field { display: grid; gap: 5px; }
+.principle-change-set__comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.principle-change-set__comparison > div { min-width: 0; padding: 7px; border-radius: 6px; background: #fff; }
+.principle-change-set__comparison small { color: #64748b; font-size: 11px; }
+.principle-change-set__comparison pre { margin: 4px 0 0; color: #334155; font: inherit; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .principle-change-set > div {
   display: grid;
@@ -7797,12 +7803,11 @@ button.case-tag:hover {
   min-width: 0;
   align-items: center;
   gap: 5px;
-  overflow: hidden;
+  overflow-wrap: anywhere;
   color: #718198;
   font-size: 10px;
   font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .case-map-node__rewrite-state {
@@ -7904,7 +7909,7 @@ button.case-tag:hover {
 .case-map-node__text {
   display: block;
   width: 100%;
-  overflow: hidden;
+  overflow-wrap: anywhere;
   padding: 2px 3px;
   border: 0;
   border-radius: 5px;
@@ -7914,8 +7919,7 @@ button.case-tag:hover {
   font-weight: 700;
   line-height: 1.45;
   text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-wrap;
   cursor: text;
 }
 
@@ -7936,20 +7940,20 @@ button.case-tag:hover {
 }
 
 .case-map-node--detail > .case-map-node__text {
-  display: -webkit-box;
-  max-height: 4.35em;
-  white-space: pre-line;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  white-space: pre-wrap;
 }
 
 .case-map-node__inline-editor textarea {
   display: block;
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   field-sizing: content;
   min-height: 28px;
   max-height: none;
   overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
   resize: none;
   padding: 2px 3px;
   border: 1px solid transparent;
@@ -7963,6 +7967,22 @@ button.case-tag:hover {
   outline: none;
   cursor: text;
 }
+
+.case-map-node--draft { width: 340px; border-color: #79a5ef; }
+.case-map-node__draft { display: grid; gap: 7px; }
+.case-map-node__draft textarea, .case-map-node__draft input {
+  width: 100%; min-width: 0; box-sizing: border-box; resize: vertical;
+  padding: 6px; border: 1px solid #cedbed; border-radius: 5px;
+  color: #24364d; background: #fff; font: inherit; font-size: 12px;
+  line-height: 1.45; overflow-wrap: anywhere;
+}
+.case-map-node__draft > span { color: #c63343; font-size: 11px; }
+.case-map-node__draft-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.case-map-node__draft-actions button {
+  padding: 5px 9px; border: 1px solid #cedbed; border-radius: 5px;
+  color: #2d3c52; background: #fff; cursor: pointer;
+}
+.case-map-node__draft-actions button:last-child { color: #fff; border-color: #2563eb; background: #2563eb; }
 
 .case-map-node__inline-editor textarea:hover {
   border-color: #bdd2f3;

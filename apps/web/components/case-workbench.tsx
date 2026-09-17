@@ -79,6 +79,7 @@ type CaseWorkbenchProps = {
   pendingOperationId?: string;
   onSelectCase: (caseId: string) => void;
   onCreateCase: (module?: string) => void;
+  onCreateCaseInline: (input: TestCaseInput) => Promise<void>;
   onEditCase: (testCase: TestCaseDto) => void;
   onSaveCase: (testCase: TestCaseDto, input: TestCaseInput) => Promise<void>;
   onCasesChanged: () => Promise<void>;
@@ -183,6 +184,21 @@ const englishOperationStatusLabels: Record<string, string> = {
   failed: "Failed", cancelled: "Cancelled",
 };
 
+function formatChangeValue(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value.map((item, index) =>
+      typeof item === "string"
+        ? `${index + 1}. ${item}`
+        : typeof item === "object" && item !== null && "action" in item
+          ? `${index + 1}. ${String(item.action)}\n   → ${String("expected" in item ? item.expected : "")}`
+          : `${index + 1}. ${JSON.stringify(item)}`,
+    ).join("\n");
+  }
+  return JSON.stringify(value, null, 2);
+}
+
 const terminalWorkflowStatuses = new Set(["completed", "failed", "cancelled"]);
 const terminalOperationStatuses = new Set(["completed", "skipped"]);
 
@@ -257,6 +273,7 @@ export function CaseWorkbench({
   conversationId,
   pendingOperationId,
   onSelectCase,
+  onCreateCaseInline,
   onEditCase,
   onSaveCase,
   onCasesChanged,
@@ -341,18 +358,20 @@ export function CaseWorkbench({
     () => candidates.map(candidateToCase),
     [candidates],
   );
-  const visibleCases =
-    phase === "candidate_review"
+  const visibleCases = useMemo(
+    () => phase === "candidate_review"
       ? candidateCases
       : phase === "maintenance"
         ? cases
-        : [];
+        : [],
+    [phase, candidateCases, cases],
+  );
   const selectedCase =
     visibleCases.find((item) => item.id === selectedCaseId) ??
     visibleCases[0] ??
     null;
-  const selectedCandidate =
-    candidates.find((item) => item.id === selectedCase?.id) ?? null;
+  const effectivePendingOperationId = pendingOperationId ??
+    workspace?.operation_plan?.operations.find((item) => item.status === "awaiting_target")?.id;
   const activeRewriteTargets = rewriteTargets.length
     ? rewriteTargets
     : selectedTargets;
@@ -432,6 +451,24 @@ export function CaseWorkbench({
     [workspace],
   );
 
+  const caseTarget = useCallback((testCase: TestCaseDto): ConversationTarget => {
+    const candidate = candidates.find((item) => item.id === testCase.id);
+    return candidate
+      ? { kind: "case", candidate_refs: [candidate.ref] }
+      : { kind: "case", case_ids: [testCase.id] };
+  }, [candidates]);
+
+  const targetsFromInstruction = useCallback((instruction: string): ConversationTarget[] => {
+    const matches = visibleCases.filter((item) =>
+      (item.case_key.length >= 4 && instruction.includes(item.case_key)) ||
+      (item.title.length >= 4 && instruction.includes(item.title)),
+    );
+    if (matches.length) return matches.map(caseTarget);
+    const moduleMatches = [...new Set(visibleCases.map((item) => item.module).filter(Boolean))]
+      .filter((module) => instruction.includes(`模块「${module}」`) || instruction.includes(`模块“${module}”`));
+    return moduleMatches.length === 1 ? [{ kind: "module", module: moduleMatches[0] }] : [];
+  }, [caseTarget, visibleCases]);
+
   const selectedCollectionId = selectedCollection?.id ?? "";
   const applyWorkspaceResult = useCallback((result: ConversationDto) => {
     setWorkspace(result);
@@ -468,12 +505,8 @@ export function CaseWorkbench({
       ...item,
       key: JSON.stringify(item.target),
     }));
-    setSelectedTargets((current) =>
-      normalizedTargets.length ? normalizedTargets : current,
-    );
-    setRewriteTargets((current) =>
-      normalizedTargets.length ? normalizedTargets : current,
-    );
+    setSelectedTargets(normalizedTargets);
+    setRewriteTargets(normalizedTargets);
     const activeJobId = String(result.context.active_job_id ?? "");
     setCurrentJobId(activeJobId);
     setBusy(
@@ -496,6 +529,19 @@ export function CaseWorkbench({
       ? await getConversation(conversationId)
       : await getOrCreateWorkspace(selectedCollectionId);
     applyWorkspaceResult(result);
+    const review = result.operation_plan?.operations.find(
+      (item) => item.status === "awaiting_confirmation" && item.related_change_set_id,
+    );
+    if (review?.related_change_set_id) {
+      const changeSet = await getCaseChangeSet(review.related_change_set_id);
+      if (changeSet.status === "ready") {
+        setActiveChangeSet(changeSet);
+        setAcceptedFields(Object.fromEntries(changeSet.items.map((item) => [
+          item.ref,
+          item.field_diff.map((diff) => diff.field),
+        ])));
+      }
+    }
     return result;
   }, [applyWorkspaceResult, conversationId, selectedCollectionId]);
   const waitAndRefresh = useCallback(
@@ -574,9 +620,22 @@ export function CaseWorkbench({
     void (conversationId
       ? getConversation(conversationId)
       : getOrCreateWorkspace(selectedCollectionId))
-      .then((result) => {
+      .then(async (result) => {
         if (ignored) return;
         applyWorkspaceResult(result);
+        const review = result.operation_plan?.operations.find(
+          (item) => item.status === "awaiting_confirmation" && item.related_change_set_id,
+        );
+        if (review?.related_change_set_id) {
+          const changeSet = await getCaseChangeSet(review.related_change_set_id);
+          if (!ignored && changeSet.status === "ready") {
+            setActiveChangeSet(changeSet);
+            setAcceptedFields(Object.fromEntries(changeSet.items.map((item) => [
+              item.ref,
+              item.field_diff.map((diff) => diff.field),
+            ])));
+          }
+        }
         setError("");
         setNotice("");
       })
@@ -690,45 +749,40 @@ export function CaseWorkbench({
     if (
       !workspace ||
       busy ||
-      (!pendingOperationId && !prompt.trim()) ||
-      (pendingOperationId && !selectedTargets.length && !selectedCandidate)
+      (!effectivePendingOperationId && !prompt.trim()) ||
+      (effectivePendingOperationId && !selectedTargets.length)
     ) return;
     const content = prompt.trim();
-    setRewriteTargets(selectedTargets);
+    const structuredTargets = selectedTargets.length
+      ? selectedTargets.map((item) => item.target)
+      : targetsFromInstruction(content);
+    const resolvedSelections = selectedTargets.length
+      ? selectedTargets
+      : structuredTargets.map((target) => {
+          const testCase = visibleCases.find((item) =>
+            target.kind === "case" && (
+              target.case_ids?.includes(item.id) ||
+              candidates.some((candidate) => candidate.id === item.id && target.candidate_refs?.includes(candidate.ref))
+            ),
+          );
+          const label = testCase?.title ?? target.module ?? pick("Selected cases", "已匹配用例");
+          return { key: JSON.stringify(target), label, target };
+        });
+    setSelectedTargets(resolvedSelections);
+    setRewriteTargets(resolvedSelections);
     setBusy(true);
     setPrompt("");
     setError("");
     setNotice("");
-    const structuredTargets = selectedTargets.map((item) => item.target);
-    const formalTargets =
-      phase === "maintenance" && !structuredTargets.length && selectedCase
-        ? [selectedCase.id]
-        : [];
-    const candidateTargets = selectedCandidate
-      ? [
-          {
-            ref: selectedCandidate.ref,
-            version: selectedCandidate.version,
-            snapshot: selectedCandidate.snapshot as unknown as Record<
-              string,
-              unknown
-            >,
-          },
-        ]
-      : [];
     try {
-      const turn = pendingOperationId
-        ? await resumeConversationOperation(pendingOperationId, {
+      const turn = effectivePendingOperationId
+        ? await resumeConversationOperation(effectivePendingOperationId, {
             targets: structuredTargets,
-            targetCaseIds: formalTargets,
-            targetCandidateSnapshots: candidateTargets,
           })
         : await sendConversationMessage(workspace.id, {
             content,
             modelId,
             scope: "current",
-            targetCaseIds: formalTargets,
-            targetCandidateSnapshots: candidateTargets,
             knowledgeSourceIds: sourceIds,
             useSpaceKnowledge: true,
             targets: structuredTargets,
@@ -736,7 +790,7 @@ export function CaseWorkbench({
       setWorkspace(
         await updateWorkspaceState(workspace.id, {
           draft_text: "",
-          selected_targets: selectedTargets.map((item) => ({
+          selected_targets: resolvedSelections.map((item) => ({
             label: item.label,
             target: item.target,
           })),
@@ -758,7 +812,7 @@ export function CaseWorkbench({
           ),
         );
       }
-      if (pendingOperationId) setSelectedTargets([]);
+      if (effectivePendingOperationId) setSelectedTargets([]);
       if (jobId && !turn.action.change_set_id) {
         const refreshed = await refreshWorkspace();
         const next = nextRunnableOperation(refreshed);
@@ -1338,23 +1392,27 @@ export function CaseWorkbench({
                 {item.field_diff.map((diff) => {
                   const checked = acceptedFields[item.ref]?.includes(diff.field);
                   return (
-                    <label key={diff.field}>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() =>
-                          setAcceptedFields((current) => ({
-                            ...current,
-                            [item.ref]: checked
-                              ? (current[item.ref] ?? []).filter(
-                                  (field) => field !== diff.field,
-                                )
-                              : [...(current[item.ref] ?? []), diff.field],
-                          }))
-                        }
-                      />
-                      {diff.field === "delete" ? pick("Confirm soft delete", "确认软删除") : diff.field}
-                    </label>
+                    <div className="principle-change-set__field" key={diff.field}>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() =>
+                            setAcceptedFields((current) => ({
+                              ...current,
+                              [item.ref]: checked
+                                ? (current[item.ref] ?? []).filter((field) => field !== diff.field)
+                                : [...(current[item.ref] ?? []), diff.field],
+                            }))
+                          }
+                        />
+                        {diff.field === "delete" ? pick("Confirm soft delete", "确认软删除") : diff.field}
+                      </label>
+                      <div className="principle-change-set__comparison">
+                        <div><small>{pick("Before", "原内容")}</small><pre>{formatChangeValue(diff.before)}</pre></div>
+                        <div><small>{pick("After", "改写后")}</small><pre>{formatChangeValue(diff.after)}</pre></div>
+                      </div>
+                    </div>
                   );
                 })}
               </div>
@@ -1472,7 +1530,7 @@ export function CaseWorkbench({
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
             placeholder={
-              pendingOperationId
+              effectivePendingOperationId
                 ? pick("Select a test case or mind map node above to continue", "选择上方用例或脑图节点后，继续执行修改")
                 : displayedTargets.length === 1
                   ? pick(`Describe how you want to modify “${displayedTargets[0].label}”…`, `描述你希望如何修改「${displayedTargets[0].label}」…`)
@@ -1542,12 +1600,12 @@ export function CaseWorkbench({
                 type="submit"
                 disabled={
                   uploading ||
-                  (pendingOperationId
-                    ? !selectedTargets.length && !selectedCandidate
+                  (effectivePendingOperationId
+                    ? !selectedTargets.length
                     : !prompt.trim())
                 }
               >
-                <Send size={16} /> {pendingOperationId
+                <Send size={16} /> {effectivePendingOperationId
                   ? pick("Continue changes", "继续执行修改")
                   : displayedTargets.length
                     ? pick("Rewrite with AI", "让 AI 修改")
@@ -1767,7 +1825,7 @@ export function CaseWorkbench({
               <CaseMindMap
                 collection={selectedCollection}
                 cases={visibleCases}
-                selectedCaseId={selectedCase?.id ?? ""}
+                selectedCaseId={selectedCaseId}
                 onSelectCase={(caseId) => {
                   setSelectedCaseId(caseId);
                   const candidate = candidates.find((item) => item.id === caseId);
@@ -1777,12 +1835,22 @@ export function CaseWorkbench({
                   onSelectCase(caseId);
                 }}
                 onCreateCase={() => undefined}
+                onCreateCaseInline={phase === "maintenance" ? onCreateCaseInline : undefined}
                 onEditCase={(testCase) => {
                   if (phase === "maintenance") onEditCase(testCase);
                   else setSelectedCaseId(testCase.id);
                 }}
                 onSaveCase={phase === "maintenance" ? onSaveCase : undefined}
-                onSelectTarget={selectTarget}
+                onSelectTarget={(target, label) => {
+                  if (target.kind === "case" && target.case_ids?.length === 1) {
+                    const testCase = visibleCases.find((item) => item.id === target.case_ids?.[0]);
+                    if (testCase) {
+                      selectTarget(caseTarget(testCase), label);
+                      return;
+                    }
+                  }
+                  selectTarget(target, label);
+                }}
                 rewriteTargets={selectedRewriteTargets}
                 rewriteStatus={rewriteStatus}
               />
@@ -1797,7 +1865,7 @@ export function CaseWorkbench({
                       key={testCase.id}
                       className={[
                         "principle-case-row",
-                        selectedCase?.id === testCase.id ? "is-active" : "",
+                        selectedCaseId === testCase.id ? "is-active" : "",
                         activeRewriteTargets.some(
                           (item) =>
                             item.target.kind === "case" &&
@@ -1809,7 +1877,7 @@ export function CaseWorkbench({
                     >
                       <button
                         type="button"
-                        aria-pressed={selectedCase?.id === testCase.id}
+                        aria-pressed={selectedCaseId === testCase.id}
                         onClick={() => {
                           setSelectedCaseId(testCase.id);
                           setCandidateDraft(
@@ -1821,12 +1889,7 @@ export function CaseWorkbench({
                               selected_case_id: testCase.id,
                             });
                           }
-                          if (phase === "maintenance") {
-                            selectTarget(
-                              { kind: "case", case_ids: [testCase.id] },
-                              testCase.title,
-                            );
-                          }
+                          selectTarget(caseTarget(testCase), testCase.title);
                         }}
                       >
                         <span>{testCase.case_key}</span>

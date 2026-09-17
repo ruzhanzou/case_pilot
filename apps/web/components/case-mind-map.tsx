@@ -17,6 +17,7 @@ import {
   type Edge,
   type Node,
   type NodeProps,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
@@ -45,7 +46,7 @@ import {
 } from "react";
 
 type MindMapNodeData = {
-  kind: "collection" | "module" | "case" | "detail";
+  kind: "collection" | "module" | "case" | "detail" | "draft";
   detailKind?: "setup" | "procedure" | "validation";
   title: string;
   eyebrow: string;
@@ -59,6 +60,8 @@ type MindMapNodeData = {
   showRewriteBadge?: boolean;
   rewriteStatus?: "selected" | "running" | "review" | "applied";
   onCreateCase: (module?: string) => void;
+  onCancelDraft?: () => void;
+  onSaveDraft?: (input: TestCaseInput) => Promise<void>;
   onEditCase: (caseId: string) => void;
   onSaveText?: (value: string) => Promise<void>;
   onToggleLeaves?: () => void;
@@ -76,6 +79,11 @@ const MindMapCard = memo(function MindMapCard({
   const [saveError, setSaveError] = useState("");
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const cancelingRef = useRef(false);
+  const [draftTitle, setDraftTitle] = useState("");
+  const [draftModule, setDraftModule] = useState(data.module ?? "");
+  const [draftSetup, setDraftSetup] = useState("");
+  const [draftProcedure, setDraftProcedure] = useState("");
+  const [draftValidation, setDraftValidation] = useState("");
   const KindIcon =
     data.kind === "collection"
       ? FolderTree
@@ -118,7 +126,7 @@ const MindMapCard = memo(function MindMapCard({
     }
   };
 
-  const canQuickAdd = data.kind !== "detail";
+  const canQuickAdd = data.kind !== "detail" && data.kind !== "draft";
   const quickAddLabel =
     data.kind === "case"
       ? pick(`Add a test case after ${data.title}`, `在${data.title}后新增同模块用例`)
@@ -131,6 +139,32 @@ const MindMapCard = memo(function MindMapCard({
         : data.rewriteStatus === "applied"
           ? pick("Updated", "已更新")
           : pick("Selected", "已选目标");
+
+  const saveDraft = async () => {
+    if (saving || !data.onSaveDraft) return;
+    const title = draftTitle.trim();
+    const setup = draftSetup.split("\n").map((line) => line.trim()).filter(Boolean);
+    const procedure = draftProcedure.split("\n").map((line) => line.trim()).filter(Boolean);
+    const validation = draftValidation.split("\n").map((line) => line.trim()).filter(Boolean);
+    if (!title || !setup.length || !procedure.length || procedure.length !== validation.length) {
+      setSaveError(pick("Enter a title, setup, and matching procedure and validation lines", "请填写标题、前置条件，以及逐行对应的操作和预期结果"));
+      return;
+    }
+    setSaving(true);
+    setSaveError("");
+    try {
+      await data.onSaveDraft({
+        title, module: draftModule.trim(), priority: "P1", case_type: "功能",
+        tags: [], preconditions: setup,
+        steps: procedure.map((action, index) => ({ action, expected: validation[index] })),
+        source: "人工创建",
+      });
+    } catch (caught) {
+      setSaveError(caught instanceof Error ? caught.message : pick("Save failed. Try again.", "保存失败，请重试"));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <article
@@ -190,7 +224,20 @@ const MindMapCard = memo(function MindMapCard({
           </div>
         ) : null}
       </div>
-      {data.onSaveText ? (
+      {data.kind === "draft" ? (
+        <div className="case-map-node__draft nodrag nowheel" onPointerDown={(event) => event.stopPropagation()}>
+          <textarea autoFocus aria-label={pick("New case title", "新用例标题")} placeholder={pick("Case title", "用例标题")} value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} rows={2} />
+          <input aria-label={pick("Case module", "所属模块")} placeholder={pick("Module (optional)", "所属模块（可选）")} value={draftModule} onChange={(event) => setDraftModule(event.target.value)} />
+          <textarea aria-label="test_setup" placeholder={pick("Setup, one item per line", "前置条件，每行一条")} value={draftSetup} onChange={(event) => setDraftSetup(event.target.value)} rows={2} />
+          <textarea aria-label="test_procedure" placeholder={pick("Procedure, one step per line", "操作步骤，每行一条")} value={draftProcedure} onChange={(event) => setDraftProcedure(event.target.value)} rows={2} />
+          <textarea aria-label="test_validation" placeholder={pick("Expected result, one per step", "预期结果，与操作逐行对应")} value={draftValidation} onChange={(event) => setDraftValidation(event.target.value)} rows={2} />
+          {saveError && <span role="alert">{saveError}</span>}
+          <div className="case-map-node__draft-actions">
+            <button type="button" onClick={data.onCancelDraft} disabled={saving}>{pick("Cancel", "取消")}</button>
+            <button type="button" onClick={() => void saveDraft()} disabled={saving}>{saving ? pick("Saving…", "保存中…") : pick("Save case", "保存用例")}</button>
+          </div>
+        </div>
+      ) : data.onSaveText ? (
         <div className="case-map-node__inline-editor nodrag nowheel">
           <textarea
             key={`${data.caseId}-${data.eyebrow}-${data.title}`}
@@ -355,6 +402,7 @@ type CaseMindMapProps = {
   selectedCaseId: string;
   onSelectCase: (caseId: string) => void;
   onCreateCase: (module?: string) => void;
+  onCreateCaseInline?: (input: TestCaseInput) => Promise<void>;
   onEditCase: (testCase: TestCaseDto) => void;
   onSaveCase?: (testCase: TestCaseDto, input: TestCaseInput) => Promise<void>;
   onSelectTarget?: (target: ConversationTarget, label: string) => void;
@@ -368,6 +416,7 @@ export function CaseMindMap({
   selectedCaseId,
   onSelectCase,
   onCreateCase,
+  onCreateCaseInline,
   onEditCase,
   onSaveCase,
   onSelectTarget,
@@ -376,7 +425,31 @@ export function CaseMindMap({
 }: CaseMindMapProps) {
   const { pick } = useI18n();
   const mapRef = useRef<HTMLDivElement>(null);
+  const flowRef = useRef<ReactFlowInstance<MindMapNode, Edge> | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [draft, setDraft] = useState<{ module: string; parentId: string } | null>(null);
+  const startCreateCase = useCallback((module?: string) => {
+    if (!onCreateCaseInline) {
+      onCreateCase(module);
+      return;
+    }
+    const name = module || "";
+    const moduleIndex = [...new Set(cases.map((item) => item.module.trim() || "未分类"))]
+      .indexOf(name || "未分类");
+    setDraft({ module: name, parentId: moduleIndex < 0 ? "collection-root" : `module-${moduleIndex}` });
+  }, [cases, onCreateCase, onCreateCaseInline]);
+  const saveDraft = useCallback(async (input: TestCaseInput) => {
+    if (!onCreateCaseInline) return;
+    await onCreateCaseInline(input);
+    setDraft(null);
+  }, [onCreateCaseInline]);
+  useEffect(() => {
+    if (!draft || !flowRef.current) return;
+    const frame = window.requestAnimationFrame(() => {
+      void flowRef.current?.fitView({ nodes: [{ id: "new-case-draft" }], maxZoom: 0.9, duration: 250, padding: 0.5 });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [draft]);
   const [hiddenLeafModules, setHiddenLeafModules] = useState<Set<string>>(
     () => new Set(),
   );
@@ -525,7 +598,13 @@ export function CaseMindMap({
 
     const nodes: MindMapNode[] = [];
     const edges: Edge[] = [];
-    const rowHeight = 144;
+    const longestDetailLines = Math.max(0, ...cases.flatMap((testCase) => [
+      [testCase.title],
+      testCase.preconditions,
+      testCase.steps.map((step) => step.action),
+      testCase.steps.map((step) => step.expected),
+    ].map((items) => items.reduce((count, item) => count + Math.max(1, Math.ceil(item.length / 25)), 0))));
+    const rowHeight = Math.max(144, 64 + longestDetailLines * 19);
     let row = 0;
     const moduleEntries = [...grouped.entries()];
     const moduleStructures = moduleEntries.map(([moduleName, moduleCases]) => ({
@@ -557,7 +636,7 @@ export function CaseMindMap({
         title: collection.name,
         eyebrow: pick(`${cases.length} test cases`, `${cases.length} 条用例`),
         leavesHidden: allLeavesHidden,
-        onCreateCase,
+        onCreateCase: startCreateCase,
         onEditCase: (caseId) => {
           const testCase = cases.find((item) => item.id === caseId);
           if (testCase) onEditCase(testCase);
@@ -575,7 +654,7 @@ export function CaseMindMap({
           kind: "module",
           title: pick("Create the first module", "创建第一个模块"),
           eyebrow: pick("No test cases", "暂无用例"),
-          onCreateCase,
+          onCreateCase: startCreateCase,
           onEditCase: () => undefined,
         },
       });
@@ -610,7 +689,7 @@ export function CaseMindMap({
           showRewriteBadge: moduleTargeted,
           rewriteStatus:
             moduleTargeted && rewriteStatus !== "idle" ? rewriteStatus : undefined,
-          onCreateCase,
+          onCreateCase: startCreateCase,
           onEditCase: () => undefined,
           onToggleLeaves: () => toggleModuleLeaves(moduleName),
         },
@@ -649,7 +728,7 @@ export function CaseMindMap({
             showRewriteBadge: directCaseTargeted,
             rewriteStatus:
               caseTargeted && rewriteStatus !== "idle" ? rewriteStatus : undefined,
-            onCreateCase,
+            onCreateCase: startCreateCase,
             onEditCase: (caseId) => {
               const current = cases.find((item) => item.id === caseId);
               if (current) onEditCase(current);
@@ -713,7 +792,7 @@ export function CaseMindMap({
                 caseTargeted && rewriteStatus !== "idle"
                   ? rewriteStatus
                   : undefined,
-              onCreateCase,
+              onCreateCase: startCreateCase,
               onEditCase: (caseId) => {
                 const current = cases.find((item) => item.id === caseId);
                 if (current) onEditCase(current);
@@ -730,6 +809,27 @@ export function CaseMindMap({
 
       moduleCases.forEach(addCaseNode);
     });
+
+    if (draft) {
+      const parent = nodes.find((node) => node.id === draft.parentId);
+      const draftId = "new-case-draft";
+      nodes.push({
+        id: draftId,
+        type: "casePilotNode",
+        position: { x: draft.parentId === "collection-root" ? 360 : 700, y: Math.max((totalRows + 1) * rowHeight, (parent?.position.y ?? 0) + rowHeight) },
+        data: {
+          kind: "draft",
+          title: "",
+          eyebrow: pick("New test case", "新增用例"),
+          module: draft.module,
+          onCreateCase: startCreateCase,
+          onEditCase: () => undefined,
+          onCancelDraft: () => setDraft(null),
+          onSaveDraft: saveDraft,
+        },
+      });
+      edges.push(createEdge(`draft-${draft.parentId}`, draft.parentId, draftId));
+    }
 
     return {
       nodes,
@@ -748,14 +848,16 @@ export function CaseMindMap({
     hiddenCaseDetails,
     isCaseRewriteTarget,
     isModuleRewriteTarget,
-    onCreateCase,
+    draft,
     onEditCase,
     onSaveCase,
     pick,
     rewriteStatus,
     rewriteTargets,
     saveNodeText,
+    saveDraft,
     selectedCaseId,
+    startCreateCase,
     toggleAllLeaves,
     toggleCaseDetails,
     toggleModuleLeaves,
@@ -774,6 +876,7 @@ export function CaseMindMap({
       aria-label={pick(`${collection.name} test case mind map`, `${collection.name} 用例脑图`)}
     >
       <ReactFlow
+        onInit={(instance) => { flowRef.current = instance; }}
         nodes={graph.nodes}
         edges={graph.edges}
         nodeTypes={nodeTypes}

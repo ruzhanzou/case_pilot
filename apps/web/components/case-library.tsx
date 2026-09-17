@@ -45,6 +45,7 @@ type CaseLibraryProps = {
   onEditCollection: () => void;
   onDeleteCollection: () => void;
   onCreateCase: (module?: string) => void;
+  onCreateCaseInline: (input: TestCaseInput) => Promise<void>;
   onOpenWorkbench: () => void;
   onStartExecution: () => void;
   onSelectCase: (caseId: string) => void;
@@ -66,6 +67,7 @@ export function CaseLibrary({
   onEditCollection,
   onDeleteCollection,
   onCreateCase,
+  onCreateCaseInline,
   onOpenWorkbench,
   onStartExecution,
   onSelectCase,
@@ -315,6 +317,7 @@ export function CaseLibrary({
                 selectedCaseId={selectedCase?.id ?? ""}
                 onSelectCase={onSelectCase}
                 onCreateCase={onCreateCase}
+                onCreateCaseInline={onCreateCaseInline}
                 onEditCase={onEditCase}
                 onSaveCase={onSaveCase}
               />
