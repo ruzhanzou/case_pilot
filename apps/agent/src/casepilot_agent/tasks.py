@@ -602,6 +602,11 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                 "test_object_specified。若缺少测试对象，只提出一个测试对象澄清项；"
                 "角色、流程、规则、约束、风险等其他内容均由你结合上下文分析，"
                 "必要时记录为假设，不得要求用户澄清。"
+                "context.evidence 是已检索到的资料证据；资料明确写出的数值、单位、"
+                "时间阈值、边界条件和错误码均属于已明确的信息，不是猜测。"
+                "在 business_rules 中逐条写出与测试对象相关的原始精确值及对应行为，"
+                "不得用‘规定时长’‘金额上限’等笼统说法替代证据中的具体值。"
+                "若用户要求不要猜测，只禁止补造资料未写明的值；仍须保留资料已写明的值。"
             ),
             payload=stage_input,
             result_type=RequirementAnalysis,
