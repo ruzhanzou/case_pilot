@@ -137,6 +137,11 @@ GENERATE_TERMS = (
     "重新生成",
     "测试场景",
 )
+ENGLISH_CASE_GENERATION = re.compile(
+    r"\b(?:generate|create|write|draft|design)\s+(?:(?:some|new|more|a set of)\s+)?"
+    r"test\s+cases?\b|\btest\s+case\s+generation\b",
+    re.IGNORECASE,
+)
 MODIFY_TERMS = (
     "修改",
     "改写",
@@ -395,6 +400,11 @@ def classify_intent(
         or asks_about_capabilities
     ):
         return "SMALL_TALK", 0.99
+    if ENGLISH_CASE_GENERATION.search(normalized) and not re.search(
+        r"\b(?:how to|how do|why|what|when|whether|do not|don't|without|never)\b",
+        compact,
+    ):
+        return "CASE_GENERATE", 0.98
     question_like = any(term in normalized for term in QA_TERMS)
     question_like = question_like or any(
         term in normalized for term in ("什么", "为何", "含义", "指什么")
@@ -845,6 +855,70 @@ def collection_workspace_context(context: dict[str, Any]) -> dict[str, Any]:
     if str(normalized.get("phase", "idle")) == "idle":
         normalized["phase"] = "maintenance"
     return normalized
+
+
+def terminal_workspace_context(
+    context: dict[str, Any],
+    *,
+    operation: str,
+    has_candidates: bool,
+    has_brief: bool,
+) -> dict[str, Any]:
+    phase = (
+        "candidate_review"
+        if has_candidates
+        else "brief_review"
+        if has_brief or operation == "generate"
+        else "maintenance"
+    )
+    return {
+        **context,
+        "phase": phase,
+        "active_job_id": None,
+        "active_operation_id": None,
+    }
+
+
+def recover_terminal_workspace_job(db: Session, conversation: Conversation) -> None:
+    context = dict(conversation.context)
+    if context.get("phase") not in {"generating", "brief_drafting"}:
+        return
+    raw_job_id = context.get("active_job_id")
+    if not raw_job_id:
+        return
+    try:
+        job = db.get(GenerationJob, UUID(str(raw_job_id)))
+    except ValueError:
+        job = None
+    if job is None:
+        return
+    status = job.status.value if hasattr(job.status, "value") else str(job.status)
+    if status not in {"completed", "failed", "cancelled"}:
+        return
+    if job.operation not in {"generate", "draft_brief"}:
+        return
+    has_candidates = db.scalar(
+        select(WorkspaceCandidate.id)
+        .where(
+            WorkspaceCandidate.conversation_id == conversation.id,
+            WorkspaceCandidate.status == "candidate",
+        )
+        .limit(1)
+    ) is not None
+    has_brief = db.scalar(
+        select(WorkspaceTestBrief.id)
+        .where(WorkspaceTestBrief.conversation_id == conversation.id)
+        .limit(1)
+    ) is not None
+    conversation.context = terminal_workspace_context(
+        context,
+        operation=job.operation,
+        has_candidates=has_candidates,
+        has_brief=has_brief,
+    )
+    conversation.updated_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(conversation)
 
 
 def _change_set_view(change_set: CaseChangeSet) -> CaseChangeSetView:
@@ -1487,6 +1561,7 @@ def get_or_create_workspace(
         )
         existing = _ensure_conversation(db, account.id, created.id)
 
+    recover_terminal_workspace_job(db, existing)
     normalized_context = collection_workspace_context(dict(existing.context))
     if normalized_context != dict(existing.context):
         existing.context = normalized_context
@@ -1592,6 +1667,7 @@ def get_latest_conversation(
     )
     if conversation is None:
         raise HTTPException(status_code=404, detail="conversation_not_found")
+    recover_terminal_workspace_job(db, conversation)
     return _conversation_view(db, conversation)
 
 
@@ -1736,9 +1812,11 @@ def get_conversation(
     account: CurrentAccount,
     db: DbSession,
 ) -> ConversationView:
+    conversation = _ensure_conversation(db, account.id, conversation_id)
+    recover_terminal_workspace_job(db, conversation)
     return _conversation_view(
         db,
-        _ensure_conversation(db, account.id, conversation_id),
+        conversation,
     )
 
 

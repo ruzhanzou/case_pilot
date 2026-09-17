@@ -83,9 +83,15 @@ PRONOUN_SIGNAL = re.compile(
     r"(?:这个|那个|刚才|刚刚|前面|上面|上一条|第[一二三四五六七八九十\d]+条)"
 )
 WRITE_SIGNAL = re.compile(
-    r"(?:生成|创建|新增|补充|修改|改写|调整|替换|删除|移除|作废|改成|改为)"
+    r"(?:生成|创建|新增|补充|修改|改写|调整|替换|删除|移除|作废|改成|改为|"
+    r"\b(?:generate|create|write|draft|design)\s+(?:some\s+|new\s+|more\s+|a\s+set\s+of\s+)?test\s+cases?\b)",
+    re.IGNORECASE,
 )
-EXPLICIT_REQUEST_SIGNAL = re.compile(r"(?:请|帮我|我要|需要|现在|立即|给我|替我)")
+EXPLICIT_REQUEST_SIGNAL = re.compile(
+    r"(?:请|帮我|我要|需要|现在|立即|给我|替我|"
+    r"\b(?:please|can you|could you|i want|i need)\b)",
+    re.IGNORECASE,
+)
 
 
 def intent_threshold(intent: str) -> float:

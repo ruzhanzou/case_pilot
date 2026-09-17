@@ -586,6 +586,9 @@ export function CaseWorkbench({
           throw new Error(job.error_code ?? pick("Task failed. Try again later.", "任务处理失败，请稍后重试"));
         }
         await refreshWorkspace();
+      } catch (caught) {
+        await refreshWorkspace().catch(() => undefined);
+        throw caught;
       } finally {
         if (watchedJobRef.current === jobId) {
           watchedJobRef.current = "";
@@ -667,9 +670,14 @@ export function CaseWorkbench({
     ) {
       return;
     }
-    void waitAndRefresh(activeWorkspaceJobId, workspace.id).catch((caught) => {
-      setError(caught instanceof Error ? caught.message : pick("Failed to restore task", "任务恢复失败"));
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      void waitAndRefresh(activeWorkspaceJobId, workspace.id).catch((caught) => {
+        setError(caught instanceof Error ? caught.message : pick("Failed to restore task", "任务恢复失败"));
+      });
     });
+    return () => { active = false; };
   }, [activeWorkspaceJobId, phase, pick, waitAndRefresh, workspace]);
 
   useEffect(() => {
@@ -1738,7 +1746,7 @@ export function CaseWorkbench({
                 </button>
               )}
               {selectedBrief.version === activeBrief?.version &&
-                activeBrief.status === "draft" &&
+                ["draft", "confirmed"].includes(activeBrief.status) &&
                 phase === "brief_review" && (
                   <button
                     type="button"
@@ -1751,7 +1759,11 @@ export function CaseWorkbench({
                     ) : (
                       <Check size={16} />
                     )}
-                    {busy ? pick("Starting generation…", "正在启动生成…") : pick("Confirm and generate", "确认并生成用例")}
+                    {busy
+                      ? pick("Starting generation…", "正在启动生成…")
+                      : activeBrief.status === "confirmed"
+                        ? pick("Retry generation", "重新生成用例")
+                        : pick("Confirm and generate", "确认并生成用例")}
                   </button>
                 )}
             </header>

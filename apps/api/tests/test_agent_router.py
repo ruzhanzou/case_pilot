@@ -10,6 +10,7 @@ from casepilot_api.agent_router import (
     plan_intents,
     sdk_plan,
 )
+from casepilot_api.conversations import classify_intent
 
 
 def classify(clause: str) -> tuple[str, float]:
@@ -58,6 +59,29 @@ def test_small_talk_uses_the_same_model_answer_action_as_knowledge_qa() -> None:
 
     assert plan.operations[0].intent == "SMALL_TALK"
     assert plan.operations[0].action == "ANSWER_QUESTION"
+
+
+def test_english_generation_request_routes_to_workspace_without_model() -> None:
+    instruction = (
+        "doubao Generate test cases for phone verification-code login, "
+        "covering the happy path, rate limits, code expiry, and poor networks."
+    )
+    plan = plan_intents(
+        instruction,
+        classify_intent,
+        has_targets=False,
+        phase="idle",
+        target_context=[],
+        provider="mock",
+        model_name="mock",
+        base_url="",
+        api_key="",
+        timeout_seconds=5,
+        tracing_enabled=False,
+    )
+    assert plan.operations[0].intent == "CASE_GENERATE"
+    assert plan.operations[0].action == "BRIEF_CREATE"
+    assert plan.operations[0].requires_confirmation is False
 
 
 def test_model_authored_action_is_normalized_to_the_server_contract(

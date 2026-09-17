@@ -34,6 +34,30 @@ from sqlalchemy.engine import Connection
 
 metadata = MetaData()
 
+
+def generation_failure_message(error_code: str, output_payload: dict[str, Any]) -> str:
+    friendly_message = {
+        "ProviderResponseError": "模型返回内容暂时无法解析，请稍后重试或更换模型。",
+        "TimeoutError": "模型响应超时，请稍后重试。",
+        "ConnectionError": "网络连接中断，请检查网络后重试。",
+        "GenerationQualityError": "候选用例未通过质量校验，请补充需求后重试。",
+    }.get(error_code, "处理暂时未完成，请稍后重试。")
+    if error_code != "GenerationQualityError":
+        return friendly_message
+    quality = dict(output_payload.get("quality") or {})
+    reasons = [
+        str(issue.get("message", "")).strip()
+        for issue in quality.get("issues", [])
+        if issue.get("severity") == "error" and issue.get("message")
+    ]
+    if not reasons:
+        return friendly_message
+    return (
+        "候选用例未通过质量校验："
+        + "；".join(list(dict.fromkeys(reasons))[:3])
+        + "。请根据以上问题调整测试说明后重试。"
+    )
+
 callback_deliveries = Table(
     "callback_deliveries",
     metadata,
@@ -1247,12 +1271,11 @@ class JobStore:
         job_id: UUID,
         error_code: str,
     ) -> None:
-        friendly_message = {
-            "ProviderResponseError": "模型返回内容暂时无法解析，请稍后重试或更换模型。",
-            "TimeoutError": "模型响应超时，请稍后重试。",
-            "ConnectionError": "网络连接中断，请检查网络后重试。",
-            "GenerationQualityError": "候选用例未通过质量校验，请补充需求后重试。",
-        }.get(error_code, "处理暂时未完成，请稍后重试。")
+        job = self.get_job(connection, job_id)
+        friendly_message = generation_failure_message(
+            error_code,
+            dict(job.get("output_payload") or {}),
+        )
         connection.execute(
             update(conversation_messages)
             .where(conversation_messages.c.related_job_id == job_id)

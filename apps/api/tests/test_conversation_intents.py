@@ -12,9 +12,11 @@ from casepilot_api.conversations import (
     _merge_change_fields,
     _test_object_from_messages,
     classify_intent,
+    recover_terminal_workspace_job,
     render_test_brief_markdown,
     small_talk_response,
     summarize_conversation_title,
+    terminal_workspace_context,
 )
 from casepilot_api.schemas import (
     ConversationMessageCreate,
@@ -26,6 +28,14 @@ from casepilot_api.schemas import (
 
 def test_intent_classifier_routes_generation_modification_and_qa() -> None:
     assert classify_intent("补充弱网用例")[0] == "CASE_GENERATE"
+    assert classify_intent(
+        "doubao Generate test cases for phone verification-code login, "
+        "covering the happy path, rate limits, code expiry, and poor networks."
+    ) == ("CASE_GENERATE", 0.98)
+    assert classify_intent("How to generate test cases?")[0] == "KNOWLEDGE_QA"
+    assert classify_intent("Can you generate test cases for login?")[0] == (
+        "CASE_GENERATE"
+    )
     assert classify_intent("为已登录用户修改密码生成测试用例") == (
         "CASE_GENERATE",
         0.98,
@@ -108,6 +118,60 @@ def test_module_target_expands_generated_candidates() -> None:
     assert [(item.ref, item.version) for item in expanded.target_candidate_snapshots] == [
         ("TC-1", 2)
     ]
+
+
+def test_terminal_generation_releases_workspace_phase_and_job() -> None:
+    context = {"phase": "generating", "active_job_id": "old-job", "chat_width": 400}
+    recovered = terminal_workspace_context(
+        context,
+        operation="generate",
+        has_candidates=False,
+        has_brief=True,
+    )
+    assert recovered == {
+        "phase": "brief_review",
+        "active_job_id": None,
+        "active_operation_id": None,
+        "chat_width": 400,
+    }
+    assert context["phase"] == "generating"
+    assert terminal_workspace_context(
+        context,
+        operation="generate",
+        has_candidates=True,
+        has_brief=True,
+    )["phase"] == "candidate_review"
+
+
+def test_failed_generation_is_recovered_when_workspace_is_read() -> None:
+    job_id = uuid4()
+    conversation = SimpleNamespace(
+        id=uuid4(),
+        context={"phase": "generating", "active_job_id": str(job_id)},
+        updated_at=None,
+    )
+
+    class FakeDb:
+        committed = False
+
+        def get(self, model, identifier):
+            assert identifier == job_id
+            return SimpleNamespace(status="failed", operation="generate")
+
+        def scalar(self, statement):
+            return uuid4() if "workspace_test_briefs" in str(statement) else None
+
+        def commit(self):
+            self.committed = True
+
+        def refresh(self, item):
+            assert item is conversation
+
+    db = FakeDb()
+    recover_terminal_workspace_job(db, conversation)
+    assert db.committed
+    assert conversation.context["phase"] == "brief_review"
+    assert conversation.context["active_job_id"] is None
 
 
 def test_ambiguous_modification_requires_confirmation() -> None:

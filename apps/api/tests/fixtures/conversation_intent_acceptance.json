@@ -16,6 +16,7 @@
   {"id":"GEN-003","text":"补充弱网用例","expected":"CASE_GENERATE"},
   {"id":"GEN-004","text":"重新生成注册流程测试用例","expected":"CASE_GENERATE"},
   {"id":"GEN-005","text":"给我生成手机号验证码登录用例","expected":"CASE_GENERATE"},
+  {"id":"GEN-EN-001","text":"doubao Generate test cases for phone verification-code login, covering the happy path, rate limits, code expiry, and poor networks.","expected":"CASE_GENERATE"},
   {"id":"BRIEF-UPDATE","text":"修改测试说明：增加弱网恢复","expected":"CASE_GENERATE","phase":"brief_review"},
   {"id":"INTENT-003","text":"把失败场景的预期结果改得更明确","expected":"CASE_MODIFY","has_targets":true},
   {"id":"INTENT-004","text":"修改一下用例","expected":"CASE_MODIFY"},
