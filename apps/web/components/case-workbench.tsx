@@ -16,6 +16,7 @@ import {
   getConversation,
   getOrCreateWorkspace,
   listGenerationModels,
+  rejectCaseChangeSet,
   resumeConversationOperation,
   sendConversationMessage,
   updateWorkspaceCandidate,
@@ -1056,6 +1057,22 @@ export function CaseWorkbench({
     }
   };
 
+  const rejectChangeSet = async () => {
+    if (!activeChangeSet) return;
+    setBusy(true);
+    setError("");
+    try {
+      await rejectCaseChangeSet(activeChangeSet.id);
+      setActiveChangeSet(null);
+      await refreshWorkspace();
+      setNotice(pick("Changes rejected. Official test cases were not modified.", "已拒绝变更，正式用例未修改"));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : pick("Failed to reject changes", "拒绝变更失败"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const persistPanelWidth = (
     panel: "chat" | "inspector",
     value: number,
@@ -1452,10 +1469,10 @@ export function CaseWorkbench({
               </div>
             ))}
             <div>
-              <button type="button" onClick={() => setActiveChangeSet(null)}>
-                {pick("Cancel", "取消")}
+              <button type="button" onClick={() => void rejectChangeSet()} disabled={busy}>
+                {pick("Reject changes", "拒绝变更")}
               </button>
-              <button type="button" onClick={() => void applyChangeSet()}>
+              <button type="button" onClick={() => void applyChangeSet()} disabled={busy}>
                 {pick("Apply changes", "确认应用")}
               </button>
             </div>
@@ -1574,7 +1591,7 @@ export function CaseWorkbench({
             }
             aria-label={pick("Modify selected targets with natural language", "用自然语言修改选中目标")}
             rows={4}
-            disabled={busy}
+            disabled={busy || !workspace}
           />
           <div>
             <input
@@ -1634,6 +1651,7 @@ export function CaseWorkbench({
                 type="submit"
                 disabled={
                   uploading ||
+                  !workspace ||
                   (effectivePendingOperationId
                     ? !selectedTargets.length
                     : !prompt.trim())

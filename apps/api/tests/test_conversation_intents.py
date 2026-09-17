@@ -70,6 +70,7 @@ def test_intent_classifier_routes_generation_modification_and_qa() -> None:
     assert classify_intent(
         "把失败场景的预期结果改得更明确", has_targets=True
     )[0] == "CASE_MODIFY"
+    assert classify_intent("请把预期结果写得更明确。")[0] == "CASE_MODIFY"
 
 
 @pytest.mark.parametrize(

@@ -13,6 +13,7 @@ import {
   Position,
   ReactFlow,
   useReactFlow,
+  useNodesState,
   useViewport,
   type Edge,
   type Node,
@@ -862,6 +863,16 @@ export function CaseMindMap({
     toggleCaseDetails,
     toggleModuleLeaves,
   ]);
+  const [flowNodes, setFlowNodes, onNodesChange] = useNodesState<MindMapNode>(graph.nodes);
+  useEffect(() => {
+    setFlowNodes((current) => {
+      const measuredById = new Map(current.map((node) => [node.id, node.measured]));
+      return graph.nodes.map((node) => ({
+        ...node,
+        measured: measuredById.get(node.id),
+      }));
+    });
+  }, [graph.nodes, setFlowNodes]);
 
   return (
     <div
@@ -877,7 +888,8 @@ export function CaseMindMap({
     >
       <ReactFlow
         onInit={(instance) => { flowRef.current = instance; }}
-        nodes={graph.nodes}
+        nodes={flowNodes}
+        onNodesChange={onNodesChange}
         edges={graph.edges}
         nodeTypes={nodeTypes}
         defaultViewport={graph.viewport}
