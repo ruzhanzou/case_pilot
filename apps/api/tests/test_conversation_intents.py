@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+
 from casepilot_api.conversations import (
     AGENT_MEMORY_CONTENT_LIMIT,
     AGENT_MEMORY_MESSAGE_LIMIT,
@@ -68,6 +70,24 @@ def test_intent_classifier_routes_generation_modification_and_qa() -> None:
     assert classify_intent(
         "把失败场景的预期结果改得更明确", has_targets=True
     )[0] == "CASE_MODIFY"
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("不要生成测试用例", "KNOWLEDGE_QA"),
+        ("请不要生成测试用例", "KNOWLEDGE_QA"),
+        ("Don't generate test cases.", "KNOWLEDGE_QA"),
+        ("Modify the selected test case to cover poor networks.", "CASE_MODIFY"),
+        ("Delete the selected test case.", "CASE_DELETE"),
+        ("Find all P0 test cases.", "CASE_QUERY"),
+        ("Please generate test cases for login and tell me why.", "CASE_GENERATE"),
+    ],
+)
+def test_english_actions_and_negated_generation(
+    content: str, expected: str
+) -> None:
+    assert classify_intent(content, has_targets=True)[0] == expected
 
 
 def test_change_set_merges_selected_nested_step_without_touching_other_steps() -> None:
@@ -197,6 +217,8 @@ def test_brief_review_does_not_treat_plain_statements_as_asset_writes() -> None:
         == "KNOWLEDGE_QA"
     )
     assert classify_intent("什么是ASR", phase="brief_review")[0] == "KNOWLEDGE_QA"
+    assert classify_intent("如何修改测试说明？", phase="brief_review")[0] == "KNOWLEDGE_QA"
+    assert classify_intent("为什么要补充弱网场景？", phase="brief_review")[0] == "KNOWLEDGE_QA"
 
 
 def test_collection_candidates_builds_query_with_collection_columns() -> None:

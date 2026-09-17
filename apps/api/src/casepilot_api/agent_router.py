@@ -72,9 +72,28 @@ SEQUENCE_SPLIT = re.compile(
     r"\s*(?:；|;|然后|随后|接着|另外|并且|同时|以及|顺便|"
     r"(?:[，,]\s*)?再(?=(?:生成|创建|新增|补充|修改|改写|调整|删除|查询|"
     r"解释|介绍|说明))|并(?=(?:生成|创建|新增|补充|修改|改写|调整|删除|"
-    r"查询|解释|介绍|说明)))\s*"
+    r"查询|解释|介绍|说明))|"
+    r"\b(?:and\s+then|then|and|also)\s+(?=(?:generate|create|write|draft|"
+    r"design|modify|edit|update|rewrite|revise|delete|remove|archive|"
+    r"find|list|search|show)\b))\s*",
+    re.IGNORECASE,
 )
 NEGATED_DELETE = re.compile(r"(?:不要|无需|不用|别|禁止).{0,8}(?:删除|移除|作废)")
+NEGATED_WRITE = re.compile(
+    r"(?:不要|无需|不用|别|禁止|暂不|先别).{0,12}"
+    r"(?:生成|创建|新增|补充|修改|改写|调整|替换|删除|移除|作废)|"
+    r"\b(?:do\s+not|don't|never|without)\s+"
+    r"(?:generate|create|write|draft|design|modify|edit|update|rewrite|"
+    r"revise|delete|remove|archive)\b",
+    re.IGNORECASE,
+)
+INFORMATION_QUESTION = re.compile(
+    r"^\s*(?:请问)?(?:如何|怎么|为什么|为何|什么|是否|能否|可否)|"
+    r"^\s*(?:how|why|what|when|whether|should|"
+    r"(?:can|could)\s+you\s+explain|"
+    r"(?:please\s+)?(?:explain|tell\s+me)\s+(?:how|why|what))\b",
+    re.IGNORECASE,
+)
 QUESTION_SIGNAL = re.compile(
     r"(?:什么|为何|为什么|怎么|如何|是否|能否|可否|吗|么|呢|多少|哪些|哪个|"
     r"哪里|何时|含义|指什么|区别|[？?])"
@@ -84,7 +103,10 @@ PRONOUN_SIGNAL = re.compile(
 )
 WRITE_SIGNAL = re.compile(
     r"(?:生成|创建|新增|补充|修改|改写|调整|替换|删除|移除|作废|改成|改为|"
-    r"\b(?:generate|create|write|draft|design)\s+(?:some\s+|new\s+|more\s+|a\s+set\s+of\s+)?test\s+cases?\b)",
+    r"\b(?:generate|create|write|draft|design)\s+(?:some\s+|new\s+|more\s+|a\s+set\s+of\s+)?test\s+cases?\b|"
+    r"\b(?:modify|edit|update|rewrite|revise|delete|remove|archive)\b.{0,50}"
+    r"\b(?:test\s+cases?|cases?|steps?|expected\s+results?|preconditions?|"
+    r"priorit(?:y|ies)|selected|old\s+ones|them)\b)",
     re.IGNORECASE,
 )
 EXPLICIT_REQUEST_SIGNAL = re.compile(
@@ -107,9 +129,13 @@ def _looks_like_question(content: str) -> bool:
 
 
 def _has_explicit_write_request(content: str) -> bool:
-    return bool(WRITE_SIGNAL.search(content)) and (
-        bool(EXPLICIT_REQUEST_SIGNAL.search(content))
-        or not _looks_like_question(content)
+    return (
+        not (NEGATED_WRITE.search(content) or INFORMATION_QUESTION.search(content))
+        and bool(WRITE_SIGNAL.search(content))
+        and (
+            bool(EXPLICIT_REQUEST_SIGNAL.search(content))
+            or not _looks_like_question(content)
+        )
     )
 
 
@@ -117,6 +143,7 @@ def _requires_semantic_router(content: str, phase: str) -> bool:
     return bool(
         PRONOUN_SIGNAL.search(content)
         or NEGATED_DELETE.search(content)
+        or NEGATED_WRITE.search(content)
         or len(SEQUENCE_SPLIT.split(content)) > 1
         or (_looks_like_question(content) and WRITE_SIGNAL.search(content))
         or (phase == "brief_review" and not _has_explicit_write_request(content))
@@ -133,6 +160,20 @@ def _validate_model_plan(
     for operation in plan.operations:
         instruction = operation.instruction.strip() or content.strip()
         operation.instruction = instruction
+        if INFORMATION_QUESTION.search(instruction) and operation.intent in {
+            "CASE_GENERATE", "CASE_MODIFY", "CASE_DELETE"
+        }:
+            operation.intent = "KNOWLEDGE_QA"
+            operation.confidence = 0.94
+            operation.requires_confirmation = False
+            operation.reason_codes.append("WRITE_MENTIONED_IN_QUESTION")
+        if NEGATED_WRITE.search(instruction) and operation.intent in {
+            "CASE_GENERATE", "CASE_MODIFY", "CASE_DELETE"
+        }:
+            operation.intent = "KNOWLEDGE_QA"
+            operation.confidence = 0.94
+            operation.requires_confirmation = False
+            operation.reason_codes.append("WRITE_ACTION_NEGATED")
         if (
             operation.intent == "CASE_DELETE"
             and _looks_like_question(instruction)

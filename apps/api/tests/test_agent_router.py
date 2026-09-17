@@ -39,6 +39,89 @@ def test_multi_intent_plan_preserves_order_and_limits_to_three() -> None:
     assert plan.operations[2].requires_confirmation is True
 
 
+def test_english_multi_intent_plan_preserves_generation_then_deletion() -> None:
+    plan = deterministic_plan(
+        "Generate test cases and then delete the old ones.",
+        classify_intent,
+        has_targets=False,
+    )
+    assert [item.intent for item in plan.operations] == [
+        "CASE_GENERATE",
+        "CASE_DELETE",
+    ]
+    assert plan.operations[1].requires_confirmation is True
+
+
+def test_english_multi_intent_survives_model_router_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_router(*args, **kwargs):
+        raise RuntimeError("router unavailable")
+
+    monkeypatch.setattr(agent_router, "sdk_plan", fail_router)
+    plan = plan_intents(
+        "Generate test cases and then delete the old ones.",
+        classify_intent,
+        has_targets=False,
+        phase="idle",
+        target_context=[],
+        provider="openai_compatible",
+        model_name="test",
+        base_url="https://example.test/v1",
+        api_key="test-only",
+        timeout_seconds=5,
+        tracing_enabled=False,
+    )
+    assert [item.intent for item in plan.operations] == [
+        "CASE_GENERATE",
+        "CASE_DELETE",
+    ]
+
+
+def test_negated_generation_is_not_an_explicit_write_request() -> None:
+    for content in ("不要生成测试用例", "Please don't generate test cases"):
+        assert agent_router._has_explicit_write_request(content) is False
+
+
+@pytest.mark.parametrize(
+    ("content", "phase"),
+    [
+        ("如何修改测试说明？", "brief_review"),
+        ("请问如何生成测试用例？", "idle"),
+        ("Can you explain how to generate test cases?", "idle"),
+    ],
+)
+def test_model_plan_cannot_turn_information_question_into_write(
+    content: str, phase: str
+) -> None:
+    plan = IntentPlanDraft.model_validate({
+        "operations": [{
+            "intent": "CASE_GENERATE",
+            "instruction": content,
+            "confidence": 0.99,
+        }],
+    })
+    validated = agent_router._validate_model_plan(
+        content, plan, has_targets=False, phase=phase
+    )
+    assert validated.operations[0].intent == "KNOWLEDGE_QA"
+
+
+def test_model_plan_cannot_turn_negated_generation_into_write() -> None:
+    content = "请不要生成测试用例"
+    plan = IntentPlanDraft.model_validate({
+        "operations": [{
+            "intent": "CASE_GENERATE",
+            "instruction": content,
+            "confidence": 0.99,
+        }],
+    })
+    validated = agent_router._validate_model_plan(
+        content, plan, has_targets=False, phase="idle"
+    )
+    assert validated.operations[0].intent == "KNOWLEDGE_QA"
+
+
 def test_negated_delete_is_never_dispatched_as_delete() -> None:
     plan = deterministic_plan(
         "不要删除当前用例",

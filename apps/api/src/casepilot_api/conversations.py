@@ -142,6 +142,37 @@ ENGLISH_CASE_GENERATION = re.compile(
     r"test\s+cases?\b|\btest\s+case\s+generation\b",
     re.IGNORECASE,
 )
+ENGLISH_CASE_MODIFY = re.compile(
+    r"\b(?:modify|edit|update|rewrite|revise)\b.{0,50}"
+    r"\b(?:test\s+cases?|cases?|steps?|expected\s+results?|preconditions?|"
+    r"priorit(?:y|ies)|selected|them)\b",
+    re.IGNORECASE,
+)
+ENGLISH_CASE_DELETE = re.compile(
+    r"\b(?:delete|remove|archive)\b.{0,50}"
+    r"\b(?:test\s+cases?|cases?|selected|old\s+ones|them)\b",
+    re.IGNORECASE,
+)
+ENGLISH_CASE_QUERY = re.compile(
+    r"\b(?:find|list|search|show)\b.{0,50}\b(?:test\s+cases?|cases?)\b",
+    re.IGNORECASE,
+)
+NEGATED_CASE_GENERATION = re.compile(
+    r"(?:不要|无需|不用|别|禁止|暂不|先别).{0,12}"
+    r"(?:生成|创建|新增|补充|设计|编写).{0,40}(?:用例|场景)"
+)
+NEGATED_ENGLISH_CASE_ACTION = re.compile(
+    r"\b(?:do\s+not|don't|never|without)\s+"
+    r"(?:generate|create|write|draft|design|modify|edit|update|rewrite|"
+    r"revise|delete|remove|archive)\b",
+    re.IGNORECASE,
+)
+ENGLISH_CASE_QUESTION = re.compile(
+    r"^\s*(?:how|why|what|when|whether|should|can\s+you\s+explain|"
+    r"could\s+you\s+explain|(?:please\s+)?(?:explain|tell\s+me)\s+"
+    r"(?:how|why|what))\b",
+    re.IGNORECASE,
+)
 MODIFY_TERMS = (
     "修改",
     "改写",
@@ -400,11 +431,20 @@ def classify_intent(
         or asks_about_capabilities
     ):
         return "SMALL_TALK", 0.99
-    if ENGLISH_CASE_GENERATION.search(normalized) and not re.search(
-        r"\b(?:how to|how do|why|what|when|whether|do not|don't|without|never)\b",
-        compact,
+    if NEGATED_CASE_GENERATION.search(normalized) or NEGATED_ENGLISH_CASE_ACTION.search(
+        normalized
     ):
+        return "KNOWLEDGE_QA", 0.96
+    if ENGLISH_CASE_QUESTION.search(normalized):
+        return "KNOWLEDGE_QA", 0.94
+    if ENGLISH_CASE_GENERATION.search(normalized):
         return "CASE_GENERATE", 0.98
+    if ENGLISH_CASE_DELETE.search(normalized):
+        return "CASE_DELETE", 0.98
+    if ENGLISH_CASE_QUERY.search(normalized):
+        return "CASE_QUERY", 0.96
+    if ENGLISH_CASE_MODIFY.search(normalized):
+        return "CASE_MODIFY", 0.96 if has_targets else 0.91
     question_like = any(term in normalized for term in QA_TERMS)
     question_like = question_like or any(
         term in normalized for term in ("什么", "为何", "含义", "指什么")
@@ -430,10 +470,10 @@ def classify_intent(
     ):
         return "CASE_QUERY", 0.96
     if phase == "brief_review":
+        if question_like and not generation_request:
+            return "KNOWLEDGE_QA", 0.94
         if any(term in normalized for term in ("补充", "增加", "覆盖", "修改", "调整")):
             return "CASE_GENERATE", 0.97
-        if question_like:
-            return "KNOWLEDGE_QA", 0.94
         if re.fullmatch(r"(?:继续|照这个|按这个|改一下)[吧。！!]?", normalized):
             return "UNRESOLVED", 0.55
         return "KNOWLEDGE_QA", 0.82
