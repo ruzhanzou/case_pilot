@@ -5755,13 +5755,21 @@ button.case-tag:hover {
 .collection-item__content small {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 7px;
-  overflow: visible;
+  overflow: hidden;
+  white-space: normal;
+}
+
+.collection-item__count {
+  flex: none;
 }
 
 .collection-status {
   display: inline-flex;
   width: fit-content;
+  max-width: 100%;
+  min-width: 0;
   min-height: 24px;
   align-items: center;
   gap: 5px;
@@ -5774,7 +5782,18 @@ button.case-tag:hover {
   white-space: nowrap;
 }
 
+.collection-status svg {
+  flex: none;
+}
+
+.collection-status__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .collection-status.is-compact {
+  flex: 0 1 auto;
   min-height: 20px;
   padding: 2px 6px;
   font-size: 10px;

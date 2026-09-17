@@ -140,6 +140,61 @@ def test_module_target_expands_generated_candidates() -> None:
     ]
 
 
+def test_current_case_question_expands_selected_candidate() -> None:
+    candidate_id = uuid4()
+    candidate = SimpleNamespace(
+        id=candidate_id,
+        ref="TC-1",
+        version=2,
+        snapshot={"title": "登录成功", "steps": [{"action": "输入验证码"}]},
+    )
+
+    class FakeDb:
+        def scalar(self, statement):
+            assert statement is not None
+            return candidate
+
+    conversation = SimpleNamespace(
+        id=uuid4(),
+        collection_id=uuid4(),
+        context={"selected_case_id": str(candidate_id)},
+    )
+    payload = ConversationMessageCreate(content="你能告诉我当前用例有什么问题吗？")
+    expanded = _expand_conversation_targets(FakeDb(), conversation, payload)
+    assert expanded.target_case_ids == []
+    assert expanded.target_candidate_snapshots[0].snapshot["title"] == "登录成功"
+    assert classify_intent(payload.content, has_targets=True)[0] == "KNOWLEDGE_QA"
+
+
+def test_current_case_question_expands_selected_formal_case() -> None:
+    case_id = uuid4()
+
+    class FakeDb:
+        def __init__(self):
+            self.scalar_calls = 0
+
+        def scalar(self, statement):
+            assert statement is not None
+            self.scalar_calls += 1
+            return None if self.scalar_calls == 1 else case_id
+
+        def scalars(self, statement):
+            assert statement is not None
+            return [case_id]
+
+    conversation = SimpleNamespace(
+        id=uuid4(),
+        collection_id=uuid4(),
+        context={"selected_case_id": str(case_id)},
+    )
+    expanded = _expand_conversation_targets(
+        FakeDb(),
+        conversation,
+        ConversationMessageCreate(content="你能告诉我当前用例有什么问题吗？"),
+    )
+    assert expanded.target_case_ids == [case_id]
+
+
 def test_terminal_generation_releases_workspace_phase_and_job() -> None:
     context = {"phase": "generating", "active_job_id": "old-job", "chat_width": 400}
     recovered = terminal_workspace_context(

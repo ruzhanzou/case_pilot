@@ -329,6 +329,7 @@ export function CaseWorkbench({
   const promptSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const watchedJobRef = useRef("");
+  const lastWorkspacePhaseRef = useRef("");
   const {
     scrollRef: messagesScrollRef,
     contentRef: messagesContentRef,
@@ -359,11 +360,9 @@ export function CaseWorkbench({
     [candidates],
   );
   const visibleCases = useMemo(
-    () => phase === "candidate_review"
+    () => phase === "candidate_review" && candidateCases.length
       ? candidateCases
-      : phase === "maintenance"
-        ? cases
-        : [],
+      : cases,
     [phase, candidateCases, cases],
   );
   const selectedCase =
@@ -413,7 +412,7 @@ export function CaseWorkbench({
   const latestMessage = messages.at(-1);
   const inspectorCollapsed =
     artifactOpen ||
-    !["candidate_review", "maintenance"].includes(phase);
+    !visibleCases.length;
 
   const toggleTarget = useCallback(
     (target: ConversationTarget, label: string) => {
@@ -482,11 +481,15 @@ export function CaseWorkbench({
         0,
     );
     setSelectedBriefVersion(restoredBriefVersion);
-    setArtifactOpen(
-      ["brief_review", "brief_drafting", "generating"].includes(
-        String(result.context.phase ?? "idle"),
-      ),
-    );
+    const workspacePhase = `${result.id}:${String(result.context.phase ?? "idle")}`;
+    if (workspacePhase !== lastWorkspacePhaseRef.current) {
+      lastWorkspacePhaseRef.current = workspacePhase;
+      setArtifactOpen(
+        ["brief_review", "brief_drafting", "generating"].includes(
+          String(result.context.phase ?? "idle"),
+        ),
+      );
+    }
     setChatWidth(
       clampPanelWidth("chat", Number(result.context.chat_width ?? 400)),
     );
@@ -761,10 +764,23 @@ export function CaseWorkbench({
       (effectivePendingOperationId && !selectedTargets.length)
     ) return;
     const content = prompt.trim();
-    const structuredTargets = selectedTargets.length
+    let structuredTargets = selectedTargets.length
       ? selectedTargets.map((item) => item.target)
       : targetsFromInstruction(content);
-    const resolvedSelections = selectedTargets.length
+    let inferredCurrentCase = false;
+    if (
+      !structuredTargets.length &&
+      selectedCase &&
+      /(?:当前用例(?!集)|这条用例|选中(?:的)?用例|current\s+(?:test\s+)?case|selected\s+(?:test\s+)?case)/i.test(content)
+    ) {
+      structuredTargets = [caseTarget(selectedCase)];
+      inferredCurrentCase = true;
+    }
+    const contextOnlyTarget = inferredCurrentCase &&
+      !/(?:修改|改写|调整|补充|新增|替换|删除|改成|改为|\b(?:modify|edit|update|rewrite|revise|delete|remove)\b)/i.test(content);
+    const resolvedSelections = contextOnlyTarget
+      ? selectedTargets
+      : selectedTargets.length
       ? selectedTargets
       : structuredTargets.map((target) => {
           const testCase = visibleCases.find((item) =>
@@ -776,8 +792,10 @@ export function CaseWorkbench({
           const label = testCase?.title ?? target.module ?? pick("Selected cases", "已匹配用例");
           return { key: JSON.stringify(target), label, target };
         });
-    setSelectedTargets(resolvedSelections);
-    setRewriteTargets(resolvedSelections);
+    if (!contextOnlyTarget) {
+      setSelectedTargets(resolvedSelections);
+      setRewriteTargets(resolvedSelections);
+    }
     setBusy(true);
     setPrompt("");
     setError("");
@@ -991,6 +1009,14 @@ export function CaseWorkbench({
     setBusy(true);
     try {
       const committed = await commitWorkspaceCandidates(workspace.id);
+      await onCasesChanged();
+      setSelectedCaseId(committed[0]?.id ?? "");
+      setSelectedTargets([]);
+      setRewriteTargets([]);
+      await updateWorkspaceState(workspace.id, {
+        selected_case_id: committed[0]?.id ?? "",
+        selected_targets: [],
+      });
       setNotice(pick(`${committed.length} cases added to the official collection`, `已纳入 ${committed.length} 条正式用例`));
       let refreshed = await refreshWorkspace();
       const next = nextRunnableOperation(refreshed);
@@ -1690,9 +1716,7 @@ export function CaseWorkbench({
           </div>
         )}
 
-        {(artifactOpen ||
-          ["brief_review", "brief_drafting", "generating"].includes(phase)) &&
-        selectedBrief ? (
+        {artifactOpen && selectedBrief ? (
           <section className="principle-brief">
             <header className="principle-brief-toolbar">
               <div className="principle-brief-identity">
@@ -1740,7 +1764,7 @@ export function CaseWorkbench({
                 <Download size={16} />
                 {pick("Download .md", "下载 .md")}
               </button>
-              {["candidate_review", "maintenance"].includes(phase) && (
+              {visibleCases.length > 0 && (
                 <button type="button" onClick={() => setArtifactOpen(false)}>
                   {pick("Back to test cases", "返回用例")}
                 </button>
@@ -1787,6 +1811,11 @@ export function CaseWorkbench({
           <section className="principle-case-area">
             <div className="principle-viewbar">
               <div>
+                {selectedBrief && (
+                  <button type="button" onClick={() => setArtifactOpen(true)}>
+                    <Sparkles size={17} /> {pick("Structured brief", "结构化测试说明")}
+                  </button>
+                )}
                 <button
                   type="button"
                   className={viewMode === "map" ? "is-active" : ""}
@@ -1835,6 +1864,7 @@ export function CaseWorkbench({
             </div>
             {viewMode === "map" ? (
               <CaseMindMap
+                key={`${selectedCollection.id}:${phase === "candidate_review" ? "candidates" : "official"}`}
                 collection={selectedCollection}
                 cases={visibleCases}
                 selectedCaseId={selectedCaseId}

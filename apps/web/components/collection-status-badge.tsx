@@ -46,6 +46,13 @@ const statusDetails = {
   { en: string; zh: string; tone: string; icon: typeof CircleDashed }
 >;
 
+const compactStatusLabels: Partial<
+  Record<CollectionLifecycleStatus, { en: string; zh: string }>
+> = {
+  brief_review: { en: "Review brief", zh: "测试说明待确认" },
+  candidate_review: { en: "Review candidates", zh: "候选待评审" },
+};
+
 export function collectionStatusFromPhase(
   phase: string,
   caseCount: number,
@@ -71,6 +78,12 @@ export function CollectionStatusBadge({
   const { pick } = useI18n();
   const details = statusDetails[status];
   const label = pick(details.en, details.zh);
+  const displayLabel = compact
+    ? pick(
+        compactStatusLabels[status]?.en ?? details.en,
+        compactStatusLabels[status]?.zh ?? details.zh,
+      )
+    : label;
   const Icon = details.icon;
   const spinning = ["brief_drafting", "generating", "importing"].includes(
     status,
@@ -83,7 +96,7 @@ export function CollectionStatusBadge({
       title={pick(`Collection status: ${label}`, `用例集状态：${label}`)}
     >
       <Icon size={compact ? 12 : 13} className={spinning ? "auth-spinner" : ""} />
-      {label}
+      <span className="collection-status__label">{displayLabel}</span>
     </span>
   );
 }

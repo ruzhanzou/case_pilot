@@ -173,6 +173,11 @@ ENGLISH_CASE_QUESTION = re.compile(
     r"(?:how|why|what))\b",
     re.IGNORECASE,
 )
+CURRENT_CASE_REFERENCE = re.compile(
+    r"(?:当前用例(?!集)|这条用例|选中(?:的)?用例|"
+    r"\b(?:current|selected)\s+(?:test\s+)?case\b)",
+    re.IGNORECASE,
+)
 MODIFY_TERMS = (
     "修改",
     "改写",
@@ -1214,6 +1219,21 @@ def _start_action(
                 "snapshot": case_to_view(db, test_case).model_dump(mode="json"),
             }
         )
+
+    if intent == "KNOWLEDGE_QA" and CURRENT_CASE_REFERENCE.search(
+        payload.content
+    ) and not case_context:
+        assistant = _new_assistant_message(
+            conversation.id,
+            content="请先在当前集合中选中一条用例，再询问它的问题；我会依据该用例的步骤和预期结果回答。",
+            intent=intent,
+            confidence=confidence,
+            status="awaiting_clarification",
+            target_case_ids=[],
+        )
+        db.add(assistant)
+        db.flush()
+        return assistant, {"type": "clarification"}, None
 
     if intent == "CASE_QUERY":
         cases = list(
@@ -2359,6 +2379,43 @@ def _expand_conversation_targets(
     case_ids = list(payload.target_case_ids)
     candidate_snapshots = list(payload.target_candidate_snapshots)
     candidate_refs = {item.ref for item in candidate_snapshots}
+    if (
+        not case_ids
+        and not candidate_snapshots
+        and not payload.targets
+        and CURRENT_CASE_REFERENCE.search(payload.content)
+    ):
+        selected_id = dict(conversation.context).get("selected_case_id")
+        try:
+            selected_uuid = UUID(str(selected_id)) if selected_id else None
+        except ValueError:
+            selected_uuid = None
+        if selected_uuid is not None:
+            candidate = db.scalar(
+                select(WorkspaceCandidate).where(
+                    WorkspaceCandidate.id == selected_uuid,
+                    WorkspaceCandidate.conversation_id == conversation.id,
+                    WorkspaceCandidate.status == "candidate",
+                )
+            )
+            if candidate is not None:
+                candidate_snapshots.append(
+                    ConversationTargetSnapshot(
+                        ref=candidate.ref,
+                        version=candidate.version,
+                        snapshot=dict(candidate.snapshot),
+                    )
+                )
+                candidate_refs.add(candidate.ref)
+            elif conversation.collection_id is not None:
+                member_id = db.scalar(
+                    select(CollectionCaseMembership.test_case_id).where(
+                        CollectionCaseMembership.collection_id == conversation.collection_id,
+                        CollectionCaseMembership.test_case_id == selected_uuid,
+                    )
+                )
+                if member_id is not None:
+                    case_ids.append(selected_uuid)
     for target in payload.targets:
         if target.collection_id and target.collection_id != conversation.collection_id:
             raise HTTPException(status_code=422, detail="target_collection_mismatch")

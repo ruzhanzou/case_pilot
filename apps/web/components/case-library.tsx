@@ -165,7 +165,9 @@ export function CaseLibrary({
               <span className="collection-item__content">
                 <strong>{collection.name}</strong>
                 <small>
-                  {pick(`${collection.case_count} cases`, `${collection.case_count} 条用例`)}
+                  <span className="collection-item__count">
+                    {pick(`${collection.case_count} cases`, `${collection.case_count} 条用例`)}
+                  </span>
                   <CollectionStatusBadge
                     compact
                     status={
@@ -312,6 +314,7 @@ export function CaseLibrary({
           <div className={viewMode === "mind-map" ? "case-map-wrap" : "case-table-wrap"}>
             {viewMode === "mind-map" && selectedCollection ? (
               <CaseMindMap
+                key={selectedCollection.id}
                 collection={selectedCollection}
                 cases={filteredCases}
                 selectedCaseId={selectedCase?.id ?? ""}

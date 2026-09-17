@@ -99,6 +99,8 @@ export function CaseManagementApp({
   const { t, pick } = useI18n();
   const router = useRouter();
   const applyingRouteRef = useRef(true);
+  const internalRoutePathRef = useRef("");
+  const collectionSelectionRef = useRef(0);
   const routePath = casePilotPath(route);
   const routePage = route.page;
   const routeConversationId =
@@ -208,17 +210,28 @@ export function CaseManagementApp({
   };
 
   const selectCollection = async (collectionId: string) => {
-    setSelectedCollectionId(collectionId);
-    setSelectedCaseId("");
-    setCases([]);
+    const requestId = ++collectionSelectionRef.current;
     setLoading(true);
     setError("");
     try {
-      await refreshCases(collectionId);
+      const result = await listTestCases(collectionId);
+      if (requestId !== collectionSelectionRef.current) return;
+      setCases(result);
+      setSelectedCaseId(result[0]?.id ?? "");
+      setSelectedCollectionId(collectionId);
+      setCollections((current) =>
+        current.map((collection) =>
+          collection.id === collectionId
+            ? { ...collection, case_count: result.length }
+            : collection,
+        ),
+      );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : pick("Failed to load test cases", "用例加载失败"));
+      if (requestId === collectionSelectionRef.current) {
+        setError(caught instanceof Error ? caught.message : pick("Failed to load test cases", "用例加载失败"));
+      }
     } finally {
-      setLoading(false);
+      if (requestId === collectionSelectionRef.current) setLoading(false);
     }
   };
 
@@ -525,6 +538,7 @@ export function CaseManagementApp({
   };
 
   useEffect(() => {
+    if (routePath === internalRoutePathRef.current) return;
     let active = true;
     applyingRouteRef.current = true;
 
@@ -647,6 +661,7 @@ export function CaseManagementApp({
     if (applyingRouteRef.current) return;
     const nextPath = casePilotPath(activeRoute);
     if (window.location.pathname === nextPath) return;
+    internalRoutePathRef.current = nextPath;
     if (window.location.pathname === "/") {
       router.replace(nextPath, { scroll: false });
     } else {
@@ -655,6 +670,10 @@ export function CaseManagementApp({
   }, [activeRoute, router]);
 
   useEffect(() => {
+    if (routePath === internalRoutePathRef.current) {
+      internalRoutePathRef.current = "";
+      return;
+    }
     let active = true;
     if (!activeSpaceId) return;
     void (async () => {
@@ -1168,7 +1187,9 @@ export function CaseManagementApp({
             selectedCase={selectedCase}
             loading={loading}
             importingCollectionId={importingCollectionId}
-            onSelectCollection={(collectionId) => void selectCollection(collectionId)}
+            onSelectCollection={(collectionId) => {
+              if (collectionId !== selectedCollectionId) void selectCollection(collectionId);
+            }}
             onCreateCollection={() => setCollectionEditor({ mode: "create" })}
             onImportExcel={() => setCaseImportOpen(true)}
             onEditCollection={() =>
