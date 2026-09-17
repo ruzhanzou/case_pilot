@@ -188,6 +188,15 @@ export type TestCaseDto = {
   preconditions: string[];
   steps: CaseStepDto[];
   automation_type?: "manual" | "automated";
+  automation_cases?: Array<{
+    creator: string;
+    git: string;
+    branch: string;
+    commit: string;
+    case_name: string;
+    update_time: string;
+    create_time: string;
+  }>;
   source: string;
   source_refs: SourceRefDto[];
   creator?: {

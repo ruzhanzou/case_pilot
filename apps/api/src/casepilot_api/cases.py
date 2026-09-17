@@ -126,6 +126,7 @@ def apply_candidate(
     db.refresh(test_case, with_for_update=True)
     if test_case.current_revision_id != candidate.base_revision_id:
         raise HTTPException(status_code=409, detail="revision_conflict")
+    current_revision = get_current_revision(db, test_case)
 
     snapshot = candidate.proposed_snapshot
     latest_number = db.scalar(
@@ -151,6 +152,10 @@ def apply_candidate(
             for step in snapshot.get("steps", [])
         ],
         source_refs=list(snapshot.get("source_refs", [])),
+        execution_level=current_revision.execution_level,
+        test_domains=list(current_revision.test_domains),
+        automation_type=current_revision.automation_type,
+        automation_cases=list(current_revision.automation_cases),
     )
     db.add(revision)
     db.flush()

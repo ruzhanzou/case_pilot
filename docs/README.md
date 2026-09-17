@@ -19,6 +19,7 @@
 
 ## 工程与验收
 
+- [自动化用例绑定上传接口](./automation-case-binding-api.md)：字段、批量上传与绑定状态。
 - [四段式用例生成与脑图端到端验收（2026-09-15）](./acceptance-four-section-mind-map-2026-09-15.md)
 - [产品原则重构与端到端验收 V1](./casepilot-product-principles-acceptance-v1.md)
 - [开发基线](./development-baseline-v1.md)

@@ -3442,6 +3442,9 @@ def apply_change_set(
             )
         else:
             test_case = formal_cases[item["ref"]]
+            current_revision = db.get(TestCaseRevision, test_case.current_revision_id)
+            if current_revision is None:
+                raise HTTPException(status_code=409, detail="test_case_revision_not_found")
             latest_number = db.scalar(
                 select(func.max(TestCaseRevision.revision_number)).where(
                     TestCaseRevision.test_case_id == test_case.id
@@ -3469,6 +3472,10 @@ def apply_change_set(
                     for step in merged.get("steps", [])
                 ],
                 source_refs=list(merged.get("source_refs", [])),
+                execution_level=current_revision.execution_level,
+                test_domains=list(current_revision.test_domains),
+                automation_type=current_revision.automation_type,
+                automation_cases=list(current_revision.automation_cases),
             )
             db.add(revision)
             db.flush()

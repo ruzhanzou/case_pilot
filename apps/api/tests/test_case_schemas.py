@@ -7,6 +7,7 @@ from casepilot_api.case_management import (
     validate_execution_record_update,
 )
 from casepilot_api.schemas import (
+    AutomationCaseUpload,
     CandidateCreate,
     ExecutionRecordUpdate,
     ExecutionRunCreate,
@@ -27,6 +28,38 @@ from casepilot_api.schemas import (
 from casepilot_api.schemas import (
     TestCaseUpdate as CaseUpdateSchema,
 )
+
+
+def test_automation_case_upload_accepts_multiple_bindings_and_requires_timestamps() -> None:
+    first = {
+        "creator": " 张三 ",
+        "git": "https://example.com/qa.git",
+        "branch": "main",
+        "commit": "a" * 40,
+        "case_name": "tests/login.py::test_valid_login",
+        "create_time": "2026-09-10T09:00:00+08:00",
+        "update_time": "2026-09-17T10:00:00+08:00",
+    }
+    second = {**first, "case_name": "tests/login.py::test_invalid_login"}
+    upload = AutomationCaseUpload.model_validate([first, second])
+    assert len(upload.root) == 2
+    assert upload.root[0].creator == "张三"
+    assert len(AutomationCaseUpload.model_validate([]).root) == 0
+
+    with pytest.raises(ValidationError):
+        AutomationCaseUpload.model_validate([{**first, "update_time": "2026-09-01T09:00:00+08:00"}])
+    with pytest.raises(ValidationError):
+        AutomationCaseUpload.model_validate([{**first, "create_time": "2026-09-10T09:00:00"}])
+
+
+def test_automation_case_upload_is_exposed_in_openapi() -> None:
+    from casepilot_api.main import app
+
+    path = app.openapi()["paths"]["/api/v1/test-cases/{case_id}/automation-cases/upload"]
+    assert "post" in path
+    assert path["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] == (
+        "#/components/schemas/AutomationCaseUpload"
+    )
 
 
 def valid_case_payload() -> dict:

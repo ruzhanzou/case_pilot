@@ -515,6 +515,7 @@ pnpm dev
 - `GET /api/v1/test-cases/{case_id}`
 - `PATCH /api/v1/test-cases/{case_id}`
 - `DELETE /api/v1/test-cases/{case_id}`
+- `POST /api/v1/test-cases/{case_id}/automation-cases/upload`：上传自动化用例绑定清单，字段和示例见 [接口文档](./docs/automation-case-binding-api.md)。
 
 AI 生成：
 

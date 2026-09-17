@@ -194,6 +194,9 @@ class TestCaseRevision(TimestampMixin, Base):
     execution_level: Mapped[str] = mapped_column(String(4), default="L0", nullable=False)
     test_domains: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
     automation_type: Mapped[str] = mapped_column(String(24), default="manual", nullable=False)
+    automation_cases: Mapped[list[dict[str, str]]] = mapped_column(
+        JSONB, default=list, nullable=False
+    )
 
 
 class CollectionCaseMembership(TimestampMixin, Base):

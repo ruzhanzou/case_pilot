@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, RootModel, model_validator
 
 
 class ExecutionStatus(StrEnum):
@@ -129,6 +129,54 @@ class SourceRefInput(BaseModel):
     excerpt: str = Field(default="", max_length=4000)
 
 
+class AutomationCaseBinding(BaseModel):
+    """One automated test associated with a test case."""
+
+    creator: str = Field(min_length=1, max_length=160, description="自动化用例维护人")
+    git: str = Field(min_length=1, max_length=500, description="Git 仓库地址")
+    branch: str = Field(min_length=1, max_length=160, description="Git 分支")
+    commit: str = Field(min_length=1, max_length=160, description="Git commit SHA")
+    case_name: str = Field(
+        min_length=1, max_length=500, description="自动化用例名称或仓库内唯一标识"
+    )
+    update_time: AwareDatetime = Field(description="自动化用例最近更新时间，ISO 8601 格式")
+    create_time: AwareDatetime = Field(description="自动化用例创建时间，ISO 8601 格式")
+
+    @model_validator(mode="after")
+    def trim_fields(self) -> "AutomationCaseBinding":
+        for name in ("creator", "git", "branch", "commit", "case_name"):
+            value = getattr(self, name).strip()
+            if not value:
+                raise ValueError(f"{name} must not be blank")
+            setattr(self, name, value)
+        if self.update_time < self.create_time:
+            raise ValueError("update_time must not precede create_time")
+        return self
+
+
+class AutomationCaseUpload(RootModel[list[AutomationCaseBinding]]):
+    """Complete binding list; uploading [] removes all bindings."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                [
+                    {
+                        "creator": "张三",
+                        "git": "https://github.com/example/automation.git",
+                        "branch": "main",
+                        "commit": "8c4f0b4d9a7b6a1e0123456789abcdef01234567",
+                        "case_name": "tests/login.py::test_valid_login",
+                        "update_time": "2026-09-17T10:30:00+08:00",
+                        "create_time": "2026-09-10T09:00:00+08:00",
+                    }
+                ]
+            ]
+        }
+    )
+    root: list[AutomationCaseBinding] = Field(max_length=100)
+
+
 class TestCaseCreate(BaseModel):
     case_key: str | None = Field(default=None, max_length=40)
     title: str = Field(min_length=1, max_length=300)
@@ -199,6 +247,7 @@ class TestCaseView(BaseModel):
     execution_level: str = "L0"
     test_domains: list[str] = Field(default_factory=list)
     automation_type: str = "manual"
+    automation_cases: list[AutomationCaseBinding] = Field(default_factory=list)
     creator: TestCaseCreatorView | None = None
     test_targets: list[TestCaseTargetView] = Field(default_factory=list)
     created_at: datetime

@@ -28,6 +28,7 @@ from casepilot_api.models import (
     TestCaseRevision,
 )
 from casepilot_api.schemas import (
+    AutomationCaseUpload,
     CaseCollectionCreate,
     CaseCollectionLifecycleStatus,
     CaseCollectionUpdate,
@@ -539,6 +540,7 @@ def case_to_view(
         execution_level=revision.execution_level,
         test_domains=list(revision.test_domains),
         automation_type=revision.automation_type,
+        automation_cases=list(revision.automation_cases),
         creator=(
             {
                 "id": creator.id,
@@ -1038,6 +1040,83 @@ def get_test_case(
 
 
 @router.post(
+    "/test-cases/{case_id}/automation-cases/upload",
+    response_model=TestCaseView,
+    summary="上传并绑定自动化用例",
+    description=(
+        "请求体为自动化用例数组。一条测试用例可绑定多条自动化用例。"
+        "每次上传完整替换现有绑定；传入空数组可清除绑定。"
+        "非空数组将 automation_type 标记为 automated，空数组标记为 manual。"
+    ),
+    responses={
+        401: {"description": "未登录或会话无效"},
+        403: {"description": "无权访问用例所在空间"},
+        404: {"description": "用例不存在或已删除"},
+        409: {"description": "用例当前 Revision 不存在"},
+        422: {"description": "请求字段无效或自动化用例重复"},
+    },
+)
+def upload_automation_cases(
+    case_id: UUID,
+    payload: AutomationCaseUpload,
+    account: CurrentAccount,
+    db: DbSession,
+) -> TestCaseView:
+    test_case = ensure_case(db, account, case_id)
+    db.refresh(test_case, with_for_update=True)
+    current_revision = db.scalar(
+        select(TestCaseRevision).where(
+            TestCaseRevision.id == test_case.current_revision_id,
+            TestCaseRevision.test_case_id == test_case.id,
+        )
+    )
+    if current_revision is None:
+        raise HTTPException(status_code=409, detail="test_case_revision_not_found")
+    bindings = [item.model_dump(mode="json") for item in payload.root]
+    identities = [(item["git"], item["branch"], item["case_name"]) for item in bindings]
+    if len(identities) != len(set(identities)):
+        raise HTTPException(status_code=422, detail="duplicate_automation_case")
+    expected_type = "automated" if bindings else "manual"
+    if (
+        bindings == current_revision.automation_cases
+        and current_revision.automation_type == expected_type
+    ):
+        return case_to_view(db, test_case)
+
+    revision = TestCaseRevision(
+        test_case_id=test_case.id,
+        revision_number=current_revision.revision_number + 1,
+        title=current_revision.title,
+        module=current_revision.module,
+        priority=current_revision.priority,
+        case_type=current_revision.case_type,
+        tags=list(current_revision.tags),
+        preconditions=list(current_revision.preconditions),
+        steps=list(current_revision.steps),
+        source_refs=list(current_revision.source_refs),
+        execution_level=current_revision.execution_level,
+        test_domains=list(current_revision.test_domains),
+        automation_type=expected_type,
+        automation_cases=bindings,
+    )
+    db.add(revision)
+    db.flush()
+    test_case.current_revision_id = revision.id
+    write_audit(
+        db,
+        space_id=test_case.space_id,
+        actor_id=account.id,
+        action="test_case.automation_cases_uploaded",
+        resource_type="test_case",
+        resource_id=test_case.id,
+        payload={"revision_number": revision.revision_number, "binding_count": len(bindings)},
+    )
+    db.commit()
+    db.refresh(test_case)
+    return case_to_view(db, test_case)
+
+
+@router.post(
     "/collections/{collection_id}/test-cases",
     response_model=TestCaseView,
     status_code=201,
@@ -1177,7 +1256,11 @@ def update_test_case(
             if payload.test_domains is not None
             else list(current_revision.test_domains)
         ),
-        automation_type=payload.automation_type or current_revision.automation_type,
+        automation_type=(
+            "automated" if current_revision.automation_cases
+            else payload.automation_type or current_revision.automation_type
+        ),
+        automation_cases=list(current_revision.automation_cases),
     )
     db.add(revision)
     db.flush()
