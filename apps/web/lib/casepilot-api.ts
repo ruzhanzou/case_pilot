@@ -720,6 +720,7 @@ const publicErrors: Record<string, string> = {
   generation_failed: "处理暂时未完成，请稍后重试。",
   ProviderResponseError: "模型返回内容暂时无法解析，请重试或更换模型。",
   TimeoutError: "模型响应超时，请稍后重试。",
+  APIConnectionError: "模型连接暂时中断，请重试。",
   ConnectionError: "网络连接中断，请检查网络后重试。",
   test_brief_has_blocking_questions: "仍有阻塞待确认项，请先补充说明。",
   test_brief_version_changed: "测试说明已更新，请确认最新版本。",

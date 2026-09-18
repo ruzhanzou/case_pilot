@@ -14,8 +14,12 @@ async function login(page: Page) {
     await page.getByLabel("邮箱").fill("demo@casepilot.local");
     await page.getByLabel("密码").fill("CasePilot123!");
     await page.getByRole("button", { name: "登录并进入工作台" }).click();
+  } else if (await page.getByLabel("Email").isVisible()) {
+    await page.getByLabel("Email").fill("demo@casepilot.local");
+    await page.getByLabel("Password").fill("CasePilot123!");
+    await page.getByRole("button", { name: "Sign in to workspace" }).click();
   }
-  await expect(page.getByRole("heading", { name: "今天想测试什么？" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /今天想测试什么|What would you like to test/i })).toBeVisible();
 }
 
 async function seedCollection(page: Page): Promise<AcceptanceCollection> {

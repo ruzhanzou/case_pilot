@@ -78,7 +78,7 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
 
     assert result.answer == "已回答"
     assert captured["client"]["base_url"] == "https://ark.example/v1"
-    assert captured["client"]["max_retries"] == 0
+    assert captured["client"]["max_retries"] == 2
     assert captured["model"]["model"] == "doubao-test"
     output_schema = captured["agent"]["output_type"]
     assert output_schema.output_type is KnowledgeAnswer

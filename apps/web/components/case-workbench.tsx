@@ -17,6 +17,7 @@ import {
   getOrCreateWorkspace,
   listGenerationModels,
   rejectCaseChangeSet,
+  retryConversationMessage,
   resumeConversationOperation,
   sendConversationMessage,
   updateWorkspaceCandidate,
@@ -299,6 +300,8 @@ export function CaseWorkbench({
   const [modelId, setModelId] = useState<AgentModelId>("auto");
   const [models, setModels] = useState<{ id: string; label: string }[]>([]);
   const [viewMode, setViewMode] = useState<"list" | "map">("list");
+  const restoredViewCollectionIdRef = useRef("");
+  const viewTouchedRef = useRef(false);
   const [selectedCaseId, setSelectedCaseId] = useState("");
   const [selectedTargets, setSelectedTargets] = useState<
     { key: string; label: string; target: ConversationTarget }[]
@@ -475,7 +478,10 @@ export function CaseWorkbench({
     setPrompt(String(result.context.draft_text ?? ""));
     const restoredModelId = String(result.context.model_id ?? "");
     if (restoredModelId) setModelId(restoredModelId);
-    setViewMode(result.context.active_view === "map" ? "map" : "list");
+    if (!viewTouchedRef.current && restoredViewCollectionIdRef.current !== selectedCollectionId) {
+      restoredViewCollectionIdRef.current = selectedCollectionId;
+      setViewMode(result.context.active_view === "map" ? "map" : "list");
+    }
     const restoredBriefVersion = Number(
       result.context.selected_brief_version ??
         result.test_briefs.at(-1)?.version ??
@@ -526,7 +532,7 @@ export function CaseWorkbench({
     setCandidateDraft(
       restoredCandidate ? structuredClone(restoredCandidate) : null,
     );
-  }, []);
+  }, [selectedCollectionId]);
   const refreshWorkspace = useCallback(async () => {
     if (!selectedCollectionId) return null;
     const result = conversationId
@@ -606,6 +612,21 @@ export function CaseWorkbench({
     [pick, refreshWorkspace, workspace?.id],
   );
 
+  const retryFailedMessage = async (messageId: string) => {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const turn = await retryConversationMessage(messageId);
+      await refreshWorkspace();
+      if (turn.action.job_id) await waitAndRefresh(turn.action.job_id);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : pick("Retry failed", "重试失败"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   useEffect(() => {
     void listGenerationModels()
       .then((result) => {
@@ -623,6 +644,7 @@ export function CaseWorkbench({
 
   useEffect(() => {
     if (!selectedCollectionId) return;
+    viewTouchedRef.current = false;
     let ignored = false;
     void (conversationId
       ? getConversation(conversationId)
@@ -1408,6 +1430,17 @@ export function CaseWorkbench({
                               : pick("Processing did not complete. Try again.", "处理未完成，请重试")}
                         </div>
                       )}
+                    {message.status === "failed" &&
+                      message.related_job_id &&
+                      messages.at(-1)?.id === message.id && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void retryFailedMessage(message.id)}
+                        >
+                          {pick("Retry this request", "重试本次请求")}
+                        </button>
+                      )}
                   </div>
                   )}
                 {artifactVersion > 0 && (
@@ -1838,6 +1871,7 @@ export function CaseWorkbench({
                   type="button"
                   className={viewMode === "map" ? "is-active" : ""}
                   onClick={() => {
+                    viewTouchedRef.current = true;
                     setViewMode("map");
                     if (workspace) {
                       void updateWorkspaceState(workspace.id, {
@@ -1852,6 +1886,7 @@ export function CaseWorkbench({
                   type="button"
                   className={viewMode === "list" ? "is-active" : ""}
                   onClick={() => {
+                    viewTouchedRef.current = true;
                     setViewMode("list");
                     if (workspace) {
                       void updateWorkspaceState(workspace.id, {

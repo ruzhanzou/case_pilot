@@ -894,7 +894,8 @@ export function CaseManagementApp({
         ...input,
         base_revision_id: testCase.current_revision_id,
       });
-      await refreshCases(selectedCollection.id, result.id);
+      setCases((current) => current.map((item) => item.id === result.id ? result : item));
+      setSelectedCaseId(result.id);
     } catch (caught) {
       const message =
         caught instanceof Error ? caught.message : pick("Failed to save node. Try again.", "节点保存失败，请重试");

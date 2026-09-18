@@ -479,11 +479,16 @@ def case_to_view(
     db: Session,
     test_case: TestCase,
     revision_id: UUID | None = None,
+    *,
+    prepared: (
+        tuple[TestCaseRevision | None, list[UUID], list[CaseProject], Account | None]
+        | None
+    ) = None,
 ) -> TestCaseView:
     resolved_revision_id = revision_id or test_case.current_revision_id
     if resolved_revision_id is None:
         raise HTTPException(status_code=409, detail="test_case_has_no_revision")
-    revision = db.scalar(
+    revision = prepared[0] if prepared else db.scalar(
         select(TestCaseRevision).where(
             TestCaseRevision.id == resolved_revision_id,
             TestCaseRevision.test_case_id == test_case.id,
@@ -491,21 +496,21 @@ def case_to_view(
     )
     if revision is None:
         raise HTTPException(status_code=409, detail="test_case_revision_not_found")
-    collection_ids = list(
+    collection_ids = prepared[1] if prepared else list(
         db.scalars(
             select(CollectionCaseMembership.collection_id).where(
                 CollectionCaseMembership.test_case_id == test_case.id
             )
         )
     )
-    projects = list(
+    projects = prepared[2] if prepared else list(
         db.scalars(
             select(CaseProject)
             .where(CaseProject.collection_id.in_(collection_ids))
             .order_by(CaseProject.created_at, CaseProject.id)
         )
     )
-    creator_id = db.scalar(
+    creator_id = None if prepared else db.scalar(
         select(AuditEvent.actor_id)
         .where(
             AuditEvent.resource_type == "test_case",
@@ -516,9 +521,9 @@ def case_to_view(
         .order_by(AuditEvent.created_at, AuditEvent.id)
         .limit(1)
     )
-    if creator_id is None and projects:
+    if prepared is None and creator_id is None and projects:
         creator_id = projects[0].account_id
-    creator = db.get(Account, creator_id) if creator_id else None
+    creator = prepared[3] if prepared else db.get(Account, creator_id) if creator_id else None
     source = ""
     if revision.source_refs:
         source = str(revision.source_refs[0].get("label", ""))
@@ -738,7 +743,75 @@ def list_test_cases(
             .order_by(CollectionCaseMembership.position, TestCase.created_at)
         )
     )
-    views = [case_to_view(db, test_case) for test_case in cases]
+    if not cases:
+        return []
+    case_ids = [test_case.id for test_case in cases]
+    revision_ids = [
+        test_case.current_revision_id
+        for test_case in cases
+        if test_case.current_revision_id
+    ]
+    revisions = {
+        revision.id: revision
+        for revision in db.scalars(
+            select(TestCaseRevision).where(TestCaseRevision.id.in_(revision_ids))
+        )
+    }
+    memberships: dict[UUID, list[UUID]] = {case_id: [] for case_id in case_ids}
+    for case_id, member_collection_id in db.execute(
+        select(CollectionCaseMembership.test_case_id, CollectionCaseMembership.collection_id)
+        .where(CollectionCaseMembership.test_case_id.in_(case_ids))
+    ):
+        memberships[case_id].append(member_collection_id)
+    all_collection_ids = {value for values in memberships.values() for value in values}
+    projects_by_collection: dict[UUID, list[CaseProject]] = {}
+    if all_collection_ids:
+        for project in db.scalars(
+            select(CaseProject)
+            .where(CaseProject.collection_id.in_(all_collection_ids))
+            .order_by(CaseProject.created_at, CaseProject.id)
+        ):
+            projects_by_collection.setdefault(project.collection_id, []).append(project)
+    creator_ids: dict[UUID, UUID] = {}
+    for resource_id, actor_id in db.execute(
+        select(AuditEvent.resource_id, AuditEvent.actor_id)
+        .where(
+            AuditEvent.resource_type == "test_case",
+            AuditEvent.resource_id.in_(case_ids),
+            AuditEvent.action == "test_case.created",
+            AuditEvent.actor_id.is_not(None),
+        )
+        .order_by(AuditEvent.created_at, AuditEvent.id)
+    ):
+        creator_ids.setdefault(resource_id, actor_id)
+    projects_by_case = {
+        case_id: sorted(
+            (project for member_id in memberships[case_id]
+             for project in projects_by_collection.get(member_id, [])),
+            key=lambda project: (project.created_at, project.id),
+        )
+        for case_id in case_ids
+    }
+    for case_id, projects in projects_by_case.items():
+        if case_id not in creator_ids and projects:
+            creator_ids[case_id] = projects[0].account_id
+    accounts = {
+        account.id: account
+        for account in db.scalars(select(Account).where(Account.id.in_(set(creator_ids.values()))))
+    } if creator_ids else {}
+    views = [
+        case_to_view(
+            db,
+            test_case,
+            prepared=(
+                revisions.get(test_case.current_revision_id),
+                memberships[test_case.id],
+                projects_by_case[test_case.id],
+                accounts.get(creator_ids.get(test_case.id)),
+            ),
+        )
+        for test_case in cases
+    ]
     return [item for item in views if matches_case_search(item, q)] if q.strip() else views
 
 

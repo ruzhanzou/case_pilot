@@ -52,6 +52,7 @@ type MindMapNodeData = {
   title: string;
   eyebrow: string;
   caseId?: string;
+  revisionId?: string;
   module?: string;
   priority?: TestCaseDto["priority"];
   tags?: string[];
@@ -317,6 +318,26 @@ const MindMapCard = memo(function MindMapCard({
 });
 
 const nodeTypes = { casePilotNode: MindMapCard };
+const moduleNodeId = (name: string) => `module-${encodeURIComponent(name)}`;
+
+function sameNodeData(left: MindMapNodeData, right: MindMapNodeData): boolean {
+  return left.kind === right.kind &&
+    left.detailKind === right.detailKind &&
+    left.title === right.title &&
+    left.eyebrow === right.eyebrow &&
+    left.caseId === right.caseId &&
+    left.revisionId === right.revisionId &&
+    left.module === right.module &&
+    left.priority === right.priority &&
+    left.automationType === right.automationType &&
+    left.leavesHidden === right.leavesHidden &&
+    left.isRewriteTarget === right.isRewriteTarget &&
+    left.showRewriteBadge === right.showRewriteBadge &&
+    left.rewriteStatus === right.rewriteStatus &&
+    Boolean(left.onSaveText) === Boolean(right.onSaveText) &&
+    left.tags?.length === right.tags?.length &&
+    left.tags?.every((tag, index) => tag === right.tags?.[index]) !== false;
+}
 
 function createEdge(id: string, source: string, target: string): Edge {
   return {
@@ -435,9 +456,9 @@ export function CaseMindMap({
       return;
     }
     const name = module || "";
-    const moduleIndex = [...new Set(cases.map((item) => item.module.trim() || "未分类"))]
-      .indexOf(name || "未分类");
-    setDraft({ module: name, parentId: moduleIndex < 0 ? "collection-root" : `module-${moduleIndex}` });
+    const moduleName = name || "未分类";
+    const moduleExists = cases.some((item) => (item.module.trim() || "未分类") === moduleName);
+    setDraft({ module: name, parentId: moduleExists ? moduleNodeId(moduleName) : "collection-root" });
   }, [cases, onCreateCase, onCreateCaseInline]);
   const saveDraft = useCallback(async (input: TestCaseInput) => {
     if (!onCreateCaseInline) return;
@@ -457,6 +478,8 @@ export function CaseMindMap({
   const [hiddenCaseDetails, setHiddenCaseDetails] = useState<Set<string>>(
     () => new Set(),
   );
+  const draggedPositions = useRef(new Map<string, { x: number; y: number }>());
+  const collapsedByDefault = cases.length > 30;
   const moduleNames = useMemo(
     () => [...new Set(cases.map((testCase) => testCase.module.trim() || "未分类"))],
     [cases],
@@ -594,17 +617,28 @@ export function CaseMindMap({
     const grouped = new Map<string, TestCaseDto[]>();
     cases.forEach((testCase) => {
       const moduleName = testCase.module.trim() || "未分类";
-      grouped.set(moduleName, [...(grouped.get(moduleName) ?? []), testCase]);
+      const moduleCases = grouped.get(moduleName);
+      if (moduleCases) moduleCases.push(testCase);
+      else grouped.set(moduleName, [testCase]);
     });
 
     const nodes: MindMapNode[] = [];
     const edges: Edge[] = [];
-    const longestDetailLines = Math.max(0, ...cases.flatMap((testCase) => [
-      [testCase.title],
-      testCase.preconditions,
-      testCase.steps.map((step) => step.action),
-      testCase.steps.map((step) => step.expected),
-    ].map((items) => items.reduce((count, item) => count + Math.max(1, Math.ceil(item.length / 25)), 0))));
+    let longestDetailLines = 0;
+    for (const testCase of cases) {
+      for (const items of [
+        [testCase.title],
+        testCase.preconditions,
+        testCase.steps.map((step) => step.action),
+        testCase.steps.map((step) => step.expected),
+      ]) {
+        const lines = items.reduce(
+          (count, item) => count + Math.max(1, Math.ceil(item.length / 25)),
+          0,
+        );
+        longestDetailLines = Math.max(longestDetailLines, lines);
+      }
+    }
     const rowHeight = Math.max(144, 64 + longestDetailLines * 19);
     let row = 0;
     const moduleEntries = [...grouped.entries()];
@@ -618,7 +652,7 @@ export function CaseMindMap({
           (rows, testCase) =>
             rows +
             (hiddenLeafModules.has(structure.moduleName) ||
-            hiddenCaseDetails.has(testCase.id)
+            (collapsedByDefault !== hiddenCaseDetails.has(testCase.id))
               ? 1
               : 3),
           0,
@@ -662,16 +696,16 @@ export function CaseMindMap({
       edges.push(createEdge("root-empty", "collection-root", "empty-module"));
     }
 
-    moduleStructures.forEach((structure, moduleIndex) => {
+    moduleStructures.forEach((structure) => {
       const { moduleName, moduleCases } = structure;
-      const moduleId = `module-${moduleIndex}`;
+      const moduleId = moduleNodeId(moduleName);
       const leavesHidden = hiddenLeafModules.has(moduleName);
       const moduleStartRow = row;
       const visibleRows = leavesHidden
         ? moduleCases.length
         : moduleCases.reduce(
             (rows, testCase) =>
-              rows + (hiddenCaseDetails.has(testCase.id) ? 1 : 3),
+            rows + (collapsedByDefault !== hiddenCaseDetails.has(testCase.id) ? 1 : 3),
             0,
           );
       const moduleCenterRow = moduleStartRow + (visibleRows - 1) / 2;
@@ -699,7 +733,7 @@ export function CaseMindMap({
 
       const addCaseNode = (testCase: TestCaseDto) => {
         const nodeId = `case-${testCase.id}`;
-        const detailsHidden = leavesHidden || hiddenCaseDetails.has(testCase.id);
+        const detailsHidden = leavesHidden || (collapsedByDefault !== hiddenCaseDetails.has(testCase.id));
         const detailRows = detailsHidden ? 1 : 3;
         const caseStartRow = row;
         const caseTargeted = isCaseRewriteTarget(testCase);
@@ -720,6 +754,7 @@ export function CaseMindMap({
             title: testCase.title,
             eyebrow: `title · ${testCase.case_key} · V${testCase.revision_number}`,
             caseId: testCase.id,
+            revisionId: testCase.current_revision_id,
             priority: testCase.priority,
             tags: testCase.tags,
             automationType: testCase.automation_type,
@@ -787,6 +822,7 @@ export function CaseMindMap({
               title: detail.title,
               eyebrow: detail.eyebrow,
               caseId: testCase.id,
+              revisionId: testCase.current_revision_id,
               module: testCase.module,
               isRewriteTarget: caseTargeted,
               rewriteStatus:
@@ -847,6 +883,7 @@ export function CaseMindMap({
     allLeavesHidden,
     hiddenLeafModules,
     hiddenCaseDetails,
+    collapsedByDefault,
     isCaseRewriteTarget,
     isModuleRewriteTarget,
     draft,
@@ -866,11 +903,17 @@ export function CaseMindMap({
   const [flowNodes, setFlowNodes, onNodesChange] = useNodesState<MindMapNode>(graph.nodes);
   useEffect(() => {
     setFlowNodes((current) => {
-      const measuredById = new Map(current.map((node) => [node.id, node.measured]));
-      return graph.nodes.map((node) => ({
-        ...node,
-        measured: measuredById.get(node.id),
-      }));
+      const currentById = new Map(current.map((node) => [node.id, node]));
+      return graph.nodes.map((node) => {
+        const previous = currentById.get(node.id);
+        const position = draggedPositions.current.get(node.id) ?? node.position;
+        if (previous && previous.selected === node.selected &&
+          previous.position.x === position.x && previous.position.y === position.y &&
+          sameNodeData(previous.data, node.data)) {
+          return previous;
+        }
+        return { ...node, position, measured: previous?.measured };
+      });
     });
   }, [graph.nodes, setFlowNodes]);
 
@@ -890,6 +933,9 @@ export function CaseMindMap({
         onInit={(instance) => { flowRef.current = instance; }}
         nodes={flowNodes}
         onNodesChange={onNodesChange}
+        onNodeDragStop={(_, node) => {
+          draggedPositions.current.set(node.id, node.position);
+        }}
         edges={graph.edges}
         nodeTypes={nodeTypes}
         defaultViewport={graph.viewport}

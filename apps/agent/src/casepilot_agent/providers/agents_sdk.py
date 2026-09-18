@@ -116,7 +116,7 @@ class AgentsSdkProvider:
             api_key=self.api_key,
             base_url=self.base_url,
             timeout=timeout,
-            max_retries=0,
+            max_retries=2,
         )
         model = OpenAIChatCompletionsModel(
             model=resolved_model,
