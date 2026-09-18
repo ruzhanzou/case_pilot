@@ -478,13 +478,26 @@ export function CaseLibrary({
                 </section>
 
                 <section className="case-detail__section">
-                  <h3>{pick("Steps and validations", "执行步骤与校验点")}</h3>
+                  <h3>{pick("Test steps", "测试步骤")}</h3>
                   <div className="case-detail__steps">
                     {selectedCase.steps.map((step, index) => (
                       <article key={step.id}>
                         <span>{index + 1}</span>
                         <div>
                           <strong>{step.action}</strong>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="case-detail__section">
+                  <h3>{pick("Expected results", "预期结果")}</h3>
+                  <div className="case-detail__steps">
+                    {selectedCase.steps.map((step, index) => (
+                      <article key={step.id}>
+                        <span>{index + 1}</span>
+                        <div>
                           <p>{step.expected}</p>
                         </div>
                       </article>

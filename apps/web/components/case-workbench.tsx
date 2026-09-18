@@ -2180,12 +2180,21 @@ export function CaseWorkbench({
                 </ul>
               </section>
               <section>
-                <strong>{pick("Steps and checkpoints", "执行步骤与检查点")}</strong>
+                <strong>{pick("Test steps", "测试步骤")}</strong>
                 <ol>
                   {selectedCase.steps.map((step) => (
                     <li key={step.id}>
                       <p>{step.action}</p>
-                      <small>{step.expected}</small>
+                    </li>
+                  ))}
+                </ol>
+              </section>
+              <section>
+                <strong>{pick("Expected results", "预期结果")}</strong>
+                <ol>
+                  {selectedCase.steps.map((step) => (
+                    <li key={step.id}>
+                      <p>{step.expected}</p>
                     </li>
                   ))}
                 </ol>

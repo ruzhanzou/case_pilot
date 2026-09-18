@@ -778,6 +778,8 @@
 
 .principle-inspector li p {
   margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .principle-inspector li small {
@@ -6274,15 +6276,17 @@ button.case-tag:hover {
   color: #34445a;
   font-size: 12px;
   line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .case-detail__steps p {
-  margin: 7px 0 0;
-  padding-top: 7px;
-  border-top: 1px dashed #e1e8f1;
+  margin: 0;
   color: #228069;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .case-detail__source {
