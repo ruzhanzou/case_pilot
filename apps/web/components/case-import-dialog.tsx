@@ -123,13 +123,14 @@ export function CaseImportDialog({
               <span>Test Setup</span>
               <span className="is-required">Test Procedure {pick("required", "必填")}</span>
               <span className="is-required">Test Validation {pick("required", "必填")}</span>
-              <span>Level</span>
+              <span>Priority / Level / 优先级</span>
+              <span>Tag / Tags / 标签</span>
               <span>Module / 模块</span>
             </div>
             <p>
               {pick(
-                `Level accepts P0/P1/P2, 0/1/2, High/Medium/Low, or 高/中/低. Blank values default to P1. Up to ${MAX_EXCEL_IMPORT_ROWS} rows per import.`,
-                `Level 支持 P0/P1/P2、0/1/2、High/Medium/Low 或高/中/低；留空按 P1 导入。单次最多 ${MAX_EXCEL_IMPORT_ROWS} 条。`,
+                `Priority or Level accepts P0/P1/P2, 0/1/2, High/Medium/Low, or 高/中/低. Priority takes precedence; blank values default to P1. Separate tags with commas, semicolons, or newlines. Up to ${MAX_EXCEL_IMPORT_ROWS} rows per import.`,
+                `Priority 或 Level 支持 P0/P1/P2、0/1/2、High/Medium/Low 或高/中/低；优先读取 Priority，留空按 P1 导入。标签可用逗号、分号或换行分隔。单次最多 ${MAX_EXCEL_IMPORT_ROWS} 条。`,
               )}
             </p>
           </div>
@@ -183,7 +184,8 @@ export function CaseImportDialog({
                       <tr>
                         <th>{pick("Test case", "用例名称")}</th>
                         <th>{pick("Module", "模块")}</th>
-                        <th>Level</th>
+                        <th>Priority</th>
+                        <th>Tag</th>
                         <th>{pick("Preconditions", "前置条件")}</th>
                         <th>{pick("Steps", "步骤")}</th>
                       </tr>
@@ -194,6 +196,7 @@ export function CaseImportDialog({
                           <td>{testCase.title}</td>
                           <td>{testCase.module || "—"}</td>
                           <td>{testCase.priority}</td>
+                          <td>{testCase.tags.join("、") || "—"}</td>
                           <td>{testCase.preconditions.length || "—"}</td>
                           <td>{testCase.steps.length}</td>
                         </tr>

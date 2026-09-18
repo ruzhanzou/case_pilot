@@ -14,6 +14,11 @@ const COLUMN_KEYS = {
   testprocedure: "Test Procedure",
   testvalidation: "Test Validation",
   level: "Level",
+  priority: "Priority",
+  "优先级": "Priority",
+  tag: "Tag",
+  tags: "Tag",
+  "标签": "Tag",
   module: "Module",
   featuremodule: "Module",
   "模块": "Module",
@@ -67,6 +72,10 @@ function parsePriority(value: string): TestCaseInput["priority"] | null {
     return "P2";
   }
   return null;
+}
+
+function parseTags(value: string): string[] {
+  return [...new Set(value.split(/[,，;；\r\n]+/).map((tag) => tag.trim()).filter(Boolean))];
 }
 
 function buildSteps(procedure: string, validation: string) {
@@ -147,6 +156,8 @@ export async function parseTestCaseExcel(
     const validation = get("Test Validation");
     const setup = get("Test Setup");
     const level = get("Level");
+    const explicitPriority = get("Priority");
+    const tagValue = get("Tag");
     const caseModule = get("Module");
     const missingValues = [
       !title && "Test_Case_Name",
@@ -169,9 +180,19 @@ export async function parseTestCaseExcel(
       errors.push(`第 ${excelRow} 行步骤或校验内容超过 4000 个字符`);
       return;
     }
-    const priority = parsePriority(level);
+    const priorityValue = explicitPriority || level;
+    const priority = parsePriority(priorityValue);
     if (!priority) {
-      errors.push(`第 ${excelRow} 行 Level 无法识别：${level}`);
+      errors.push(`第 ${excelRow} 行 ${explicitPriority ? "Priority" : "Level"} 无法识别：${priorityValue}`);
+      return;
+    }
+    const tags = parseTags(tagValue);
+    if (tags.length > 20) {
+      errors.push(`第 ${excelRow} 行 Tag 超过 20 项`);
+      return;
+    }
+    if (tags.some((tag) => tag.length > 32)) {
+      errors.push(`第 ${excelRow} 行 Tag 单项超过 32 个字符`);
       return;
     }
     const preconditions = splitStructuredLines(setup);
@@ -189,7 +210,7 @@ export async function parseTestCaseExcel(
       module: caseModule,
       priority,
       case_type: "功能",
-      tags: [],
+      tags,
       preconditions,
       steps,
       source: `Excel 导入：${file.name}`.slice(0, 500),
