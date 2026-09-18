@@ -14,7 +14,11 @@ from redis import Redis
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
-from casepilot_api.agent_router import needs_intent_confirmation, plan_intents
+from casepilot_api.agent_router import (
+    needs_intent_confirmation,
+    normalize_routing_text,
+    plan_intents,
+)
 from casepilot_api.auth import CurrentAccount, require_space_membership
 from casepilot_api.case_management import (
     case_to_view,
@@ -424,7 +428,7 @@ def classify_intent(
     has_targets: bool = False,
     phase: str = "idle",
 ) -> tuple[str, float]:
-    normalized = " ".join(content.strip().split())
+    normalized = " ".join(normalize_routing_text(content).strip().split())
     compact = normalized.casefold().strip("。！？!?，, ")
     asks_about_capabilities = (
         "casepilot" in compact or "你" in compact

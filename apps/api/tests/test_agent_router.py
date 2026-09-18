@@ -167,6 +167,26 @@ def test_english_generation_request_routes_to_workspace_without_model() -> None:
     assert plan.operations[0].requires_confirmation is False
 
 
+def test_joined_wake_word_routes_generation_to_workspace() -> None:
+    plan = plan_intents(
+        "dou baoGenerate test cases for phone verification-code login, "
+        "covering the happy path, rate limits, code expiry, and poor networks.",
+        classify_intent,
+        has_targets=False,
+        phase="idle",
+        target_context=[],
+        provider="mock",
+        model_name="mock",
+        base_url="",
+        api_key="",
+        timeout_seconds=5,
+        tracing_enabled=False,
+    )
+    assert plan.operations[0].intent == "CASE_GENERATE"
+    assert plan.operations[0].action == "BRIEF_CREATE"
+    assert plan.operations[0].requires_confirmation is False
+
+
 def test_model_authored_action_is_normalized_to_the_server_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

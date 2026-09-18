@@ -34,6 +34,10 @@ def test_intent_classifier_routes_generation_modification_and_qa() -> None:
         "doubao Generate test cases for phone verification-code login, "
         "covering the happy path, rate limits, code expiry, and poor networks."
     ) == ("CASE_GENERATE", 0.98)
+    assert classify_intent(
+        "dou baoGenerate test cases for phone verification-code login, "
+        "covering the happy path, rate limits, code expiry, and poor networks."
+    ) == ("CASE_GENERATE", 0.98)
     assert classify_intent("How to generate test cases?")[0] == "KNOWLEDGE_QA"
     assert classify_intent("Can you generate test cases for login?")[0] == (
         "CASE_GENERATE"

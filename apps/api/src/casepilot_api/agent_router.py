@@ -114,6 +114,15 @@ EXPLICIT_REQUEST_SIGNAL = re.compile(
     r"\b(?:please|can you|could you|i want|i need)\b)",
     re.IGNORECASE,
 )
+JOINED_WAKE_WORD = re.compile(
+    r"(?:dou\s*bao|豆包)(?=(?:generate|create|write|draft|design)\b)",
+    re.IGNORECASE,
+)
+
+
+def normalize_routing_text(content: str) -> str:
+    """Separate a voice wake word glued to an English case command."""
+    return JOINED_WAKE_WORD.sub("doubao ", content)
 
 
 def intent_threshold(intent: str) -> float:
@@ -330,6 +339,7 @@ def plan_intents(
     timeout_seconds: float,
     tracing_enabled: bool,
 ) -> IntentPlanDraft:
+    content = normalize_routing_text(content)
     fallback = deterministic_plan(content, classify, has_targets=has_targets)
     needs_model = _requires_semantic_router(content, phase) or any(
         needs_intent_confirmation(operation.intent, operation.confidence)
