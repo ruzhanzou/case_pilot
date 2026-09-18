@@ -7863,43 +7863,12 @@ button.case-tag:hover {
   background: rgba(255, 255, 255, .96);
 }
 
-.case-map-node--detail.case-map-node--setup-procedure {
+.case-map-node--detail.case-map-node--setup {
   border-left: 3px solid #3b82f6;
   background: #f9fbff;
 }
+.case-map-node--detail.case-map-node--procedure { border-left: 3px solid #8b5cf6; }
 .case-map-node--detail.case-map-node--validation { border-left: 3px solid #10b981; }
-
-.case-map-node__sections { display: grid; gap: 10px; }
-.case-map-node__section + .case-map-node__section {
-  padding-top: 9px;
-  border-top: 1px solid #dce7f5;
-}
-.case-map-node__section-label {
-  display: block;
-  margin-bottom: 5px;
-  color: #52749e;
-  font-size: 10px;
-  font-weight: 750;
-}
-.case-map-node__section textarea {
-  display: block;
-  width: 100%;
-  min-height: 38px;
-  padding: 3px 2px;
-  resize: vertical;
-  border: 0;
-  background: transparent;
-  color: #2d3c52;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.45;
-}
-.case-map-node__section textarea:focus {
-  outline: 2px solid #93b8f4;
-  outline-offset: 2px;
-  border-radius: 3px;
-}
 
 .case-map-node__meta {
   display: flex;

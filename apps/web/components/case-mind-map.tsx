@@ -48,11 +48,9 @@ import {
 
 type MindMapNodeData = {
   kind: "collection" | "module" | "case" | "detail" | "draft";
-  detailKind?: "setup-procedure" | "validation";
+  detailKind?: "setup" | "procedure" | "validation";
   title: string;
   eyebrow: string;
-  setupText?: string;
-  procedureText?: string;
   caseId?: string;
   revisionId?: string;
   module?: string;
@@ -68,79 +66,11 @@ type MindMapNodeData = {
   onSaveDraft?: (input: TestCaseInput) => Promise<void>;
   onEditCase: (caseId: string) => void;
   onSaveText?: (value: string) => Promise<void>;
-  onSaveSetup?: (value: string) => Promise<void>;
-  onSaveProcedure?: (value: string) => Promise<void>;
   onToggleLeaves?: () => void;
 };
 
 type MindMapNode = Node<MindMapNodeData, "casePilotNode">;
 const emptyRewriteTargets: ConversationTarget[] = [];
-
-function DetailSection({
-  label,
-  value,
-  onSave,
-  onOpen,
-}: {
-  label: string;
-  value: string;
-  onSave?: (value: string) => Promise<void>;
-  onOpen: () => void;
-}) {
-  const { pick } = useI18n();
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const cancelingRef = useRef(false);
-  const save = async (draft: string) => {
-    if (!onSave || saving || cancelingRef.current || draft.trim() === value.trim()) return;
-    setSaving(true);
-    setError("");
-    try {
-      await onSave(draft);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : pick("Save failed. Try again.", "保存失败，请重试"));
-    } finally {
-      setSaving(false);
-    }
-  };
-  return (
-    <div className="case-map-node__section">
-      <span className="case-map-node__section-label">{label}</span>
-      {onSave ? (
-        <textarea
-          key={value}
-          className="nodrag nowheel"
-          aria-label={pick(`Edit ${label} inline`, `直接编辑${label}`)}
-          defaultValue={value}
-          rows={Math.max(2, value.split("\n").reduce(
-            (count, line) => count + Math.max(1, Math.ceil(line.length / 32)), 0,
-          ))}
-          disabled={saving}
-          onClick={(event) => event.stopPropagation()}
-          onPointerDown={(event) => event.stopPropagation()}
-          onKeyDown={(event) => {
-            event.stopPropagation();
-            if (event.key === "Escape") {
-              cancelingRef.current = true;
-              event.currentTarget.value = value;
-              event.currentTarget.blur();
-              window.requestAnimationFrame(() => { cancelingRef.current = false; });
-            } else if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              event.currentTarget.blur();
-            }
-          }}
-          onBlur={(event) => void save(event.currentTarget.value)}
-        />
-      ) : (
-        <button type="button" className="case-map-node__text nodrag" onClick={onOpen}>
-          {value}
-        </button>
-      )}
-      {error && <span role="alert">{error}</span>}
-    </div>
-  );
-}
 
 const MindMapCard = memo(function MindMapCard({
   data,
@@ -310,21 +240,6 @@ const MindMapCard = memo(function MindMapCard({
             <button type="button" onClick={() => void saveDraft()} disabled={saving}>{saving ? pick("Saving…", "保存中…") : pick("Save case", "保存用例")}</button>
           </div>
         </div>
-      ) : data.detailKind === "setup-procedure" && data.caseId ? (
-        <div className="case-map-node__sections">
-          <DetailSection
-            label="test_setup"
-            value={data.setupText ?? ""}
-            onSave={data.onSaveSetup}
-            onOpen={() => data.onEditCase(data.caseId!)}
-          />
-          <DetailSection
-            label="test_procedure"
-            value={data.procedureText ?? ""}
-            onSave={data.onSaveProcedure}
-            onOpen={() => data.onEditCase(data.caseId!)}
-          />
-        </div>
       ) : data.onSaveText ? (
         <div className="case-map-node__inline-editor nodrag nowheel">
           <textarea
@@ -415,8 +330,6 @@ function sameNodeData(left: MindMapNodeData, right: MindMapNodeData): boolean {
     left.detailKind === right.detailKind &&
     left.title === right.title &&
     left.eyebrow === right.eyebrow &&
-    left.setupText === right.setupText &&
-    left.procedureText === right.procedureText &&
     left.caseId === right.caseId &&
     left.revisionId === right.revisionId &&
     left.module === right.module &&
@@ -427,8 +340,6 @@ function sameNodeData(left: MindMapNodeData, right: MindMapNodeData): boolean {
     left.showRewriteBadge === right.showRewriteBadge &&
     left.rewriteStatus === right.rewriteStatus &&
     Boolean(left.onSaveText) === Boolean(right.onSaveText) &&
-    Boolean(left.onSaveSetup) === Boolean(right.onSaveSetup) &&
-    Boolean(left.onSaveProcedure) === Boolean(right.onSaveProcedure) &&
     left.tags?.length === right.tags?.length &&
     left.tags?.every((tag, index) => tag === right.tags?.[index]) !== false;
 }
@@ -720,6 +631,7 @@ export function CaseMindMap({
     const edges: Edge[] = [];
     const moduleEntries = [...grouped.entries()];
     const caseTops = new Map<string, number>();
+    const caseHeights = new Map<string, number>();
     let nextY = 40;
     const visualLines = (items: string[]) => items.reduce(
       (count, item) => count + Math.max(1, Math.ceil(item.length / 32)), 0,
@@ -732,11 +644,9 @@ export function CaseMindMap({
         const setupLines = visualLines(testCase.preconditions);
         const procedureLines = visualLines(testCase.steps.map((step) => step.action));
         const validationLines = visualLines(testCase.steps.map((step) => step.expected));
-        const height = detailsHidden ? 140 : Math.max(
-          140,
-          100 + (Math.max(2, setupLines) + Math.max(2, procedureLines)) * 18,
-          70 + Math.max(3, validationLines) * 18,
-        );
+        const height = detailsHidden ? 140 : [setupLines, procedureLines, validationLines]
+          .reduce((total, lines) => total + 80 + Math.max(3, lines) * 18, 28);
+        caseHeights.set(testCase.id, height);
         nextY += height + 28;
       }
     }
@@ -779,8 +689,10 @@ export function CaseMindMap({
     moduleEntries.forEach(([moduleName, moduleCases]) => {
       const moduleId = moduleNodeId(moduleName);
       const leavesHidden = hiddenLeafModules.has(moduleName);
-      const firstY = caseTops.get(moduleCases[0].id) ?? 40;
-      const lastY = caseTops.get(moduleCases.at(-1)!.id) ?? firstY;
+      const firstCase = moduleCases[0];
+      const lastCase = moduleCases.at(-1)!;
+      const firstY = (caseTops.get(firstCase.id) ?? 40) + (caseHeights.get(firstCase.id) ?? 140) / 2;
+      const lastY = (caseTops.get(lastCase.id) ?? 40) + (caseHeights.get(lastCase.id) ?? 140) / 2;
       const moduleY = (firstY + lastY) / 2;
       const moduleTargeted = isModuleRewriteTarget(moduleName);
       nodes.push({
@@ -807,7 +719,8 @@ export function CaseMindMap({
       const addCaseNode = (testCase: TestCaseDto) => {
         const nodeId = `case-${testCase.id}`;
         const detailsHidden = leavesHidden || (collapsedByDefault !== hiddenCaseDetails.has(testCase.id));
-        const caseY = caseTops.get(testCase.id) ?? 40;
+        const rowTop = caseTops.get(testCase.id) ?? 40;
+        const caseY = rowTop + ((caseHeights.get(testCase.id) ?? 140) - 100) / 2;
         const caseTargeted = isCaseRewriteTarget(testCase);
         const directCaseTargeted = rewriteTargets.some(
           (target) =>
@@ -853,57 +766,57 @@ export function CaseMindMap({
           return;
         }
 
-        const setupProcedureId = `${nodeId}-setup-procedure`;
-        const validationId = `${nodeId}-validation`;
+        const detailItems = [
+          {
+            kind: "setup" as const,
+            label: "test_setup",
+            text: testCase.preconditions.length
+              ? testCase.preconditions.map((item, index) => `${index + 1}. ${item}`).join("\n")
+              : pick("No preconditions", "无前置条件"),
+            values: testCase.preconditions,
+          },
+          {
+            kind: "procedure" as const,
+            label: "test_procedure",
+            text: testCase.steps.map((step, index) => `${index + 1}. ${step.action}`).join("\n"),
+            values: testCase.steps.map((step) => step.action),
+          },
+          {
+            kind: "validation" as const,
+            label: "test_validation",
+            text: testCase.steps.map((step, index) => `${index + 1}. ${step.expected}`).join("\n"),
+            values: testCase.steps.map((step) => step.expected),
+          },
+        ];
         const editCase = (caseId: string) => {
           const current = cases.find((item) => item.id === caseId);
           if (current) onEditCase(current);
         };
-        nodes.push({
-          id: setupProcedureId,
-          type: "casePilotNode",
-          position: { x: 870, y: caseY },
-          data: {
-            kind: "detail",
-            detailKind: "setup-procedure",
-            title: "",
-            eyebrow: "setup · procedure",
-            setupText: testCase.preconditions.length
-              ? testCase.preconditions.map((item, index) => `${index + 1}. ${item}`).join("\n")
-              : pick("No preconditions", "无前置条件"),
-            procedureText: testCase.steps.map((step, index) => `${index + 1}. ${step.action}`).join("\n"),
-            caseId: testCase.id,
-            revisionId: testCase.current_revision_id,
-            module: testCase.module,
-            isRewriteTarget: caseTargeted,
-            rewriteStatus: caseTargeted && rewriteStatus !== "idle" ? rewriteStatus : undefined,
-            onCreateCase: startCreateCase,
-            onEditCase: editCase,
-            onSaveSetup: onSaveCase ? (value) => saveNodeText(testCase, "setup", value) : undefined,
-            onSaveProcedure: onSaveCase ? (value) => saveNodeText(testCase, "procedure", value) : undefined,
-          },
+        let detailY = rowTop;
+        detailItems.forEach(({ kind, label, text, values }) => {
+          const detailId = `${nodeId}-${kind}`;
+          nodes.push({
+            id: detailId,
+            type: "casePilotNode",
+            position: { x: 870, y: detailY },
+            data: {
+              kind: "detail",
+              detailKind: kind,
+              title: text,
+              eyebrow: label,
+              caseId: testCase.id,
+              revisionId: testCase.current_revision_id,
+              module: testCase.module,
+              isRewriteTarget: caseTargeted,
+              rewriteStatus: caseTargeted && rewriteStatus !== "idle" ? rewriteStatus : undefined,
+              onCreateCase: startCreateCase,
+              onEditCase: editCase,
+              onSaveText: onSaveCase ? (value) => saveNodeText(testCase, kind, value) : undefined,
+            },
+          });
+          edges.push(createEdge(detailId, nodeId, detailId));
+          detailY += 80 + Math.max(3, visualLines(values)) * 18 + 14;
         });
-        nodes.push({
-          id: validationId,
-          type: "casePilotNode",
-          position: { x: 1270, y: caseY },
-          data: {
-            kind: "detail",
-            detailKind: "validation",
-            title: testCase.steps.map((step, index) => `${index + 1}. ${step.expected}`).join("\n"),
-            eyebrow: "test_validation",
-            caseId: testCase.id,
-            revisionId: testCase.current_revision_id,
-            module: testCase.module,
-            isRewriteTarget: caseTargeted,
-            rewriteStatus: caseTargeted && rewriteStatus !== "idle" ? rewriteStatus : undefined,
-            onCreateCase: startCreateCase,
-            onEditCase: editCase,
-            onSaveText: onSaveCase ? (value) => saveNodeText(testCase, "validation", value) : undefined,
-          },
-        });
-        edges.push(createEdge(`${nodeId}-setup-procedure`, nodeId, setupProcedureId));
-        edges.push(createEdge(`${nodeId}-validation`, setupProcedureId, validationId));
       };
 
       moduleCases.forEach(addCaseNode);

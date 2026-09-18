@@ -61,32 +61,34 @@ test("四段式脑图展示完整文字，并在画布内新增用例", async ({
     const map = page.getByLabel(`${collectionName} 用例脑图`);
     await expect(map).toBeVisible();
     const caseNode = map.locator(`.react-flow__node[data-id="case-${caseId}"]`);
-    const setupProcedureNode = map.locator(`.react-flow__node[data-id="case-${caseId}-setup-procedure"]`);
+    const setupNode = map.locator(`.react-flow__node[data-id="case-${caseId}-setup"]`);
+    const procedureNode = map.locator(`.react-flow__node[data-id="case-${caseId}-procedure"]`);
     const validationNode = map.locator(`.react-flow__node[data-id="case-${caseId}-validation"]`);
     await expect(caseNode.locator(".case-map-node")).toHaveClass(/case-map-node--priority-p0/);
-    await expect(setupProcedureNode.getByText("test_setup")).toBeVisible();
-    await expect(setupProcedureNode.getByText("test_procedure")).toBeVisible();
+    await expect(setupNode.getByText("test_setup")).toBeVisible();
+    await expect(procedureNode.getByText("test_procedure")).toBeVisible();
     await expect(validationNode.getByText("test_validation")).toBeVisible();
-    await expect(map.locator(`.react-flow__node[data-id="case-${caseId}-setup"]`)).toHaveCount(0);
-    await expect(map.locator(`.react-flow__node[data-id="case-${caseId}-procedure"]`)).toHaveCount(0);
+    await expect(map.locator(`.react-flow__node[data-id="case-${caseId}-setup-procedure"]`)).toHaveCount(0);
     await expect(map.getByText(longExpected)).toBeVisible();
 
-    const nodeRects = await Promise.all([caseNode, setupProcedureNode, validationNode].map(
+    const nodeRects = await Promise.all([caseNode, setupNode, procedureNode, validationNode].map(
       (node) => node.evaluate((element) => {
-        const { x, y } = element.getBoundingClientRect();
-        return { x, y };
+        const { x, y, width, height } = element.getBoundingClientRect();
+        return { x, y, width, height };
       }),
     ));
     expect(nodeRects[0].x).toBeLessThan(nodeRects[1].x);
-    expect(nodeRects[1].x).toBeLessThan(nodeRects[2].x);
-    expect(Math.max(...nodeRects.map((rect) => rect.y)) - Math.min(...nodeRects.map((rect) => rect.y))).toBeLessThan(12);
+    expect(nodeRects[1].x).toBeCloseTo(nodeRects[2].x, 0);
+    expect(nodeRects[2].x).toBeCloseTo(nodeRects[3].x, 0);
+    expect(nodeRects[1].y + nodeRects[1].height).toBeLessThan(nodeRects[2].y);
+    expect(nodeRects[2].y + nodeRects[2].height).toBeLessThan(nodeRects[3].y);
 
-    await setupProcedureNode.getByLabel("直接编辑test_setup").fill("用户已登录且持有有效会话");
-    await setupProcedureNode.getByLabel("直接编辑test_setup").press("Enter");
-    await expect(setupProcedureNode.getByLabel("直接编辑test_setup")).toHaveValue("1. 用户已登录且持有有效会话");
-    await setupProcedureNode.getByLabel("直接编辑test_procedure").fill("提交订单支付");
-    await setupProcedureNode.getByLabel("直接编辑test_procedure").press("Enter");
-    await expect(setupProcedureNode.getByLabel("直接编辑test_procedure")).toHaveValue("1. 提交订单支付");
+    await setupNode.getByLabel("直接编辑test_setup").fill("用户已登录且持有有效会话");
+    await setupNode.getByLabel("直接编辑test_setup").press("Enter");
+    await expect(setupNode.getByLabel("直接编辑test_setup")).toHaveValue("1. 用户已登录且持有有效会话");
+    await procedureNode.getByLabel("直接编辑test_procedure").fill("提交订单支付");
+    await procedureNode.getByLabel("直接编辑test_procedure").press("Enter");
+    await expect(procedureNode.getByLabel("直接编辑test_procedure")).toHaveValue("1. 提交订单支付");
 
     const revisedExpected = `${longExpected}，并写入审计记录`;
     await map.getByLabel("直接编辑test_validation").fill(revisedExpected);
@@ -164,7 +166,7 @@ test("大量用例默认收起详情，单条用例仍可展开编辑", async ({
     await expect(map.locator(".case-map-node--case")).toHaveCount(31);
     await expect(map.locator(".case-map-node--detail")).toHaveCount(0);
     await map.getByRole("button", { name: /展开批量用例 0的结构节点/ }).dispatchEvent("click");
-    await expect(map.locator(".case-map-node--detail")).toHaveCount(2);
+    await expect(map.locator(".case-map-node--detail")).toHaveCount(3);
   } finally {
     for (const id of caseIds) await page.request.delete(`${apiUrl}/api/v1/test-cases/${id}`);
     await page.request.delete(`${apiUrl}/api/v1/collections/${collectionId}`);
