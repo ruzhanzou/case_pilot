@@ -124,6 +124,7 @@ export function CaseImportDialog({
               <span className="is-required">Test Procedure {pick("required", "必填")}</span>
               <span className="is-required">Test Validation {pick("required", "必填")}</span>
               <span>Level</span>
+              <span>Module / 模块</span>
             </div>
             <p>
               {pick(
@@ -181,6 +182,7 @@ export function CaseImportDialog({
                     <thead>
                       <tr>
                         <th>{pick("Test case", "用例名称")}</th>
+                        <th>{pick("Module", "模块")}</th>
                         <th>Level</th>
                         <th>{pick("Preconditions", "前置条件")}</th>
                         <th>{pick("Steps", "步骤")}</th>
@@ -190,6 +192,7 @@ export function CaseImportDialog({
                       {preview.cases.slice(0, 5).map((testCase, index) => (
                         <tr key={`${testCase.title}-${index}`}>
                           <td>{testCase.title}</td>
+                          <td>{testCase.module || "—"}</td>
                           <td>{testCase.priority}</td>
                           <td>{testCase.preconditions.length || "—"}</td>
                           <td>{testCase.steps.length}</td>

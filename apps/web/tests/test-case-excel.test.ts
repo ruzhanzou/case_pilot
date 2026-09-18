@@ -54,6 +54,30 @@ test("reports missing required columns", async () => {
   assert.deepEqual(result.errors, ["缺少必填列：Test Validation"]);
 });
 
+test("imports optional module columns with English and Chinese headers", async () => {
+  for (const header of ["Module", "Feature Module", "模块", "功能模块"]) {
+    const result = await parseTestCaseExcel(
+      excelFile([
+        ["Test_Case_Name", "Test Procedure", "Test Validation", header],
+        ["登录", "点击登录", "显示首页", " 账号 / 登录 "],
+      ]),
+    );
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.cases[0].module, "账号 / 登录");
+  }
+});
+
+test("rejects modules longer than the case schema limit", async () => {
+  const result = await parseTestCaseExcel(
+    excelFile([
+      ["Test_Case_Name", "Test Procedure", "Test Validation", "模块"],
+      ["登录", "点击登录", "显示首页", "模".repeat(161)],
+    ]),
+  );
+  assert.equal(result.cases.length, 0);
+  assert.deepEqual(result.errors, ["第 2 行 Module 超过 160 个字符"]);
+});
+
 test("reports row-level required values and unsupported levels", async () => {
   const result = await parseTestCaseExcel(
     excelFile([

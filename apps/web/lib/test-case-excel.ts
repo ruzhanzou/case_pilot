@@ -14,6 +14,10 @@ const COLUMN_KEYS = {
   testprocedure: "Test Procedure",
   testvalidation: "Test Validation",
   level: "Level",
+  module: "Module",
+  featuremodule: "Module",
+  "模块": "Module",
+  "功能模块": "Module",
 } as const;
 
 type CanonicalColumn = (typeof COLUMN_KEYS)[keyof typeof COLUMN_KEYS];
@@ -31,7 +35,7 @@ function normalizeHeader(value: unknown) {
     .replace(/^\uFEFF/, "")
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
+    .replace(/[^a-z0-9\u4e00-\u9fff]/g, "");
 }
 
 function textValue(value: unknown) {
@@ -143,6 +147,7 @@ export async function parseTestCaseExcel(
     const validation = get("Test Validation");
     const setup = get("Test Setup");
     const level = get("Level");
+    const caseModule = get("Module");
     const missingValues = [
       !title && "Test_Case_Name",
       !procedure && "Test Procedure",
@@ -154,6 +159,10 @@ export async function parseTestCaseExcel(
     }
     if (title.length > 300) {
       errors.push(`第 ${excelRow} 行 Test_Case_Name 超过 300 个字符`);
+      return;
+    }
+    if (caseModule.length > 160) {
+      errors.push(`第 ${excelRow} 行 Module 超过 160 个字符`);
       return;
     }
     if (procedure.length > 4000 || validation.length > 4000) {
@@ -177,7 +186,7 @@ export async function parseTestCaseExcel(
     }
     cases.push({
       title,
-      module: "",
+      module: caseModule,
       priority,
       case_type: "功能",
       tags: [],
