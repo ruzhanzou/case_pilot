@@ -1,8 +1,17 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const apiUrl = process.env.CASEPILOT_E2E_API_URL ?? "http://localhost:8000";
 
 test.use({ viewport: { width: 1600, height: 1000 } });
+
+async function login(page: Page) {
+  const response = await page.request.post(`${apiUrl}/api/v1/auth/login`, {
+    data: { email: "demo@casepilot.local", password: "CasePilot123!" },
+  });
+  expect(response.ok()).toBeTruthy();
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: /今天想测试什么|What would you like to test/i })).toBeVisible();
+}
 
 test("四段式脑图展示完整文字，并在画布内新增用例", async ({ page }) => {
   const token = Date.now();
@@ -13,20 +22,7 @@ test("四段式脑图展示完整文字，并在画布内新增用例", async ({
   let caseId = "";
   let addedCaseId = "";
 
-  await page.goto("/");
-  if (await page.getByRole("button", { name: "Display language: English" }).isVisible()) {
-    await page.getByRole("button", { name: "Display language: English" }).click();
-  }
-  if (await page.getByLabel("邮箱").isVisible()) {
-    await page.getByLabel("邮箱").fill("demo@casepilot.local");
-    await page.getByLabel("密码").fill("CasePilot123!");
-    await page.getByRole("button", { name: "登录并进入工作台" }).click();
-  } else if (await page.getByLabel("Email").isVisible()) {
-    await page.getByLabel("Email").fill("demo@casepilot.local");
-    await page.getByLabel("Password").fill("CasePilot123!");
-    await page.getByRole("button", { name: "Sign in to workspace" }).click();
-  }
-  await expect(page.getByRole("heading", { name: /今天想测试什么|What would you like to test/i })).toBeVisible();
+  await login(page);
 
   try {
     const me = await page.request.get(`${apiUrl}/api/v1/auth/me`);
@@ -64,10 +60,33 @@ test("四段式脑图展示完整文字，并在画布内新增用例", async ({
     await page.getByRole("button", { name: "用例脑图" }).click();
     const map = page.getByLabel(`${collectionName} 用例脑图`);
     await expect(map).toBeVisible();
-    await expect(map.getByText("test_setup")).toBeVisible();
-    await expect(map.getByText("test_procedure")).toBeVisible();
-    await expect(map.getByText("test_validation")).toBeVisible();
+    const caseNode = map.locator(`.react-flow__node[data-id="case-${caseId}"]`);
+    const setupProcedureNode = map.locator(`.react-flow__node[data-id="case-${caseId}-setup-procedure"]`);
+    const validationNode = map.locator(`.react-flow__node[data-id="case-${caseId}-validation"]`);
+    await expect(caseNode.locator(".case-map-node")).toHaveClass(/case-map-node--priority-p0/);
+    await expect(setupProcedureNode.getByText("test_setup")).toBeVisible();
+    await expect(setupProcedureNode.getByText("test_procedure")).toBeVisible();
+    await expect(validationNode.getByText("test_validation")).toBeVisible();
+    await expect(map.locator(`.react-flow__node[data-id="case-${caseId}-setup"]`)).toHaveCount(0);
+    await expect(map.locator(`.react-flow__node[data-id="case-${caseId}-procedure"]`)).toHaveCount(0);
     await expect(map.getByText(longExpected)).toBeVisible();
+
+    const nodeRects = await Promise.all([caseNode, setupProcedureNode, validationNode].map(
+      (node) => node.evaluate((element) => {
+        const { x, y } = element.getBoundingClientRect();
+        return { x, y };
+      }),
+    ));
+    expect(nodeRects[0].x).toBeLessThan(nodeRects[1].x);
+    expect(nodeRects[1].x).toBeLessThan(nodeRects[2].x);
+    expect(Math.max(...nodeRects.map((rect) => rect.y)) - Math.min(...nodeRects.map((rect) => rect.y))).toBeLessThan(12);
+
+    await setupProcedureNode.getByLabel("直接编辑test_setup").fill("用户已登录且持有有效会话");
+    await setupProcedureNode.getByLabel("直接编辑test_setup").press("Enter");
+    await expect(setupProcedureNode.getByLabel("直接编辑test_setup")).toHaveValue("1. 用户已登录且持有有效会话");
+    await setupProcedureNode.getByLabel("直接编辑test_procedure").fill("提交订单支付");
+    await setupProcedureNode.getByLabel("直接编辑test_procedure").press("Enter");
+    await expect(setupProcedureNode.getByLabel("直接编辑test_procedure")).toHaveValue("1. 提交订单支付");
 
     const revisedExpected = `${longExpected}，并写入审计记录`;
     await map.getByLabel("直接编辑test_validation").fill(revisedExpected);
@@ -75,8 +94,13 @@ test("四段式脑图展示完整文字，并在画布内新增用例", async ({
     await expect(map.getByLabel("直接编辑test_validation")).toHaveValue(`1. ${revisedExpected}`);
     const revised = await page.request.get(`${apiUrl}/api/v1/collections/${collectionId}/test-cases`);
     expect(revised.ok()).toBeTruthy();
-    expect(((await revised.json()) as { id: string; revision_number: number }[])
-      .find((item) => item.id === caseId)?.revision_number).toBe(2);
+    const savedCase = ((await revised.json()) as {
+      id: string; revision_number: number; preconditions: string[];
+      steps: { action: string; expected: string }[];
+    }[]).find((item) => item.id === caseId);
+    expect(savedCase?.revision_number).toBe(4);
+    expect(savedCase?.preconditions).toEqual(["用户已登录且持有有效会话"]);
+    expect(savedCase?.steps[0]).toMatchObject({ action: "提交订单支付", expected: revisedExpected });
 
     await page.getByRole("button", { name: /在支付下新增用例/ }).click();
     await expect(map.getByLabel("新用例标题")).toBeVisible();
@@ -103,20 +127,7 @@ test("四段式脑图展示完整文字，并在画布内新增用例", async ({
 test("大量用例默认收起详情，单条用例仍可展开编辑", async ({ page }) => {
   test.setTimeout(120_000);
   const token = Date.now();
-  await page.goto("/");
-  if (await page.getByRole("button", { name: "Display language: English" }).isVisible()) {
-    await page.getByRole("button", { name: "Display language: English" }).click();
-  }
-  if (await page.getByLabel("邮箱").isVisible()) {
-    await page.getByLabel("邮箱").fill("demo@casepilot.local");
-    await page.getByLabel("密码").fill("CasePilot123!");
-    await page.getByRole("button", { name: "登录并进入工作台" }).click();
-  } else if (await page.getByLabel("Email").isVisible()) {
-    await page.getByLabel("Email").fill("demo@casepilot.local");
-    await page.getByLabel("Password").fill("CasePilot123!");
-    await page.getByRole("button", { name: "Sign in to workspace" }).click();
-  }
-  await expect(page.getByRole("heading", { name: /今天想测试什么|What would you like to test/i })).toBeVisible();
+  await login(page);
   const account = await page.request.get(`${apiUrl}/api/v1/auth/me`);
   const spaceId = ((await account.json()) as { spaces: { id: string }[] }).spaces[0].id;
   const name = `脑图大量节点验收-${token}`;
@@ -153,7 +164,7 @@ test("大量用例默认收起详情，单条用例仍可展开编辑", async ({
     await expect(map.locator(".case-map-node--case")).toHaveCount(31);
     await expect(map.locator(".case-map-node--detail")).toHaveCount(0);
     await map.getByRole("button", { name: /展开批量用例 0的结构节点/ }).dispatchEvent("click");
-    await expect(map.locator(".case-map-node--detail")).toHaveCount(3);
+    await expect(map.locator(".case-map-node--detail")).toHaveCount(2);
   } finally {
     for (const id of caseIds) await page.request.delete(`${apiUrl}/api/v1/test-cases/${id}`);
     await page.request.delete(`${apiUrl}/api/v1/collections/${collectionId}`);

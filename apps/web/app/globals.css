@@ -7829,15 +7829,77 @@ button.case-tag:hover {
   background: #fbfdff;
 }
 
+.case-map-node--case {
+  border-color: #7eacf3;
+  border-left: 4px solid #3b82f6;
+  background: linear-gradient(145deg, #eaf3ff, #f7fbff);
+}
+
+.case-map-node--case.case-map-node--priority-p0 {
+  border-color: #f3a0a8;
+  border-left-color: #e5485d;
+  background: linear-gradient(145deg, #fff0f1, #fffafb);
+}
+
+.case-map-node--case.case-map-node--priority-p1 {
+  border-color: #edc276;
+  border-left-color: #d89522;
+  background: linear-gradient(145deg, #fff6e7, #fffdf8);
+}
+
+.case-map-node--case .case-map-node__meta > span,
+.case-map-node--case .case-map-node__text {
+  color: #244b84;
+}
+
+.case-map-node--case.case-map-node--priority-p0 .case-map-node__meta > span,
+.case-map-node--case.case-map-node--priority-p0 .case-map-node__text { color: #8c3343; }
+.case-map-node--case.case-map-node--priority-p1 .case-map-node__meta > span,
+.case-map-node--case.case-map-node--priority-p1 .case-map-node__text { color: #80561c; }
+
 .case-map-node--detail {
   width: 340px;
   border-color: #d5e2f2;
   background: rgba(255, 255, 255, .96);
 }
 
-.case-map-node--detail.case-map-node--setup { border-left: 3px solid #7c9bc4; }
-.case-map-node--detail.case-map-node--procedure { border-left: 3px solid #3b82f6; }
+.case-map-node--detail.case-map-node--setup-procedure {
+  border-left: 3px solid #3b82f6;
+  background: #f9fbff;
+}
 .case-map-node--detail.case-map-node--validation { border-left: 3px solid #10b981; }
+
+.case-map-node__sections { display: grid; gap: 10px; }
+.case-map-node__section + .case-map-node__section {
+  padding-top: 9px;
+  border-top: 1px solid #dce7f5;
+}
+.case-map-node__section-label {
+  display: block;
+  margin-bottom: 5px;
+  color: #52749e;
+  font-size: 10px;
+  font-weight: 750;
+}
+.case-map-node__section textarea {
+  display: block;
+  width: 100%;
+  min-height: 38px;
+  padding: 3px 2px;
+  resize: vertical;
+  border: 0;
+  background: transparent;
+  color: #2d3c52;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+.case-map-node__section textarea:focus {
+  outline: 2px solid #93b8f4;
+  outline-offset: 2px;
+  border-radius: 3px;
+}
 
 .case-map-node__meta {
   display: flex;
