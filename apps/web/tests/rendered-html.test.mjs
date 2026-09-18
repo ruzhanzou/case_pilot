@@ -76,7 +76,7 @@ test("keeps the persisted case management and execution baseline", async () => {
     readFile(new URL("../components/conversation-history-drawer.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/casepilot-api.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/casepilot-route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/[[...route]]/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/(workspace)/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/i18n.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
