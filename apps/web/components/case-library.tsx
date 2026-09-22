@@ -20,6 +20,8 @@ import {
   FolderPlus,
   GitFork,
   List,
+  Maximize2,
+  Minimize2,
   Plus,
   Play,
   Search,
@@ -28,7 +30,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const CASES_PER_PAGE = 20;
 
@@ -80,6 +82,9 @@ export function CaseLibrary({
   const [collectionQuery, setCollectionQuery] = useState("");
   const [viewMode, setViewMode] = useState<"list" | "mind-map">("list");
   const [currentPage, setCurrentPage] = useState(1);
+  const [detailExpanded, setDetailExpanded] = useState(false);
+  const tableRef = useRef<HTMLDivElement>(null);
+  const keyboardSelection = useRef<string | null>(null);
   const filteredCases = useMemo(() => {
     return cases.filter((testCase) => matchesCaseSearch(testCase, query));
   }, [cases, query]);
@@ -103,6 +108,15 @@ export function CaseLibrary({
       ),
     [effectivePage, filteredCases],
   );
+
+  useEffect(() => {
+    if (keyboardSelection.current !== selectedCase?.id) return;
+    const button = tableRef.current?.querySelector<HTMLButtonElement>("tr.is-selected .case-table__title");
+    if (!button) return;
+    button.focus({ preventScroll: true });
+    button.scrollIntoView({ block: "nearest", inline: "nearest" });
+    keyboardSelection.current = null;
+  }, [selectedCase?.id, effectivePage]);
 
   return (
     <div className="case-library">
@@ -308,10 +322,29 @@ export function CaseLibrary({
           className={
             viewMode === "mind-map"
               ? "case-library__body case-library__body--mind-map"
-              : "case-library__body case-library__body--list"
+              : `case-library__body case-library__body--list${detailExpanded ? " is-detail-expanded" : ""}`
           }
         >
-          <div className={viewMode === "mind-map" ? "case-map-wrap" : "case-table-wrap"}>
+          <div
+            ref={tableRef}
+            className={viewMode === "mind-map" ? "case-map-wrap" : "case-table-wrap"}
+            tabIndex={viewMode === "list" ? 0 : undefined}
+            aria-label={pick("Test case list", "用例列表")}
+            onKeyDown={(event) => {
+              if (viewMode !== "list" || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+                !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+              if ((event.target as HTMLElement).closest("input, textarea, select, [contenteditable=true]")) return;
+              if (!filteredCases.length) return;
+              event.preventDefault();
+              const index = filteredCases.findIndex((item) => item.id === selectedCase?.id);
+              const nextIndex = index < 0 ? (effectivePage - 1) * CASES_PER_PAGE :
+                Math.max(0, Math.min(filteredCases.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)));
+              const next = filteredCases[nextIndex];
+              keyboardSelection.current = next.id;
+              setCurrentPage(Math.floor(nextIndex / CASES_PER_PAGE) + 1);
+              onSelectCase(next.id);
+            }}
+          >
             {viewMode === "mind-map" && selectedCollection ? (
               <CaseMindMap
                 key={selectedCollection.id}
@@ -331,7 +364,6 @@ export function CaseLibrary({
                 <tr>
                   <th>{pick("Case", "用例")}</th>
                   <th>{pick("Module", "模块")}</th>
-                  <th>Test target</th>
                   <th>{pick("Creator", "创建人")}</th>
                   <th>{pick("Priority", "优先级")}</th>
                   <th>{pick("Tags", "标签")}</th>
@@ -355,18 +387,6 @@ export function CaseLibrary({
                       </button>
                     </td>
                     <td>{testCase.module || pick("Uncategorized", "未分类")}</td>
-                    <td>
-                      {testCase.test_targets?.length ? (
-                        <div className="case-target-list">
-                          {testCase.test_targets.slice(0, 2).map((target) => (
-                            <span key={`${target.target_type}:${target.target_id}`}>
-                              <strong>{target.target_key || target.title}</strong>
-                              <small>{target.target_type}:{target.target_id}</small>
-                            </span>
-                          ))}
-                        </div>
-                      ) : "—"}
-                    </td>
                     <td title={testCase.creator?.email}>
                       {testCase.creator?.display_name ?? "—"}
                     </td>
@@ -441,6 +461,17 @@ export function CaseLibrary({
                     <h2>{selectedCase.title}</h2>
                   </div>
                   <div>
+                    {viewMode === "list" && (
+                      <button
+                        className="management-icon-button"
+                        type="button"
+                        onClick={() => setDetailExpanded((value) => !value)}
+                        aria-label={detailExpanded ? pick("Restore detail width", "恢复详情宽度") : pick("Expand case details", "扩大用例详情")}
+                        aria-pressed={detailExpanded}
+                      >
+                        {detailExpanded ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+                      </button>
+                    )}
                     <button
                       className="management-icon-button"
                       type="button"

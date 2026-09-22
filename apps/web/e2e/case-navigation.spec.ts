@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
 
-test("collection and case navigation preserves the authenticated workspace", async ({ page }) => {
+test("collection and case navigation preserves the authenticated workspace", async ({ page }, testInfo) => {
   const requests: string[] = [];
   const collections = ["alpha", "beta"].map((id) => ({
-    id, space_id: "space", name: id, description: "", case_count: 2,
+    id, space_id: "space", name: id, description: "", case_count: 25,
     lifecycle_status: "maintenance", created_at: "2026-09-18T00:00:00Z",
   }));
   await page.route("**/api/v1/**", async (route) => {
@@ -17,7 +17,7 @@ test("collection and case navigation preserves the authenticated workspace", asy
       data = collections;
     } else if (/\/collections\/[^/]+\/test-cases$/.test(path)) {
       const collection = path.split("/")[4];
-      data = [1, 2].map((n) => ({
+      data = Array.from({ length: 25 }, (_, i) => i + 1).map((n) => ({
         id: `${collection}-${n}`, case_key: `${collection}-${n}`,
         collection_ids: [collection], title: `Case ${collection} ${n}`,
         current_revision_id: `revision-${n}`, revision_number: 1,
@@ -42,7 +42,7 @@ test("collection and case navigation preserves the authenticated workspace", asy
   expect(await sidebar!.evaluate((node) => node.isConnected)).toBe(true);
 
   requests.length = 0;
-  await page.getByRole("button", { name: /Case beta 2/ }).click();
+  await page.getByRole("button", { name: /Case beta 2$/ }).click();
   await expect(page).toHaveURL(/\/cases\/beta\/beta-2$/);
   await page.waitForLoadState("networkidle");
   expect(requests).toEqual([]);
@@ -59,4 +59,33 @@ test("collection and case navigation preserves the authenticated workspace", asy
 
   await page.reload();
   await expect(page.locator(".case-table tr.is-selected")).toContainText("Case beta 1");
+
+  const list = page.locator(".case-table-wrap");
+  await page.getByRole("button", { name: "beta-1 Case beta 1", exact: true }).click();
+  await page.keyboard.press("ArrowUp");
+  await expect(page).toHaveURL(/\/cases\/beta\/beta-1$/);
+  for (let i = 0; i < 20; i++) {
+    await page.keyboard.press("ArrowDown");
+    await expect(page.locator(".case-table tr.is-selected")).toContainText(`Case beta ${i + 2}`);
+  }
+  await expect(page).toHaveURL(/\/cases\/beta\/beta-21$/);
+  await expect(page.locator(".case-table tr.is-selected button")).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(page).toHaveURL(/\/cases\/beta\/beta-20$/);
+  await expect(page.locator(".case-table tr.is-selected button")).toBeInViewport();
+  expect(await list.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await expect(page.getByRole("columnheader", { name: "Test target", exact: true })).toHaveCount(0);
+  const before = await page.locator(".case-detail").boundingBox();
+  await page.getByRole("button", { name: /Expand case details|扩大用例详情/ }).click();
+  const after = await page.locator(".case-detail").boundingBox();
+  expect(after!.width).toBeGreaterThan(before!.width);
+  const header = await page.locator(".case-library__header").boundingBox();
+  const toolbar = await page.locator(".case-library__toolbar").boundingBox();
+  expect(header!.y + header!.height).toBeLessThanOrEqual(toolbar!.y + 1);
+  const search = page.locator(".case-search input");
+  await search.fill("Case beta 2");
+  await search.press("ArrowDown");
+  await expect(page).toHaveURL(/\/cases\/beta\/beta-20$/);
+  await search.fill("");
+  await page.screenshot({ path: testInfo.outputPath("case-list-layout.png") });
 });

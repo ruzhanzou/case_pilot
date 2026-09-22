@@ -5866,14 +5866,14 @@ button.case-tag:hover {
 }
 
 .case-library__main--list {
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
 
 .case-library__header {
   display: flex;
+  flex-shrink: 0;
   min-height: 82px;
   align-items: flex-start;
   justify-content: space-between;
@@ -5904,6 +5904,7 @@ button.case-tag:hover {
 
 .case-library__toolbar {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
@@ -5956,14 +5957,21 @@ button.case-tag:hover {
 }
 
 .case-library__body--list {
-  min-height: 560px;
-  flex: none;
-  overflow: visible;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 34%);
+}
+
+.case-library__body--list.is-detail-expanded {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 60%);
 }
 
 .case-library__body--list .case-table-wrap,
 .case-library__body--list .case-detail {
-  overflow: visible;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .case-table-wrap {
@@ -6037,13 +6045,12 @@ button.case-tag:hover {
   white-space: nowrap;
 }
 
-.case-table th:first-child { width: 28%; }
-.case-table th:nth-child(2) { width: 12%; }
-.case-table th:nth-child(3) { width: 18%; }
-.case-table th:nth-child(4) { width: 12%; }
-.case-table th:nth-child(5) { width: 9%; }
-.case-table th:nth-child(6) { width: 15%; }
-.case-table th:nth-child(7) { width: 6%; }
+.case-table th:first-child { width: 34%; }
+.case-table th:nth-child(2) { width: 20%; }
+.case-table th:nth-child(3) { width: 12%; }
+.case-table th:nth-child(4) { width: 9%; }
+.case-table th:nth-child(5) { width: 17%; }
+.case-table th:nth-child(6) { width: 8%; }
 
 .case-table td {
   height: 76px;
@@ -6196,10 +6203,16 @@ button.case-tag:hover {
   margin: 0;
   font-size: 19px;
   line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.case-detail__header > div:first-child {
+  min-width: 0;
 }
 
 .case-detail__header > div:last-child {
   display: flex;
+  flex-shrink: 0;
   gap: 6px;
 }
 
@@ -12394,10 +12407,8 @@ body.is-resizing-workbench {
 
   .case-table th:nth-child(3),
   .case-table td:nth-child(3),
-  .case-table th:nth-child(4),
-  .case-table td:nth-child(4),
-  .case-table th:nth-child(6),
-  .case-table td:nth-child(6) {
+  .case-table th:nth-child(5),
+  .case-table td:nth-child(5) {
     display: none;
   }
 }
