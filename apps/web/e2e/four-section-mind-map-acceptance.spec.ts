@@ -126,7 +126,7 @@ test("四段式脑图展示完整文字，并在画布内新增用例", async ({
   }
 });
 
-test("大量用例默认收起详情，单条用例仍可展开编辑", async ({ page }) => {
+test("大量导入用例默认展示完整结构，并可按单条用例收起", async ({ page }) => {
   test.setTimeout(120_000);
   const token = Date.now();
   await login(page);
@@ -150,7 +150,7 @@ test("大量用例默认收起详情，单条用例仍可展开编辑", async ({
         tags: [],
         preconditions: ["已登录"],
         steps: [{ action: "操作", expected: "成功" }],
-        source: "脑图性能验收",
+        source: "Excel 导入：large-cases.xlsx",
       })) },
     });
     expect(created.status()).toBe(201);
@@ -164,9 +164,11 @@ test("大量用例默认收起详情，单条用例仍可展开编辑", async ({
     const map = page.getByLabel(`${name} 用例脑图`);
     await expect(map).toBeVisible();
     await expect(map.locator(".case-map-node--case")).toHaveCount(31);
-    await expect(map.locator(".case-map-node--detail")).toHaveCount(0);
-    await map.getByRole("button", { name: /展开批量用例 0的结构节点/ }).dispatchEvent("click");
-    await expect(map.locator(".case-map-node--detail")).toHaveCount(3);
+    await expect(map.locator(".case-map-node--detail")).toHaveCount(93);
+    await expect(map.getByText("test_procedure").first()).toBeVisible();
+    await expect(map.getByText("test_validation").first()).toBeVisible();
+    await map.getByRole("button", { name: /收起批量用例 0的结构节点/ }).dispatchEvent("click");
+    await expect(map.locator(".case-map-node--detail")).toHaveCount(90);
   } finally {
     for (const id of caseIds) await page.request.delete(`${apiUrl}/api/v1/test-cases/${id}`);
     await page.request.delete(`${apiUrl}/api/v1/collections/${collectionId}`);

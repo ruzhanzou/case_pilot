@@ -484,7 +484,6 @@ export function CaseMindMap({
     () => new Set(),
   );
   const draggedPositions = useRef(new Map<string, { x: number; y: number }>());
-  const collapsedByDefault = cases.length > 30;
   const moduleNames = useMemo(
     () => [...new Set(cases.map((testCase) => testCase.module.trim() || "未分类"))],
     [cases],
@@ -640,7 +639,7 @@ export function CaseMindMap({
       for (const testCase of moduleCases) {
         caseTops.set(testCase.id, nextY);
         const detailsHidden = hiddenLeafModules.has(moduleName) ||
-          (collapsedByDefault !== hiddenCaseDetails.has(testCase.id));
+          hiddenCaseDetails.has(testCase.id);
         const setupLines = visualLines(testCase.preconditions);
         const procedureLines = visualLines(testCase.steps.map((step) => step.action));
         const validationLines = visualLines(testCase.steps.map((step) => step.expected));
@@ -718,7 +717,7 @@ export function CaseMindMap({
 
       const addCaseNode = (testCase: TestCaseDto) => {
         const nodeId = `case-${testCase.id}`;
-        const detailsHidden = leavesHidden || (collapsedByDefault !== hiddenCaseDetails.has(testCase.id));
+        const detailsHidden = leavesHidden || hiddenCaseDetails.has(testCase.id);
         const rowTop = caseTops.get(testCase.id) ?? 40;
         const caseY = rowTop + ((caseHeights.get(testCase.id) ?? 140) - 100) / 2;
         const caseTargeted = isCaseRewriteTarget(testCase);
@@ -858,7 +857,6 @@ export function CaseMindMap({
     allLeavesHidden,
     hiddenLeafModules,
     hiddenCaseDetails,
-    collapsedByDefault,
     isCaseRewriteTarget,
     isModuleRewriteTarget,
     draft,
