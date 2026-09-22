@@ -1,6 +1,6 @@
 import type { TestCaseInput } from "@/lib/casepilot-api";
 
-export const MAX_EXCEL_IMPORT_ROWS = 100;
+export const MAX_EXCEL_IMPORT_ROWS = 1000;
 
 const REQUIRED_COLUMNS = [
   "Test_Case_Name",

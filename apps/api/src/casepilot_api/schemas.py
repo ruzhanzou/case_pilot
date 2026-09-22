@@ -194,7 +194,7 @@ class TestCaseCreate(BaseModel):
 
 
 class TestCaseBatchCreate(BaseModel):
-    cases: list[TestCaseCreate] = Field(min_length=1, max_length=100)
+    cases: list[TestCaseCreate] = Field(min_length=1, max_length=1000)
 
 
 class TestCaseUpdate(BaseModel):

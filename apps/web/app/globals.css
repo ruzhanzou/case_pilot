@@ -6535,9 +6535,18 @@ button.case-tag:hover {
   width: min(820px, calc(100vw - 48px));
 }
 
+.case-import > .management-modal__header,
+.case-import > .management-modal__footer {
+  flex-shrink: 0;
+}
+
 .case-import__body {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-rows: max-content;
+  align-content: start;
   min-height: 0;
+  min-width: 0;
   gap: 16px;
   padding: 22px;
   overflow: auto;
@@ -6704,11 +6713,13 @@ button.case-tag:hover {
 }
 
 .case-import__table-wrap {
+  overflow-x: auto;
   padding: 0 14px 12px;
 }
 
 .case-import__table {
   width: 100%;
+  min-width: 600px;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -6727,8 +6738,12 @@ button.case-tag:hover {
   font-weight: 650;
 }
 
-.case-import__table th:first-child { width: 64%; }
+.case-import__table th:first-child { width: 40%; }
 .case-import__table th:not(:first-child) { width: 12%; }
+
+.case-import__table td {
+  overflow-wrap: anywhere;
+}
 
 .case-import__table td:first-child {
   overflow: hidden;

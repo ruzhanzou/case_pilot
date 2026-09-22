@@ -5,6 +5,37 @@ import * as XLSX from "xlsx";
 
 import { parseTestCaseExcel } from "../lib/test-case-excel";
 
+for (const count of [100, 101, 147, 1000]) {
+  test(`imports all ${count} rows without truncation`, async () => {
+    const result = await parseTestCaseExcel(excelFile([
+      ["Test_Case_Name", "Test Procedure", "Test Validation"],
+      ...Array.from({ length: count }, (_, i) => [`Case ${i + 1}`, "Act", "Expected"]),
+    ]));
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.totalRows, count);
+    assert.equal(result.cases.length, count);
+    assert.equal(result.cases.at(-1)?.title, `Case ${count}`);
+  });
+}
+
+test("reports invalid rows after row 100", async () => {
+  const result = await parseTestCaseExcel(excelFile([
+    ["Test_Case_Name", "Test Procedure", "Test Validation"],
+    ...Array.from({ length: 100 }, (_, i) => [`Case ${i}`, "Act", "Expected"]),
+    ["Invalid", "Act", ""],
+  ]));
+  assert.deepEqual(result.errors, ["第 102 行缺少：Test Validation"]);
+});
+
+test("reports the limit when a workbook exceeds 1000 rows", async () => {
+  const result = await parseTestCaseExcel(excelFile([
+    ["Test_Case_Name", "Test Procedure", "Test Validation"],
+    ...Array.from({ length: 1001 }, (_, i) => [`Case ${i}`, "Act", "Expected"]),
+  ]));
+  assert.equal(result.totalRows, 1001);
+  assert.deepEqual(result.errors, ["单次最多导入 1000 条用例，当前有 1001 条"]);
+});
+
 function excelFile(rows: unknown[][], name = "cases.xlsx") {
   const sheet = XLSX.utils.aoa_to_sheet(rows);
   const workbook = XLSX.utils.book_new();

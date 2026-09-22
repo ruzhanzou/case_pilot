@@ -178,6 +178,17 @@ def test_batch_case_create_requires_at_least_one_case() -> None:
     ) == 1
 
 
+@pytest.mark.parametrize("count", [100, 101, 147, 1000])
+def test_batch_case_create_accepts_large_imports(count: int) -> None:
+    cases = [{**valid_case_payload(), "case_key": f"IMPORT-{i}"} for i in range(count)]
+    assert len(BatchCreateSchema.model_validate({"cases": cases}).cases) == count
+
+
+def test_batch_case_create_rejects_more_than_1000_cases() -> None:
+    with pytest.raises(ValidationError):
+        BatchCreateSchema.model_validate({"cases": [valid_case_payload()] * 1001})
+
+
 def test_case_update_can_preserve_structured_source_refs() -> None:
     payload = valid_case_payload()
     payload.pop("case_key")
