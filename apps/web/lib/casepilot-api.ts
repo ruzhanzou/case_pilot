@@ -183,6 +183,7 @@ export type CaseProjectNavigationDto = {
 };
 
 export type TestCaseDto = {
+  description?: string;
   id: string;
   case_key: string;
   collection_ids: string[];
@@ -292,6 +293,7 @@ export type PlaylistCreationCompleteDto = {
 };
 
 export type TestCaseInput = {
+  description?: string;
   case_key?: string;
   title: string;
   module: string;

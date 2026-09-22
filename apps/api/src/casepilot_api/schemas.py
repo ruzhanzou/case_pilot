@@ -211,6 +211,7 @@ class AutomationCaseUpload(RootModel[list[AutomationCaseBinding]]):
 class TestCaseCreate(BaseModel):
     case_key: str | None = Field(default=None, max_length=40)
     title: str = Field(min_length=1, max_length=300)
+    description: str = Field(default="", max_length=4000)
     module: str = Field(default="", max_length=160)
     priority: str = Field(default="P1", pattern=r"^P[0-2]$")
     case_type: str = Field(default="功能", max_length=40)
@@ -231,6 +232,7 @@ class TestCaseBatchCreate(BaseModel):
 class TestCaseUpdate(BaseModel):
     base_revision_id: UUID
     title: str = Field(min_length=1, max_length=300)
+    description: str | None = Field(default=None, max_length=4000)
     module: str = Field(default="", max_length=160)
     priority: str = Field(default="P1", pattern=r"^P[0-2]$")
     case_type: str = Field(default="功能", max_length=40)
@@ -267,6 +269,7 @@ class TestCaseView(BaseModel):
     current_revision_id: UUID
     revision_number: int
     title: str
+    description: str = ""
     module: str
     priority: str
     case_type: str

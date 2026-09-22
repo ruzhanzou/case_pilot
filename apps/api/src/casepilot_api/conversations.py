@@ -3458,6 +3458,7 @@ def apply_change_set(
                 test_case_id=test_case.id,
                 revision_number=latest_number + 1,
                 title=str(merged["title"]).strip(),
+                description=current_revision.description or "",
                 module=str(merged.get("module", "")).strip(),
                 priority=str(merged.get("priority", "P1")),
                 case_type=str(merged.get("case_type", "功能")).strip(),

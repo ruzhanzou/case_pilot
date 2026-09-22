@@ -53,6 +53,7 @@ type MindMapNodeData = {
   kind: "collection" | "module" | "case" | "detail" | "draft" | "text";
   detailKind?: "setup" | "procedure" | "validation";
   title: string;
+  description?: string;
   eyebrow: string;
   caseId?: string;
   revisionId?: string;
@@ -87,6 +88,7 @@ const MindMapCard = memo(function MindMapCard({
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const cancelingRef = useRef(false);
   const [draftTitle, setDraftTitle] = useState("");
+  const [draftDescription, setDraftDescription] = useState("");
   const [draftModule, setDraftModule] = useState(data.module ?? "");
   const [draftSetup, setDraftSetup] = useState("");
   const [draftProcedure, setDraftProcedure] = useState("");
@@ -164,7 +166,7 @@ const MindMapCard = memo(function MindMapCard({
     setSaveError("");
     try {
       await data.onSaveDraft({
-        title, module: draftModule.trim(), priority: "P1", case_type: "功能",
+        title, description: draftDescription.trim(), module: draftModule.trim(), priority: "P1", case_type: "功能",
         tags: [], preconditions: setup,
         steps: procedure.map((action, index) => ({ action, expected: validation[index] })),
         source: "人工创建",
@@ -238,6 +240,7 @@ const MindMapCard = memo(function MindMapCard({
       {data.kind === "draft" ? (
         <div className="case-map-node__draft nodrag nowheel" onPointerDown={(event) => event.stopPropagation()}>
           <textarea autoFocus aria-label={pick("New case title", "新用例标题")} placeholder={pick("Case title", "用例标题")} value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} rows={2} />
+          <textarea aria-label={pick("Case description (optional)", "用例描述（选填）")} placeholder={pick("Case description (optional)", "用例描述（选填）")} maxLength={4000} value={draftDescription} onChange={(event) => setDraftDescription(event.target.value)} rows={3} />
           <input aria-label={pick("Case module", "所属模块")} placeholder={pick("Module (optional)", "所属模块（可选）")} value={draftModule} onChange={(event) => setDraftModule(event.target.value)} />
           <textarea aria-label="test_setup" placeholder={pick("Setup, one item per line", "前置条件，每行一条")} value={draftSetup} onChange={(event) => setDraftSetup(event.target.value)} rows={2} />
           <textarea aria-label="test_procedure" placeholder={pick("Procedure, one step per line", "操作步骤，每行一条")} value={draftProcedure} onChange={(event) => setDraftProcedure(event.target.value)} rows={2} />
@@ -295,6 +298,9 @@ const MindMapCard = memo(function MindMapCard({
         <strong className="case-map-node__static-text" title={data.title}>
           {data.title}
         </strong>
+      )}
+      {data.kind === "case" && data.description && (
+        <p className="case-map-node__description">{data.description}</p>
       )}
       {data.kind === "case" && (
         <footer>
@@ -373,6 +379,7 @@ function sameNodeData(left: MindMapNodeData, right: MindMapNodeData): boolean {
   return left.kind === right.kind &&
     left.detailKind === right.detailKind &&
     left.title === right.title &&
+    left.description === right.description &&
     left.eyebrow === right.eyebrow &&
     left.caseId === right.caseId &&
     left.revisionId === right.revisionId &&
@@ -673,6 +680,7 @@ export function CaseMindMap({
       await onSaveCase(testCase, {
         case_key: testCase.case_key,
         title: field === "title" ? value : testCase.title,
+        description: testCase.description,
         module: testCase.module,
         priority: testCase.priority,
         case_type: testCase.case_type,
@@ -717,8 +725,10 @@ export function CaseMindMap({
         const setupLines = visualLines(testCase.preconditions);
         const procedureLines = visualLines(testCase.steps.map((step) => step.action));
         const validationLines = visualLines(testCase.steps.map((step) => step.expected));
-        const height = detailsHidden ? 140 : [setupLines, procedureLines, validationLines]
-          .reduce((total, lines) => total + 80 + Math.max(3, lines) * 18, 28);
+        const descriptionHeight = testCase.description
+          ? 24 + visualLines(testCase.description.split("\n")) * 18 : 0;
+        const height = Math.max(140 + descriptionHeight, detailsHidden ? 140 : [setupLines, procedureLines, validationLines]
+          .reduce((total, lines) => total + 80 + Math.max(3, lines) * 18, 28));
         caseHeights.set(testCase.id, height);
         nextY += height + 28;
       }
@@ -808,7 +818,8 @@ export function CaseMindMap({
         const nodeId = `case-${testCase.id}`;
         const detailsHidden = leavesHidden || hiddenCaseDetails.has(testCase.id);
         const rowTop = caseTops.get(testCase.id) ?? 40;
-        const caseY = rowTop + ((caseHeights.get(testCase.id) ?? 140) - 100) / 2;
+        const caseCardHeight = 100 + (testCase.description ? 24 + visualLines(testCase.description.split("\n")) * 18 : 0);
+        const caseY = rowTop + Math.max(0, ((caseHeights.get(testCase.id) ?? 140) - caseCardHeight) / 2);
         const caseTargeted = isCaseRewriteTarget(testCase);
         const directCaseTargeted = rewriteTargets.some(
           (target) =>
@@ -825,6 +836,7 @@ export function CaseMindMap({
           data: {
             kind: "case",
             title: testCase.title,
+            description: testCase.description,
             eyebrow: `title · ${testCase.case_key} · V${testCase.revision_number}`,
             caseId: testCase.id,
             revisionId: testCase.current_revision_id,

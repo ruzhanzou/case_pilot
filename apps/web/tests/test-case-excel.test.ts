@@ -44,6 +44,32 @@ function excelFile(rows: unknown[][], name = "cases.xlsx") {
   return new File([bytes], name);
 }
 
+test("imports optional case descriptions with English and Chinese headers", async () => {
+  for (const header of ["Case Description", "case_description", "Test Case Description", "用例描述"]) {
+    const result = await parseTestCaseExcel(excelFile([
+      ["Test_Case_Name", "Test Procedure", "Test Validation", header],
+      ["Login", "Submit", "Success", "  Covers normal login\nwith an active account.  "],
+      ["Logout", "Exit", "Home", ""],
+    ]));
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.cases[0].description, "Covers normal login\nwith an active account.");
+    assert.equal(result.cases[1].description, "");
+  }
+});
+
+test("description is optional and limited to 4000 characters", async () => {
+  const missing = await parseTestCaseExcel(excelFile([
+    ["Test_Case_Name", "Test Procedure", "Test Validation"], ["Login", "Submit", "Success"],
+  ]));
+  assert.deepEqual(missing.errors, []);
+  assert.equal(missing.cases[0].description, "");
+  const oversized = await parseTestCaseExcel(excelFile([
+    ["Test_Case_Name", "Test Procedure", "Test Validation", "Case Description"],
+    ["Login", "Submit", "Success", "x".repeat(4001)],
+  ]));
+  assert.deepEqual(oversized.errors, ["第 2 行 Case Description 超过 4000 个字符"]);
+});
+
 test("parses required fields and pairs multiline procedures with validations", async () => {
   const result = await parseTestCaseExcel(
     excelFile([

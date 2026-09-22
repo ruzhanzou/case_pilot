@@ -10,6 +10,10 @@ const REQUIRED_COLUMNS = [
 
 const COLUMN_KEYS = {
   testcasename: "Test_Case_Name",
+  casedescription: "Case Description",
+  testcasedescription: "Case Description",
+  description: "Case Description",
+  用例描述: "Case Description",
   testsetup: "Test Setup",
   testprocedure: "Test Procedure",
   testvalidation: "Test Validation",
@@ -152,6 +156,7 @@ export async function parseTestCaseExcel(
     const get = (column: CanonicalColumn) =>
       textValue(row[columnIndexes.get(column) ?? -1]);
     const title = get("Test_Case_Name");
+    const description = get("Case Description");
     const procedure = get("Test Procedure");
     const validation = get("Test Validation");
     const setup = get("Test Setup");
@@ -170,6 +175,10 @@ export async function parseTestCaseExcel(
     }
     if (title.length > 300) {
       errors.push(`第 ${excelRow} 行 Test_Case_Name 超过 300 个字符`);
+      return;
+    }
+    if (description.length > 4000) {
+      errors.push(`第 ${excelRow} 行 Case Description 超过 4000 个字符`);
       return;
     }
     if (caseModule.length > 160) {
@@ -207,6 +216,7 @@ export async function parseTestCaseExcel(
     }
     cases.push({
       title,
+      description,
       module: caseModule,
       priority,
       case_type: "功能",

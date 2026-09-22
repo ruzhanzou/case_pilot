@@ -499,6 +499,12 @@ export function CaseLibrary({
                   <span>{selectedCase.priority}</span>
                 </div>
 
+                {selectedCase.description && (
+                  <section className="case-detail__section">
+                    <h3>{pick("Case description", "用例描述")}</h3>
+                    <p className="case-detail__description">{selectedCase.description}</p>
+                  </section>
+                )}
                 <section className="case-detail__section">
                   <h3>{pick("Preconditions", "前置条件")}</h3>
                   <ol>

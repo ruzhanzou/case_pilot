@@ -115,6 +115,7 @@ def create_test_case_record(
         test_case_id=test_case.id,
         revision_number=1,
         title=payload.title.strip(),
+        description=payload.description.strip(),
         module=payload.module.strip(),
         priority=payload.priority,
         case_type=payload.case_type.strip(),
@@ -535,6 +536,7 @@ def case_to_view(
         current_revision_id=revision.id,
         revision_number=revision.revision_number,
         title=revision.title,
+        description=revision.description or "",
         module=revision.module,
         priority=revision.priority,
         case_type=revision.case_type,
@@ -1172,6 +1174,7 @@ def upload_automation_cases(
         test_case_id=test_case.id,
         revision_number=current_revision.revision_number + 1,
         title=current_revision.title,
+        description=current_revision.description or "",
         module=current_revision.module,
         priority=current_revision.priority,
         case_type=current_revision.case_type,
@@ -1328,6 +1331,11 @@ def update_test_case(
         test_case_id=test_case.id,
         revision_number=(latest_number or 0) + 1,
         title=payload.title.strip(),
+        description=(
+            payload.description.strip()
+            if payload.description is not None
+            else current_revision.description or ""
+        ),
         module=payload.module.strip(),
         priority=payload.priority,
         case_type=payload.case_type.strip(),

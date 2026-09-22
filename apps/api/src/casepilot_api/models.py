@@ -185,6 +185,7 @@ class TestCaseRevision(TimestampMixin, Base):
     )
     revision_number: Mapped[int] = mapped_column(nullable=False)
     title: Mapped[str] = mapped_column(String(300), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     module: Mapped[str] = mapped_column(String(160), default="", nullable=False)
     priority: Mapped[str] = mapped_column(String(8), default="P1", nullable=False)
     case_type: Mapped[str] = mapped_column(String(40), default="功能", nullable=False)

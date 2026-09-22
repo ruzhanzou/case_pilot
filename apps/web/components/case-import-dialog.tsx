@@ -120,6 +120,7 @@ export function CaseImportDialog({
             <strong>{pick("Required columns", "列要求")}</strong>
             <div>
               <span className="is-required">Test_Case_Name {pick("required", "必填")}</span>
+              <span>Case Description / 用例描述 {pick("optional", "选填")}</span>
               <span>Test Setup</span>
               <span className="is-required">Test Procedure {pick("required", "必填")}</span>
               <span className="is-required">Test Validation {pick("required", "必填")}</span>
@@ -183,6 +184,7 @@ export function CaseImportDialog({
                     <thead>
                       <tr>
                         <th>{pick("Test case", "用例名称")}</th>
+                        <th>{pick("Description", "用例描述")}</th>
                         <th>{pick("Module", "模块")}</th>
                         <th>Priority</th>
                         <th>Tag</th>
@@ -194,6 +196,7 @@ export function CaseImportDialog({
                       {preview.cases.slice(0, 5).map((testCase, index) => (
                         <tr key={`${testCase.title}-${index}`}>
                           <td>{testCase.title}</td>
+                          <td>{testCase.description || "—"}</td>
                           <td>{testCase.module || "—"}</td>
                           <td>{testCase.priority}</td>
                           <td>{testCase.tags.join("、") || "—"}</td>

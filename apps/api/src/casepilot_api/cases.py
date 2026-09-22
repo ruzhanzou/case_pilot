@@ -138,6 +138,7 @@ def apply_candidate(
         test_case_id=test_case.id,
         revision_number=latest_number + 1,
         title=str(snapshot["title"]).strip(),
+        description=current_revision.description or "",
         module=str(snapshot.get("module", "")).strip(),
         priority=str(snapshot.get("priority", "P1")),
         case_type=str(snapshot.get("case_type", "功能")).strip(),

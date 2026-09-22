@@ -6390,6 +6390,7 @@ button.case-tag:hover {
 
 .case-editor__grid input,
 .case-editor__grid select,
+.case-editor__grid textarea,
 .case-editor__section input,
 .case-editor__section textarea,
 .collection-editor input,
@@ -6414,6 +6415,7 @@ button.case-tag:hover {
   padding: 0 11px;
 }
 
+.case-editor__grid textarea,
 .case-editor__section textarea,
 .collection-editor textarea,
 .execution-notes textarea {
@@ -6423,6 +6425,7 @@ button.case-tag:hover {
 
 .case-editor__grid input:focus,
 .case-editor__grid select:focus,
+.case-editor__grid textarea:focus,
 .case-editor__section input:focus,
 .case-editor__section textarea:focus,
 .collection-editor input:focus,
@@ -6751,8 +6754,9 @@ button.case-tag:hover {
   font-weight: 650;
 }
 
-.case-import__table th:first-child { width: 40%; }
-.case-import__table th:not(:first-child) { width: 12%; }
+.case-import__table th:first-child { width: 28%; }
+.case-import__table th:nth-child(2) { width: 22%; }
+.case-import__table th:nth-child(n+3) { width: 10%; }
 
 .case-import__table td {
   overflow-wrap: anywhere;
@@ -8050,6 +8054,17 @@ button.case-tag:hover {
   outline: none;
   background: #edf4ff;
   box-shadow: 0 0 0 1px #bdd2f3;
+}
+
+.case-map-node__description,
+.case-detail__description {
+  margin: 8px 0;
+  color: #617288;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .case-map-node--detail > .case-map-node__text {

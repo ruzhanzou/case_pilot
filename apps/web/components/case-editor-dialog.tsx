@@ -42,6 +42,7 @@ export function CaseEditorDialog({
   const { pick } = useI18n();
   const [caseKey, setCaseKey] = useState(testCase?.case_key ?? "");
   const [title, setTitle] = useState(testCase?.title ?? "");
+  const [description, setDescription] = useState(testCase?.description ?? "");
   const [module, setModule] = useState(testCase?.module ?? initialModule ?? "");
   const [priority, setPriority] = useState<TestCaseInput["priority"]>(
     testCase?.priority ?? "P1",
@@ -71,6 +72,7 @@ export function CaseEditorDialog({
   const initialSnapshot = JSON.stringify({
     caseKey: testCase?.case_key ?? "",
     title: testCase?.title ?? "",
+    description: testCase?.description ?? "",
     module: testCase?.module ?? initialModule ?? "",
     priority: testCase?.priority ?? "P1",
     caseType: testCase?.case_type ?? "功能",
@@ -86,6 +88,7 @@ export function CaseEditorDialog({
   const currentSnapshot = JSON.stringify({
     caseKey,
     title,
+    description,
     module,
     priority,
     caseType,
@@ -149,6 +152,7 @@ export function CaseEditorDialog({
     await onSave({
       case_key: caseKey.trim() || undefined,
       title: title.trim(),
+      description: description.trim(),
       module: module.trim(),
       priority,
       case_type: caseType.trim() || "功能",
@@ -212,6 +216,16 @@ export function CaseEditorDialog({
                 onChange={(event) => setTitle(event.target.value)}
                 placeholder={pick("Describe a clear, verifiable test objective", "描述明确、可验证的测试目标")}
                 autoFocus
+              />
+            </label>
+            <label className="case-editor__wide">
+              {pick("Case description (optional)", "用例描述（选填）")}
+              <textarea
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                maxLength={4000}
+                rows={3}
+                placeholder={pick("Describe the purpose and scope of this case", "补充用例的目的与覆盖范围")}
               />
             </label>
             <label>
