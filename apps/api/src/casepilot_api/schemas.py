@@ -81,9 +81,39 @@ class CaseCollectionCreate(BaseModel):
     description: str = Field(default="", max_length=2000)
 
 
+class MindMapNote(BaseModel):
+    id: str = Field(min_length=1, max_length=160, pattern=r"^note-[A-Za-z0-9-]+$")
+    parent_id: str = Field(min_length=1, max_length=1000)
+    text: str = Field(min_length=1, max_length=4000)
+    module: str = Field(default="", max_length=160)
+
+
 class CaseCollectionUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=160)
     description: str | None = Field(default=None, max_length=2000)
+    mind_map_notes: list[MindMapNote] | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_note_tree(self):
+        notes = self.mind_map_notes or []
+        by_id = {note.id: note for note in notes}
+        if len(by_id) != len(notes):
+            raise ValueError("Duplicate text node IDs")
+        for note in notes:
+            if not note.text.strip():
+                raise ValueError("Text node content cannot be blank")
+            seen = {note.id}
+            parent = note.parent_id
+            while parent.startswith("note-"):
+                if parent in seen or parent not in by_id:
+                    raise ValueError("Invalid text node parent")
+                seen.add(parent)
+                parent = by_id[parent].parent_id
+            if parent != "collection-root" and not parent.startswith(
+                ("module-", "case-", "empty-module")
+            ):
+                raise ValueError("Invalid text node parent")
+        return self
 
 
 class CollectionCreatorView(BaseModel):
@@ -107,6 +137,7 @@ class CaseCollectionView(BaseModel):
     space_id: UUID
     name: str
     description: str
+    mind_map_notes: list[MindMapNote] = Field(default_factory=list)
     case_count: int
     lifecycle_status: CaseCollectionLifecycleStatus
     creator: CollectionCreatorView | None = None

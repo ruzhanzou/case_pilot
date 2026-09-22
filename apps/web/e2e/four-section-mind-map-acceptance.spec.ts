@@ -105,6 +105,7 @@ test("四段式脑图展示完整文字，并在画布内新增用例", async ({
     expect(savedCase?.steps[0]).toMatchObject({ action: "提交订单支付", expected: revisedExpected });
 
     await page.getByRole("button", { name: /在支付下新增用例/ }).click();
+    await map.getByRole("button", { name: "新建用例", exact: true }).click();
     await expect(map.getByLabel("新用例标题")).toBeVisible();
     await expect(map.getByLabel("所属模块")).toHaveValue("支付");
     await expect(page.getByRole("heading", { name: "创建结构化测试用例" })).toHaveCount(0);

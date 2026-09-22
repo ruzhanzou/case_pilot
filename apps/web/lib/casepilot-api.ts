@@ -129,7 +129,15 @@ export type CaseStepDto = {
   expected: string;
 };
 
+export type MindMapNote = {
+  id: string;
+  parent_id: string;
+  text: string;
+  module: string;
+};
+
 export type CaseCollectionDto = {
+  mind_map_notes?: MindMapNote[];
   id: string;
   space_id: string;
   name: string;
@@ -1466,7 +1474,7 @@ export function createCollection(
 
 export function updateCollection(
   collectionId: string,
-  input: { name?: string; description?: string },
+  input: { name?: string; description?: string; mind_map_notes?: MindMapNote[] },
 ): Promise<CaseCollectionDto> {
   return apiRequest(`/api/v1/collections/${collectionId}`, {
     method: "PATCH",
@@ -1478,6 +1486,10 @@ export function deleteCollection(collectionId: string): Promise<void> {
   return apiRequest(`/api/v1/collections/${collectionId}`, {
     method: "DELETE",
   });
+}
+
+export function getCollection(collectionId: string): Promise<CaseCollectionDto> {
+  return apiRequest(`/api/v1/collections/${collectionId}`);
 }
 
 export function listTestCases(collectionId: string): Promise<TestCaseDto[]> {

@@ -9,6 +9,7 @@ from casepilot_api.case_management import (
 from casepilot_api.schemas import (
     AutomationCaseUpload,
     CandidateCreate,
+    CaseCollectionUpdate,
     ExecutionRecordUpdate,
     ExecutionRunCreate,
     ExecutionRunUpdate,
@@ -28,6 +29,30 @@ from casepilot_api.schemas import (
 from casepilot_api.schemas import (
     TestCaseUpdate as CaseUpdateSchema,
 )
+
+
+def test_collection_text_nodes_round_trip() -> None:
+    notes = [
+        {"id": "note-one", "parent_id": "module-Selective%20Logging%2FODP",
+         "text": "Location", "module": "Selective Logging/ODP"},
+        {"id": "note-two", "parent_id": "note-one", "text": "Child",
+         "module": "Selective Logging/ODP"},
+    ]
+    payload = CaseCollectionUpdate.model_validate({"mind_map_notes": notes})
+    assert payload.model_dump()["mind_map_notes"] == notes
+    assert CaseCollectionUpdate.model_validate({"name": "Rename"}).mind_map_notes is None
+    assert CaseCollectionUpdate.model_validate({"mind_map_notes": []}).mind_map_notes == []
+
+
+@pytest.mark.parametrize("notes", [
+    [{"id": "note-one", "parent_id": "note-one", "text": "Cycle"}],
+    [{"id": "note-one", "parent_id": "note-missing", "text": "Orphan"}],
+    [{"id": "note-one", "parent_id": "collection-root", "text": " "}],
+    [{"id": "note-one", "parent_id": "collection-root", "text": "Duplicate"}] * 2,
+])
+def test_collection_rejects_invalid_text_nodes(notes: list[dict]) -> None:
+    with pytest.raises(ValidationError):
+        CaseCollectionUpdate.model_validate({"mind_map_notes": notes})
 
 
 def test_automation_case_upload_accepts_multiple_bindings_and_requires_timestamps() -> None:

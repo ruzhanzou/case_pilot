@@ -143,6 +143,7 @@ class CaseCollection(TimestampMixin, Base):
     )
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    mind_map_notes: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 

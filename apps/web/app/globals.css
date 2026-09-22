@@ -8152,6 +8152,37 @@ button.case-tag:hover {
   background: #2563eb;
 }
 
+.case-map-node:has(.case-map-node__add-menu) { z-index: 10; }
+.react-flow__node:has(.case-map-node__add-menu) { z-index: 100 !important; }
+.case-map-node__add-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 10;
+  display: grid;
+  width: 250px;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid #bdd2f3;
+  border-radius: 8px;
+  background: white;
+  box-shadow: 0 8px 24px #24364d26;
+}
+.case-map-node__add-menu form { display: grid; gap: 8px; }
+.case-map-node__add-menu textarea { width: 100%; min-height: 70px; resize: vertical; }
+.case-map-node__add-menu button, .case-map-node__delete-text {
+  padding: 6px 8px;
+  border: 1px solid #dce4ee;
+  border-radius: 5px;
+  color: #315d9f;
+  background: #f8fafc;
+  font-size: 12px;
+  cursor: pointer;
+}
+.case-map-node--text { border-left: 3px solid #94a3b8; background: #fffef6; }
+.case-map-node__delete-text { margin-top: 8px; }
+.case-map-notes-error { position: absolute; z-index: 10; padding: 10px; color: #b72d3d; background: white; }
+
 
 .case-map-node > footer {
   display: flex;

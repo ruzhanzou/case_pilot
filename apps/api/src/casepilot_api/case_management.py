@@ -398,6 +398,7 @@ def collection_to_view(db: Session, collection: CaseCollection) -> CaseCollectio
         space_id=collection.space_id,
         name=collection.name,
         description=collection.description,
+        mind_map_notes=collection.mind_map_notes or [],
         case_count=case_count or 0,
         lifecycle_status=collection_lifecycle_status(
             latest_workspace_context,
@@ -665,6 +666,15 @@ def create_collection(
     return collection_to_view(db, collection)
 
 
+@router.get("/collections/{collection_id}", response_model=CaseCollectionView)
+def get_collection(
+    collection_id: UUID,
+    account: CurrentAccount,
+    db: DbSession,
+) -> CaseCollectionView:
+    return collection_to_view(db, ensure_collection(db, account, collection_id))
+
+
 @router.patch(
     "/collections/{collection_id}",
     response_model=CaseCollectionView,
@@ -680,6 +690,8 @@ def update_collection(
         collection.name = payload.name.strip()
     if payload.description is not None:
         collection.description = payload.description.strip()
+    if payload.mind_map_notes is not None:
+        collection.mind_map_notes = [note.model_dump() for note in payload.mind_map_notes]
     write_audit(
         db,
         space_id=collection.space_id,
