@@ -210,12 +210,14 @@ const MindMapCard = memo(function MindMapCard({
                 type="button"
                 aria-label={pick(`${data.leavesHidden ? "Expand" : "Collapse"} the structure for ${data.title}`, `${data.leavesHidden ? "展开" : "收起"}${data.title}的结构节点`)}
                 title={data.leavesHidden ? pick("Expand case structure", "展开用例结构") : pick("Collapse case structure", "收起用例结构")}
+                aria-expanded={!data.leavesHidden}
                 onClick={(event) => {
                   event.stopPropagation();
                   data.onToggleLeaves?.();
                 }}
               >
                 {data.leavesHidden ? <Eye size={14} /> : <EyeOff size={14} />}
+                <span>{data.leavesHidden ? pick("Expand", "展开") : pick("Collapse", "收起")}</span>
               </button>
             )}
           </div>
@@ -409,9 +411,11 @@ function createEdge(id: string, source: string, target: string): Edge {
 function MapControls({
   allLeavesHidden,
   onToggleAllLeaves,
+  onExpandAll,
 }: {
   allLeavesHidden: boolean;
   onToggleAllLeaves: () => void;
+  onExpandAll: () => void;
 }) {
   const { pick } = useI18n();
   const { fitView, zoomIn, zoomOut, zoomTo } = useReactFlow();
@@ -434,6 +438,11 @@ function MapControls({
         <RotateCcw size={16} />
       </button>
       <i />
+      <button type="button" className="case-map-controls__details" onClick={onExpandAll}
+        title={pick("Show setup, test procedure and validation for every case", "展示全部用例的 setup、test procedure 和 validation")}
+        aria-label={pick("Expand all case details", "展开全部用例详情")}>
+        <Eye size={16} /> {pick("Expand all details", "展开全部详情")}
+      </button>
       <button
         type="button"
         aria-label={allLeavesHidden ? pick("Show all leaf cases", "显示全部叶子用例") : pick("Hide all leaf cases", "一键隐藏全部叶子用例")}
@@ -556,9 +565,6 @@ export function CaseMindMap({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [draft]);
-  const [hiddenLeafModules, setHiddenLeafModules] = useState<Set<string>>(
-    () => new Set(),
-  );
   const [hiddenCaseDetails, setHiddenCaseDetails] = useState<Set<string>>(
     () => new Set(),
   );
@@ -567,6 +573,10 @@ export function CaseMindMap({
     () => [...new Set(cases.map((testCase) => modulePath(testCase.module) || "未分类"))],
     [cases],
   );
+  const hiddenLeafModules = useMemo(() => new Set(moduleNames.filter((name) =>
+    cases.filter((item) => (modulePath(item.module) || "未分类") === name)
+      .every((item) => hiddenCaseDetails.has(item.id)),
+  )), [cases, moduleNames, hiddenCaseDetails]);
   const allLeavesHidden =
     moduleNames.length > 0 &&
     moduleNames.every((moduleName) => hiddenLeafModules.has(moduleName));
@@ -591,14 +601,14 @@ export function CaseMindMap({
   );
 
   const toggleModuleLeaves = useCallback((moduleName: string) => {
-    setHiddenLeafModules((current) => {
+    setHiddenCaseDetails((current) => {
       const next = new Set(current);
-      const descendants = moduleNames.filter((name) => isModuleWithin(name, moduleName));
-      const allHidden = descendants.every((name) => next.has(name));
-      descendants.forEach((name) => { if (allHidden) next.delete(name); else next.add(name); });
+      const descendants = cases.filter((item) => isModuleWithin(item.module || "未分类", moduleName));
+      const allHidden = descendants.every((item) => next.has(item.id));
+      descendants.forEach((item) => { if (allHidden) next.delete(item.id); else next.add(item.id); });
       return next;
     });
-  }, [moduleNames]);
+  }, [cases]);
 
   const toggleCaseDetails = useCallback((caseId: string) => {
     setHiddenCaseDetails((current) => {
@@ -610,14 +620,11 @@ export function CaseMindMap({
   }, []);
 
   const toggleAllLeaves = useCallback(() => {
-    setHiddenLeafModules((current) => {
-      const currentlyAllHidden =
-        moduleNames.length > 0 &&
-        moduleNames.every((moduleName) => current.has(moduleName));
-      return currentlyAllHidden ? new Set() : new Set(moduleNames);
+    setHiddenCaseDetails((current) => {
+      const currentlyAllHidden = cases.length > 0 && cases.every((item) => current.has(item.id));
+      return currentlyAllHidden ? new Set() : new Set(cases.map((item) => item.id));
     });
-    setHiddenCaseDetails(new Set());
-  }, [moduleNames]);
+  }, [cases]);
 
   useEffect(() => {
     const syncFullscreenState = () => {
@@ -1106,6 +1113,7 @@ export function CaseMindMap({
         <MapControls
           allLeavesHidden={allLeavesHidden}
           onToggleAllLeaves={toggleAllLeaves}
+          onExpandAll={() => setHiddenCaseDetails(new Set())}
         />
         <FullscreenControl
           isFullscreen={isFullscreen}

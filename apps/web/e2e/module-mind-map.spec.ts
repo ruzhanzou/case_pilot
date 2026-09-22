@@ -38,6 +38,27 @@ test("module hierarchy, text persistence, and module-aware case creation", async
   await page.getByRole("button", { name: /Case mind map|用例脑图/ }).click();
   const map = page.locator(".case-mind-map");
   const node = (path: string) => map.locator(`.react-flow__node[data-id="module-${encodeURIComponent(path)}"]`);
+  const caseNode = map.locator('.react-flow__node[data-id="case-case0"]');
+  await expect(map.locator(".case-map-node--detail")).toHaveCount(9);
+  await map.getByRole("button", { name: /Hide all leaf cases|一键隐藏全部叶子用例/ }).click();
+  await expect(map.locator(".case-map-node--detail")).toHaveCount(0);
+  await caseNode.getByRole("button", { name: /Expand the structure|展开.*结构节点/ }).dispatchEvent("click");
+  await expect(map.locator(".case-map-node--detail")).toHaveCount(3);
+  for (const kind of ["setup", "procedure", "validation"]) {
+    await expect(map.locator(`.react-flow__node[data-id="case-case0-${kind}"]`)).toHaveCount(1);
+  }
+  await map.getByRole("button", { name: /Expand all case details|展开全部用例详情/ }).click();
+  await expect(map.locator(".case-map-node--detail")).toHaveCount(9);
+  await caseNode.getByRole("button", { name: /Collapse the structure|收起.*结构节点/ }).dispatchEvent("click");
+  await expect(map.locator(".case-map-node--detail")).toHaveCount(6);
+  await map.getByRole("button", { name: /Expand all case details|展开全部用例详情/ }).click();
+  await expect(map.locator(".case-map-node--detail")).toHaveCount(9);
+  await node("Selective Logging").getByRole("button", { name: /Hide leaf cases|隐藏.*叶子用例/ }).dispatchEvent("click");
+  await expect(map.locator(".case-map-node--detail")).toHaveCount(3);
+  await caseNode.getByRole("button", { name: /Expand the structure|展开.*结构节点/ }).dispatchEvent("click");
+  await expect(map.locator(".case-map-node--detail")).toHaveCount(6);
+  await map.getByRole("button", { name: /Expand all case details|展开全部用例详情/ }).click();
+  await expect(map.locator(".case-map-node--detail")).toHaveCount(9);
   for (const path of ["Selective Logging", "Selective Logging/ODP", "Selective Logging/ODP/ODP Condition Matching", modules[0]]) {
     await expect(node(path)).toHaveCount(1);
   }

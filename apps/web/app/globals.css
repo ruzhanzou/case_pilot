@@ -8023,6 +8023,15 @@ button.case-tag:hover {
   gap: 4px;
 }
 
+.case-map-node--case .case-map-node__actions > button {
+  display: inline-flex;
+  width: auto;
+  gap: 4px;
+  padding: 0 6px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 .case-map-node__text {
   display: block;
   width: 100%;
@@ -8275,6 +8284,15 @@ button.case-tag:hover {
 .case-map-controls button:hover {
   color: #1d4ed8;
   background: #edf4ff;
+}
+
+.case-map-controls button.case-map-controls__details {
+  display: inline-flex;
+  width: auto;
+  gap: 5px;
+  padding: 0 8px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .case-map-controls span {
