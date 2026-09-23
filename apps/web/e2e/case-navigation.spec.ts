@@ -60,6 +60,24 @@ test("collection and case navigation preserves the authenticated workspace", asy
   await page.reload();
   await expect(page.locator(".case-table tr.is-selected")).toContainText("Case beta 1");
 
+  // Direct links start with focus outside the table.
+  await page.keyboard.press("ArrowDown");
+  await expect(page).toHaveURL(/\/cases\/beta\/beta-2$/);
+  await page.locator(".case-detail h2").click();
+  await page.keyboard.press("ArrowDown");
+  await expect(page).toHaveURL(/\/cases\/beta\/beta-3$/);
+  // A modal must keep its own keyboard behavior.
+  await page.evaluate(() => {
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    dialog.id = "keyboard-test-dialog";
+    document.querySelector("body")!.appendChild(dialog);
+  });
+  await page.keyboard.press("ArrowDown");
+  await expect(page).toHaveURL(/\/cases\/beta\/beta-3$/);
+  await page.locator("#keyboard-test-dialog").evaluate((element) => element.remove());
+
   const list = page.locator(".case-table-wrap");
   await page.getByRole("button", { name: "beta-1 Case beta 1", exact: true }).click();
   await page.keyboard.press("ArrowUp");

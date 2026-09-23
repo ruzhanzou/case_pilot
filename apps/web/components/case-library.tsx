@@ -118,6 +118,30 @@ export function CaseLibrary({
     keyboardSelection.current = null;
   }, [selectedCase?.id, effectivePage]);
 
+  useEffect(() => {
+    if (viewMode !== "list" || loading || !selectedCollection) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey ||
+        event.metaKey || event.shiftKey || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      // Leave editing, dialogs, and controls with their own arrow navigation alone.
+      if (target?.isContentEditable || target?.closest(
+        'input, textarea, select, [role="combobox"], [role="listbox"], [role="menu"], [role="slider"], .collection-sidebar',
+      ) || document.querySelector('[aria-modal="true"], dialog[open], [role="menu"]')) return;
+      if (!filteredCases.length) return;
+      event.preventDefault();
+      const index = filteredCases.findIndex((item) => item.id === selectedCase?.id);
+      const nextIndex = index < 0 ? (effectivePage - 1) * CASES_PER_PAGE :
+        Math.max(0, Math.min(filteredCases.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)));
+      const next = filteredCases[nextIndex];
+      keyboardSelection.current = next.id;
+      setCurrentPage(Math.floor(nextIndex / CASES_PER_PAGE) + 1);
+      onSelectCase(next.id);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [viewMode, loading, selectedCollection, filteredCases, selectedCase?.id, effectivePage, onSelectCase]);
+
   return (
     <div className="case-library">
       <aside className="collection-sidebar">
@@ -330,20 +354,6 @@ export function CaseLibrary({
             className={viewMode === "mind-map" ? "case-map-wrap" : "case-table-wrap"}
             tabIndex={viewMode === "list" ? 0 : undefined}
             aria-label={pick("Test case list", "用例列表")}
-            onKeyDown={(event) => {
-              if (viewMode !== "list" || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
-                !["ArrowUp", "ArrowDown"].includes(event.key)) return;
-              if ((event.target as HTMLElement).closest("input, textarea, select, [contenteditable=true]")) return;
-              if (!filteredCases.length) return;
-              event.preventDefault();
-              const index = filteredCases.findIndex((item) => item.id === selectedCase?.id);
-              const nextIndex = index < 0 ? (effectivePage - 1) * CASES_PER_PAGE :
-                Math.max(0, Math.min(filteredCases.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)));
-              const next = filteredCases[nextIndex];
-              keyboardSelection.current = next.id;
-              setCurrentPage(Math.floor(nextIndex / CASES_PER_PAGE) + 1);
-              onSelectCase(next.id);
-            }}
           >
             {viewMode === "mind-map" && selectedCollection ? (
               <CaseMindMap
