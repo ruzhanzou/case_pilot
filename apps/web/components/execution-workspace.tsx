@@ -790,9 +790,9 @@ export function ExecutionWorkspace({
                     {item.can_manage && (
                       <button type="button" className="execution-task-card__delete"
                         disabled={Boolean(deletingId)} onClick={() => setPendingDelete(item)}
+                        title={pick("Delete task", "删除任务")}
                         aria-label={pick(`Delete task: ${item.description}`, `删除任务：${item.description}`)}>
-                        {deletingId === item.id ? <LoaderCircle size={14} /> : <Trash2 size={14} />}
-                        {pick("Delete", "删除")}
+                        {deletingId === item.id ? <LoaderCircle className="auth-spinner" size={15} /> : <Trash2 size={15} />}
                       </button>
                     )}
                     </article>
