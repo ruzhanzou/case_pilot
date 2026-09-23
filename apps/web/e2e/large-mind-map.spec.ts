@@ -2,15 +2,16 @@ import { expect, test } from "@playwright/test";
 import type { MindMapNote } from "../lib/casepilot-api";
 
 test.use({ viewport: { width: 1600, height: 1000 }, actionTimeout: 20_000 });
+const caseCount = Number(process.env.CASEPILOT_LARGE_MAP_CASES || 160);
 
 for (const entry of ["/cases/alpha/case0", "/workbench/collections/alpha"]) {
 test(`large module mind map stays responsive and preserves editing: ${entry}`, async ({ page }, testInfo) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   const notes: MindMapNote[] = [];
-  const collection = { id: "alpha", space_id: "space", name: "Module tree", description: "", case_count: 160,
+  const collection = { id: "alpha", space_id: "space", name: "Module tree", description: "", case_count: caseCount,
     lifecycle_status: "maintenance", created_at: "2026-09-22T00:00:00Z" };
-  const modules = Array.from({ length: 160 }, (_, index) => `A/B/C${Math.floor(index / 10)}/D${index % 10}`);
+  const modules = Array.from({ length: caseCount }, (_, index) => `A/B/C${Math.floor(index / 10)}/D${index % 10}`);
   const cases = modules.map((module, index) => ({
     id: `case${index}`, case_key: `CASE-${index}`, collection_ids: ["alpha"], title: `Scenario ${index}`,
     current_revision_id: `revision-${index}`, revision_number: 1, module, priority: "P1", case_type: "功能", tags: [],
@@ -111,12 +112,50 @@ test(`large module mind map stays responsive and preserves editing: ${entry}`, a
   // Hold a menu open so all cards can be inspected, including offscreen cases.
   await root.locator(".case-map-node__quick-add").dispatchEvent("click");
   await map.getByRole("button", { name: /Collapse all test cases|折叠所有用例/ }).click();
-  await expect(map.locator(".case-map-node--case")).toHaveCount(160);
+  await expect(map.locator(".case-map-node--case")).toHaveCount(caseCount);
   await expect(map.locator(".case-map-node--detail")).toHaveCount(0);
+  await expect(map.locator(".case-map-controls")).toContainText("100%");
+  await expect.poll(() => map.evaluate((element) => {
+    const canvas = element.getBoundingClientRect();
+    return [...element.querySelectorAll(".case-map-node--case")].some((node) => {
+      const card = node.getBoundingClientRect();
+      return card.left >= canvas.left && card.right <= canvas.right && card.top >= canvas.top && card.bottom <= canvas.bottom - 60;
+    });
+  })).toBe(true);
+  const collapsedMetrics = await map.evaluate((element) => {
+    const cards = [...element.querySelectorAll(".react-flow__node")].map((node) => ({
+      id: node.getAttribute("data-id"), box: node.getBoundingClientRect(),
+    }));
+    const overlaps: string[] = [];
+    for (let index = 0; index < cards.length; index++) {
+      const a = cards[index];
+      for (const b of cards.slice(index + 1)) {
+        if (a.box.left < b.box.right && b.box.left < a.box.right &&
+          a.box.top < b.box.bottom && b.box.top < a.box.bottom) overlaps.push(`${a.id} / ${b.id}`);
+      }
+    }
+    return { totalNodes: cards.length, overlappingPairs: overlaps.length, examples: overlaps.slice(0, 5) };
+  });
+  console.log("Collapsed map layout", JSON.stringify(collapsedMetrics));
+  await testInfo.attach("collapsed-layout", { body: JSON.stringify(collapsedMetrics), contentType: "application/json" });
+  await page.screenshot({ path: testInfo.outputPath("large-map-collapsed-100.png") });
+  expect(collapsedMetrics.overlappingPairs).toBe(0);
   await map.getByRole("button", { name: /Expand all case details|展开全部用例详情/ }).click();
-  await expect(map.locator(".case-map-node--detail")).toHaveCount(480);
+  await expect(map.locator(".case-map-node--detail")).toHaveCount(caseCount * 3);
   await root.locator(".case-map-node__quick-add").dispatchEvent("click");
   await expect.poll(() => map.locator(".react-flow__node").count()).toBeLessThan(120);
+  await map.getByRole("button", { name: /Collapse all test cases|折叠所有用例/ }).click();
+  await expect(map.locator(".case-map-controls")).toContainText("100%");
+  const collapsedViewport = await viewport.getAttribute("style");
+  const canvas = (await map.boundingBox())!;
+  // Scroll over the canvas, not a title editor, whose wheel handling is local.
+  await page.mouse.move(canvas.x + 12, canvas.y + canvas.height / 2);
+  await page.mouse.wheel(0, 5000);
+  await expect.poll(() => viewport.getAttribute("style")).not.toBe(collapsedViewport);
+  await expect.poll(() => map.locator(".case-map-node--case.is-collapsed").count()).toBeGreaterThan(0);
+  await expect.poll(() => map.locator(".react-flow__node").count()).toBeLessThan(120);
+  await expect(map.locator(".case-map-controls")).toContainText("100%");
+  await page.screenshot({ path: testInfo.outputPath("large-map-collapsed-panned.png") });
   expect(errors).toEqual([]);
 });
 }

@@ -8126,6 +8126,30 @@ button.case-tag:hover {
   background: #edf4ff;
 }
 
+.case-map-node--case.is-collapsed {
+  width: 420px;
+  min-height: 38px;
+  padding: 7px 42px 7px 10px;
+}
+
+.case-map-node--case.is-collapsed .case-map-node__meta {
+  position: absolute;
+  right: 8px;
+  top: 6px;
+  margin: 0;
+}
+
+.case-map-node--case.is-collapsed .case-map-node__meta > span,
+.case-map-node--case.is-collapsed .case-map-node__actions > button > span,
+.case-map-node--case.is-collapsed .case-map-node__inline-editor > small {
+  display: none;
+}
+
+.case-map-node--case.is-collapsed .case-map-node__inline-editor textarea {
+  min-height: 22px;
+  line-height: 18px;
+}
+
 .case-map-node__inline-editor textarea:focus {
   border-color: #79a5ef;
   background: #fff;

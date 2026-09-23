@@ -42,6 +42,8 @@ test("module hierarchy, text persistence, and module-aware case creation", async
   await expect(map.locator(".case-map-node--detail")).toHaveCount(9);
   await map.getByRole("button", { name: /Collapse all test cases|折叠所有用例/ }).click();
   await expect(map.locator(".case-map-node--detail")).toHaveCount(0);
+  await expect(map.locator(".case-map-controls")).toContainText("100%");
+  await expect(map.locator(".case-map-node--case.is-collapsed")).toHaveCount(3);
   await caseNode.getByRole("button", { name: /Expand the structure|展开.*结构节点/ }).dispatchEvent("click");
   await expect(map.locator(".case-map-node--detail")).toHaveCount(3);
   for (const kind of ["setup", "procedure", "validation"]) {

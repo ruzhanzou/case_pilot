@@ -202,6 +202,7 @@ const MindMapCard = memo(function MindMapCard({
       className={[
         "case-map-node",
         `case-map-node--${data.kind}`,
+        data.kind === "case" && data.leavesHidden ? "is-collapsed" : "",
         data.detailKind ? `case-map-node--${data.detailKind}` : "",
         data.kind === "case" && data.priority ? `case-map-node--priority-${data.priority.toLowerCase()}` : "",
         selected ? "is-selected" : "",
@@ -320,10 +321,10 @@ const MindMapCard = memo(function MindMapCard({
           {data.title}
         </strong>
       )}
-      {data.kind === "case" && data.description && (
+      {data.kind === "case" && !data.leavesHidden && data.description && (
         <p className="case-map-node__description">{data.description}</p>
       )}
-      {data.kind === "case" && (
+      {data.kind === "case" && !data.leavesHidden && (
         <footer>
           {data.priority && (
             <span className={`priority-badge priority-badge--${data.priority.toLowerCase()}`}>
@@ -598,6 +599,12 @@ export function CaseMindMap({
     () => new Set(),
   );
   const draggedPositions = useRef(new Map<string, { x: number; y: number }>());
+  const centerCollapsedGraph = useRef(false);
+  const collapseAllCases = useCallback(() => {
+    draggedPositions.current.clear();
+    centerCollapsedGraph.current = true;
+    setHiddenCaseDetails(new Set(cases.map((item) => item.id)));
+  }, [cases]);
   const groupedCases = useMemo(() => {
     const grouped = new Map<string, TestCaseDto[]>();
     for (const testCase of cases) {
@@ -750,7 +757,18 @@ export function CaseMindMap({
     const visualLines = (items: string[]) => items.reduce(
       (count, item) => count + Math.max(1, Math.ceil(item.length / 32)), 0,
     );
+    const compactHeight = (title: string) => 20 + 18 * title.split("\n").reduce(
+      (lines, line) => lines + Math.max(1, Math.ceil(
+        [...line].reduce((width, char) => width + (char.charCodeAt(0) > 255 ? 2 : 1), 0) / 48,
+      )), 0,
+    );
+    // Reserve for the larger typography and controls in the embedded workspace too.
+    const moduleHeight = (title: string) => 68 + 22 * Math.max(1, Math.ceil(
+      [...title].reduce((width, char) => width + (char.charCodeAt(0) > 255 ? 2 : 1), 0) / 18,
+    ));
     for (const [moduleName, moduleCases] of moduleEntries) {
+      // Even a one-case branch needs enough space for its full module card.
+      const moduleSpan = Math.max(...moduleName.split("/").map(moduleHeight));
       for (const testCase of moduleCases) {
         caseTops.set(testCase.id, nextY);
         const detailsHidden = hiddenLeafModules.has(moduleName) ||
@@ -760,10 +778,10 @@ export function CaseMindMap({
         const validationLines = visualLines(testCase.steps.map((step) => step.expected));
         const descriptionHeight = testCase.description
           ? 24 + visualLines(testCase.description.split("\n")) * 18 : 0;
-        const height = Math.max(140 + descriptionHeight, detailsHidden ? 140 : [setupLines, procedureLines, validationLines]
+        const height = detailsHidden ? Math.max(compactHeight(testCase.title), moduleSpan / moduleCases.length) : Math.max(140 + descriptionHeight, [setupLines, procedureLines, validationLines]
           .reduce((total, lines) => total + 80 + Math.max(3, lines) * 18, 28));
         caseHeights.set(testCase.id, height);
-        nextY += height + 28;
+        nextY += height + (detailsHidden ? 8 : 28);
       }
     }
     const rootY = Math.max(40, (nextY - 28) / 2 - 50);
@@ -828,7 +846,7 @@ export function CaseMindMap({
       nodes.push({
         id: moduleId,
         type: "casePilotNode",
-        position: { x: 290 + (path.length - 1) * 250, y: (branch.top + branch.bottom) / 2 },
+        position: { x: 290 + (path.length - 1) * 250, y: (branch.top + branch.bottom) / 2 - moduleHeight(moduleName.split("/").at(-1)!) / 2 },
         data: {
           kind: "module",
           title: moduleName.split("/").at(-1)!,
@@ -855,7 +873,7 @@ export function CaseMindMap({
         const nodeId = `case-${testCase.id}`;
         const detailsHidden = leavesHidden || hiddenCaseDetails.has(testCase.id);
         const rowTop = caseTops.get(testCase.id) ?? 40;
-        const caseCardHeight = 100 + (testCase.description ? 24 + visualLines(testCase.description.split("\n")) * 18 : 0);
+        const caseCardHeight = detailsHidden ? compactHeight(testCase.title) : 100 + (testCase.description ? 24 + visualLines(testCase.description.split("\n")) * 18 : 0);
         const caseY = rowTop + Math.max(0, ((caseHeights.get(testCase.id) ?? 140) - caseCardHeight) / 2);
         const caseTargeted = isCaseRewriteTarget(testCase);
         const directCaseTargeted = rewriteTargets.some(
@@ -1083,6 +1101,32 @@ export function CaseMindMap({
       });
     });
   }, [graph.nodes, selectedCaseId, setFlowNodes]);
+  useEffect(() => {
+    if (!centerCollapsedGraph.current || flowNodes.some((node) => node.data.kind === "detail")) return;
+    let secondFrame = 0;
+    const frame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        const flow = flowRef.current;
+        const map = mapRef.current;
+        if (!flow || !map) return;
+        const nodes = flow.getNodes();
+        const bounds = flow.getNodesBounds(nodes);
+        const firstCase = nodes.find((node) => node.data.kind === "case");
+        // An oversized deep tree has no nodes in its top-left corner. Start at
+        // the first case branch so collapsing never presents an empty canvas.
+        const x = bounds.width + 64 > map.clientWidth && firstCase
+          ? map.clientWidth - firstCase.position.x - (firstCase.measured?.width ?? 420) - 64
+          : Math.max(32, (map.clientWidth - bounds.width) / 2) - bounds.x;
+        void flow.setViewport({
+          x,
+          y: Math.max(24, (map.clientHeight - 80 - bounds.height) / 2) - bounds.y,
+          zoom: 1,
+        });
+        centerCollapsedGraph.current = false;
+      });
+    });
+    return () => { window.cancelAnimationFrame(frame); window.cancelAnimationFrame(secondFrame); };
+  }, [flowNodes]);
 
   return (
     <div
@@ -1144,7 +1188,7 @@ export function CaseMindMap({
         <Background color="#cfdaea" gap={22} size={1} />
         <MapControls
           largeMap={cases.length >= 100}
-          onCollapseAll={() => setHiddenCaseDetails(new Set(cases.map((item) => item.id)))}
+          onCollapseAll={collapseAllCases}
           onExpandAll={() => setHiddenCaseDetails(new Set())}
         />
         <FullscreenControl
