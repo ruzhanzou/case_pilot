@@ -23,6 +23,9 @@ coverage/
 htmlcov/
 test-results/
 playwright-report/
+.playwright-mcp/
+celerybeat.*
+celerybeat-schedule*
 *.log
 artifacts/
 prototype/
