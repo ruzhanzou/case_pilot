@@ -20,6 +20,7 @@ import {
   useStore,
   type Edge,
   type Node,
+  type NodeChange,
   type NodeProps,
   type ReactFlowInstance,
   type ReactFlowState,
@@ -433,10 +434,12 @@ function createEdge(id: string, source: string, target: string): Edge {
 function MapControls({
   onCollapseAll,
   onExpandAll,
+  onGlobalView,
   largeMap,
 }: {
   onCollapseAll: () => void;
   onExpandAll: () => void;
+  onGlobalView: () => void;
   largeMap: boolean;
 }) {
   const { pick } = useI18n();
@@ -455,13 +458,19 @@ function MapControls({
         <Plus size={17} />
       </button>
       <i />
-      <button type="button" aria-label={pick("Fit to canvas", "适应画布")} onClick={() => void fitView({ padding: 0.18, duration: largeMap ? 0 : 220 })}>
+      <button type="button" aria-label={pick("Fit to canvas", "适应画布")} title={pick("Fit to canvas", "适应画布")} onClick={() => void fitView({ minZoom: 0.35, padding: 0.18, duration: largeMap ? 0 : 220 })}>
         <Maximize2 size={16} />
       </button>
       <button type="button" aria-label={pick("Reset to 100 percent", "恢复百分之百")} onClick={() => void zoomTo(1, { duration: largeMap ? 0 : 180 })}>
         <RotateCcw size={16} />
       </button>
       <i />
+      <button type="button" className="case-map-controls__details"
+        aria-label={pick("Show entire mind map", "全局显示脑图")}
+        title={pick("Zoom out to show every node", "缩放至全部节点完整显示")}
+        onClick={onGlobalView}>
+        <Maximize2 size={16} /> {pick("Global view", "全局显示")}
+      </button>
       <button type="button" className="case-map-controls__details" onClick={onExpandAll}
         title={pick("Show setup, test procedure and validation for every case", "展示全部用例的 setup、test procedure 和 validation")}
         aria-label={pick("Expand all case details", "展开全部用例详情")}>
@@ -599,12 +608,19 @@ export function CaseMindMap({
     () => new Set(),
   );
   const draggedPositions = useRef(new Map<string, { x: number; y: number }>());
-  const centerCollapsedGraph = useRef(false);
+  const centerCollapsedGraph = useRef<"collapse" | "global" | null>(null);
+  const [measuringCollapse, setMeasuringCollapse] = useState(false);
+  const [measuredCards, setMeasuredCards] = useState<Map<string, { title: string; height: number }>>(() => new Map());
   const collapseAllCases = useCallback(() => {
     draggedPositions.current.clear();
-    centerCollapsedGraph.current = true;
+    centerCollapsedGraph.current = "collapse";
+    setMeasuringCollapse(true);
     setHiddenCaseDetails(new Set(cases.map((item) => item.id)));
   }, [cases]);
+  const showGlobalView = useCallback(() => {
+    centerCollapsedGraph.current = "global";
+    setMeasuringCollapse(true);
+  }, []);
   const groupedCases = useMemo(() => {
     const grouped = new Map<string, TestCaseDto[]>();
     for (const testCase of cases) {
@@ -757,7 +773,8 @@ export function CaseMindMap({
     const visualLines = (items: string[]) => items.reduce(
       (count, item) => count + Math.max(1, Math.ceil(item.length / 32)), 0,
     );
-    const compactHeight = (title: string) => 20 + 18 * title.split("\n").reduce(
+    const compactHeight = (title: string, id: string) => measuredCards.get(id)?.title === title
+      ? measuredCards.get(id)!.height : 20 + 18 * title.split("\n").reduce(
       (lines, line) => lines + Math.max(1, Math.ceil(
         [...line].reduce((width, char) => width + (char.charCodeAt(0) > 255 ? 2 : 1), 0) / 48,
       )), 0,
@@ -778,10 +795,10 @@ export function CaseMindMap({
         const validationLines = visualLines(testCase.steps.map((step) => step.expected));
         const descriptionHeight = testCase.description
           ? 24 + visualLines(testCase.description.split("\n")) * 18 : 0;
-        const height = detailsHidden ? Math.max(compactHeight(testCase.title), moduleSpan / moduleCases.length) : Math.max(140 + descriptionHeight, [setupLines, procedureLines, validationLines]
+        const height = detailsHidden ? Math.max(compactHeight(testCase.title, testCase.id), moduleSpan / moduleCases.length) : Math.max(140 + descriptionHeight, [setupLines, procedureLines, validationLines]
           .reduce((total, lines) => total + 80 + Math.max(3, lines) * 18, 28));
         caseHeights.set(testCase.id, height);
-        nextY += height + (detailsHidden ? 8 : 28);
+        nextY += height + (detailsHidden ? 16 : 28);
       }
     }
     const rootY = Math.max(40, (nextY - 28) / 2 - 50);
@@ -873,7 +890,7 @@ export function CaseMindMap({
         const nodeId = `case-${testCase.id}`;
         const detailsHidden = leavesHidden || hiddenCaseDetails.has(testCase.id);
         const rowTop = caseTops.get(testCase.id) ?? 40;
-        const caseCardHeight = detailsHidden ? compactHeight(testCase.title) : 100 + (testCase.description ? 24 + visualLines(testCase.description.split("\n")) * 18 : 0);
+        const caseCardHeight = detailsHidden ? compactHeight(testCase.title, testCase.id) : 100 + (testCase.description ? 24 + visualLines(testCase.description.split("\n")) * 18 : 0);
         const caseY = rowTop + Math.max(0, ((caseHeights.get(testCase.id) ?? 140) - caseCardHeight) / 2);
         const caseTargeted = isCaseRewriteTarget(testCase);
         const directCaseTargeted = rewriteTargets.some(
@@ -1060,6 +1077,7 @@ export function CaseMindMap({
     allLeavesHidden,
     hiddenLeafModules,
     hiddenCaseDetails,
+    measuredCards,
     isCaseRewriteTarget,
     isModuleRewriteTarget,
     draft,
@@ -1076,6 +1094,27 @@ export function CaseMindMap({
     toggleModuleLeaves,
   ]);
   const [flowNodes, setFlowNodes, onNodesChange] = useNodesState<MindMapNode>(graph.nodes);
+  const handleNodesChange = useCallback((changes: NodeChange<MindMapNode>[]) => {
+    onNodesChange(changes);
+    // Real text wrapping depends on fonts, word boundaries and platform. Reflow
+    // from measured cards instead of treating character counts as final heights.
+    const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+    const measured = changes.flatMap((change) => {
+      if (change.type !== "dimensions" || change.dimensions?.width !== 420) return [];
+      const node = byId.get(change.id);
+      return node?.data.kind === "case" && node.data.leavesHidden
+        ? [{ id: node.data.caseId!, title: node.data.title, height: change.dimensions.height }] : [];
+    });
+    if (!measured.length) return;
+    setMeasuredCards((current) => {
+      const changed = measured.filter((node) => current.get(node.id)?.title !== node.title ||
+        current.get(node.id)?.height !== node.height);
+      if (!changed.length) return current;
+      const next = new Map(current);
+      changed.forEach((node) => next.set(node.id, { title: node.title, height: node.height }));
+      return next;
+    });
+  }, [graph.nodes, onNodesChange]);
   useEffect(() => {
     const id = focusNote.current;
     if (!id || !flowNodes.some((node) => node.id === id)) return;
@@ -1102,7 +1141,7 @@ export function CaseMindMap({
     });
   }, [graph.nodes, selectedCaseId, setFlowNodes]);
   useEffect(() => {
-    if (!centerCollapsedGraph.current || flowNodes.some((node) => node.data.kind === "detail")) return;
+    if (!centerCollapsedGraph.current || (centerCollapsedGraph.current === "collapse" && flowNodes.some((node) => node.data.kind === "detail"))) return;
     let secondFrame = 0;
     const frame = window.requestAnimationFrame(() => {
       secondFrame = window.requestAnimationFrame(() => {
@@ -1110,6 +1149,14 @@ export function CaseMindMap({
         const map = mapRef.current;
         if (!flow || !map) return;
         const nodes = flow.getNodes();
+        if (centerCollapsedGraph.current === "global") {
+          const controlsHeight = map.querySelector(".case-map-controls")?.getBoundingClientRect().height ?? 44;
+          void flow.fitView({ minZoom: 0.001, maxZoom: 1,
+            padding: { top: "32px", left: "32px", right: "32px", bottom: `${controlsHeight + 36}px` } });
+          centerCollapsedGraph.current = null;
+          setMeasuringCollapse(false);
+          return;
+        }
         const bounds = flow.getNodesBounds(nodes);
         const firstCase = nodes.find((node) => node.data.kind === "case");
         // An oversized deep tree has no nodes in its top-left corner. Start at
@@ -1122,11 +1169,12 @@ export function CaseMindMap({
           y: Math.max(24, (map.clientHeight - 80 - bounds.height) / 2) - bounds.y,
           zoom: 1,
         });
-        centerCollapsedGraph.current = false;
+        centerCollapsedGraph.current = null;
+        setMeasuringCollapse(false);
       });
     });
     return () => { window.cancelAnimationFrame(frame); window.cancelAnimationFrame(secondFrame); };
-  }, [flowNodes]);
+  }, [flowNodes, measuringCollapse]);
 
   return (
     <div
@@ -1145,15 +1193,15 @@ export function CaseMindMap({
       <ReactFlow
         onInit={(instance) => { flowRef.current = instance; }}
         nodes={flowNodes}
-        onNodesChange={onNodesChange}
+        onNodesChange={handleNodesChange}
         onNodeDragStop={(_, node) => {
           draggedPositions.current.set(node.id, node.position);
         }}
         edges={graph.edges}
         nodeTypes={nodeTypes}
-        onlyRenderVisibleElements={cases.length >= 100 && retainedEditors === 0 && !draft}
+        onlyRenderVisibleElements={cases.length >= 100 && retainedEditors === 0 && !draft && !measuringCollapse}
         defaultViewport={graph.viewport}
-        minZoom={0.35}
+        minZoom={0.001}
         maxZoom={1.8}
         nodesConnectable={false}
         nodesDraggable
@@ -1188,6 +1236,7 @@ export function CaseMindMap({
         <Background color="#cfdaea" gap={22} size={1} />
         <MapControls
           largeMap={cases.length >= 100}
+          onGlobalView={showGlobalView}
           onCollapseAll={collapseAllCases}
           onExpandAll={() => setHiddenCaseDetails(new Set())}
         />

@@ -8283,6 +8283,8 @@ button.case-tag:hover {
   bottom: 18px;
   left: 18px;
   display: flex;
+  flex-wrap: wrap;
+  max-width: calc(100% - 36px);
   align-items: center;
   padding: 5px;
   border: 1px solid #d6e1ef;
