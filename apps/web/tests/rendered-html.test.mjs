@@ -126,7 +126,7 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(caseMindMap, /在\$\{data.title\}下新增用例/);
   assert.match(caseMindMap, /zoomOnScroll=\{false\}/);
   assert.match(caseMindMap, /panOnScroll/);
-  assert.match(caseMindMap, /一键隐藏全部叶子用例/);
+  assert.match(caseMindMap, /折叠所有用例/);
   assert.match(caseMindMap, /进入脑图全屏/);
   assert.match(caseMindMap, /requestFullscreen/);
   assert.match(caseMindMap, /toggleModuleLeaves/);

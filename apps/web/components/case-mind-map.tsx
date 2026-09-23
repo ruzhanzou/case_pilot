@@ -17,11 +17,12 @@ import {
   ReactFlow,
   useReactFlow,
   useNodesState,
-  useViewport,
+  useStore,
   type Edge,
   type Node,
   type NodeProps,
   type ReactFlowInstance,
+  type ReactFlowState,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
@@ -41,9 +42,12 @@ import {
   Sparkles,
 } from "lucide-react";
 import {
+  createContext,
   memo,
   useCallback,
+  useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -77,6 +81,8 @@ type MindMapNodeData = {
 
 type MindMapNode = Node<MindMapNodeData, "casePilotNode">;
 const emptyRewriteTargets: ConversationTarget[] = [];
+// Keep local drafts and failed saves mounted while the user edits or pans.
+const RetainMapEditors = createContext<(() => () => void) | null>(null);
 
 const MindMapCard = memo(function MindMapCard({
   data,
@@ -96,6 +102,12 @@ const MindMapCard = memo(function MindMapCard({
   const [addMenu, setAddMenu] = useState(false);
   const [addingText, setAddingText] = useState(false);
   const [noteText, setNoteText] = useState("");
+  const [editorFocused, setEditorFocused] = useState(false);
+  const retainEditors = useContext(RetainMapEditors);
+  const needsRetention = editorFocused || addMenu || saving || Boolean(saveError) || data.kind === "draft";
+  useLayoutEffect(() => {
+    if (needsRetention) return retainEditors?.();
+  }, [needsRetention, retainEditors]);
   const KindIcon =
     data.kind === "collection"
       ? FolderTree
@@ -180,6 +192,13 @@ const MindMapCard = memo(function MindMapCard({
 
   return (
     <article
+      onFocusCapture={(event) => {
+        if (event.target.matches("input, textarea")) setEditorFocused(true);
+      }}
+      onBlurCapture={(event) => {
+        setEditorFocused(event.currentTarget.contains(event.relatedTarget) &&
+          event.relatedTarget instanceof Element && event.relatedTarget.matches("input, textarea"));
+      }}
       className={[
         "case-map-node",
         `case-map-node--${data.kind}`,
@@ -339,13 +358,14 @@ const MindMapCard = memo(function MindMapCard({
               setSaveError("");
               try {
                 await data.onCreateText?.(noteText.trim());
+                setEditorFocused(false);
                 setAddMenu(false); setAddingText(false); setNoteText("");
               } catch (error) { setSaveError(error instanceof Error ? error.message : pick("Save failed", "保存失败")); }
               finally { setSaving(false); }
             }}>
               <textarea autoFocus aria-label={pick("Text node content", "文本节点内容")} maxLength={4000} value={noteText} onChange={(event) => setNoteText(event.target.value)} />
               <button type="submit" disabled={saving || !noteText.trim()}>{pick("Save text node", "保存文本节点")}</button>
-              <button type="button" disabled={saving} onClick={() => { setAddMenu(false); setAddingText(false); }}>{pick("Cancel", "取消")}</button>
+              <button type="button" disabled={saving} onClick={() => { setEditorFocused(false); setAddMenu(false); setAddingText(false); }}>{pick("Cancel", "取消")}</button>
               {saveError && <span role="alert">{saveError}</span>}
             </form>
           ) : <>
@@ -376,6 +396,7 @@ const MindMapCard = memo(function MindMapCard({
 
 const nodeTypes = { casePilotNode: MindMapCard };
 const moduleNodeId = (name: string) => `module-${encodeURIComponent(name)}`;
+const selectZoomPercent = (state: ReactFlowState) => Math.round(state.transform[2] * 100);
 
 function sameNodeData(left: MindMapNodeData, right: MindMapNodeData): boolean {
   return left.kind === right.kind &&
@@ -409,32 +430,34 @@ function createEdge(id: string, source: string, target: string): Edge {
 }
 
 function MapControls({
-  allLeavesHidden,
-  onToggleAllLeaves,
+  onCollapseAll,
   onExpandAll,
+  largeMap,
 }: {
-  allLeavesHidden: boolean;
-  onToggleAllLeaves: () => void;
+  onCollapseAll: () => void;
   onExpandAll: () => void;
+  largeMap: boolean;
 }) {
   const { pick } = useI18n();
   const { fitView, zoomIn, zoomOut, zoomTo } = useReactFlow();
-  const { zoom } = useViewport();
+  const zoomPercent = useStore(selectZoomPercent);
+  // Avoid mounting/unmounting hundreds of cards across intermediate zoom frames.
+  const zoomDuration = largeMap ? 0 : 160;
 
   return (
     <div className="case-map-controls" aria-label={pick("Mind map zoom controls", "脑图缩放工具")}>
-      <button type="button" aria-label={pick("Zoom out", "缩小脑图")} onClick={() => void zoomOut({ duration: 160 })}>
+      <button type="button" aria-label={pick("Zoom out", "缩小脑图")} onClick={() => void zoomOut({ duration: zoomDuration })}>
         <Minus size={17} />
       </button>
-      <span>{Math.round(zoom * 100)}%</span>
-      <button type="button" aria-label={pick("Zoom in", "放大脑图")} onClick={() => void zoomIn({ duration: 160 })}>
+      <span>{zoomPercent}%</span>
+      <button type="button" aria-label={pick("Zoom in", "放大脑图")} onClick={() => void zoomIn({ duration: zoomDuration })}>
         <Plus size={17} />
       </button>
       <i />
-      <button type="button" aria-label={pick("Fit to canvas", "适应画布")} onClick={() => void fitView({ padding: 0.18, duration: 220 })}>
+      <button type="button" aria-label={pick("Fit to canvas", "适应画布")} onClick={() => void fitView({ padding: 0.18, duration: largeMap ? 0 : 220 })}>
         <Maximize2 size={16} />
       </button>
-      <button type="button" aria-label={pick("Reset to 100 percent", "恢复百分之百")} onClick={() => void zoomTo(1, { duration: 180 })}>
+      <button type="button" aria-label={pick("Reset to 100 percent", "恢复百分之百")} onClick={() => void zoomTo(1, { duration: largeMap ? 0 : 180 })}>
         <RotateCcw size={16} />
       </button>
       <i />
@@ -445,11 +468,12 @@ function MapControls({
       </button>
       <button
         type="button"
-        aria-label={allLeavesHidden ? pick("Show all leaf cases", "显示全部叶子用例") : pick("Hide all leaf cases", "一键隐藏全部叶子用例")}
-        title={allLeavesHidden ? pick("Show all leaves", "显示全部叶子") : pick("Hide all leaves", "一键隐藏全部叶子")}
-        onClick={onToggleAllLeaves}
+        className="case-map-controls__details"
+        aria-label={pick("Collapse all test cases", "折叠所有用例")}
+        title={pick("Collapse all case details and keep case titles visible", "一键收起全部用例详情，保留用例标题")}
+        onClick={onCollapseAll}
       >
-        {allLeavesHidden ? <Eye size={16} /> : <EyeOff size={16} />}
+        <EyeOff size={16} /> {pick("Collapse all cases", "折叠所有用例")}
       </button>
     </div>
   );
@@ -516,6 +540,11 @@ export function CaseMindMap({
   const mapRef = useRef<HTMLDivElement>(null);
   const flowRef = useRef<ReactFlowInstance<MindMapNode, Edge> | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [retainedEditors, setRetainedEditors] = useState(0);
+  const retainEditors = useCallback(() => {
+    setRetainedEditors((count) => count + 1);
+    return () => setRetainedEditors((count) => count - 1);
+  }, []);
   const [notes, setNotes] = useState<MindMapNote[]>(collection.mind_map_notes ?? []);
   const notesRef = useRef(notes);
   const notesSaving = useRef(false);
@@ -569,17 +598,22 @@ export function CaseMindMap({
     () => new Set(),
   );
   const draggedPositions = useRef(new Map<string, { x: number; y: number }>());
-  const moduleNames = useMemo(
-    () => [...new Set(cases.map((testCase) => modulePath(testCase.module) || "未分类"))],
-    [cases],
-  );
-  const hiddenLeafModules = useMemo(() => new Set(moduleNames.filter((name) =>
-    cases.filter((item) => (modulePath(item.module) || "未分类") === name)
-      .every((item) => hiddenCaseDetails.has(item.id)),
-  )), [cases, moduleNames, hiddenCaseDetails]);
+  const groupedCases = useMemo(() => {
+    const grouped = new Map<string, TestCaseDto[]>();
+    for (const testCase of cases) {
+      const name = modulePath(testCase.module) || "未分类";
+      const group = grouped.get(name);
+      if (group) group.push(testCase);
+      else grouped.set(name, [testCase]);
+    }
+    return grouped;
+  }, [cases]);
+  const hiddenLeafModules = useMemo(() => new Set(
+    [...groupedCases].filter(([, items]) => items.every((item) => hiddenCaseDetails.has(item.id)))
+      .map(([name]) => name),
+  ), [groupedCases, hiddenCaseDetails]);
   const allLeavesHidden =
-    moduleNames.length > 0 &&
-    moduleNames.every((moduleName) => hiddenLeafModules.has(moduleName));
+    groupedCases.size > 0 && hiddenLeafModules.size === groupedCases.size;
   const isModuleRewriteTarget = useCallback(
     (moduleName: string) =>
       rewriteTargets.some(
@@ -706,17 +740,9 @@ export function CaseMindMap({
   );
 
   const graph = useMemo(() => {
-    const grouped = new Map<string, TestCaseDto[]>();
-    cases.forEach((testCase) => {
-      const moduleName = modulePath(testCase.module) || "未分类";
-      const moduleCases = grouped.get(moduleName);
-      if (moduleCases) moduleCases.push(testCase);
-      else grouped.set(moduleName, [testCase]);
-    });
-
     const nodes: MindMapNode[] = [];
     const edges: Edge[] = [];
-    const moduleEntries = [...grouped.entries()].sort(([left], [right]) => left.localeCompare(right));
+    const moduleEntries = [...groupedCases.entries()].sort(([left], [right]) => left.localeCompare(right));
     const caseX = 290 + Math.max(1, ...moduleEntries.map(([name]) => moduleAncestors(name).length)) * 250;
     const caseTops = new Map<string, number>();
     const caseHeights = new Map<string, number>();
@@ -784,10 +810,14 @@ export function CaseMindMap({
       const bottom = (caseTops.get(last.id) ?? 40) + (caseHeights.get(last.id) ?? 140) / 2;
       moduleAncestors(moduleName).forEach((path) => {
         const branch = branches.get(path);
-        branches.set(path, {
-          top: Math.min(branch?.top ?? top, top), bottom: Math.max(branch?.bottom ?? bottom, bottom),
-          count: (branch?.count ?? 0) + moduleCases.length, leaves: [...(branch?.leaves ?? []), moduleName],
-        });
+        if (branch) {
+          branch.top = Math.min(branch.top, top);
+          branch.bottom = Math.max(branch.bottom, bottom);
+          branch.count += moduleCases.length;
+          branch.leaves.push(moduleName);
+        } else {
+          branches.set(path, { top, bottom, count: moduleCases.length, leaves: [moduleName] });
+        }
       });
     });
     branches.forEach((branch, moduleName) => {
@@ -839,7 +869,6 @@ export function CaseMindMap({
             x: caseX,
             y: caseY,
           },
-          selected: testCase.id === selectedCaseId,
           data: {
             kind: "case",
             title: testCase.title,
@@ -1005,6 +1034,7 @@ export function CaseMindMap({
     };
   }, [
     cases,
+    groupedCases,
     notes,
     notesReady,
     saveNotes,
@@ -1022,7 +1052,6 @@ export function CaseMindMap({
     rewriteTargets,
     saveNodeText,
     saveDraft,
-    selectedCaseId,
     startCreateCase,
     toggleAllLeaves,
     toggleCaseDetails,
@@ -1044,15 +1073,16 @@ export function CaseMindMap({
       return graph.nodes.map((node) => {
         const previous = currentById.get(node.id);
         const position = draggedPositions.current.get(node.id) ?? node.position;
-        if (previous && previous.selected === node.selected &&
+        const selected = node.data.kind === "case" && node.data.caseId === selectedCaseId;
+        if (previous && previous.selected === selected &&
           previous.position.x === position.x && previous.position.y === position.y &&
           sameNodeData(previous.data, node.data)) {
           return previous;
         }
-        return { ...node, position, measured: previous?.measured };
+        return { ...node, selected, position, measured: previous?.measured };
       });
     });
-  }, [graph.nodes, setFlowNodes]);
+  }, [graph.nodes, selectedCaseId, setFlowNodes]);
 
   return (
     <div
@@ -1067,6 +1097,7 @@ export function CaseMindMap({
       aria-label={pick(`${collection.name} test case mind map`, `${collection.name} 用例脑图`)}
     >
       {notesError && <div className="case-map-notes-error" role="alert">{pick("Text nodes could not be loaded: ", "文本节点加载失败：")}{notesError}</div>}
+      <RetainMapEditors.Provider value={retainEditors}>
       <ReactFlow
         onInit={(instance) => { flowRef.current = instance; }}
         nodes={flowNodes}
@@ -1076,6 +1107,7 @@ export function CaseMindMap({
         }}
         edges={graph.edges}
         nodeTypes={nodeTypes}
+        onlyRenderVisibleElements={cases.length >= 100 && retainedEditors === 0 && !draft}
         defaultViewport={graph.viewport}
         minZoom={0.35}
         maxZoom={1.8}
@@ -1111,8 +1143,8 @@ export function CaseMindMap({
       >
         <Background color="#cfdaea" gap={22} size={1} />
         <MapControls
-          allLeavesHidden={allLeavesHidden}
-          onToggleAllLeaves={toggleAllLeaves}
+          largeMap={cases.length >= 100}
+          onCollapseAll={() => setHiddenCaseDetails(new Set(cases.map((item) => item.id)))}
           onExpandAll={() => setHiddenCaseDetails(new Set())}
         />
         <FullscreenControl
@@ -1120,6 +1152,7 @@ export function CaseMindMap({
           onToggleFullscreen={toggleFullscreen}
         />
       </ReactFlow>
+      </RetainMapEditors.Provider>
     </div>
   );
 }
