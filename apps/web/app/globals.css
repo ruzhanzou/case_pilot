@@ -7087,7 +7087,7 @@ button.case-tag:hover {
   gap: 12px;
 }
 
-.execution-task-grid > button {
+.execution-task-card__open {
   display: grid;
   min-width: 0;
   gap: 10px;
@@ -7101,12 +7101,12 @@ button.case-tag:hover {
   transition: border-color .15s ease, box-shadow .15s ease;
 }
 
-.execution-task-grid > button:hover {
+.execution-task-card__open:hover {
   border-color: #9ebbf2;
   box-shadow: 0 8px 22px rgba(50, 83, 132, .08);
 }
 
-.execution-task-grid > button > strong {
+.execution-task-card__open > strong {
   overflow: hidden;
   color: #2d3d54;
   font-size: 14px;
@@ -7114,7 +7114,7 @@ button.case-tag:hover {
   white-space: nowrap;
 }
 
-.execution-task-grid > button > span {
+.execution-task-card__open > span {
   overflow: hidden;
   font-size: 11px;
   text-overflow: ellipsis;
@@ -12506,3 +12506,16 @@ body.is-resizing-workbench {
     display: none;
   }
 }
+
+.execution-task-card { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.execution-task-card__open { width: 100%; flex: 1; }
+.execution-task-card__delete { align-self: flex-end; display: inline-flex; align-items: center; gap: 5px; padding: 6px 10px; border: 1px solid var(--management-line); border-radius: 6px; background: #fff; color: #b42318; cursor: pointer; }
+.execution-task-card__delete:disabled { opacity: .5; cursor: wait; }
+.execution-task-search { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin: 12px 0; border: 1px solid var(--management-line); border-radius: 8px; background: #fff; color: #75859a; }
+.execution-task-search input { min-width: 0; flex: 1; border: 0; background: transparent; color: #34445a; font: inherit; }
+.execution-task-search span { white-space: nowrap; font-size: 12px; }
+
+.execution-delete-dialog { max-width: min(460px, calc(100vw - 32px)); padding: 24px; border: 1px solid var(--management-line); border-radius: 12px; color: #34445a; background: #fff; }
+.execution-delete-dialog::backdrop { background: rgba(15, 23, 42, .4); }
+.execution-delete-dialog h2 { margin: 0 0 12px; font-size: 18px; }
+.execution-delete-dialog p { overflow-wrap: anywhere; line-height: 1.6; }

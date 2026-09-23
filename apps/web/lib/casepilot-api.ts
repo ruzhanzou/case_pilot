@@ -713,7 +713,7 @@ export type SpaceMemberDto = {
 
 export type ExecutionRunSummaryDto = Omit<
   ExecutionRunDto,
-  "records" | "creator_id" | "can_manage"
+  "records" | "creator_id"
 > & {
   total_count: number;
   not_run_count: number;
@@ -1650,6 +1650,10 @@ export function listSpaceExecutionRuns(
 
 export function getExecutionRun(runId: string): Promise<ExecutionRunDto> {
   return apiRequest(`/api/v1/execution-runs/${runId}`);
+}
+
+export function deleteExecutionRun(runId: string): Promise<void> {
+  return apiRequest(`/api/v1/execution-runs/${runId}`, { method: "DELETE" });
 }
 
 export function closeExecutionRun(

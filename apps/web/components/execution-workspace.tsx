@@ -4,6 +4,7 @@ import { ExecutionNotes } from "@/components/execution-notes";
 import { PlaylistPicker } from "@/components/playlist-picker";
 import {
   closeExecutionRun,
+  deleteExecutionRun,
   addSpaceMember,
   createPlaylistExecutionRun,
   getExecutionRun,
@@ -21,6 +22,7 @@ import {
   type PlaylistDto,
   type SpaceMemberDto,
 } from "@/lib/casepilot-api";
+import { matchesExecutionSearch } from "@/lib/execution-search";
 import { useI18n } from "@/lib/i18n";
 import {
   AlertTriangle,
@@ -35,6 +37,8 @@ import {
   Plus,
   SkipForward,
   Square,
+  Search,
+  Trash2,
   Users,
   XCircle,
 } from "lucide-react";
@@ -113,6 +117,15 @@ export function ExecutionWorkspace({
   const executionStatusLabel = Object.fromEntries(
     executionOptions.map((option) => [option.value, pick(option.en, option.zh)]),
   ) as Record<ExecutionStatusApi, string>;
+  const [taskQuery, setTaskQuery] = useState("");
+  const [deletingId, setDeletingId] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<ExecutionRunSummaryDto | null>(null);
+  const deleteDialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (pendingDelete) deleteDialogRef.current?.showModal();
+    else deleteDialogRef.current?.close();
+  }, [pendingDelete]);
+  const deletedRunIds = useRef(new Set<string>());
   const [view, setView] = useState<ExecutionView>("overview");
   const [run, setRun] = useState<ExecutionRunDto | null>(null);
   const [runHistory, setRunHistory] = useState<ExecutionRunSummaryDto[]>([]);
@@ -137,7 +150,7 @@ export function ExecutionWorkspace({
   const activeRunId = run?.id;
 
   const refreshHistory = async () => {
-    setRunHistory(await listSpaceExecutionRuns(spaceId));
+    setRunHistory((await listSpaceExecutionRuns(spaceId)).filter((item) => !deletedRunIds.current.has(item.id)));
   };
 
   const refreshMembers = async () => {
@@ -157,7 +170,7 @@ export function ExecutionWorkspace({
     const load = () => {
       void listSpaceExecutionRuns(spaceId)
         .then((items) => {
-          if (!ignored) setRunHistory(items);
+          if (!ignored) setRunHistory(items.filter((item) => !deletedRunIds.current.has(item.id)));
         })
         .catch((caught) => {
           if (!ignored) {
@@ -299,6 +312,24 @@ export function ExecutionWorkspace({
       percent: Math.round((done / run.records.length) * 100),
     };
   }, [run]);
+
+  const filteredRuns = runHistory.filter((item) => matchesExecutionSearch(item, taskQuery));
+
+  const deleteRun = async (item: ExecutionRunSummaryDto) => {
+    if (deletingId || !item.can_manage) return;
+    setDeletingId(item.id);
+    setError("");
+    try {
+      await deleteExecutionRun(item.id);
+      setPendingDelete(null);
+      deletedRunIds.current.add(item.id);
+      setRunHistory((items) => items.filter((entry) => entry.id !== item.id));
+    } catch (caught) {
+      setError(caught instanceof Error ? publicErrorMessage(caught.message) : pick("Failed to delete run", "删除任务失败"));
+    } finally {
+      setDeletingId("");
+    }
+  };
 
   const overviewStats = useMemo(
     () => ({
@@ -605,6 +636,24 @@ export function ExecutionWorkspace({
       {error && (
         <div className="management-banner-error" role="alert">{error}</div>
       )}
+      <dialog ref={deleteDialogRef} className="execution-delete-dialog"
+        aria-labelledby="execution-delete-title" aria-describedby="execution-delete-description"
+        onCancel={(event) => { event.preventDefault(); if (!deletingId) setPendingDelete(null); }}>
+        <h2 id="execution-delete-title">{pick("Delete task?", "删除任务？")}</h2>
+        <p id="execution-delete-description">{pick(
+          `“${pendingDelete?.description ?? ""}” and its execution results and notes will be permanently deleted. Source cases and Playlists are kept.`,
+          `“${pendingDelete?.description ?? ""}”及其执行结果和备注将永久删除，原始用例和 Playlist 会保留。`,
+        )}</p>
+        {error && <p role="alert" className="management-banner-error">{error}</p>}
+        <div className="management-modal__footer">
+          <button type="button" className="management-button" disabled={Boolean(deletingId)}
+            onClick={() => setPendingDelete(null)}>{pick("Cancel", "取消")}</button>
+          <button type="button" className="management-button" disabled={Boolean(deletingId)}
+            onClick={() => pendingDelete && void deleteRun(pendingDelete)}>
+            {deletingId ? pick("Deleting…", "删除中…") : pick("Confirm delete", "确认删除")}
+          </button>
+        </div>
+      </dialog>
 
       {view === "overview" && (
         <>
@@ -678,23 +727,31 @@ export function ExecutionWorkspace({
               </div>
               <span>{pick(`${runHistory.length} runs`, `${runHistory.length} 个任务`)}</span>
             </div>
-            {runHistory.length === 0 ? (
+            <label className="execution-task-search">
+              <Search size={16} aria-hidden="true" />
+              <input type="search" value={taskQuery} onChange={(event) => setTaskQuery(event.target.value)}
+                aria-label={pick("Search tasks", "搜索任务")}
+                placeholder={pick("Search description, source, or member", "搜索任务描述、来源或成员")} />
+              <span aria-live="polite">{pick(`${filteredRuns.length} runs`, `${filteredRuns.length} 个任务`)}</span>
+            </label>
+            {filteredRuns.length === 0 ? (
               <div className="management-empty management-empty--detail">
                 <ClipboardCheck size={30} />
-                <strong>{pick("No execution runs", "暂无执行任务")}</strong>
-                <span>{pick("Create a run to execute cases with space members.", "创建任务后即可邀请空间成员共同执行")}</span>
+                <strong>{taskQuery.trim() ? pick("No matching tasks", "未找到匹配的任务") : pick("No execution runs", "暂无执行任务")}</strong>
+                <span>{taskQuery.trim() ? pick("Try another keyword or clear the search.", "请尝试其他关键词或清空搜索。") : pick("Create a run to execute cases with space members.", "创建任务后即可邀请空间成员共同执行")}</span>
               </div>
             ) : (
               <div className="execution-task-grid">
-                {runHistory.map((item) => {
+                {filteredRuns.map((item) => {
                   const done = item.total_count - item.not_run_count;
                   const percent = item.total_count
                     ? Math.round((done / item.total_count) * 100)
                     : 0;
                   return (
+                    <article className="execution-task-card" key={item.id}>
                     <button
                       type="button"
-                      key={item.id}
+                      className="execution-task-card__open"
                       onClick={() => void openRun(item.id)}
                     >
                       <div className="execution-task-card__top">
@@ -730,6 +787,15 @@ export function ExecutionWorkspace({
                         </span>
                       </div>
                     </button>
+                    {item.can_manage && (
+                      <button type="button" className="execution-task-card__delete"
+                        disabled={Boolean(deletingId)} onClick={() => setPendingDelete(item)}
+                        aria-label={pick(`Delete task: ${item.description}`, `删除任务：${item.description}`)}>
+                        {deletingId === item.id ? <LoaderCircle size={14} /> : <Trash2 size={14} />}
+                        {pick("Delete", "删除")}
+                      </button>
+                    )}
+                    </article>
                   );
                 })}
               </div>

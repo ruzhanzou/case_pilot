@@ -774,6 +774,7 @@ class ExecutionRecordView(BaseModel):
 
 
 class ExecutionRunSummaryView(BaseModel):
+    can_manage: bool = False
     id: UUID
     collection_id: UUID | None
     collection_name: str | None

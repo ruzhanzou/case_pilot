@@ -1540,6 +1540,7 @@ def execution_run_contributors(db: Session, run: ExecutionRun) -> list[str]:
 def execution_run_to_summary(
     db: Session,
     run: ExecutionRun,
+    viewer_id: UUID | None = None,
 ) -> ExecutionRunSummaryView:
     collection = db.get(CaseCollection, run.collection_id) if run.collection_id else None
     creator = db.get(Account, run.executor_id)
@@ -1555,6 +1556,7 @@ def execution_run_to_summary(
     )
     assignees = execution_run_assignees(db, run)
     return ExecutionRunSummaryView(
+        can_manage=bool(viewer_id is not None and can_manage_execution_run(db, run, viewer_id)),
         id=run.id,
         collection_id=run.collection_id,
         collection_name=collection.name if collection else None,
@@ -1605,7 +1607,7 @@ def list_space_execution_runs(
             .order_by(ExecutionRun.created_at.desc())
         )
     )
-    return [execution_run_to_summary(db, run) for run in runs]
+    return [execution_run_to_summary(db, run, account.id) for run in runs]
 
 
 @router.get(
@@ -1628,7 +1630,7 @@ def list_execution_runs(
             .order_by(ExecutionRun.created_at.desc())
         )
     )
-    return [execution_run_to_summary(db, run) for run in runs]
+    return [execution_run_to_summary(db, run, account.id) for run in runs]
 
 
 @router.get(
@@ -1815,6 +1817,31 @@ def create_playlist_execution_run(
         source_name=playlist.name,
         source_collection_count=source_collection_count or 0,
     )
+
+
+@router.delete("/execution-runs/{run_id}", status_code=204)
+def delete_execution_run(
+    run_id: UUID,
+    account: CurrentAccount,
+    db: DbSession,
+) -> Response:
+    run = db.get(ExecutionRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="execution_run_not_found")
+    require_space_membership(db, account.id, run.space_id)
+    if not can_manage_execution_run(db, run, account.id):
+        raise HTTPException(status_code=403, detail="execution_run_manager_required")
+    write_audit(
+        db,
+        space_id=run.space_id,
+        actor_id=account.id,
+        action="execution_run.deleted",
+        resource_type="execution_run",
+        resource_id=run.id,
+    )
+    db.delete(run)
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.patch(

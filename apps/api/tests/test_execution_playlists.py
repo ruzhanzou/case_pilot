@@ -2,11 +2,11 @@ from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import delete
+from sqlalchemy import delete, func, select
 
 from casepilot_api.database import get_session_factory
 from casepilot_api.main import app
-from casepilot_api.models import Account, ExecutionRun, Space
+from casepilot_api.models import Account, ExecutionRecord, ExecutionRun, ExecutionRunAssignee, Space
 
 
 @pytest.mark.asyncio
@@ -175,6 +175,21 @@ async def test_playlist_crud_search_execution_and_snapshot_survival() -> None:
             historical_run = await client.get(f"/api/v1/execution-runs/{run['id']}")
             assert historical_run.status_code == 200
             assert historical_run.json()["source_name"] == "执行回归 Playlist"
+
+            summaries = await client.get(f"/api/v1/spaces/{space_id}/execution-runs")
+            assert next(item for item in summaries.json() if item["id"] == run_id)["can_manage"]
+            deleted_run = await client.delete(f"/api/v1/execution-runs/{run_id}")
+            assert deleted_run.status_code == 204
+            assert (await client.get(f"/api/v1/execution-runs/{run_id}")).status_code == 404
+            summaries = await client.get(f"/api/v1/spaces/{space_id}/execution-runs")
+            assert all(item["id"] != run_id for item in summaries.json())
+            with get_session_factory()() as db:
+                assert db.scalar(select(func.count()).select_from(ExecutionRecord).where(
+                    ExecutionRecord.run_id == UUID(run_id)
+                )) == 0
+                assert db.scalar(select(func.count()).select_from(ExecutionRunAssignee).where(
+                    ExecutionRunAssignee.run_id == UUID(run_id)
+                )) == 0
     finally:
         if space_id or account_id or other_space_id or other_account_id:
             with get_session_factory()() as db:
