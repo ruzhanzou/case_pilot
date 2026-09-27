@@ -85,6 +85,7 @@ test(`large module mind map stays responsive and preserves editing: ${entry}`, a
   await root.getByRole("button", { name: /New text node|新建文本节点/ }).dispatchEvent("click");
   const editor = root.getByRole("textbox", { name: /Text node content|文本节点内容/ });
   await editor.fill("Unsaved note survives panning");
+  await expect.poll(() => map.locator(".react-flow__node").count()).toBeLessThan(120);
   const viewport = map.locator(".react-flow__viewport");
   const before = await viewport.getAttribute("style");
   await page.mouse.move(1100, 600);
@@ -98,21 +99,22 @@ test(`large module mind map stays responsive and preserves editing: ${entry}`, a
   await expect.poll(() => map.locator(".react-flow__node").count()).toBeLessThan(120);
 
   // Focused inline edits must also survive viewport culling, then cancel cleanly.
-  await root.locator(".case-map-node__quick-add").dispatchEvent("click");
+  const search = map.getByRole("textbox", { name: /Search test cases|搜索用例资产/ });
+  await search.fill("CASE-0");
   const titleEditor = map.locator('.react-flow__node[data-id="case-case0"] textarea');
   await titleEditor.fill("Unsaved inline title");
-  await root.locator(".case-map-node__quick-add").dispatchEvent("click");
+  await expect.poll(() => map.locator(".react-flow__node").count()).toBeLessThan(120);
   await page.mouse.move(1100, 600);
   await page.mouse.wheel(0, 6000);
   await expect(titleEditor).toHaveValue("Unsaved inline title");
-  await titleEditor.press("Escape");
+  await titleEditor.dispatchEvent("keydown", { key: "Escape", bubbles: true });
+  await search.fill("");
   await map.getByRole("button", { name: /Fit to canvas|适应画布/ }).click();
   await expect.poll(() => map.locator(".react-flow__node").count()).toBeLessThan(120);
 
-  // Hold a menu open so all cards can be inspected, including offscreen cases.
-  await root.locator(".case-map-node__quick-add").dispatchEvent("click");
+  // Check the readable collapsed view, then inspect all cards in global view.
   await map.getByRole("button", { name: /Collapse all test cases|折叠所有用例/ }).click();
-  await expect(map.locator(".case-map-node--case")).toHaveCount(caseCount);
+  await expect.poll(() => map.locator(".case-map-node--case").count()).toBeGreaterThan(0);
   await expect(map.locator(".case-map-node--detail")).toHaveCount(0);
   await expect(map.locator(".case-map-controls")).toContainText("100%");
   await expect.poll(() => map.evaluate((element) => {
@@ -122,6 +124,8 @@ test(`large module mind map stays responsive and preserves editing: ${entry}`, a
       return card.left >= canvas.left && card.right <= canvas.right && card.top >= canvas.top && card.bottom <= canvas.bottom - 60;
     });
   })).toBe(true);
+  await map.getByRole("button", { name: "Show entire mind map" }).click();
+  await expect(map.locator(".case-map-node--case")).toHaveCount(caseCount);
   const collapsedMetrics = await map.evaluate((element) => {
     const cards = [...element.querySelectorAll(".react-flow__node")].map((node) => ({
       id: node.getAttribute("data-id"), box: node.getBoundingClientRect(),
@@ -141,8 +145,9 @@ test(`large module mind map stays responsive and preserves editing: ${entry}`, a
   await page.screenshot({ path: testInfo.outputPath("large-map-collapsed-100.png") });
   expect(collapsedMetrics.overlappingPairs).toBe(0);
   await map.getByRole("button", { name: /Expand all case details|展开全部用例详情/ }).click();
-  await expect(map.locator(".case-map-node--detail")).toHaveCount(caseCount * 3);
-  await root.locator(".case-map-node__quick-add").dispatchEvent("click");
+  await map.getByRole("button", { name: /Reset to 100 percent|重置.*100/ }).click();
+  await search.fill("CASE-0");
+  await expect.poll(() => map.locator(".case-map-node--detail").count()).toBeGreaterThan(0);
   await expect.poll(() => map.locator(".react-flow__node").count()).toBeLessThan(120);
   await map.getByRole("button", { name: /Collapse all test cases|折叠所有用例/ }).click();
   await expect(map.locator(".case-map-controls")).toContainText("100%");

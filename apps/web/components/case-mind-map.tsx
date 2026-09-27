@@ -9,6 +9,7 @@ import type {
 } from "@/lib/casepilot-api";
 import { getCollection, updateCollection } from "@/lib/casepilot-api";
 import { isModuleWithin, moduleAncestors, modulePath } from "@/lib/case-module-tree";
+import { matchesCaseSearch } from "@/lib/case-search";
 import { useI18n } from "@/lib/i18n";
 import {
   Background,
@@ -24,9 +25,13 @@ import {
   type NodeProps,
   type ReactFlowInstance,
   type ReactFlowState,
+  type Viewport,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
+  ArrowUp,
+  ArrowDown,
+  Search,
   Bot,
   Boxes,
   ClipboardCheck,
@@ -83,9 +88,17 @@ type MindMapNodeData = {
 type MindMapNode = Node<MindMapNodeData, "casePilotNode">;
 const emptyRewriteTargets: ConversationTarget[] = [];
 // Keep local drafts and failed saves mounted while the user edits or pans.
-const RetainMapEditors = createContext<(() => () => void) | null>(null);
+const RetainMapEditors = createContext<((id: string) => () => void) | null>(null);
+
+// Graph actions keep their identity while always invoking the latest parent callback.
+function useMapCallback<Args extends unknown[], Result>(callback: ((...args: Args) => Result) | undefined) {
+  const latest = useRef(callback);
+  useLayoutEffect(() => { latest.current = callback; }, [callback]);
+  return useCallback((...args: Args) => latest.current?.(...args), []);
+}
 
 const MindMapCard = memo(function MindMapCard({
+  id,
   data,
   selected,
 }: NodeProps<MindMapNode>) {
@@ -107,8 +120,8 @@ const MindMapCard = memo(function MindMapCard({
   const retainEditors = useContext(RetainMapEditors);
   const needsRetention = editorFocused || addMenu || saving || Boolean(saveError) || data.kind === "draft";
   useLayoutEffect(() => {
-    if (needsRetention) return retainEditors?.();
-  }, [needsRetention, retainEditors]);
+    if (needsRetention) return retainEditors?.(id);
+  }, [id, needsRetention, retainEditors]);
   const KindIcon =
     data.kind === "collection"
       ? FolderTree
@@ -523,6 +536,8 @@ type CaseMindMapProps = {
   collection: CaseCollectionDto;
   cases: TestCaseDto[];
   selectedCaseId: string;
+  searchQuery?: string;
+  onSearchQueryChange?: (query: string) => void;
   onSelectCase: (caseId: string) => void;
   onCreateCase: (module?: string) => void;
   onCreateCaseInline?: (input: TestCaseInput) => Promise<void>;
@@ -537,23 +552,54 @@ export function CaseMindMap({
   collection,
   cases,
   selectedCaseId,
-  onSelectCase,
-  onCreateCase,
-  onCreateCaseInline,
-  onEditCase,
-  onSaveCase,
-  onSelectTarget,
+  searchQuery,
+  onSearchQueryChange,
+  onSelectCase: selectCaseProp,
+  onCreateCase: createCaseProp,
+  onCreateCaseInline: createCaseInlineProp,
+  onEditCase: editCaseProp,
+  onSaveCase: saveCaseProp,
+  onSelectTarget: selectTargetProp,
   rewriteTargets = emptyRewriteTargets,
   rewriteStatus = "idle",
 }: CaseMindMapProps) {
   const { pick } = useI18n();
+  const onSelectCase = useMapCallback(selectCaseProp);
+  const onSelectTarget = useMapCallback(selectTargetProp);
+  const onCreateCase = useMapCallback(createCaseProp);
+  const createCaseInline = useMapCallback(createCaseInlineProp);
+  const onCreateCaseInline = createCaseInlineProp ? createCaseInline : undefined;
+  const onEditCase = useMapCallback(editCaseProp);
+  const saveCase = useMapCallback(saveCaseProp);
+  const onSaveCase = saveCaseProp ? saveCase : undefined;
   const mapRef = useRef<HTMLDivElement>(null);
   const flowRef = useRef<ReactFlowInstance<MindMapNode, Edge> | null>(null);
+  const [localQuery, setLocalQuery] = useState("");
+  const query = searchQuery ?? localQuery;
+  const searchRef = useRef<HTMLInputElement>(null);
+  const [focusRequest, setFocusRequest] = useState<{ id: string; keyboard: boolean } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [retainedEditors, setRetainedEditors] = useState(0);
-  const retainEditors = useCallback(() => {
-    setRetainedEditors((count) => count + 1);
-    return () => setRetainedEditors((count) => count - 1);
+  const [retainedEditors, setRetainedEditors] = useState<Set<string>>(() => new Set());
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const observer = new ResizeObserver(([entry]) => {
+      setCanvasSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
+    observer.observe(map);
+    return () => observer.disconnect();
+  }, []);
+  const [editorViewport, setEditorViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1 });
+  const retainEditors = useCallback((id: string) => {
+    const viewport = flowRef.current?.getViewport();
+    if (viewport) setEditorViewport(viewport);
+    setRetainedEditors((current) => new Set(current).add(id));
+    return () => setRetainedEditors((current) => {
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
   }, []);
   const [notes, setNotes] = useState<MindMapNote[]>(collection.mind_map_notes ?? []);
   const notesRef = useRef(notes);
@@ -1093,15 +1139,42 @@ export function CaseMindMap({
     toggleCaseDetails,
     toggleModuleLeaves,
   ]);
+  const matchingNodes = useMemo(() => {
+    const matchingIds = new Set(cases.filter((item) => matchesCaseSearch(item, query)).map((item) => item.id));
+    return graph.nodes.filter((node) => node.data.kind === "case" && matchingIds.has(node.data.caseId!));
+  }, [cases, graph.nodes, query]);
+  const matchIndex = matchingNodes.findIndex((node) => node.data.caseId === selectedCaseId);
+  const selectAndReveal = useCallback((id: string, keyboard = false) => {
+    onSelectCase(id);
+    setFocusRequest({ id, keyboard });
+  }, [onSelectCase]);
+  const moveSelection = (direction: number, keyboard: boolean) => {
+    if (!matchingNodes.length) return;
+    const index = matchIndex < 0 ? (direction > 0 ? 0 : matchingNodes.length - 1) :
+      Math.max(0, Math.min(matchingNodes.length - 1, matchIndex + direction));
+    selectAndReveal(matchingNodes[index].data.caseId!, keyboard);
+  };
+  const firstMatchId = matchingNodes[0]?.data.caseId;
+  const lastSearch = useRef("");
+  useEffect(() => {
+    const key = JSON.stringify([query, firstMatchId]);
+    if (lastSearch.current === key) return;
+    const frame = window.requestAnimationFrame(() => {
+      lastSearch.current = key;
+      if (query.trim() && firstMatchId) selectAndReveal(firstMatchId);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [query, firstMatchId, selectAndReveal]);
+
+  const graphNodesById = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
   const [flowNodes, setFlowNodes, onNodesChange] = useNodesState<MindMapNode>(graph.nodes);
   const handleNodesChange = useCallback((changes: NodeChange<MindMapNode>[]) => {
     onNodesChange(changes);
     // Real text wrapping depends on fonts, word boundaries and platform. Reflow
     // from measured cards instead of treating character counts as final heights.
-    const byId = new Map(graph.nodes.map((node) => [node.id, node]));
     const measured = changes.flatMap((change) => {
       if (change.type !== "dimensions" || change.dimensions?.width !== 420) return [];
-      const node = byId.get(change.id);
+      const node = graphNodesById.get(change.id);
       return node?.data.kind === "case" && node.data.leavesHidden
         ? [{ id: node.data.caseId!, title: node.data.title, height: change.dimensions.height }] : [];
     });
@@ -1114,7 +1187,7 @@ export function CaseMindMap({
       changed.forEach((node) => next.set(node.id, { title: node.title, height: node.height }));
       return next;
     });
-  }, [graph.nodes, onNodesChange]);
+  }, [graphNodesById, onNodesChange]);
   useEffect(() => {
     const id = focusNote.current;
     if (!id || !flowNodes.some((node) => node.id === id)) return;
@@ -1124,13 +1197,15 @@ export function CaseMindMap({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [flowNodes]);
+  const selectionRef = useRef(selectedCaseId);
+  useLayoutEffect(() => { selectionRef.current = selectedCaseId; }, [selectedCaseId]);
   useEffect(() => {
     setFlowNodes((current) => {
       const currentById = new Map(current.map((node) => [node.id, node]));
       return graph.nodes.map((node) => {
         const previous = currentById.get(node.id);
         const position = draggedPositions.current.get(node.id) ?? node.position;
-        const selected = node.data.kind === "case" && node.data.caseId === selectedCaseId;
+        const selected = node.data.kind === "case" && node.data.caseId === selectionRef.current;
         if (previous && previous.selected === selected &&
           previous.position.x === position.x && previous.position.y === position.y &&
           sameNodeData(previous.data, node.data)) {
@@ -1139,7 +1214,52 @@ export function CaseMindMap({
         return { ...node, selected, position, measured: previous?.measured };
       });
     });
-  }, [graph.nodes, selectedCaseId, setFlowNodes]);
+  }, [graph.nodes, setFlowNodes]);
+  useEffect(() => {
+    setFlowNodes((current) => {
+      let changed = false;
+      const next = current.map((node) => {
+        const selected = node.data.kind === "case" && node.data.caseId === selectedCaseId;
+        if (Boolean(node.selected) === selected) return node;
+        changed = true;
+        return { ...node, selected };
+      });
+      return changed ? next : current;
+    });
+  }, [selectedCaseId, setFlowNodes]);
+
+  const selectedPosition = graphNodesById.get(`case-${selectedCaseId}`)?.position;
+  const selectedX = selectedPosition?.x;
+  const selectedY = selectedPosition?.y;
+  const previousLayout = useRef<{ id: string; x?: number; y?: number } | null>(null);
+  useEffect(() => {
+    const previous = previousLayout.current;
+    previousLayout.current = { id: selectedCaseId, x: selectedX, y: selectedY };
+    if (!previous || previous.id !== selectedCaseId || selectedX === undefined || selectedY === undefined || centerCollapsedGraph.current ||
+      (previous.x === selectedX && previous.y === selectedY)) return;
+    const frame = window.requestAnimationFrame(() => setFocusRequest({ id: selectedCaseId, keyboard: false }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedCaseId, selectedX, selectedY]);
+  useEffect(() => {
+    if (!focusRequest) return;
+    const node = flowNodes.find((item) => item.data.kind === "case" && item.data.caseId === focusRequest.id);
+    const flow = flowRef.current;
+    if (!node || !flow) return;
+    // Offscreen nodes may not be mounted in large maps. Center using graph
+    // coordinates first so virtualization can mount the destination.
+    void flow.setCenter(node.position.x + (node.measured?.width ?? 280) / 2,
+      node.position.y + (node.measured?.height ?? 100) / 2,
+      { zoom: flow.getZoom(), duration: 0 });
+    if (focusRequest.keyboard) mapRef.current?.focus({ preventScroll: true });
+    const frame = window.requestAnimationFrame(() => {
+      const element = Array.from(mapRef.current?.querySelectorAll<HTMLElement>(".react-flow__node") ?? [])
+        .find((item) => item.dataset.id === node.id);
+      if (focusRequest.keyboard) element?.focus({ preventScroll: true });
+      setFocusRequest(null);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusRequest, flowNodes]);
+
   useEffect(() => {
     if (!centerCollapsedGraph.current || (centerCollapsedGraph.current === "collapse" && flowNodes.some((node) => node.data.kind === "detail"))) return;
     let secondFrame = 0;
@@ -1176,9 +1296,75 @@ export function CaseMindMap({
     return () => { window.cancelAnimationFrame(frame); window.cancelAnimationFrame(secondFrame); };
   }, [flowNodes, measuringCollapse]);
 
+  // React Flow cannot exempt an individual editor from viewport culling.
+  // While editing, keep its node plus the visible nodes, hiding other cards.
+  // Hidden wrappers do not mount their card, textarea, or handle DOM.
+  const renderedNodes = useMemo(() => {
+    if (cases.length < 100 || !retainedEditors.size || measuringCollapse) return flowNodes;
+    const { x, y, zoom } = editorViewport;
+    const { width, height } = canvasSize;
+    const margin = 200;
+    return flowNodes.map((node) => {
+      if (retainedEditors.has(node.id) || node.data.kind === "draft") return node;
+      const left = node.position.x * zoom + x;
+      const top = node.position.y * zoom + y;
+      const right = left + (node.measured?.width ?? 420) * zoom;
+      const bottom = top + (node.measured?.height ?? 300) * zoom;
+      const visible = right >= -margin && bottom >= -margin && left <= width + margin && top <= height + margin;
+      return visible ? node : { ...node, hidden: true };
+    });
+  }, [canvasSize, cases.length, editorViewport, flowNodes, measuringCollapse, retainedEditors]);
+  const renderedEdges = useMemo(() => {
+    if (renderedNodes === flowNodes) return graph.edges;
+    const hiddenIds = new Set(renderedNodes.filter((node) => node.hidden).map((node) => node.id));
+    return graph.edges.map((edge) => hiddenIds.has(edge.source) || hiddenIds.has(edge.target)
+      ? { ...edge, hidden: true } : edge);
+  }, [flowNodes, graph.edges, renderedNodes]);
+  const trackEditorViewport = useCallback((_: unknown, viewport: Viewport) => {
+    if (retainedEditors.size) setEditorViewport(viewport);
+  }, [retainedEditors.size]);
+
+  const handleNodeClick = useCallback((_: unknown, node: MindMapNode) => {
+    if (node.data.caseId) {
+      onSelectCase(node.data.caseId);
+      const selectedCase = cases.find(
+        (item) => item.id === node.data.caseId,
+      );
+      onSelectTarget?.(
+        { kind: "case", case_ids: [node.data.caseId] },
+        selectedCase?.title ?? node.data.title,
+      );
+    } else if (node.data.kind === "module") {
+      onSelectTarget?.(
+        { kind: "module", module: node.data.module ?? "" },
+        pick(`Module: ${node.data.title}`, `模块：${node.data.title}`),
+      );
+    }
+  }, [cases, onSelectCase, onSelectTarget, pick]);
+  const handleNodeDoubleClick = useCallback((_: unknown, node: MindMapNode) => {
+    if (!node.data.caseId) return;
+    const testCase = cases.find((item) => item.id === node.data.caseId);
+    if (testCase) onEditCase(testCase);
+  }, [cases, onEditCase]);
+
   return (
     <div
       ref={mapRef}
+      tabIndex={0}
+      onKeyDownCapture={(event) => {
+        if (event.defaultPrevented || event.nativeEvent.isComposing || event.altKey || event.ctrlKey ||
+          event.metaKey || event.shiftKey || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+        const target = event.target instanceof HTMLElement ? event.target : null;
+        const inSearch = target === searchRef.current;
+        if (!inSearch && (target?.isContentEditable || target?.closest(
+          'input, textarea, select, [role="combobox"], [role="listbox"], [role="menu"], [role="slider"]',
+        ))) return;
+        if (document.querySelector('[aria-modal="true"], dialog[open], [role="menu"]')) return;
+        if (!matchingNodes.length) return;
+        event.preventDefault();
+        event.stopPropagation();
+        moveSelection(event.key === "ArrowDown" ? 1 : -1, !inSearch);
+      }}
       className={[
         "case-mind-map",
         isFullscreen ? "is-fullscreen" : "",
@@ -1188,18 +1374,36 @@ export function CaseMindMap({
         .join(" ")}
       aria-label={pick(`${collection.name} test case mind map`, `${collection.name} 用例脑图`)}
     >
+      <div className="case-map-search">
+        <label>
+          <Search size={16} />
+          <input ref={searchRef} value={query}
+            aria-label={pick("Search test cases", "搜索用例资产")}
+            placeholder={pick("Search cases · ↑ ↓ to navigate", "搜索用例 · ↑ ↓ 切换")}
+            onChange={(event) => {
+              setLocalQuery(event.target.value);
+              onSearchQueryChange?.(event.target.value);
+            }} />
+        </label>
+        <span role="status">{matchingNodes.length ? `${matchIndex + 1} / ${matchingNodes.length}` : pick("No matching cases", "无匹配用例")}</span>
+        <button type="button" aria-label={pick("Previous case", "上一条用例")}
+          disabled={!matchingNodes.length || matchIndex === 0} onClick={() => moveSelection(-1, false)}><ArrowUp size={16} /></button>
+        <button type="button" aria-label={pick("Next case", "下一条用例")}
+          disabled={!matchingNodes.length || matchIndex === matchingNodes.length - 1} onClick={() => moveSelection(1, false)}><ArrowDown size={16} /></button>
+      </div>
       {notesError && <div className="case-map-notes-error" role="alert">{pick("Text nodes could not be loaded: ", "文本节点加载失败：")}{notesError}</div>}
       <RetainMapEditors.Provider value={retainEditors}>
       <ReactFlow
         onInit={(instance) => { flowRef.current = instance; }}
-        nodes={flowNodes}
+        nodes={renderedNodes}
+        onMove={trackEditorViewport}
         onNodesChange={handleNodesChange}
         onNodeDragStop={(_, node) => {
           draggedPositions.current.set(node.id, node.position);
         }}
-        edges={graph.edges}
+        edges={renderedEdges}
         nodeTypes={nodeTypes}
-        onlyRenderVisibleElements={cases.length >= 100 && retainedEditors === 0 && !draft && !measuringCollapse}
+        onlyRenderVisibleElements={cases.length >= 100 && retainedEditors.size === 0 && !measuringCollapse}
         defaultViewport={graph.viewport}
         minZoom={0.001}
         maxZoom={1.8}
@@ -1210,28 +1414,8 @@ export function CaseMindMap({
         panOnScroll
         panOnDrag
         proOptions={{ hideAttribution: true }}
-        onNodeClick={(_, node) => {
-          if (node.data.caseId) {
-            onSelectCase(node.data.caseId);
-            const selectedCase = cases.find(
-              (item) => item.id === node.data.caseId,
-            );
-            onSelectTarget?.(
-              { kind: "case", case_ids: [node.data.caseId] },
-              selectedCase?.title ?? node.data.title,
-            );
-          } else if (node.data.kind === "module") {
-            onSelectTarget?.(
-              { kind: "module", module: node.data.module ?? "" },
-              pick(`Module: ${node.data.title}`, `模块：${node.data.title}`),
-            );
-          }
-        }}
-        onNodeDoubleClick={(_, node) => {
-          if (!node.data.caseId) return;
-          const testCase = cases.find((item) => item.id === node.data.caseId);
-          if (testCase) onEditCase(testCase);
-        }}
+        onNodeClick={handleNodeClick}
+        onNodeDoubleClick={handleNodeDoubleClick}
       >
         <Background color="#cfdaea" gap={22} size={1} />
         <MapControls

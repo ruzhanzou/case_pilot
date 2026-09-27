@@ -7849,9 +7849,12 @@ button.case-tag:hover {
 }
 
 .case-map-node.is-selected {
+  outline: 3px solid #1d4ed8;
+  outline-offset: 3px;
   box-shadow:
-    0 0 0 3px rgba(37, 99, 235, .09),
-    0 4px 14px rgba(37, 99, 235, .13);
+    0 0 0 3px #fff,
+    0 0 0 8px rgba(37, 99, 235, .18),
+    0 6px 20px rgba(30, 64, 175, .24);
 }
 
 .case-map-node--collection {
@@ -12464,6 +12467,16 @@ body.is-resizing-workbench {
   display: none;
 }
 
+@media (min-width: 761px) {
+  .case-library__body--mind-map {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .case-map-wrap > .case-mind-map:not(.is-fullscreen):not(:fullscreen) {
+    min-height: 0;
+  }
+}
+
 .playlist-saved-list {
   max-height: 330px;
   padding: 2px;
@@ -12571,3 +12584,25 @@ body.is-resizing-workbench {
 .execution-delete-dialog::backdrop { background: rgba(15, 23, 42, .4); }
 .execution-delete-dialog h2 { margin: 0 0 12px; font-size: 18px; }
 .execution-delete-dialog p { overflow-wrap: anywhere; line-height: 1.6; }
+
+.case-map-search {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 72px);
+  padding: 7px 10px;
+  border: 1px solid #d6dfec;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 3px 12px #152c4910;
+  font-size: 12px;
+}
+.case-map-search label { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.case-map-search input { width: 230px; max-width: 100%; min-width: 0; border: 0; background: transparent; }
+.case-map-search span { white-space: nowrap; }
+.case-map-search button { display: grid; place-items: center; padding: 4px; border: 0; border-radius: 4px; background: #f0f4fa; }
+.case-map-search button:disabled { opacity: 0.4; }

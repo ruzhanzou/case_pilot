@@ -307,7 +307,7 @@ export function CaseLibrary({
         </header>
 
         <div className="case-library__toolbar">
-          <label className="case-search">
+          {viewMode === "list" && <label className="case-search">
             <Search size={17} />
             <input
               value={query}
@@ -318,7 +318,7 @@ export function CaseLibrary({
               placeholder={pick("Search ID, title, target, or creator", "搜索编号、标题、test_target、创建人等")}
               aria-label={pick("Search test cases", "搜索用例资产")}
             />
-          </label>
+          </label>}
           <div className="case-library__view-controls">
             <span>{loading ? pick("Loading…", "正在读取…") : pick(`${filteredCases.length} cases`, `${filteredCases.length} 条用例`)}</span>
             <div className="view-segment" aria-label={pick("Case view", "用例视图")}>
@@ -359,7 +359,9 @@ export function CaseLibrary({
               <CaseMindMap
                 key={selectedCollection.id}
                 collection={selectedCollection}
-                cases={filteredCases}
+                cases={cases}
+                searchQuery={query}
+                onSearchQueryChange={setQuery}
                 selectedCaseId={selectedCase?.id ?? ""}
                 onSelectCase={onSelectCase}
                 onCreateCase={onCreateCase}
