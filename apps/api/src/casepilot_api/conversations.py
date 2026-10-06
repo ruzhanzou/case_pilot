@@ -27,6 +27,12 @@ from casepilot_api.case_management import (
     normalize_tags,
     write_audit,
 )
+from casepilot_api.case_scope import (
+    common_module_path,
+    filter_priority,
+    module_contains,
+    resolve_scope,
+)
 from casepilot_api.config import get_settings
 from casepilot_api.database import get_db_session
 from casepilot_api.knowledge import _store_uploads
@@ -116,11 +122,15 @@ INTENTS = {
     "CASE_MODIFY",
     "CASE_DELETE",
     "CASE_QUERY",
+    "CASE_REVIEW",
+    "CASE_DEDUP",
+    "COVERAGE_ANALYZE",
     "KNOWLEDGE_QA",
     "SMALL_TALK",
     "UNRESOLVED",
 }
-ASSET_INTENTS = {"CASE_GENERATE", "CASE_MODIFY", "CASE_DELETE", "CASE_QUERY"}
+ANALYSIS_INTENTS = {"CASE_REVIEW", "CASE_DEDUP", "COVERAGE_ANALYZE"}
+ASSET_INTENTS = {"CASE_GENERATE", "CASE_MODIFY", "CASE_DELETE", "CASE_QUERY"} | ANALYSIS_INTENTS
 CHANGE_FIELDS = {
     "title",
     "module",
@@ -399,7 +409,7 @@ def summarize_conversation_title(content: str) -> str:
         cleaned,
     )
     generation_position = re.search(
-        r"(?:生成|设计|编写|创建|新增|补充|重新生成|重新设计)",
+        r"(?:生成|设计|编写|创建|新增|增加|补充|重新生成|重新设计)",
         cleaned,
     )
     subject = ""
@@ -430,21 +440,59 @@ def classify_intent(
 ) -> tuple[str, float]:
     normalized = " ".join(normalize_routing_text(content).strip().split())
     compact = normalized.casefold().strip("。！？!?，, ")
-    asks_about_capabilities = (
-        "casepilot" in compact or "你" in compact
-    ) and any(term in compact for term in CAPABILITY_TERMS)
+    asks_about_capabilities = ("casepilot" in compact or "你" in compact) and any(
+        term in compact for term in CAPABILITY_TERMS
+    )
     if (
         compact in SMALL_TALK_TERMS
-        or any(
-            term in compact
-            for term in ("你是谁", "叫什么名字", "谢谢", "辛苦了", "再见")
-        )
+        or any(term in compact for term in ("你是谁", "叫什么名字", "谢谢", "辛苦了", "再见"))
         or asks_about_capabilities
     ):
         return "SMALL_TALK", 0.99
-    if NEGATED_CASE_GENERATION.search(normalized) or NEGATED_ENGLISH_CASE_ACTION.search(
-        normalized
+    analysis_intent = None
+    if re.search(
+        r"冗余|查重|重复用例|用例重复|检查.*重复|查找.*重复|\b(?:duplicates?|redundan\w*|dedup\w*)\b",
+        normalized,
+        re.I,
     ):
+        analysis_intent = "CASE_DEDUP"
+    elif re.search(r"覆盖(?:率|缺口|不足)|遗漏|漏测|\bcoverage\b", normalized, re.I):
+        analysis_intent = "COVERAGE_ANALYZE"
+    elif re.search(
+        r"评审|审查|检查.*(?:用例|模块)|(?<![a-z])(?:review|audit)(?![a-z])", normalized, re.I
+    ):
+        analysis_intent = "CASE_REVIEW"
+    informational = re.search(
+        r"^(?:请问)?(?:如何|怎么|什么|为什么)|^(?:how|what|why)\b", normalized, re.I
+    )
+    first_action = re.search(
+        r"生成|编写|新增|增加|补充|修改|改写|删除|移除|检查|查重|查找|评审|审查|分析|"
+        r"(?<![a-z])(?:generate|create|write|modify|rewrite|delete|remove|review|audit|check|find)(?![a-z])",
+        normalized,
+        re.I,
+    )
+    write_requested = first_action and first_action.group().casefold() in {
+        "生成",
+        "编写",
+        "新增",
+        "增加",
+        "补充",
+        "修改",
+        "改写",
+        "删除",
+        "移除",
+        "generate",
+        "create",
+        "write",
+        "modify",
+        "rewrite",
+        "delete",
+        "remove",
+    }
+    negated_analysis = re.search(r"(?:不要|别|暂不|无需).{0,8}(?:检查|评审|分析|查重)", normalized)
+    if analysis_intent and not informational and not write_requested and not negated_analysis:
+        return analysis_intent, 0.96
+    if NEGATED_CASE_GENERATION.search(normalized) or NEGATED_ENGLISH_CASE_ACTION.search(normalized):
         return "KNOWLEDGE_QA", 0.96
     if ENGLISH_CASE_QUESTION.search(normalized):
         return "KNOWLEDGE_QA", 0.94
@@ -461,14 +509,11 @@ def classify_intent(
         term in normalized for term in ("什么", "为何", "含义", "指什么")
     )
     generation_request = any(
-        term in normalized
-        for term in ("帮我", "请为", "请生成", "给我生成", "替我")
+        term in normalized for term in ("帮我", "请为", "请生成", "给我生成", "替我")
     )
     if NEGATED_ASSET_DELETE.search(normalized):
         return "KNOWLEDGE_QA", 0.96
-    if any(term in normalized for term in DELETE_TERMS) or EXPLICIT_ASSET_DELETE.search(
-        normalized
-    ):
+    if any(term in normalized for term in DELETE_TERMS) or EXPLICIT_ASSET_DELETE.search(normalized):
         explicit_delete_request = any(
             term in normalized
             for term in ("请删除", "帮我删除", "我要删除", "立即删除", "现在删除")
@@ -476,9 +521,7 @@ def classify_intent(
         if question_like and not explicit_delete_request:
             return "KNOWLEDGE_QA", 0.94
         return "CASE_DELETE", 0.98
-    if any(term in normalized for term in QUERY_TERMS) or EXPLICIT_ASSET_QUERY.search(
-        normalized
-    ):
+    if any(term in normalized for term in QUERY_TERMS) or EXPLICIT_ASSET_QUERY.search(normalized):
         return "CASE_QUERY", 0.96
     if phase == "brief_review":
         if question_like and not generation_request:
@@ -494,14 +537,16 @@ def classify_intent(
         return "CASE_GENERATE", 0.98
     explicitly_generates_cases = bool(
         re.search(
-            r"(?:生成|设计|编写|创建|新增|补充|重新生成|重新设计)"
+            r"(?:生成|设计|编写|创建|新增|增加|补充|重新生成|重新设计)"
             r".{0,40}?(?:测试)?用例",
             normalized,
         )
     )
     if question_like and not generation_request:
         return "KNOWLEDGE_QA", 0.94
-    if explicitly_generates_cases and not has_targets:
+    if explicitly_generates_cases and not re.search(
+        r"(?:修改|改写|调整).{0,8}(?:刚|已|上述|前面)生成", normalized
+    ):
         return "CASE_GENERATE", 0.98
     if EXPLICIT_ASSET_MODIFY.search(normalized):
         return "CASE_MODIFY", 0.96 if has_targets else 0.91
@@ -514,11 +559,7 @@ def classify_intent(
             modify_score += 2
         elif "用例" in normalized or "场景" in normalized:
             generate_score += 2
-    if (
-        modify_score
-        and has_targets
-        and any(term in normalized for term in MODIFY_OBJECT_TERMS)
-    ):
+    if modify_score and has_targets and any(term in normalized for term in MODIFY_OBJECT_TERMS):
         modify_score += 1
     if generate_score and modify_score:
         winner = "CASE_MODIFY" if modify_score > generate_score else "CASE_GENERATE"
@@ -1149,6 +1190,120 @@ def _collection_gate(
     return None
 
 
+def _load_scope_snapshots(db: Session, conversation: Conversation) -> list[dict]:
+    rows = db.execute(
+        select(
+            TestCase.id,
+            TestCase.case_key,
+            TestCaseRevision.title,
+            TestCaseRevision.module,
+            TestCaseRevision.priority,
+        )
+        .join(TestCaseRevision, TestCaseRevision.id == TestCase.current_revision_id)
+        .join(CollectionCaseMembership, CollectionCaseMembership.test_case_id == TestCase.id)
+        .where(
+            CollectionCaseMembership.collection_id == conversation.collection_id,
+            TestCase.space_id == conversation.space_id,
+            TestCase.deleted_at.is_(None),
+        )
+        .order_by(CollectionCaseMembership.position, TestCase.id)
+    ).mappings()
+    return [dict(row) for row in rows]
+
+
+def _resolve_action_scope(
+    db: Session,
+    conversation: Conversation,
+    payload: ConversationMessageCreate,
+    intent: str,
+) -> tuple[ConversationMessageCreate, str | None]:
+    if conversation.collection_id is None:
+        return payload, None
+    candidates = (
+        list(
+            db.scalars(
+                select(WorkspaceCandidate).where(
+                    WorkspaceCandidate.conversation_id == conversation.id,
+                    WorkspaceCandidate.status == "candidate",
+                )
+            )
+        )
+        if dict(conversation.context).get("phase") == "candidate_review"
+        else []
+    )
+    if candidates:
+        snapshots = [
+            {**dict(item.snapshot), "id": str(item.id), "case_key": item.ref} for item in candidates
+        ]
+    else:
+        snapshots = _load_scope_snapshots(db, conversation)
+    scope = resolve_scope(payload.content, snapshots)
+    if intent == "CASE_DELETE" and re.search(
+        r"冗余|重复|相似|无效|过时|\b(?:duplicate|redundant|obsolete|invalid)",
+        payload.content,
+        re.I,
+    ):
+        explicit_cases = (
+            scope
+            and scope.get("ids")
+            and not scope.get("modules")
+            and not re.search(r"全部|所有|\ball\b", payload.content, re.I)
+        )
+        selected_cases = scope is None and re.search(
+            r"选中|当前用例|selected|current case", payload.content, re.I
+        )
+        if not explicit_cases and not selected_cases:
+            return payload, "请先检查并选择需要删除的具体用例；不会把整个模块当作重复用例删除。"
+    if scope and scope.get("error"):
+        if intent == "CASE_GENERATE" and "未找到指定模块" in scope["error"]:
+            # A generation request may intentionally create a new module.
+            return payload.model_copy(
+                update={"targets": [], "target_case_ids": [], "target_candidate_snapshots": []}
+            ), None
+        return payload, scope["error"]
+    if scope is None:
+        expanded = _expand_conversation_targets(db, conversation, payload)
+        if expanded.targets or expanded.target_case_ids or expanded.target_candidate_snapshots:
+            if intent in ANALYSIS_INTENTS | {"CASE_QUERY"}:
+                allowed_ids = {
+                    str(item["id"]) for item in filter_priority(payload.content, snapshots)
+                }
+                expanded = expanded.model_copy(
+                    update={
+                        "target_case_ids": [
+                            item for item in expanded.target_case_ids if str(item) in allowed_ids
+                        ],
+                        "target_candidate_snapshots": [
+                            item
+                            for item in expanded.target_candidate_snapshots
+                            if filter_priority(payload.content, [item.snapshot])
+                        ],
+                    }
+                )
+            return expanded, None
+        if intent not in ANALYSIS_INTENTS | {"CASE_QUERY"}:
+            return expanded, None
+        scope = {"ids": [str(item["id"]) for item in snapshots]}
+    scope_ids = set(scope["ids"])
+    selected = [item for item in snapshots if str(item["id"]) in scope_ids]
+    if intent != "CASE_GENERATE":
+        selected = filter_priority(payload.content, selected)
+    ids = {str(item["id"]) for item in selected}
+    return payload.model_copy(
+        update={
+            "targets": [],
+            "target_case_ids": [] if candidates else [UUID(str(item["id"])) for item in selected],
+            "target_candidate_snapshots": [
+                ConversationTargetSnapshot(
+                    ref=item.ref, version=item.version, snapshot=dict(item.snapshot)
+                )
+                for item in candidates
+                if str(item.id) in ids
+            ],
+        }
+    ), None
+
+
 def _start_action(
     db: Session,
     account: Any,
@@ -1158,6 +1313,7 @@ def _start_action(
     intent: str,
     confidence: float,
     operation_id: UUID | None = None,
+    confirmed_targets: bool = False,
 ) -> tuple[ConversationMessage, dict[str, Any], str | None]:
     collection_gate = _collection_gate(
         db,
@@ -1199,6 +1355,55 @@ def _start_action(
         conversation.updated_at = datetime.now(UTC)
         db.flush()
         return assistant, {"type": "small_talk"}, None
+    if confirmed_targets:
+        payload, scope_error = _expand_conversation_targets(db, conversation, payload), None
+    else:
+        payload, scope_error = _resolve_action_scope(db, conversation, payload, intent)
+    if scope_error:
+        assistant = _new_assistant_message(
+            conversation.id,
+            content=scope_error,
+            intent=intent,
+            confidence=confidence,
+            status="awaiting_clarification",
+            target_case_ids=[],
+        )
+        db.add(assistant)
+        db.flush()
+        return assistant, {"type": "clarification"}, None
+    if operation_id:
+        operation = db.get(ConversationOperation, operation_id)
+        if operation is not None:
+            operation.target = {
+                **dict(operation.target),
+                "case_ids": [str(item) for item in payload.target_case_ids],
+                "candidate_refs": [item.ref for item in payload.target_candidate_snapshots],
+                "resolved": True,
+            }
+            if intent in ASSET_INTENTS:
+                refs = [("case_ids", str(item)) for item in payload.target_case_ids]
+                refs += [
+                    ("candidate_refs", item.ref) for item in payload.target_candidate_snapshots
+                ]
+                selections = []
+                for offset in range(0, len(refs), 100):
+                    group = refs[offset : offset + 100]
+                    selections.append(
+                        {
+                            "label": f"{len(group)} cases",
+                            "target": {
+                                "kind": "case",
+                                "case_ids": [ref for kind, ref in group if kind == "case_ids"],
+                                "candidate_refs": [
+                                    ref for kind, ref in group if kind == "candidate_refs"
+                                ],
+                            },
+                        }
+                    )
+                conversation.context = {
+                    **dict(conversation.context),
+                    "selected_targets": selections,
+                }
     target_ids = [str(item) for item in payload.target_case_ids]
     case_context: list[dict[str, Any]] = [
         {
@@ -1208,27 +1413,43 @@ def _start_action(
         }
         for item in payload.target_candidate_snapshots
     ]
-    for case_id in payload.target_case_ids:
-        test_case = db.scalar(
-            select(TestCase).where(
-                TestCase.id == case_id,
+    if payload.target_case_ids:
+        rows = db.execute(
+            select(TestCase, TestCaseRevision)
+            .join(TestCaseRevision, TestCaseRevision.id == TestCase.current_revision_id)
+            .where(
+                TestCase.id.in_(payload.target_case_ids),
                 TestCase.space_id == conversation.space_id,
                 TestCase.deleted_at.is_(None),
             )
-        )
-        if test_case is None:
+        ).all()
+        indexed = {item.id: (item, revision) for item, revision in rows}
+        if set(indexed) != set(payload.target_case_ids):
             raise HTTPException(status_code=404, detail="test_case_not_found")
-        case_context.append(
-            {
-                "ref": str(test_case.id),
-                "target_type": "formal",
-                "snapshot": case_to_view(db, test_case).model_dump(mode="json"),
-            }
-        )
+        for case_id in payload.target_case_ids:
+            test_case, revision = indexed[case_id]
+            case_context.append(
+                {
+                    "ref": str(test_case.id),
+                    "target_type": "formal",
+                    "snapshot": case_to_view(
+                        db,
+                        test_case,
+                        prepared=(
+                            revision,
+                            [conversation.collection_id],
+                            [],
+                            None,
+                        ),
+                    ).model_dump(mode="json"),
+                }
+            )
 
-    if intent == "KNOWLEDGE_QA" and CURRENT_CASE_REFERENCE.search(
-        payload.content
-    ) and not case_context:
+    if (
+        intent == "KNOWLEDGE_QA"
+        and CURRENT_CASE_REFERENCE.search(payload.content)
+        and not case_context
+    ):
         assistant = _new_assistant_message(
             conversation.id,
             content="请先在当前集合中选中一条用例，再询问它的问题；我会依据该用例的步骤和预期结果回答。",
@@ -1242,29 +1463,14 @@ def _start_action(
         return assistant, {"type": "clarification"}, None
 
     if intent == "CASE_QUERY":
-        cases = list(
-            db.scalars(
-                select(TestCase)
-                .join(
-                    CollectionCaseMembership,
-                    CollectionCaseMembership.test_case_id == TestCase.id,
-                )
-                .where(
-                    CollectionCaseMembership.collection_id
-                    == conversation.collection_id,
-                    TestCase.deleted_at.is_(None),
-                )
-                .order_by(CollectionCaseMembership.position, TestCase.created_at)
-                .limit(20)
-            )
-        )
-        items = [case_to_view(db, test_case) for test_case in cases]
+        items = filter_priority(payload.content, [item["snapshot"] for item in case_context])
         summary = (
-            "当前集合暂无正式用例。"
+            "当前范围没有匹配用例。"
             if not items
-            else "当前集合用例：\n"
+            else f"匹配 {len(items)} 条用例：\n"
             + "\n".join(
-                f"- {item.case_key}｜{item.title}｜{item.module or '未分类'}"
+                f"- {item.get('case_key', item.get('title', '候选'))}｜"
+                f"{item.get('title', '')}｜{item.get('module') or '未分类'}"
                 for item in items
             )
         )
@@ -1274,7 +1480,7 @@ def _start_action(
             intent=intent,
             confidence=confidence,
             status="completed",
-            target_case_ids=[str(item.id) for item in items],
+            target_case_ids=[item["ref"] for item in case_context],
             metadata={"result_count": len(items), "retrieval_performed": False},
         )
         db.add(assistant)
@@ -1329,8 +1535,7 @@ def _start_action(
         assistant = _new_assistant_message(
             conversation.id,
             content=(
-                f"将软删除 {len(items)} 条用例。请审阅受影响清单并明确确认；"
-                "取消不会改变任何资产。"
+                f"将软删除 {len(items)} 条用例。请审阅受影响清单并明确确认；取消不会改变任何资产。"
             ),
             intent=intent,
             confidence=confidence,
@@ -1346,6 +1551,18 @@ def _start_action(
             None,
         )
 
+    if intent in ANALYSIS_INTENTS and not case_context:
+        assistant = _new_assistant_message(
+            conversation.id,
+            content="当前范围没有可检查的用例，请选择模块或用例。",
+            intent=intent,
+            confidence=confidence,
+            status="awaiting_clarification",
+            target_case_ids=[],
+        )
+        db.add(assistant)
+        db.flush()
+        return assistant, {"type": "clarification"}, None
     conversation_memory = _agent_conversation_memory(db, conversation.id)
     provided_test_object = _test_object_from_memory(conversation_memory)
     input_payload = {
@@ -1362,9 +1579,14 @@ def _start_action(
         "conversation_id": str(conversation.id),
         "user_message_id": str(user_message.id),
         "case_context": case_context,
+        "analysis_kind": intent if intent in ANALYSIS_INTENTS else None,
         "conversation_memory": conversation_memory,
         "conversation_operation_id": str(operation_id) if operation_id else None,
     }
+    if intent == "CASE_GENERATE":
+        input_payload["target_module_path"] = common_module_path(
+            [str(item["snapshot"].get("module") or "") for item in case_context]
+        )
 
     if intent == "CASE_MODIFY" and not (
         payload.target_case_ids or payload.target_candidate_snapshots
@@ -1397,9 +1619,7 @@ def _start_action(
     )
     if latest_brief is not None:
         current_test_brief = dict(latest_brief.content)
-        if provided_test_object and not str(
-            current_test_brief.get("test_object") or ""
-        ).strip():
+        if provided_test_object and not str(current_test_brief.get("test_object") or "").strip():
             current_test_brief["test_object"] = provided_test_object
             current_test_brief["open_questions"] = []
         input_payload["current_test_brief"] = current_test_brief
@@ -1415,6 +1635,9 @@ def _start_action(
         operation={
             "CASE_GENERATE": "draft_brief",
             "CASE_MODIFY": "conversation_modify",
+            "CASE_REVIEW": "knowledge_qa",
+            "CASE_DEDUP": "knowledge_qa",
+            "COVERAGE_ANALYZE": "knowledge_qa",
             "KNOWLEDGE_QA": "knowledge_qa",
             "SMALL_TALK": "knowledge_qa",
         }[intent],
@@ -1450,15 +1673,24 @@ def _start_action(
         )
         task_name = "casepilot.agent.draft_brief"
         action: dict[str, Any] = {"type": "test_brief", "job_id": str(job.id)}
-    elif intent in {"KNOWLEDGE_QA", "SMALL_TALK"}:
+    elif intent in {"KNOWLEDGE_QA", "SMALL_TALK"} | ANALYSIS_INTENTS:
         assistant = _new_assistant_message(
             conversation.id,
-            content="",
+            content=(
+                f"本次检查 {len(case_context)} 条用例。\n"
+                "执行步骤：读取用例与需求依据 → 检查问题并记录用例引用 → 汇总建议。\n"
+                "检查过程不会修改用例。"
+                if intent in ANALYSIS_INTENTS else ""
+            ),
             intent=intent,
             confidence=confidence,
             status="running",
             target_case_ids=target_ids,
-            metadata={"hidden_progress": True},
+            metadata={
+                "hidden_progress": intent not in ANALYSIS_INTENTS,
+                "analysis_kind": intent,
+                "target_count": len(case_context),
+            },
         )
         task_name = "casepilot.agent.answer_question"
         action = {
@@ -1466,23 +1698,11 @@ def _start_action(
             "job_id": str(job.id),
         }
     else:
-        formal_targets: list[dict[str, str]] = []
-        for case_id in payload.target_case_ids:
-            test_case = db.scalar(
-                select(TestCase).where(
-                    TestCase.id == case_id,
-                    TestCase.space_id == conversation.space_id,
-                    TestCase.deleted_at.is_(None),
-                )
-            )
-            if test_case is None or test_case.current_revision_id is None:
-                raise HTTPException(status_code=404, detail="test_case_not_found")
-            formal_targets.append(
-                {
-                    "case_id": str(test_case.id),
-                    "base_revision_id": str(test_case.current_revision_id),
-                }
-            )
+        formal_targets = [
+            {"case_id": item["ref"], "base_revision_id": item["snapshot"]["current_revision_id"]}
+            for item in case_context
+            if item["target_type"] == "formal"
+        ]
         change_set = CaseChangeSet(
             conversation_id=conversation.id,
             generation_job_id=job.id,
@@ -1500,8 +1720,7 @@ def _start_action(
                 "change_set_id": str(change_set.id),
                 "formal_targets": formal_targets,
                 "candidate_targets": [
-                    item.model_dump(mode="json")
-                    for item in payload.target_candidate_snapshots
+                    item.model_dump(mode="json") for item in payload.target_candidate_snapshots
                 ],
             }
         )
@@ -1539,14 +1758,14 @@ def _start_action(
         **dict(conversation.context),
         "active_job_id": str(job.id),
         "last_intent": intent,
-        "phase": "brief_drafting" if intent == "CASE_GENERATE" else dict(
-            conversation.context
-        ).get("phase", "maintenance"),
+        "phase": "brief_drafting"
+        if intent == "CASE_GENERATE"
+        else dict(conversation.context).get("phase", "maintenance"),
     }
     if intent in {"CASE_GENERATE", "CASE_MODIFY", "CASE_DELETE"}:
-        context_update["active_operation_id"] = (
-            str(operation_id) if operation_id else None
-        )
+        context_update["active_operation_id"] = str(operation_id) if operation_id else None
+    if intent == "CASE_GENERATE":
+        context_update["generation_target_module_path"] = input_payload["target_module_path"]
     conversation.context = context_update
     conversation.updated_at = datetime.now(UTC)
     db.flush()
@@ -2148,6 +2367,9 @@ def confirm_test_brief(
             "conversation_memory": _agent_conversation_memory(db, conversation.id),
             "confirmed_test_brief": brief_content,
             "confirmed_test_brief_version": brief.version,
+            "target_module_path": str(
+                dict(conversation.context).get("generation_target_module_path") or ""
+            ),
             "conversation_operation_id": (
                 str(active_operation.id) if active_operation else None
             ),
@@ -2453,6 +2675,12 @@ def _expand_conversation_targets(
             )
             if source is None or source.conversation_id != conversation.id:
                 raise HTTPException(status_code=422, detail="previous_result_not_found")
+            # Once candidates are incorporated, dependent operations must target
+            # the current formal revisions, not detached candidate snapshots.
+            committed_ids = dict(source.result).get("test_case_ids", [])
+            if committed_ids:
+                case_ids.extend(UUID(str(item)) for item in committed_ids)
+                continue
             result_ids = [
                 UUID(str(item)) for item in dict(source.result).get("candidate_ids", [])
             ]
@@ -2460,6 +2688,7 @@ def _expand_conversation_targets(
                 select(WorkspaceCandidate).where(
                     WorkspaceCandidate.id.in_(result_ids),
                     WorkspaceCandidate.conversation_id == conversation.id,
+                    WorkspaceCandidate.status == "candidate",
                 )
             ):
                 if candidate.ref in candidate_refs:
@@ -2483,13 +2712,16 @@ def _expand_conversation_targets(
                 )
             ):
                 snapshot = dict(candidate.snapshot)
-                matches_module = (
-                    target.kind == "module" and snapshot.get("module") == target.module
+                matches_module = target.kind == "module" and module_contains(
+                    target.module, str(snapshot.get("module", ""))
                 )
                 matches_condition = (
                     target.kind == "condition"
                     and target.condition in snapshot.get("preconditions", [])
-                    and (not target.module or snapshot.get("module") == target.module)
+                    and (
+                        not target.module
+                        or module_contains(target.module, str(snapshot.get("module", "")))
+                    )
                 )
                 if (matches_module or matches_condition) and candidate.ref not in candidate_refs:
                     candidate_snapshots.append(
@@ -2502,7 +2734,10 @@ def _expand_conversation_targets(
                     candidate_refs.add(candidate.ref)
             continue
         if conversation.collection_id is None:
-            raise HTTPException(status_code=409, detail="conversation_collection_required")
+            raise HTTPException(
+                status_code=409,
+                detail="conversation_collection_required",
+            )
         cases = list(
             db.scalars(
                 select(TestCase)
@@ -2518,12 +2753,12 @@ def _expand_conversation_targets(
         )
         for test_case in cases:
             view = case_to_view(db, test_case)
-            if target.kind == "module" and view.module == target.module:
+            if target.kind == "module" and module_contains(target.module, view.module):
                 case_ids.append(test_case.id)
             if (
                 target.kind == "condition"
                 and target.condition in view.preconditions
-                and (not target.module or view.module == target.module)
+                and (not target.module or module_contains(target.module, view.module))
             ):
                 case_ids.append(test_case.id)
     unique_ids = list(dict.fromkeys(case_ids))
@@ -2585,7 +2820,6 @@ def send_message(
             ),
         }
     )
-    payload = _expand_conversation_targets(db, conversation, payload)
     if not settings.is_agent_model_allowed(payload.model_id):
         raise HTTPException(status_code=422, detail="generation_model_not_configured")
     conversation.context = {
@@ -3087,6 +3321,26 @@ def resume_conversation_operation(
     resume_targets = list(supplement.targets)
     if (
         not resume_targets
+        and not supplement.target_case_ids
+        and not supplement.target_candidate_snapshots
+    ):
+        resume_targets = [
+            ConversationTarget.model_validate(item)
+            for item in dict(operation.target).get("selectors", [])
+        ]
+    if not resume_targets and dict(operation.target).get("resolved"):
+        case_ids = list(dict(operation.target).get("case_ids", []))
+        refs = list(dict(operation.target).get("candidate_refs", []))
+        for offset in range(0, max(len(case_ids), len(refs)), 100):
+            resume_targets.append(
+                ConversationTarget(
+                    kind="case",
+                    case_ids=case_ids[offset : offset + 100],
+                    candidate_refs=refs[offset : offset + 100],
+                )
+            )
+    if (
+        not resume_targets
         and str(dict(operation.target).get("kind")) == "previous_result"
         and predecessors
     ):
@@ -3096,11 +3350,7 @@ def resume_conversation_operation(
             reverse=True,
         )
         source = next(
-            (
-                item
-                for item in ordered_predecessors
-                if dict(item.result).get("candidate_ids")
-            ),
+            (item for item in ordered_predecessors if dict(item.result).get("candidate_ids")),
             ordered_predecessors[0],
         )
         resume_targets = [
@@ -3115,10 +3365,10 @@ def resume_conversation_operation(
             "content": str(operation.payload.get("instruction") or user_message.content),
             "intent_override": operation.intent,
             "targets": [item.model_dump(mode="json") for item in resume_targets],
-            "target_case_ids": [str(item) for item in supplement.target_case_ids],
+            "target_case_ids": [str(item) for item in supplement.target_case_ids]
+            or (dict(operation.target).get("case_ids", []) if not resume_targets else []),
             "target_candidate_snapshots": [
-                item.model_dump(mode="json")
-                for item in supplement.target_candidate_snapshots
+                item.model_dump(mode="json") for item in supplement.target_candidate_snapshots
             ],
         }
     )
@@ -3138,6 +3388,11 @@ def resume_conversation_operation(
         operation.intent,
         operation.confidence,
         operation.id,
+        confirmed_targets=bool(
+            supplement.targets
+            or supplement.target_case_ids
+            or supplement.target_candidate_snapshots
+        ),
     )
     _operation_runtime_status(operation, assistant, action)
     conversation.context = {
@@ -3209,6 +3464,10 @@ def retry_conversation_message(
     request_payload = user_message.message_metadata.get("request", {})
     request_payload["intent_override"] = user_message.intent
     message_input = ConversationMessageCreate.model_validate(request_payload)
+    operation_id = failed_job.input_payload.get("conversation_operation_id")
+    operation = db.get(ConversationOperation, UUID(str(operation_id))) if operation_id else None
+    if operation is not None and operation.conversation_id != conversation.id:
+        raise HTTPException(status_code=409, detail="retry_context_mismatch")
     assistant, action, task_name = _start_action(
         db,
         account,
@@ -3217,7 +3476,13 @@ def retry_conversation_message(
         message_input,
         user_message.intent,
         1.0,
+        operation.id if operation else None,
     )
+    if operation is not None:
+        operation.status = "running"
+        operation.error_code = None
+        operation.completed_at = None
+        _operation_runtime_status(operation, assistant, action)
     if task_name and assistant.related_job_id:
         enqueue_task(
             db,
@@ -3406,6 +3671,10 @@ def apply_change_set(
             accepted = set(payload.accepted_fields[item["ref"]])
         else:
             accepted = {str(diff["field"]) for diff in item.get("field_diff", [])}
+        accepted &= {str(diff["field"]) for diff in item.get("field_diff", [])}
+        if not accepted:
+            updated_items.append({**item, "status": "rejected"})
+            continue
         if item.get("operation") == "delete":
             test_case = formal_cases[item["ref"]]
             confirmed = "delete" in accepted
@@ -3519,7 +3788,7 @@ def apply_change_set(
         operation.status = "completed"
         operation.result = {
             "change_set_id": str(change_set.id),
-            "updated_refs": [str(item["ref"]) for item in updated_items],
+            "updated_refs": [str(item["ref"]) for item in updated_items if item["status"] == "applied"],
         }
         operation.completed_at = datetime.now(UTC)
     deleted_count = sum(
@@ -3533,7 +3802,7 @@ def apply_change_set(
         f"已确认软删除 {deleted_count} 条用例，审计记录已保留。"
         if has_deletions
         else (
-            f"已应用 {len(updated_items)} 条用例变更。"
+            f"已应用 {sum(item['status'] == 'applied' for item in updated_items)} 条用例变更。"
             "正式用例已创建新 Revision，候选用例已保留新快照版本。"
         )
     )
@@ -3594,7 +3863,7 @@ def reject_change_set(
                 conversation_id=change_set.conversation_id,
                 role="assistant",
                 content="已拒绝本次修改，原用例内容保持不变。",
-                intent="CASE_MODIFY",
+                intent=operation.intent if operation is not None else "CASE_MODIFY",
                 intent_confidence=1.0,
                 status="completed",
                 target_case_ids=[

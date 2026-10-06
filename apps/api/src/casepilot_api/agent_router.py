@@ -11,6 +11,9 @@ IntentName = Literal[
     "CASE_MODIFY",
     "CASE_DELETE",
     "CASE_QUERY",
+    "CASE_REVIEW",
+    "CASE_DEDUP",
+    "COVERAGE_ANALYZE",
     "KNOWLEDGE_QA",
     "SMALL_TALK",
     "UNRESOLVED",
@@ -22,6 +25,9 @@ INTENT_THRESHOLDS: dict[str, float] = {
     "KNOWLEDGE_QA": 0.72,
     "SMALL_TALK": 0.80,
     "CASE_QUERY": 0.78,
+    "CASE_REVIEW": 0.85,
+    "CASE_DEDUP": 0.85,
+    "COVERAGE_ANALYZE": 0.85,
     "CASE_GENERATE": 0.86,
     "CASE_MODIFY": 0.90,
     "CASE_DELETE": 0.90,
@@ -33,6 +39,9 @@ DEFAULT_ACTIONS: dict[str, str] = {
     "CASE_MODIFY": "CHANGESET_PREPARE",
     "CASE_DELETE": "CASE_DELETE_PREPARE",
     "CASE_QUERY": "CASE_SEARCH",
+    "CASE_REVIEW": "CASE_REVIEW",
+    "CASE_DEDUP": "CASE_DEDUP",
+    "COVERAGE_ANALYZE": "COVERAGE_ANALYZE",
     "KNOWLEDGE_QA": "ANSWER_QUESTION",
     "SMALL_TALK": "ANSWER_QUESTION",
     "UNRESOLVED": "CLARIFY_INTENT",
@@ -72,10 +81,10 @@ SEQUENCE_SPLIT = re.compile(
     r"\s*(?:；|;|然后|随后|接着|另外|并且|同时|以及|顺便|"
     r"(?:[，,]\s*)?再(?=(?:生成|创建|新增|补充|修改|改写|调整|删除|查询|"
     r"解释|介绍|说明))|并(?=(?:生成|创建|新增|补充|修改|改写|调整|删除|"
-    r"查询|解释|介绍|说明))|"
+    r"查询|检查|评审|审查|review|解释|介绍|说明))|"
     r"\b(?:and\s+then|then|and|also)\s+(?=(?:generate|create|write|draft|"
     r"design|modify|edit|update|rewrite|revise|delete|remove|archive|"
-    r"find|list|search|show)\b))\s*",
+    r"find|list|search|show|review|audit|check)\b))\s*",
     re.IGNORECASE,
 )
 NEGATED_DELETE = re.compile(r"(?:不要|无需|不用|别|禁止).{0,8}(?:删除|移除|作废)")
@@ -102,7 +111,7 @@ PRONOUN_SIGNAL = re.compile(
     r"(?:这个|那个|刚才|刚刚|前面|上面|上一条|第[一二三四五六七八九十\d]+条)"
 )
 WRITE_SIGNAL = re.compile(
-    r"(?:生成|创建|新增|补充|修改|改写|调整|替换|删除|移除|作废|改成|改为|"
+    r"(?:生成|编写|设计|创建|新增|增加|补充|修改|改写|调整|替换|删除|移除|作废|改成|改为|"
     r"\b(?:generate|create|write|draft|design)\s+(?:some\s+|new\s+|more\s+|a\s+set\s+of\s+)?test\s+cases?\b|"
     r"\b(?:modify|edit|update|rewrite|revise|delete|remove|archive)\b.{0,50}"
     r"\b(?:test\s+cases?|cases?|steps?|expected\s+results?|preconditions?|"
@@ -298,7 +307,7 @@ def sdk_plan(
         name="CasePilot Orchestrator",
         instructions=(
             "将用户消息拆成最多3个按文本顺序执行的操作。"
-            "识别生成、修改、删除、查询、知识问答、闲聊；无法可靠判断时输出UNRESOLVED。"
+            "识别生成、修改、删除、查询、评审CASE_REVIEW、查冗余CASE_DEDUP、覆盖分析COVERAGE_ANALYZE、知识问答、闲聊；无法可靠判断时输出UNRESOLVED。"
             "判断用户真正请求的目标，而不是仅根据消息中出现的动词分类。"
             "询问如何删除、删除是否需要确认属于知识问答，不是删除操作；否定删除也不是删除。"
             "phase只能辅助理解，不能把普通问答强制解释为当前阶段的写操作。"

@@ -5,6 +5,7 @@ from math import sqrt
 from time import sleep
 from typing import Any
 
+from casepilot_agent.case_analysis import CaseAnalysisReport
 from casepilot_agent.contracts import (
     EMBEDDING_DIMENSIONS,
     EnhancementResult,
@@ -177,7 +178,11 @@ class MockProvider:
             for case in baseline.test_cases:
                 case.source_refs = [source_ref]
 
-        if result_type is RequirementAnalysis:
+        if result_type is CaseAnalysisReport:
+            result = CaseAnalysisReport(
+                summary="模拟评审完成", findings=[], limitations=["模拟模式不执行语义评审"]
+            )
+        elif result_type is RequirementAnalysis:
             requirement = baseline.requirement
             current_test_brief = payload.get("current_test_brief")
             if isinstance(current_test_brief, dict):

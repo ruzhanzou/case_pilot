@@ -536,6 +536,7 @@ type CaseMindMapProps = {
   collection: CaseCollectionDto;
   cases: TestCaseDto[];
   selectedCaseId: string;
+  focusVersion?: number;
   searchQuery?: string;
   onSearchQueryChange?: (query: string) => void;
   onSelectCase: (caseId: string) => void;
@@ -552,6 +553,7 @@ export function CaseMindMap({
   collection,
   cases,
   selectedCaseId,
+  focusVersion = 0,
   searchQuery,
   onSearchQueryChange,
   onSelectCase: selectCaseProp,
@@ -581,6 +583,13 @@ export function CaseMindMap({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [retainedEditors, setRetainedEditors] = useState<Set<string>>(() => new Set());
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    if (!selectedCaseId || canvasSize.width <= 0 || canvasSize.height <= 0) return;
+    const frame = window.requestAnimationFrame(() => {
+      setFocusRequest({ id: selectedCaseId, keyboard: false });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedCaseId, focusVersion, canvasSize.width, canvasSize.height]);
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -1245,11 +1254,16 @@ export function CaseMindMap({
     const node = flowNodes.find((item) => item.data.kind === "case" && item.data.caseId === focusRequest.id);
     const flow = flowRef.current;
     if (!node || !flow) return;
-    // Offscreen nodes may not be mounted in large maps. Center using graph
-    // coordinates first so virtualization can mount the destination.
-    void flow.setCenter(node.position.x + (node.measured?.width ?? 280) / 2,
-      node.position.y + (node.measured?.height ?? 100) / 2,
-      { zoom: flow.getZoom(), duration: 0 });
+    // Offscreen nodes are virtualized and have no measured bounds for fitView.
+    // Center from layout coordinates so search and report links work at any size.
+    const zoom = flow.getZoom();
+    const centerX = node.position.x + (node.measured?.width ?? 420) / 2;
+    const centerY = node.position.y + (node.measured?.height ?? 190) / 2;
+    void flow.setViewport({
+      x: canvasSize.width / 2 - centerX * zoom,
+      y: canvasSize.height / 2 - centerY * zoom,
+      zoom,
+    }, { duration: 0 });
     if (focusRequest.keyboard) mapRef.current?.focus({ preventScroll: true });
     const frame = window.requestAnimationFrame(() => {
       const element = Array.from(mapRef.current?.querySelectorAll<HTMLElement>(".react-flow__node") ?? [])
@@ -1258,7 +1272,7 @@ export function CaseMindMap({
       setFocusRequest(null);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [focusRequest, flowNodes]);
+  }, [canvasSize.height, canvasSize.width, focusRequest, flowNodes]);
 
   useEffect(() => {
     if (!centerCollapsedGraph.current || (centerCollapsedGraph.current === "collapse" && flowNodes.some((node) => node.data.kind === "detail"))) return;
@@ -1394,7 +1408,12 @@ export function CaseMindMap({
       {notesError && <div className="case-map-notes-error" role="alert">{pick("Text nodes could not be loaded: ", "文本节点加载失败：")}{notesError}</div>}
       <RetainMapEditors.Provider value={retainEditors}>
       <ReactFlow
-        onInit={(instance) => { flowRef.current = instance; }}
+        onInit={(instance) => {
+          flowRef.current = instance;
+          if (selectedCaseId && graphNodesById.has(`case-${selectedCaseId}`)) {
+            setFocusRequest({ id: selectedCaseId, keyboard: false });
+          }
+        }}
         nodes={renderedNodes}
         onMove={trackEditorViewport}
         onNodesChange={handleNodesChange}

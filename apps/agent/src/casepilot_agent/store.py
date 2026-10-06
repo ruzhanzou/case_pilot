@@ -1258,7 +1258,12 @@ class JobStore:
         if citations is not None:
             values["citations"] = citations
         if metadata_values is not None:
-            values["metadata"] = metadata_values
+            existing_metadata = connection.scalar(
+                select(conversation_messages.c.metadata).where(
+                    conversation_messages.c.id == UUID(str(message_id))
+                )
+            ) or {}
+            values["metadata"] = {**existing_metadata, **metadata_values}
         self.update_conversation_message(
             connection,
             UUID(str(message_id)),

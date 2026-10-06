@@ -446,6 +446,9 @@ export type ConversationIntent =
   | "CASE_MODIFY"
   | "CASE_DELETE"
   | "CASE_QUERY"
+  | "CASE_REVIEW"
+  | "CASE_DEDUP"
+  | "COVERAGE_ANALYZE"
   | "KNOWLEDGE_QA"
   | "SMALL_TALK"
   | "UNRESOLVED";
@@ -631,6 +634,7 @@ export type ConversationTurnDto = {
 };
 
 export type CaseChangeItemDto = {
+  operation?: "delete" | "modify";
   ref: string;
   target_type: "candidate" | "formal";
   test_case_id?: string;
@@ -855,7 +859,9 @@ export function watchGeneration(
     );
     const timeout = window.setTimeout(() => {
       finish(() => reject(new Error("AI 生成超时，请稍后重试")));
-    }, 900_000);
+    // Large collection reviews run in sequential model batches. Keep the
+    // conversation attached while the server still reports a running job.
+    }, 7_200_000);
     const poll = window.setInterval(() => {
       void getGeneration(jobId)
         .then((job) => {

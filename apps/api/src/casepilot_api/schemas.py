@@ -404,13 +404,13 @@ class ConversationMessageCreate(BaseModel):
     use_space_knowledge: bool = True
     intent_override: str | None = Field(
         default=None,
-        pattern=r"^(CASE_GENERATE|CASE_MODIFY|CASE_DELETE|CASE_QUERY|KNOWLEDGE_QA|SMALL_TALK|UNRESOLVED)$",
+        pattern=r"^(CASE_GENERATE|CASE_MODIFY|CASE_DELETE|CASE_QUERY|CASE_REVIEW|CASE_DEDUP|COVERAGE_ANALYZE|KNOWLEDGE_QA|SMALL_TALK|UNRESOLVED)$",
     )
 
 
 class IntentConfirmationRequest(BaseModel):
     intent: str = Field(
-        pattern=r"^(CASE_GENERATE|CASE_MODIFY|CASE_DELETE|CASE_QUERY|KNOWLEDGE_QA|SMALL_TALK|UNRESOLVED)$"
+        pattern=r"^(CASE_GENERATE|CASE_MODIFY|CASE_DELETE|CASE_QUERY|CASE_REVIEW|CASE_DEDUP|COVERAGE_ANALYZE|KNOWLEDGE_QA|SMALL_TALK|UNRESOLVED)$"
     )
 
 
@@ -440,7 +440,7 @@ class ConversationOperationContinueRequest(BaseModel):
 class ConversationOperationResumeRequest(BaseModel):
     intent: str | None = Field(
         default=None,
-        pattern=r"^(CASE_GENERATE|CASE_MODIFY|CASE_DELETE|CASE_QUERY|KNOWLEDGE_QA|SMALL_TALK|UNRESOLVED)$",
+        pattern=r"^(CASE_GENERATE|CASE_MODIFY|CASE_DELETE|CASE_QUERY|CASE_REVIEW|CASE_DEDUP|COVERAGE_ANALYZE|KNOWLEDGE_QA|SMALL_TALK|UNRESOLVED)$",
     )
     targets: list[ConversationTarget] = Field(default_factory=list, max_length=100)
     target_case_ids: list[UUID] = Field(default_factory=list, max_length=100)
