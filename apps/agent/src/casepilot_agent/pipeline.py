@@ -5,8 +5,8 @@ from typing import Any
 from casepilot_agent.contracts import (
     AgentProvider,
     EnhancementResult,
-    FieldDiff,
     FeaturePlan,
+    FieldDiff,
     GenerationRequest,
     GenerationResult,
     OpenQuestion,
@@ -201,9 +201,7 @@ def validate_generation(result: GenerationResult) -> QualityReport:
     issues: list[QualityIssue] = []
     feature_ids = {item.id for item in result.feature_points}
     point_ids = {item.id for item in result.test_points}
-    case_point_ids = {
-        point_id for case in result.test_cases for point_id in case.test_point_ids
-    }
+    case_point_ids = {point_id for case in result.test_cases for point_id in case.test_point_ids}
     if not result.feature_points:
         issues.append(
             QualityIssue(
@@ -263,6 +261,14 @@ def validate_generation(result: GenerationResult) -> QualityReport:
                     severity="error",
                 )
             )
+    if len({case.id for case in result.test_cases}) != len(result.test_cases):
+        issues.append(
+            QualityIssue(
+                code="duplicate_case_id",
+                message="用例 ID 重复",
+                severity="error",
+            )
+        )
     seen_titles: set[str] = set()
     for case in result.test_cases:
         normalized = case.title.strip().lower()
@@ -272,12 +278,11 @@ def validate_generation(result: GenerationResult) -> QualityReport:
                     code="duplicate_case",
                     message="存在重复用例标题",
                     object_id=case.id,
+                    severity="error",
                 )
             )
         seen_titles.add(normalized)
-        if not case.preconditions or not any(
-            item.strip() for item in case.preconditions
-        ):
+        if not case.preconditions or not any(item.strip() for item in case.preconditions):
             issues.append(
                 QualityIssue(
                     code="empty_test_setup",
@@ -339,27 +344,19 @@ def validate_generation(result: GenerationResult) -> QualityReport:
     covered_requirements: set[str] = set()
     for row in result.coverage_matrix:
         test_point_refs = (
-            row.get("test_point_ids")
-            or row.get("test_point_id")
-            or row.get("测试点编号")
+            row.get("test_point_ids") or row.get("test_point_id") or row.get("测试点编号")
         )
         requirement_refs = (
-            row.get("requirement_ref")
-            or row.get("requirement_id")
-            or row.get("需求编号")
+            row.get("requirement_ref") or row.get("requirement_id") or row.get("需求编号")
         )
         if not test_point_refs or not requirement_refs:
             continue
         if isinstance(requirement_refs, list):
-            covered_requirements.update(
-                str(requirement) for requirement in requirement_refs
-            )
+            covered_requirements.update(str(requirement) for requirement in requirement_refs)
         else:
             covered_requirements.add(str(requirement_refs))
     feature_requirements = {
-        requirement
-        for feature in result.feature_points
-        for requirement in feature.requirement_refs
+        requirement for feature in result.feature_points for requirement in feature.requirement_refs
     }
     for requirement in sorted(feature_requirements - covered_requirements):
         issues.append(
@@ -382,6 +379,26 @@ def _merge_by_id(current: list[Any], enhanced: list[Any]) -> list[Any]:
     return list(merged.values())
 
 
+def requested_case_count(request: GenerationRequest) -> int | None:
+    """Only explicit case quantities count; business thresholds are not quantities."""
+    texts = (request.prompt, request.markdown_content)
+    # A total takes precedence over a per-module quantity in a summarized brief.
+    patterns = (
+        r"(?:总计|共计|合计|总共|共)\s*([1-9]\d{0,3})\s*条",
+        r"(?:生成|编写|设计|创建|恰好)[^。；;\n]{0,24}?"
+        r"(?<!\d)([1-9]\d{0,3})\s*条\s*(?:测试)?用例",
+    )
+    for pattern in patterns:
+        for text in texts:
+            match = re.search(pattern, text)
+            if match:
+                count = int(match.group(1))
+                if count > 500:
+                    raise ValueError("单次生成最多支持500条用例，请缩小范围后重试")
+                return count
+    return None
+
+
 class GenerationPipeline:
     def __init__(self, provider: AgentProvider) -> None:
         self.provider = provider
@@ -394,7 +411,9 @@ class GenerationPipeline:
         answers: dict[str, str],
         execute_stage: StageExecutor,
     ) -> GenerationResult:
+        requested_count = requested_case_count(request)
         common = {
+            "requested_case_count": requested_count,
             "prompt": request.prompt,
             "markdown_content": request.markdown_content,
             "file_names": request.file_names,
@@ -428,42 +447,82 @@ class GenerationPipeline:
 
         features = execute_stage(
             "feature.generated",
-            "基于需求分析生成 2 至 4 个可追溯功能点，每个功能点关联需求编号和证据来源。"
+            "基于需求分析生成可追溯功能点，覆盖用户指定的全部模块，不得合并或遗漏模块。"
+            "未指定模块时生成 2 至 4 个功能点。每个功能点关联需求编号和证据来源。"
             "描述保持精炼，不重复展开测试步骤。",
             {**common, "requirement": requirement.model_dump(mode="json")},
             FeaturePlan,
             request.model_id,
         )
-        point_plan = execute_stage(
-            "test_point.generated",
-            "规划 6 至 8 个测试点，标明优先级、类型、可执行性。"
-            "覆盖矩阵只保留需求、功能点和测试点编号映射，不输出解释性长文。",
-            {
-                **common,
-                "requirement": requirement.model_dump(mode="json"),
-                "feature_points": features.model_dump(mode="json"),
-            },
-            TestPointPlan,
-            request.model_id,
+        point_groups = (
+            [[feature] for feature in features.feature_points]
+            if requested_count and requested_count > 10
+            else [features.feature_points]
         )
-        case_batch = execute_stage(
-            "test_case.generated",
-            "按测试点生成 8 至 10 条可执行候选用例，严格遵循四段式用例规范："
-            "title 是单一测试目标；test_setup 是环境、状态、身份、权限和测试数据前提，"
-            "没有特殊前提时写‘无特殊前置条件’；test_procedure 保留 1 至 4 个按序、"
-            "可执行且不混入预期的操作；test_validation 提供数量完全相同、按索引一一对应、"
-            "可观察且可判定的断言。当前 JSON 兼容结构映射为 test_setup=preconditions、"
-            "test_procedure=steps[].action、test_validation=steps[].expected。"
-            "补充来源引用，避免重复背景和‘正常’‘符合预期’等模糊表达。",
-            {
-                **common,
-                "requirement": requirement.model_dump(mode="json"),
-                "feature_points": features.model_dump(mode="json"),
-                "test_points": point_plan.model_dump(mode="json"),
-            },
-            TestCaseBatch,
-            request.model_id,
-        )
+        all_points = []
+        coverage_matrix = []
+        for group_index, group in enumerate(point_groups):
+            planned = execute_stage(
+                "test_point.generated",
+                "只为本批 feature_points 规划测试点；每个功能点恰好3个：正常、异常、边界。"
+                "标明优先级、类型、可执行性，每个测试点使用 point_id_prefix 开头的唯一ID。"
+                "覆盖矩阵只保留需求、功能点和测试点编号映射，不输出解释性长文。",
+                {
+                    **common,
+                    "requirement": requirement.model_dump(mode="json"),
+                    "feature_points": FeaturePlan(feature_points=group).model_dump(mode="json"),
+                    "point_id_prefix": f"TP-{group_index + 1}-",
+                },
+                TestPointPlan,
+                request.model_id,
+            )
+            all_points.extend(planned.test_points)
+            coverage_matrix.extend(planned.coverage_matrix)
+        point_plan = TestPointPlan(test_points=all_points, coverage_matrix=coverage_matrix)
+        generated_cases = []
+        batch_total = (requested_count + 9) // 10 if requested_count else 1
+        for batch_index in range(batch_total):
+            batch_count = (
+                min(10, requested_count - len(generated_cases)) if requested_count else None
+            )
+            quantity = f"恰好 {batch_count} 条" if batch_count else "8 至 10 条"
+            # Small responses avoid truncation; all batches belong to one generation job.
+            feature = (
+                features.feature_points[batch_index]
+                if batch_total == len(features.feature_points)
+                else None
+            )
+            case_batch = execute_stage(
+                "test_case.generated",
+                f"本批只生成{quantity}可执行候选用例，不要一次生成全量。"
+                "遵从 batch_scope（若非空），只覆盖该功能点所属模块。"
+                "用例ID全局唯一，按 batch_start_index 连续编号，"
+                "不重复 previous_titles 中的测试目标。"
+                "严格遵循四段式用例规范：title 是单一测试目标；"
+                "preconditions 是环境、状态、身份、权限和测试数据前提；"
+                "steps 保留 1 至 4 个按序操作，action 不混入预期，"
+                "expected 为同序可观察且可判定断言。"
+                "补充来源引用，避免‘正常’‘符合预期’等模糊表达。",
+                {
+                    **common,
+                    "requirement": requirement.model_dump(mode="json"),
+                    "feature_points": features.model_dump(mode="json"),
+                    "test_points": point_plan.model_dump(mode="json"),
+                    "batch_count": batch_count,
+                    "batch_start_index": len(generated_cases) + 1,
+                    "batch_scope": feature.model_dump(mode="json") if feature else None,
+                    "previous_titles": [case.title for case in generated_cases],
+                },
+                TestCaseBatch,
+                request.model_id,
+            )
+            if batch_count and len(case_batch.test_cases) != batch_count:
+                raise ValueError(
+                    f"候选数量不符：本批需要{batch_count}条，"
+                    f"实际返回{len(case_batch.test_cases)}条，请重试"
+                )
+            generated_cases.extend(case_batch.test_cases)
+        case_batch = TestCaseBatch(test_cases=generated_cases)
 
         fallback_ref = SourceRef(label="用户输入", excerpt=request.prompt[:400])
         for case in case_batch.test_cases:
@@ -499,11 +558,7 @@ class GenerationPipeline:
                 for issue in report.issues
                 if issue.severity == "error"
             ]
-            affected_ids = {
-                str(item["object_id"])
-                for item in gaps
-                if item.get("object_id")
-            }
+            affected_ids = {str(item["object_id"]) for item in gaps if item.get("object_id")}
             enhancement = execute_stage(
                 "enhancement.completed",
                 "只返回质量报告要求新增或修改的对象，不得复制无关对象。可新增功能点"
@@ -572,6 +627,15 @@ class GenerationPipeline:
             repair_rounds += 1
             report = validate_generation(enhanced)
 
+        if requested_count and len(enhanced.test_cases) != requested_count:
+            report.issues.append(
+                QualityIssue(
+                    code="case_count_mismatch",
+                    severity="error",
+                    message=f"需要{requested_count}条用例，实际{len(enhanced.test_cases)}条",
+                )
+            )
+            report.passed = False
         report.repair_rounds = repair_rounds
         enhanced.quality = report
         if not report.passed:

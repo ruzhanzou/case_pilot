@@ -123,3 +123,13 @@ def filter_priority(instruction: str, cases: list[dict]) -> list[dict]:
     )
     priorities = set(re.findall(r"(?<![A-Z0-9])P[0-3](?![A-Z0-9])", text.upper()))
     return [case for case in cases if not priorities or case.get("priority") in priorities]
+
+
+def requested_new_module(instruction: str) -> str:
+    """Extract the explicit module name in an additive request, preserving its path."""
+    match = re.search(
+        r"(?:新增|增加|添加|创建)(?:一个|个)?\s*[「“\"]?([^，,。；;\n」”\"]+?)模块"
+        r"|\b(?:add|create)\s+(?:a\s+)?(?:new\s+)?module\s+[\"']?([\w /-]+)",
+        instruction, re.I,
+    )
+    return (next((value for value in match.groups() if value), "").strip() if match else "")[:160]

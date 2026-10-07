@@ -531,9 +531,13 @@ class JobStore:
         return dict(claimed) if claimed is not None else None
 
     def update_job(self, connection: Connection, job_id: UUID, **values: Any) -> None:
-        connection.execute(
-            update(generation_jobs).where(generation_jobs.c.id == job_id).values(**values)
+        updated = connection.execute(
+            update(generation_jobs).where(
+                generation_jobs.c.id == job_id, generation_jobs.c.status != "cancelled",
+            ).values(**values)
         )
+        if updated.rowcount == 0:
+            return
         if "status" not in values:
             return
         job = self.get_job(connection, job_id)
@@ -552,23 +556,28 @@ class JobStore:
             operation_status = (
                 "awaiting_confirmation"
                 if job["operation"] in {"draft_brief", "conversation_modify"}
+                or bool(dict(values.get("output_payload") or {}).get("workspace_candidate_ids"))
                 else "completed"
             )
+        if job_status == "completed" and dict(values.get("output_payload") or {}).get("no_changes"):
+            operation_status = "completed"
         if operation_status:
             operation_values: dict[str, Any] = {
                 "status": operation_status,
                 "related_job_id": job_id,
             }
-            if job_status == "completed" and operation_status == "completed":
+            if job_status == "completed":
                 output_payload = dict(values.get("output_payload", {}) or {})
-                operation_values["result"] = {
+                operation_values["result"] = conversation_operations.c.result.op("||")({
                     **output_payload,
                     "candidate_ids": output_payload.get(
                         "workspace_candidate_ids",
                         output_payload.get("candidate_ids", []),
                     ),
-                }
-                operation_values["completed_at"] = datetime.now(UTC)
+                })
+                operation_values["completed_at"] = (
+                    datetime.now(UTC) if operation_status == "completed" else None
+                )
             if job_status == "failed":
                 operation_values["error_code"] = values.get("error_code")
                 operation_values["completed_at"] = datetime.now(UTC)
@@ -1287,7 +1296,9 @@ class JobStore:
             .values(
                 status="failed",
                 content=friendly_message,
-                metadata={"error_kind": "provider_or_generation"},
+                metadata=conversation_messages.c.metadata.op("||")(
+                    {"error_kind": "provider_or_generation"}
+                ),
             )
         )
 
@@ -1302,7 +1313,10 @@ class JobStore:
         connection.execute(
             update(case_change_sets)
             .where(case_change_sets.c.id == change_set_id)
-            .values(status="ready", items=items)
+            .values(
+                status="ready" if any(item.get("field_diff") for item in items) else "no_changes",
+                items=items,
+            )
         )
 
     def create_grouped_candidate(

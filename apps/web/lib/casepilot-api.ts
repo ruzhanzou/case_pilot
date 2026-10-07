@@ -130,6 +130,7 @@ export type CaseStepDto = {
 };
 
 export type MindMapNote = {
+  kind?: "text" | "module";
   id: string;
   parent_id: string;
   text: string;
@@ -464,6 +465,8 @@ export type ConversationTarget = {
 };
 
 export type ConversationOperationDto = {
+  source_message_id?: string | null;
+  completed_at?: string | null;
   id: string;
   sequence: number;
   intent: ConversationIntent;
@@ -520,6 +523,8 @@ export type ConversationDto = {
   candidates: WorkspaceCandidateDto[];
   workflow_runs: ConversationWorkflowRunDto[];
   operation_plan: ConversationOperationPlanDto | null;
+  operation_history?: ConversationOperationDto[];
+  candidate_history?: WorkspaceCandidateDto[];
   created_at: string;
   updated_at: string;
 };
@@ -620,6 +625,7 @@ export type ConversationTurnDto = {
   requires_intent_confirmation: boolean;
   action: {
     type?:
+      | "module_created"
       | "generation"
       | "test_brief"
       | "knowledge_qa"
@@ -644,6 +650,7 @@ export type CaseChangeItemDto = {
   base_snapshot: Record<string, unknown>;
   proposed_snapshot: Record<string, unknown>;
   applied_snapshot?: Record<string, unknown>;
+  accepted_fields?: string[];
   field_diff: {
     field: string;
     before: unknown;
@@ -659,7 +666,7 @@ export type CaseChangeSetDto = {
   generation_job_id: string | null;
   instruction: string;
   scope: string;
-  status: "generating" | "ready" | "applied" | "rejected" | "conflict" | "failed";
+  status: "generating" | "ready" | "applied" | "rejected" | "conflict" | "failed" | "no_changes";
   items: CaseChangeItemDto[];
   created_at: string;
   applied_at: string | null;
@@ -744,6 +751,9 @@ const publicErrors: Record<string, string> = {
   invalid_execution_step: "执行步骤状态已变化，请刷新后重试。",
   execution_result_reason_required: "请填写本次执行结果的原因或实际情况。",
   execution_record_changed: "该用例刚被其他成员更新，请确认最新结果后重试。",
+  conversation_task_running: "当前任务正在执行，请等待完成后再发送消息。",
+  invalid_finding_selection: "所选发现已发生变化，请重新打开检查结果。",
+  source_task_not_ready: "来源任务尚未完成，请等待结果后继续。",
   revision_conflict: "该用例刚被其他成员修订，请刷新并基于最新版本重试。",
   candidate_changed: "该候选刚被其他成员更新，已停止覆盖，请刷新后重试。",
   invalid_workspace_candidate: "候选内容不完整，请检查名称、步骤和预期结果。",
@@ -865,6 +875,13 @@ export function watchGeneration(
     const poll = window.setInterval(() => {
       void getGeneration(jobId)
         .then((job) => {
+          if (job.status === "running") {
+            onStage({
+              name: job.stage,
+              progress: job.progress,
+              count: job.stages?.filter((stage) => stage.stage === job.stage && stage.status === "completed").length ?? 0,
+            });
+          }
           if (job.status === "completed" || job.status === "awaiting_input") {
             finish(() => resolve(job));
           } else if (job.status === "cancelled") {
@@ -1080,7 +1097,7 @@ export function updateWorkspaceState(
     model_id?: AgentModelId;
     selected_case_id?: string | null;
     selected_targets?: { label: string; target: ConversationTarget }[];
-    active_view?: "list" | "map";
+    active_view?: "list" | "map" | "plan";
     search_query?: string;
     filters?: Record<string, unknown>;
     chat_width?: number;
@@ -1189,12 +1206,14 @@ export function sendConversationMessage(
     useSpaceKnowledge?: boolean;
     intentOverride?: ConversationIntent;
     targets?: ConversationTarget[];
+    sourceOperationId?: string;
   },
 ): Promise<ConversationTurnDto> {
   return apiRequest(`/api/v1/conversations/${conversationId}/messages`, {
     method: "POST",
     body: JSON.stringify({
       content: input.content,
+      source_operation_id: input.sourceOperationId,
       model_id: input.modelId,
       scope: input.scope,
       target_case_ids: input.targetCaseIds ?? [],
@@ -1224,6 +1243,7 @@ export function confirmConversationIntent(
 export function resumeConversationOperation(
   operationId: string,
   input?: {
+    content?: string;
     intent?: ConversationIntent;
     targets?: ConversationTarget[];
     targetCaseIds?: string[];
@@ -1234,6 +1254,7 @@ export function resumeConversationOperation(
     method: "POST",
     body: JSON.stringify({
       intent: input?.intent,
+      content: input?.content,
       targets: input?.targets ?? [],
       target_case_ids: input?.targetCaseIds ?? [],
       target_candidate_snapshots: input?.targetCandidateSnapshots ?? [],
@@ -1753,4 +1774,13 @@ export async function logoutAccount(): Promise<void> {
   if (!response.ok && response.status !== 401) {
     throw new Error(`logout_failed_${response.status}`);
   }
+}
+
+
+export type TaskReviewDecisions = { selected: number[]; ignored: number[]; keep_by_finding: Record<number, string> };
+
+export function saveTaskReview(operationId: string, decisions: TaskReviewDecisions): Promise<ConversationOperationDto> {
+  return apiRequest(`/api/v1/conversation-operations/${operationId}/review`, {
+    method: "PATCH", body: JSON.stringify(decisions),
+  });
 }

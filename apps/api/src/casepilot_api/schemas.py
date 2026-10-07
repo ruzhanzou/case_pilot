@@ -2,7 +2,15 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, RootModel, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    RootModel,
+    model_serializer,
+    model_validator,
+)
 
 
 class ExecutionStatus(StrEnum):
@@ -82,10 +90,19 @@ class CaseCollectionCreate(BaseModel):
 
 
 class MindMapNote(BaseModel):
+    kind: str = Field(default="text", pattern=r"^(text|module)$")
     id: str = Field(min_length=1, max_length=160, pattern=r"^note-[A-Za-z0-9-]+$")
     parent_id: str = Field(min_length=1, max_length=1000)
     text: str = Field(min_length=1, max_length=4000)
     module: str = Field(default="", max_length=160)
+
+
+    @model_serializer(mode="wrap")
+    def serialize_kind(self, handler):
+        data = handler(self)
+        if self.kind == "text":
+            data.pop("kind", None)
+        return data
 
 
 class CaseCollectionUpdate(BaseModel):
@@ -402,6 +419,7 @@ class ConversationMessageCreate(BaseModel):
     knowledge_source_ids: list[UUID] = Field(default_factory=list, max_length=50)
     document_ids: list[UUID] = Field(default_factory=list, max_length=6)
     use_space_knowledge: bool = True
+    source_operation_id: UUID | None = None
     intent_override: str | None = Field(
         default=None,
         pattern=r"^(CASE_GENERATE|CASE_MODIFY|CASE_DELETE|CASE_QUERY|CASE_REVIEW|CASE_DEDUP|COVERAGE_ANALYZE|KNOWLEDGE_QA|SMALL_TALK|UNRESOLVED)$",
@@ -438,6 +456,7 @@ class ConversationOperationContinueRequest(BaseModel):
 
 
 class ConversationOperationResumeRequest(BaseModel):
+    content: str | None = Field(default=None, min_length=1, max_length=8000)
     intent: str | None = Field(
         default=None,
         pattern=r"^(CASE_GENERATE|CASE_MODIFY|CASE_DELETE|CASE_QUERY|CASE_REVIEW|CASE_DEDUP|COVERAGE_ANALYZE|KNOWLEDGE_QA|SMALL_TALK|UNRESOLVED)$",
@@ -451,6 +470,8 @@ class ConversationOperationResumeRequest(BaseModel):
 
 
 class ConversationOperationView(BaseModel):
+    source_message_id: UUID | None = None
+    completed_at: datetime | None = None
     id: UUID
     sequence: int
     intent: str
@@ -537,7 +558,7 @@ class WorkspaceStateUpdate(BaseModel):
     )
     selected_case_id: str | None = Field(default=None, max_length=160)
     selected_targets: list[dict] | None = Field(default=None, max_length=100)
-    active_view: str | None = Field(default=None, pattern=r"^(list|map)$")
+    active_view: str | None = Field(default=None, pattern=r"^(list|map|plan)$")
     search_query: str | None = Field(default=None, max_length=500)
     filters: dict | None = None
     chat_width: int | None = Field(default=None, ge=280, le=520)
@@ -624,6 +645,8 @@ class ConversationView(BaseModel):
     candidates: list[WorkspaceCandidateView] = Field(default_factory=list)
     workflow_runs: list[ConversationWorkflowRunView] = Field(default_factory=list)
     operation_plan: ConversationOperationPlanView | None = None
+    operation_history: list[ConversationOperationView] = Field(default_factory=list)
+    candidate_history: list[WorkspaceCandidateView] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -819,3 +842,9 @@ class ExecutionRunView(BaseModel):
     last_activity_at: datetime
     completed_at: datetime | None
     records: list[ExecutionRecordView]
+
+
+class TaskReviewDecisionUpdate(BaseModel):
+    selected: list[int] = Field(default_factory=list, max_length=1000)
+    ignored: list[int] = Field(default_factory=list, max_length=1000)
+    keep_by_finding: dict[int, str] = Field(default_factory=dict)

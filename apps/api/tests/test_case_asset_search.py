@@ -61,6 +61,7 @@ def test_collection_search_matches_target_and_creator_fuzzily() -> None:
             "name": "统一登录搜索验收",
             "description": "登录资产集合",
             "case_count": 2,
+            "lifecycle_status": "maintenance",
             "creator": {
                 "id": uuid4(),
                 "display_name": "李四",

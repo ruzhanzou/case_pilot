@@ -1,0 +1,280 @@
+"""Persisted workflow boundaries; model output is controlled and no worker is dispatched."""
+
+import asyncio
+from uuid import UUID, uuid4
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import delete
+
+from casepilot_api import conversations
+from casepilot_api.database import get_session_factory
+from casepilot_api.main import app
+from casepilot_api.models import Account, Space
+
+
+@pytest.mark.asyncio
+async def test_analysis_to_candidates_keeps_history_and_blocks_overlapping_messages(monkeypatch):
+    from casepilot_agent.store import JobStore
+
+    monkeypatch.setattr(conversations, "enqueue_task", lambda *args, **kwargs: None)
+    store = JobStore(conversations.settings.database_url, conversations.settings.redis_url)
+    space_id = account_id = None
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            registration = await client.post(
+                "/api/v1/auth/register",
+                json={
+                    "email": f"workflow-{uuid4().hex}@casepilot.test",
+                    "display_name": "Workflow test",
+                    "password": "CasePilot123!",
+                },
+            )
+            assert registration.status_code == 201
+            account_id = registration.json()["id"]
+            space_id = registration.json()["spaces"][0]["id"]
+            collections = (await client.get(f"/api/v1/spaces/{space_id}/collections")).json()
+            collection_id = collections[0]["id"]
+            case = (
+                await client.post(
+                    f"/api/v1/collections/{collection_id}/test-cases",
+                    json={
+                        "title": "登录成功",
+                        "module": "登录",
+                        "steps": [{"action": "提交有效凭据", "expected": "显示首页"}],
+                    },
+                )
+            ).json()
+            workspace_responses = await asyncio.gather(*[
+                client.put(f"/api/v1/collections/{collection_id}/workspace") for _ in range(4)
+            ])
+            assert len({response.json()["id"] for response in workspace_responses}) == 1
+            workspace_response = workspace_responses[0]
+            assert workspace_response.status_code == 200
+            workspace_id = workspace_response.json()["id"]
+            messages_url = f"/api/v1/conversations/{workspace_id}/messages"
+            turn = await client.post(
+                messages_url,
+                json={
+                    "content": "检查登录模块遗漏",
+                    "intent_override": "COVERAGE_ANALYZE",
+                },
+            )
+            assert turn.status_code == 202, turn.text
+            analysis = turn.json()
+            operation_id = analysis["operation_plan"]["operations"][0]["id"]
+            blocked = await client.post(messages_url, json={"content": "查询用例"})
+            assert blocked.status_code == 409
+            assert blocked.json()["detail"] == "conversation_task_running"
+            report = {
+                "summary": "缺少锁定账户场景",
+                "findings": [
+                    {
+                        "title": "锁定账户拒绝登录",
+                        "severity": "high",
+                        "case_refs": [case["id"]],
+                        "evidence": "账户锁定规则",
+                        "recommendation": "补充锁定账户场景",
+                        "basis": "requirement",
+                        "requirement_refs": ["账户规则"],
+                    }
+                ],
+                "limitations": [],
+            }
+            with store.connection() as connection:
+                job_id = UUID(analysis["action"]["job_id"])
+                job = store.get_job(connection, job_id)
+                store.update_job(
+                    connection,
+                    job_id,
+                    status="completed",
+                    stage="completed",
+                    output_payload={"analysis_report": report},
+                )
+                store.complete_job_message(
+                    connection,
+                    job,
+                    content="发现一个覆盖缺口",
+                    metadata_values={"analysis_report": report},
+                )
+            decision = await client.patch(
+                f"/api/v1/conversation-operations/{operation_id}/review",
+                json={"selected": [0], "ignored": [], "keep_by_finding": {}},
+            )
+            assert decision.status_code == 200, decision.text
+            assert (
+                decision.json()["result"]["scope_versions"][case["id"]]
+                == case["current_revision_id"]
+            )
+            turn = await client.post(
+                messages_url,
+                json={
+                    "content": "补充锁定账户登录用例",
+                    "intent_override": "CASE_GENERATE",
+                    "source_operation_id": operation_id,
+                    "targets": [{"kind": "previous_result", "source_operation_id": operation_id}],
+                },
+            )
+            assert turn.status_code == 202, turn.text
+            generated = turn.json()
+            generation_operation_id = generated["operation_plan"]["operations"][0]["id"]
+            with store.connection() as connection:
+                job_id = UUID(generated["action"]["job_id"])
+                job = store.get_job(connection, job_id)
+                candidate_ids = store.persist_workspace_candidates(
+                    connection,
+                    job,
+                    [
+                        {
+                            "id": "C-LOCKED",
+                            "title": "锁定账户无法登录",
+                            "module": "登录",
+                            "priority": "P1",
+                            "case_type": "功能",
+                            "preconditions": ["账户已锁定"],
+                            "steps": [{"action": "提交凭据", "expected": "拒绝登录并显示锁定提示"}],
+                        }
+                    ],
+                )
+                store.update_job(
+                    connection,
+                    job_id,
+                    status="completed",
+                    stage="completed",
+                    output_payload={"workspace_candidate_ids": candidate_ids},
+                )
+                store.complete_job_message(connection, job, content="已生成一条候选用例")
+            result = (await client.get(f"/api/v1/conversations/{workspace_id}")).json()
+            assert len(result["operation_history"]) == 2
+            assert result["operation_history"][1]["status"] == "awaiting_confirmation"
+            assert result["operation_history"][1]["payload"]["source_operation_id"] == operation_id
+            committed = await client.post(
+                f"/api/v1/workspaces/{workspace_id}/candidates/commit", json={}
+            )
+            assert committed.status_code == 200, committed.text
+            result = (await client.get(f"/api/v1/conversations/{workspace_id}")).json()
+            assert result["operation_history"][1]["status"] == "completed"
+            assert result["operation_history"][0]["result"]["review_decisions"]["selected"] == [0]
+            assert result["candidate_history"][0]["status"] == "incorporated"
+            assert result["messages"][-1]["metadata"]["operation_id"] == generation_operation_id
+            empty_module = await client.post(
+                messages_url,
+                json={
+                    "content": "只创建退款模块，不生成用例",
+                    "intent_override": "CASE_GENERATE",
+                },
+            )
+            assert empty_module.status_code == 202, empty_module.text
+            assert empty_module.json()["action"]["type"] == "module_created"
+            collection = (await client.get(f"/api/v1/collections/{collection_id}")).json()
+            assert any(
+                note.get("kind") == "module" and note["module"] == "退款"
+                for note in collection["mind_map_notes"]
+            )
+            clarification_turn = (
+                await client.post(
+                    messages_url,
+                    json={
+                        "content": "修改不存在模块的用例",
+                        "intent_override": "CASE_MODIFY",
+                    },
+                )
+            ).json()
+            clarification_id = clarification_turn["operation_plan"]["operations"][0]["id"]
+            clarification = "仅将标题改为「澄清后更新的标题」，其他字段保持不变。"
+            resumed = await client.post(
+                f"/api/v1/conversation-operations/{clarification_id}/resume",
+                json={"content": clarification, "target_case_ids": [case["id"]]},
+            )
+            assert resumed.status_code == 202, resumed.text
+            from casepilot_api.models import GenerationJob
+
+            with get_session_factory()() as db:
+                job = db.get(GenerationJob, UUID(resumed.json()["action"]["job_id"]))
+                assert clarification in job.input_payload["instruction"]
+            state = (await client.get(f"/api/v1/conversations/{workspace_id}")).json()
+            assert any(
+                m["role"] == "user" and m["content"] == clarification for m in state["messages"]
+            )
+    finally:
+        with get_session_factory()() as db:
+            if space_id:
+                db.execute(delete(Space).where(Space.id == UUID(space_id)))
+            if account_id:
+                db.execute(delete(Account).where(Account.id == UUID(account_id)))
+            db.commit()
+
+
+@pytest.mark.asyncio
+async def test_end_running_task_cancels_group_and_unlocks_conversation(monkeypatch):
+    from casepilot_api import generation
+
+    monkeypatch.setattr(conversations.settings, "agent_provider", "mock")
+    monkeypatch.setattr(conversations, "enqueue_task", lambda *args, **kwargs: None)
+    monkeypatch.setattr(generation.task_client.control, "revoke", lambda *args, **kwargs: None)
+    space_id = account_id = None
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            registered = (
+                await client.post(
+                    "/api/v1/auth/register",
+                    json={
+                        "email": f"cancel-{uuid4().hex}@casepilot.test",
+                        "display_name": "Cancel test",
+                        "password": "CasePilot123!",
+                    },
+                )
+            ).json()
+            account_id = registered["id"]
+            space_id = registered["spaces"][0]["id"]
+            collection = (await client.get(f"/api/v1/spaces/{space_id}/collections")).json()[0]
+            await client.post(
+                f"/api/v1/collections/{collection['id']}/test-cases",
+                json={
+                    "title": "登录",
+                    "module": "登录",
+                    "steps": [{"action": "登录", "expected": "成功"}],
+                },
+            )
+            workspace = (
+                await client.put(f"/api/v1/collections/{collection['id']}/workspace")
+            ).json()
+            url = f"/api/v1/conversations/{workspace['id']}"
+            response = await client.post(
+                f"{url}/messages",
+                json={
+                    "content": "检查登录模块遗漏；检查登录模块冗余",
+                },
+            )
+            assert response.status_code == 202, response.text
+            turn = response.json()
+            job_id = turn["action"]["job_id"]
+            assert (
+                await client.post(f"{url}/messages", json={"content": "你好"})
+            ).status_code == 409
+            cancelled = await client.post(f"/api/v1/generation-jobs/{job_id}/cancel")
+            assert cancelled.status_code == 200, cancelled.text
+            state = (await client.get(url)).json()
+            assert len(state["operation_history"]) == 2
+            assert all(item["status"] == "cancelled" for item in state["operation_history"])
+            message = next(
+                m for m in state["messages"] if m["id"] == turn["assistant_message"]["id"]
+            )
+            assert (
+                message["metadata"]["operation_id"] == turn["operation_plan"]["operations"][0]["id"]
+            )
+            assert message["status"] == "cancelled"
+            assert state["context"]["active_job_id"] is None
+            assert (
+                await client.post(f"{url}/messages", json={"content": "你好"})
+            ).status_code == 202
+            assert (
+                await client.post(f"/api/v1/generation-jobs/{job_id}/cancel")
+            ).status_code == 200
+    finally:
+        with get_session_factory()() as db:
+            if space_id:
+                db.execute(delete(Space).where(Space.id == UUID(space_id)))
+            if account_id:
+                db.execute(delete(Account).where(Account.id == UUID(account_id)))
+            db.commit()

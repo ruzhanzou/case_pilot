@@ -9,6 +9,7 @@ import { createPortal } from "react-dom";
 type CaseEditorDialogProps = {
   testCase: TestCaseDto | null;
   initialModule?: string;
+  inline?: boolean;
   saving: boolean;
   onClose: () => void;
   onSave: (input: TestCaseInput) => Promise<void>;
@@ -35,6 +36,7 @@ const emptyStep = (clientId: string): EditableStep => ({
 export function CaseEditorDialog({
   testCase,
   initialModule,
+  inline = false,
   saving,
   onClose,
   onSave,
@@ -168,11 +170,11 @@ export function CaseEditorDialog({
   };
 
   const dialog = (
-    <div className="management-modal-backdrop" role="presentation">
+    <div className={inline ? "case-workspace-editor" : "management-modal-backdrop"} role="presentation">
       <section
         className="management-modal case-editor"
-        role="dialog"
-        aria-modal="true"
+        role={inline ? "region" : "dialog"}
+        aria-modal={inline ? undefined : "true"}
         aria-labelledby="case-editor-title"
       >
         <header className="management-modal__header">
@@ -423,6 +425,7 @@ export function CaseEditorDialog({
     </div>
   );
 
+  if (inline) return dialog;
   if (typeof document === "undefined") return null;
   const fullscreenTarget =
     document.fullscreenElement ??

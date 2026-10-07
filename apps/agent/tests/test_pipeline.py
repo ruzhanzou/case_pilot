@@ -38,12 +38,8 @@ def executor(provider: MockProvider, stages: list[str] | None = None):
 
 
 def test_knowledge_answer_instruction_allows_general_concept_answers() -> None:
-    assert "即使没有空间资料证据也必须直接基于通用知识回答" in (
-        KNOWLEDGE_ANSWER_INSTRUCTION
-    )
-    assert "只有问题涉及当前产品、组织流程或内部规则" in (
-        KNOWLEDGE_ANSWER_INSTRUCTION
-    )
+    assert "即使没有空间资料证据也必须直接基于通用知识回答" in (KNOWLEDGE_ANSWER_INSTRUCTION)
+    assert "只有问题涉及当前产品、组织流程或内部规则" in (KNOWLEDGE_ANSWER_INSTRUCTION)
 
 
 def test_login_generation_has_traceable_objects_and_real_stage_order() -> None:
@@ -148,9 +144,7 @@ def test_pipeline_does_not_clarify_details_beyond_the_test_object() -> None:
 def test_explicit_test_object_extraction_handles_confirmation_and_questions() -> None:
     assert extract_explicit_test_object("测试对象为豆包APP") == "豆包APP"
     assert (
-        extract_explicit_test_object(
-            "测试对象 都包 为手机号验证码登录生成测试用例，覆盖弱网场景"
-        )
+        extract_explicit_test_object("测试对象 都包 为手机号验证码登录生成测试用例，覆盖弱网场景")
         == "手机号验证码登录"
     )
     assert extract_explicit_test_object("测试对象不是明确了吗") == ""
@@ -197,9 +191,7 @@ def test_validator_accepts_localized_coverage_matrix_keys() -> None:
 
     report = validate_generation(result)
 
-    assert "requirement_coverage_gap" not in {
-        issue.code for issue in report.issues
-    }
+    assert "requirement_coverage_gap" not in {issue.code for issue in report.issues}
 
 
 def test_validator_accepts_singular_coverage_matrix_keys() -> None:
@@ -215,9 +207,7 @@ def test_validator_accepts_singular_coverage_matrix_keys() -> None:
 
     report = validate_generation(result)
 
-    assert "requirement_coverage_gap" not in {
-        issue.code for issue in report.issues
-    }
+    assert "requirement_coverage_gap" not in {issue.code for issue in report.issues}
 
 
 def test_rewrite_creates_candidate_without_mutating_source() -> None:
@@ -225,9 +215,7 @@ def test_rewrite_creates_candidate_without_mutating_source() -> None:
     generated = provider.generate(GenerationRequest(prompt="支付回调需求"))
     original = generated.test_cases[0]
 
-    candidate = provider.rewrite(
-        RewriteRequest(test_case=original, instruction="增加校验点")
-    )
+    candidate = provider.rewrite(RewriteRequest(test_case=original, instruction="增加校验点"))
 
     assert len(candidate.proposed.steps) == len(original.steps) + 1
     assert len(original.steps) == 1
@@ -236,9 +224,7 @@ def test_rewrite_creates_candidate_without_mutating_source() -> None:
 
 def test_rewrite_combines_custom_instruction_intents() -> None:
     provider = MockProvider()
-    original = provider.generate(
-        GenerationRequest(prompt="手机号验证码登录")
-    ).test_cases[0]
+    original = provider.generate(GenerationRequest(prompt="手机号验证码登录")).test_cases[0]
 
     candidate = provider.rewrite(
         RewriteRequest(
@@ -258,9 +244,7 @@ def test_pipeline_rewrite_applies_explicit_field_assignments_without_model() -> 
         def rewrite(self, request):
             raise AssertionError("explicit field assignment should not call the model")
 
-    original = MockProvider().generate(
-        GenerationRequest(prompt="手机号验证码登录")
-    ).test_cases[0]
+    original = MockProvider().generate(GenerationRequest(prompt="手机号验证码登录")).test_cases[0]
     candidate = GenerationPipeline(ProviderThatMustNotRun()).rewrite(
         RewriteRequest(
             test_case=original,
@@ -272,9 +256,7 @@ def test_pipeline_rewrite_applies_explicit_field_assignments_without_model() -> 
     )
 
     assert candidate.proposed.title == "登录令牌与会话唯一性"
-    assert candidate.proposed.steps[-1].expected == (
-        "登录成功、返回有效认证令牌，且只创建一个会话"
-    )
+    assert candidate.proposed.steps[-1].expected == ("登录成功、返回有效认证令牌，且只创建一个会话")
     assert {item.field for item in candidate.diff} == {"title", "steps"}
     assert candidate.quality.score == 100
 
@@ -288,9 +270,7 @@ def test_pipeline_rewrite_uses_model_for_semantic_instruction() -> None:
             return super().rewrite(request)
 
     provider = TrackingProvider()
-    original = provider.generate(
-        GenerationRequest(prompt="手机号验证码登录")
-    ).test_cases[0]
+    original = provider.generate(GenerationRequest(prompt="手机号验证码登录")).test_cases[0]
     GenerationPipeline(provider).rewrite(
         RewriteRequest(test_case=original, instruction="优化执行步骤，让表达更清晰")
     )
@@ -360,9 +340,7 @@ def test_mock_provider_updates_existing_brief_and_resolves_background_call() -> 
         model_id="auto",
     )
 
-    assert "锁屏和切后台后允许继续保持实时语音通话" in (
-        updated.business_rules
-    )
+    assert "锁屏和切后台后允许继续保持实时语音通话" in (updated.business_rules)
     assert all("锁屏" not in item.question for item in updated.open_questions)
     assert any("保存多久" in item.question for item in updated.open_questions)
 
@@ -420,3 +398,80 @@ def test_pipeline_repairs_missing_features_with_compact_delta_payload() -> None:
     assert "conversation_memory" not in provider.enhancement_payload
     inventory_case = provider.enhancement_payload["current_inventory"]["test_cases"][0]
     assert set(inventory_case) == {"id", "title", "test_point_ids"}
+
+
+@pytest.mark.parametrize(
+    ("prompt", "count"),
+    [
+        ("一次生成恰好100条测试用例，密码8到20位", 100),
+        ("生成2条用例", 2),
+        ("密码8到20位，30分钟后锁定", None),
+    ],
+)
+def test_requested_case_count_ignores_business_thresholds(prompt, count):
+    from casepilot_agent.pipeline import requested_case_count
+
+    assert requested_case_count(GenerationRequest(prompt=prompt)) == count
+
+
+def test_large_generation_batches_preserve_exact_quantity_and_unique_cases():
+    provider = MockProvider()
+    base = provider.generate(GenerationRequest(prompt="为登录生成测试用例"))
+    batches = []
+
+    def execute(stage, instruction, payload, result_type, model_id):
+        if stage == "test_case.generated":
+            count = payload["batch_count"]
+            start = payload["batch_start_index"]
+            batches.append((start, count))
+            cases = []
+            for index in range(start, start + count):
+                case = base.test_cases[(index - 1) % len(base.test_cases)].model_copy(deep=True)
+                case.id = f"CASE-{index}"
+                case.title = f"独立场景{index}"
+                cases.append(case)
+            return CaseBatchResult(test_cases=cases)
+        return executor(provider)(stage, instruction, payload, result_type, model_id)
+
+    result = GenerationPipeline(provider).run(
+        GenerationRequest(prompt="为登录生成100条测试用例"),
+        context={},
+        answers={},
+        execute_stage=execute,
+    )
+    assert len(result.test_cases) == len({case.id for case in result.test_cases}) == 100
+    assert batches == [(start, 10) for start in range(1, 101, 10)]
+    assert result.quality.passed
+
+
+def test_requested_quantity_mismatch_does_not_publish_partial_success():
+    provider = MockProvider()
+    with pytest.raises(ValueError, match="候选数量不符"):
+        GenerationPipeline(provider).run(
+            GenerationRequest(prompt="为登录生成100条测试用例"),
+            context={},
+            answers={},
+            execute_stage=executor(provider),
+        )
+
+
+@pytest.mark.parametrize("duplicate_field", ["id", "title"])
+def test_duplicate_case_identity_or_title_blocks_quality(duplicate_field):
+    provider = MockProvider()
+    result = provider.generate(GenerationRequest(prompt="为登录生成测试用例"))
+    setattr(result.test_cases[1], duplicate_field, getattr(result.test_cases[0], duplicate_field))
+    assert not validate_generation(result).passed
+
+
+def test_total_quantity_wins_over_per_module_brief_quantity():
+    from casepilot_agent.pipeline import requested_case_count
+
+    assert (
+        requested_case_count(
+            GenerationRequest(
+                prompt="生成电商测试用例",
+                markdown_content="每个模块生成10条测试用例，共100条",
+            )
+        )
+        == 100
+    )

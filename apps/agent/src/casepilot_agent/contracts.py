@@ -200,7 +200,7 @@ class GenerationResult(BaseModel):
 
 class RewriteRequest(BaseModel):
     test_case: TestCaseDraft
-    instruction: str = Field(min_length=1, max_length=2000)
+    instruction: str = Field(min_length=1, max_length=8000)
     conversation_memory: list[dict[str, str]] = Field(
         default_factory=list,
         max_length=100,

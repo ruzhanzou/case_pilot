@@ -23,7 +23,7 @@ def classify(clause: str) -> tuple[str, float]:
     return "KNOWLEDGE_QA", 0.9
 
 
-def test_multi_intent_plan_preserves_order_and_limits_to_three() -> None:
+def test_multi_intent_plan_preserves_order_without_dropping_the_fourth_action() -> None:
     plan = deterministic_plan(
         "先生成登录用例，然后修改刚生成的异常场景；删除旧用例；查询全部用例",
         classify,
@@ -34,6 +34,7 @@ def test_multi_intent_plan_preserves_order_and_limits_to_three() -> None:
         "CASE_GENERATE",
         "CASE_MODIFY",
         "CASE_DELETE",
+        "KNOWLEDGE_QA",
     ]
     assert plan.operations[1].target_kind == "previous_result"
     assert plan.operations[2].requires_confirmation is True
@@ -298,3 +299,11 @@ def test_sdk_router_uses_the_configured_chat_completions_provider(
     assert captured["model"]["model"] == "doubao-test"
     assert captured["agent"]["output_type"] is IntentPlanDraft
     assert captured["tracing_disabled"] is True
+
+
+def test_unique_coverage_in_dedup_request_does_not_create_an_extra_review():
+    plan = deterministic_plan(
+        "检查账号登录模块重复冗余用例，说明重复依据和独有覆盖，只检查不修改。",
+        classify_intent, has_targets=False,
+    )
+    assert [operation.intent for operation in plan.operations] == ["CASE_DEDUP"]

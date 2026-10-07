@@ -58,15 +58,15 @@ class IntentOperationDraft(BaseModel):
     ] = "none"
     requires_confirmation: bool = False
     reason_codes: list[str] = Field(default_factory=list, max_length=12)
-    depends_on: int | None = Field(default=None, ge=0, le=2)
+    depends_on: int | None = Field(default=None, ge=0, le=7)
 
 
 class IntentPlanDraft(BaseModel):
-    operations: list[IntentOperationDraft] = Field(min_length=1, max_length=3)
+    operations: list[IntentOperationDraft] = Field(min_length=1, max_length=8)
 
     @model_validator(mode="after")
     def enforce_safe_operations(self) -> "IntentPlanDraft":
-        self.operations = self.operations[:3]
+        self.operations = self.operations[:8]
         for operation in self.operations:
             if not operation.action:
                 operation.action = DEFAULT_ACTIONS[operation.intent]
@@ -79,9 +79,10 @@ class IntentPlanDraft(BaseModel):
 
 SEQUENCE_SPLIT = re.compile(
     r"\s*(?:；|;|然后|随后|接着|另外|并且|同时|以及|顺便|"
-    r"(?:[，,]\s*)?再(?=(?:生成|创建|新增|补充|修改|改写|调整|删除|查询|"
+    r"(?:[，,]\s*)?再(?=(?:生成|创建|新增|补充|补上|优化|修改|改写|调整|删除|查询|"
     r"解释|介绍|说明))|并(?=(?:生成|创建|新增|补充|修改|改写|调整|删除|"
     r"查询|检查|评审|审查|review|解释|介绍|说明))|"
+    r"[，,]\s*(?=(?:补上|补充|优化|改写|删除|生成))|"
     r"\b(?:and\s+then|then|and|also)\s+(?=(?:generate|create|write|draft|"
     r"design|modify|edit|update|rewrite|revise|delete|remove|archive|"
     r"find|list|search|show|review|audit|check)\b))\s*",
@@ -241,8 +242,34 @@ def deterministic_plan(
     clauses = [part.strip(" ，,") for part in SEQUENCE_SPLIT.split(content) if part.strip()]
     if not clauses:
         clauses = [content.strip()]
+    expanded_clauses = []
+    for clause in clauses:
+        if (
+            re.search(r"检查|分析|check|analy[sz]e", clause, re.I)
+            and re.search(r"遗漏|漏测|覆盖(?:缺口|率|不足|[和与及、])|coverage", clause, re.I)
+            and re.search(r"冗余|重复|duplicates?|redundan", clause, re.I)
+        ):
+            expanded_clauses.extend(
+                [
+                    re.sub(
+                        r"(?:和|与|及|、|and)?\s*(?:冗余|重复|duplicates?|redundan\w*)",
+                        "",
+                        clause,
+                        flags=re.I,
+                    ),
+                    re.sub(
+                        r"(?:和|与|及|、|and)?\s*(?:遗漏|覆盖缺口|覆盖|coverage(?: gaps?)?)",
+                        "",
+                        clause,
+                        flags=re.I,
+                    ),
+                ]
+            )
+        else:
+            expanded_clauses.append(clause)
+    clauses = expanded_clauses
     operations: list[IntentOperationDraft] = []
-    for clause in clauses[:3]:
+    for clause in clauses[:8]:
         intent, confidence = classify(clause)
         if (
             intent == "CASE_GENERATE"
@@ -273,6 +300,7 @@ def deterministic_plan(
                     or needs_intent_confirmation(intent, confidence)
                 ),
                 reason_codes=["RULE_ROUTER"],
+                depends_on=len(operations) - 1 if operations else None,
             )
         )
     return IntentPlanDraft(operations=operations)
@@ -306,7 +334,7 @@ def sdk_plan(
     agent = Agent(
         name="CasePilot Orchestrator",
         instructions=(
-            "将用户消息拆成最多3个按文本顺序执行的操作。"
+            "将用户消息拆成最多8个按文本顺序执行的操作。"
             "识别生成、修改、删除、查询、评审CASE_REVIEW、查冗余CASE_DEDUP、覆盖分析COVERAGE_ANALYZE、知识问答、闲聊；无法可靠判断时输出UNRESOLVED。"
             "判断用户真正请求的目标，而不是仅根据消息中出现的动词分类。"
             "询问如何删除、删除是否需要确认属于知识问答，不是删除操作；否定删除也不是删除。"
@@ -369,12 +397,21 @@ def plan_intents(
             timeout_seconds=timeout_seconds,
             tracing_enabled=tracing_enabled,
         )
-        return _validate_model_plan(
+        validated = _validate_model_plan(
             content,
             model_plan,
             has_targets=has_targets,
             phase=phase,
         )
+        if (
+            len(fallback.operations) == len(validated.operations) == 1
+            and fallback.operations[0].intent in {"CASE_DEDUP", "COVERAGE_ANALYZE"}
+            and validated.operations[0].intent == "CASE_REVIEW"
+        ):
+            # Preserve explicit analysis intent when the model picks a generic review.
+            validated.operations[0].intent = fallback.operations[0].intent
+            validated.operations[0].action = fallback.operations[0].action
+        return validated
     except Exception as error:
         logger.warning("agent_router_failed", exc_info=error)
         reliable_fallback = all(

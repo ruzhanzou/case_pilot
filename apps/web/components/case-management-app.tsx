@@ -443,12 +443,11 @@ export function CaseManagementApp({
   };
 
   const cancelLandingOperation = async (operationId: string) => {
-    if (!landingConversation) return;
     setSaving(true);
     setError("");
     try {
       await cancelConversationOperation(operationId);
-      setLandingConversation(await getConversation(landingConversation.id));
+      if (landingConversation) setLandingConversation(await getConversation(landingConversation.id));
       setHistoryRevision((current) => current + 1);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : pick("Failed to cancel operation", "取消操作失败"));

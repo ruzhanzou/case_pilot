@@ -84,7 +84,7 @@ def test_asset_operations_expose_the_acceptance_action_contract() -> None:
     assert expected_actions == DEFAULT_ACTIONS
 
 
-def test_four_operations_are_limited_to_three_without_reordering() -> None:
+def test_four_operations_preserve_all_requests_without_reordering() -> None:
     plan = deterministic_plan(
         "先解释等价类；再查询用例；然后修改当前用例；最后删除旧用例",
         lambda clause: (
@@ -103,6 +103,7 @@ def test_four_operations_are_limited_to_three_without_reordering() -> None:
         "KNOWLEDGE_QA",
         "CASE_QUERY",
         "CASE_MODIFY",
+        "CASE_DELETE",
     ]
 
 

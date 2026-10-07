@@ -876,7 +876,7 @@ export function CaseMindMap({
       },
     });
 
-    if (!moduleEntries.length) {
+    if (!moduleEntries.length && !notes.some((note) => note.kind === "module")) {
       nodes.push({
         id: "empty-module",
         type: "casePilotNode",
@@ -1071,7 +1071,11 @@ export function CaseMindMap({
     }
 
     // Resolve text parents in multiple passes so persisted order does not matter.
-    const pending = [...notes];
+    const mergedModules = new Map(notes
+      .filter((note) => note.kind === "module" && branches.has(note.module))
+      .map((note) => [note.id, moduleNodeId(note.module)]));
+    const pending = notes.filter((note) => !mergedModules.has(note.id))
+      .map((note) => ({ ...note, parent_id: mergedModules.get(note.parent_id) ?? note.parent_id }));
     while (pending.length) {
       const index = pending.findIndex((note) => nodes.some((node) => node.id === note.parent_id));
       const [note] = pending.splice(Math.max(0, index), 1);
@@ -1081,7 +1085,7 @@ export function CaseMindMap({
         id: note.id, type: "casePilotNode",
         position: { x: parent.position.x + 330, y: nextY + 80 },
         data: {
-          kind: "text", title: note.text, eyebrow: pick("Text", "文本"), module: note.module,
+          kind: note.kind === "module" ? "module" : "text", title: note.text, eyebrow: note.kind === "module" ? pick("No test cases", "暂无用例") : pick("Text", "文本"), module: note.module,
           onCreateCase: startCreateCase, onEditCase: () => undefined,
         },
       });

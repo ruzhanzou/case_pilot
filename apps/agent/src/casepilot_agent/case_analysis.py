@@ -2,8 +2,9 @@
 
 import json
 from collections.abc import Iterator
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class CaseFinding(BaseModel):
@@ -12,6 +13,17 @@ class CaseFinding(BaseModel):
     case_refs: list[str] = Field(min_length=1)
     evidence: str
     recommendation: str
+    basis: Literal["requirement", "potential"] = "potential"
+    relationship: Literal["duplicate", "overlap", "contains", "quality", "coverage"] | None = None
+    unique_coverage: list[str] = Field(default_factory=list)
+    requirement_refs: list[str] = Field(default_factory=list)
+
+
+    @model_validator(mode="after")
+    def require_evidence_for_confirmed_gap(self):
+        if self.basis == "requirement" and not self.requirement_refs:
+            self.basis = "potential"
+        return self
 
 
 class CaseAnalysisReport(BaseModel):

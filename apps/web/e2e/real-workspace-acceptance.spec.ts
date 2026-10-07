@@ -77,7 +77,7 @@ test('real chat → review → mind map → confirmed changes → generation', a
   await expect(node).toBeVisible();
   await expect(node).toHaveClass(/selected/);
   await page.screenshot({ path: `${evidence}/01-review-map.png`, fullPage: true });
-  await page.getByRole('button', { name: /Review plan|检查计划/, exact: true }).click();
+  await page.getByRole('button', { name: /Case workspace|用例工作区/, exact: true }).click();
   const finding = plan.locator('.case-review-plan__finding').filter({ has: page.getByRole('radio') }).first();
   await finding.getByRole('radio', { name: cases[0].case_key, exact: true }).check();
   await finding.getByRole('button', { name: /Preview changes|预览变更/ }).click();

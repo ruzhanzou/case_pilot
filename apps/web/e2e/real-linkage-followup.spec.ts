@@ -26,7 +26,7 @@ test('real review selection survives navigation; map target drives chat; QA and 
   await plan.getByRole('radio', { name: first.case_key, exact: true }).check();
   await plan.getByRole('button', { name: first.case_key, exact: true }).first().click();
   await expect(page.locator(`[data-id="case-${first.id}"]`)).toHaveClass(/selected/);
-  await page.getByRole('button', { name: /Review plan|检查计划/, exact: true }).click();
+  await page.getByRole('button', { name: /Case workspace|用例工作区/, exact: true }).click();
   await expect(plan.getByRole('radio', { name: first.case_key, exact: true })).toBeChecked();
   records.push({ check: 'review-choice-preserved-after-map-navigation', passed: true }); save();
   await page.getByRole('button', { name: /Mind map|用例脑图/, exact: true }).click();

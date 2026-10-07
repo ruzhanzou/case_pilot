@@ -31,6 +31,7 @@ from casepilot_api.case_scope import (
     common_module_path,
     filter_priority,
     module_contains,
+    requested_new_module,
     resolve_scope,
 )
 from casepilot_api.config import get_settings
@@ -75,6 +76,7 @@ from casepilot_api.schemas import (
     GenerationAnswersRequest,
     IntentConfirmationRequest,
     KnowledgeUploadView,
+    TaskReviewDecisionUpdate,
     TestBriefConfirmRequest,
     TestBriefContent,
     TestBriefCreate,
@@ -325,6 +327,9 @@ def _extract_explicit_test_object(content: str) -> str:
     normalized = " ".join(content.strip().split())
     if not normalized or any(term in normalized for term in UNKNOWN_TEST_OBJECT_TERMS):
         return ""
+    module = requested_new_module(normalized)
+    if module and module != "空":
+        return f"{module}模块"
 
     candidate = ""
     for pattern in (
@@ -352,6 +357,7 @@ def _extract_explicit_test_object(content: str) -> str:
     candidate = candidate.strip(" ：:，,。；;“”\"'的")
     if (
         len(candidate) < 2
+        or re.fullmatch(r"\d+\s*(?:条|个)?", candidate)
         or candidate in {"测试", "用例", "功能", "系统", "产品"}
         or any(term in candidate for term in UNKNOWN_TEST_OBJECT_TERMS)
     ):
@@ -492,6 +498,14 @@ def classify_intent(
     negated_analysis = re.search(r"(?:不要|别|暂不|无需).{0,8}(?:检查|评审|分析|查重)", normalized)
     if analysis_intent and not informational and not write_requested and not negated_analysis:
         return analysis_intent, 0.96
+    if (requested_new_module(normalized) and not informational
+        and not NEGATED_ENGLISH_CASE_ACTION.search(normalized) and not re.search(
+        r"(?:不要|别|不必|不用|无需).{0,5}(?:新增|增加|添加|创建)", normalized
+    )):
+        return "CASE_GENERATE", 0.98
+    if (re.search(r"补上.{0,12}(?:缺失|遗漏|场景|用例)", normalized) and not informational
+        and not re.search(r"(?:不要|别|不必|无需|暂不).{0,5}补上", normalized)):
+        return "CASE_GENERATE", 0.96
     if NEGATED_CASE_GENERATION.search(normalized) or NEGATED_ENGLISH_CASE_ACTION.search(normalized):
         return "KNOWLEDGE_QA", 0.96
     if ENGLISH_CASE_QUESTION.search(normalized):
@@ -672,6 +686,8 @@ def _message_view(message: ConversationMessage) -> ConversationMessageView:
 
 def _operation_view(operation: ConversationOperation) -> ConversationOperationView:
     return ConversationOperationView(
+        source_message_id=operation.message_id,
+        completed_at=operation.completed_at,
         id=operation.id,
         sequence=operation.sequence,
         intent=operation.intent,
@@ -724,6 +740,12 @@ def _operation_runtime_status(
     assistant: ConversationMessage,
     action: dict[str, Any],
 ) -> None:
+    assistant.message_metadata = {
+        **dict(assistant.message_metadata),
+        "operation_id": str(operation.id),
+        "source_message_id": str(operation.message_id),
+        "source_operation_id": dict(operation.payload).get("source_operation_id"),
+    }
     if assistant.status == "completed" and not action.get("job_id"):
         operation.status = "completed"
         operation.completed_at = datetime.now(UTC)
@@ -831,12 +853,17 @@ def _conversation_view(db: Session, conversation: Conversation) -> ConversationV
             )
         )
     )
+    operation_history = list(operations)
     if operations:
         active_operation = next(
             (
                 item
-                for item in operations
-                if item.status not in {"completed", "failed", "cancelled", "skipped"}
+                for item in sorted(
+                    operations,
+                    key=lambda item: (item.status == "running", item.created_at, item.sequence),
+                    reverse=True,
+                )
+                if item.status == "running"
             ),
             None,
         )
@@ -924,6 +951,12 @@ def _conversation_view(db: Session, conversation: Conversation) -> ConversationV
         candidates=[_candidate_view(candidate) for candidate in candidates],
         workflow_runs=workflow_runs,
         operation_plan=_operation_plan_view(operations),
+        operation_history=[_operation_view(item) for item in operation_history],
+        candidate_history=[_candidate_view(item) for item in db.scalars(
+            select(WorkspaceCandidate)
+            .where(WorkspaceCandidate.conversation_id == conversation.id)
+            .order_by(WorkspaceCandidate.created_at, WorkspaceCandidate.position)
+        )],
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
     )
@@ -1011,6 +1044,22 @@ def recover_terminal_workspace_job(db: Session, conversation: Conversation) -> N
     conversation.updated_at = datetime.now(UTC)
     db.commit()
     db.refresh(conversation)
+
+
+def _require_idle_conversation(db: Session, conversation: Conversation) -> None:
+    db.refresh(conversation, with_for_update=True)
+    active_job = db.scalar(
+        select(GenerationJob.id)
+        .join(ConversationMessage, ConversationMessage.related_job_id == GenerationJob.id)
+        .where(
+            ConversationMessage.conversation_id == conversation.id,
+            GenerationJob.status.in_(["queued", "running"]),
+        )
+        .limit(1)
+    )
+    if active_job is not None:
+        raise HTTPException(status_code=409, detail="conversation_task_running")
+
 
 
 def _change_set_view(change_set: CaseChangeSet) -> CaseChangeSetView:
@@ -1355,7 +1404,42 @@ def _start_action(
         conversation.updated_at = datetime.now(UTC)
         db.flush()
         return assistant, {"type": "small_talk"}, None
-    if confirmed_targets:
+    new_module = requested_new_module(payload.content)
+    if new_module and re.search(
+        r"空模块|(?:只|仅)(?:需|要)?(?:创建|新增|增加|添加).{0,20}模块|不生成.{0,8}用例",
+        payload.content,
+    ):
+        if new_module == "空":
+            assistant = _new_assistant_message(
+                conversation.id, content="请提供新模块名称。", intent=intent,
+                confidence=confidence, status="awaiting_clarification", target_case_ids=[],
+            )
+            db.add(assistant)
+            db.flush()
+            return assistant, {"type": "clarification"}, None
+        collection = ensure_collection(db, account, conversation.collection_id)
+        db.refresh(collection, with_for_update=True)
+        notes = list(collection.mind_map_notes or [])
+        if not any(
+            item.get("kind") == "module" and item.get("module") == new_module for item in notes
+        ):
+            collection.mind_map_notes = [*notes, {
+                "id": f"note-{uuid4().hex}", "kind": "module",
+                "parent_id": "collection-root", "text": new_module, "module": new_module,
+            }]
+        if operation_id:
+            operation = db.get(ConversationOperation, operation_id)
+            operation.payload = {**dict(operation.payload), "action": "MODULE_CREATE"}
+            operation.result = {"module_path": new_module}
+        assistant = _new_assistant_message(
+            conversation.id, content=f"已创建模块「{new_module}」，可继续为该模块生成用例。",
+            intent=intent, confidence=confidence, status="completed", target_case_ids=[],
+            metadata={"action": "module_created", "module_path": new_module},
+        )
+        db.add(assistant)
+        db.flush()
+        return assistant, {"type": "module_created", "module_path": new_module}, None
+    if confirmed_targets or (payload.source_operation_id and payload.targets):
         payload, scope_error = _expand_conversation_targets(db, conversation, payload), None
     else:
         payload, scope_error = _resolve_action_scope(db, conversation, payload, intent)
@@ -1444,6 +1528,27 @@ def _start_action(
                     ).model_dump(mode="json"),
                 }
             )
+
+    if operation_id:
+        operation = db.get(ConversationOperation, operation_id)
+        if operation is not None:
+            operation.result = {
+                **dict(operation.result),
+                "scope_versions": {
+                    item["ref"]: item["snapshot"].get("current_revision_id")
+                    for item in case_context
+                    if item["target_type"] == "formal"
+                },
+                "scope_modules": sorted(
+                    {str(item["snapshot"].get("module") or "") for item in case_context}
+                ),
+                "scope_count": len(case_context),
+                **(
+                    {"query_cases": [item["snapshot"] for item in case_context]}
+                    if intent == "CASE_QUERY"
+                    else {}
+                ),
+            }
 
     if (
         intent == "KNOWLEDGE_QA"
@@ -1584,7 +1689,9 @@ def _start_action(
         "conversation_operation_id": str(operation_id) if operation_id else None,
     }
     if intent == "CASE_GENERATE":
-        input_payload["target_module_path"] = common_module_path(
+        input_payload["target_module_path"] = requested_new_module(
+            payload.content
+        ) or requested_new_module(user_message.content) or common_module_path(
             [str(item["snapshot"].get("module") or "") for item in case_context]
         )
 
@@ -1651,6 +1758,27 @@ def _start_action(
     db.flush()
 
     if intent == "CASE_GENERATE":
+        previous_generations = db.scalars(
+            select(ConversationOperation).where(
+                ConversationOperation.conversation_id == conversation.id,
+                ConversationOperation.intent == "CASE_GENERATE",
+                ConversationOperation.status == "awaiting_confirmation",
+                ConversationOperation.id != operation_id,
+            )
+        ).all()
+        for previous in previous_generations:
+            previous.status = "cancelled"
+            previous.completed_at = datetime.now(UTC)
+            previous.result = {
+                **dict(previous.result),
+                "discarded": True,
+                "superseded_by": str(operation_id) if operation_id else None,
+            }
+            db.execute(update(ConversationOperation).where(
+                ConversationOperation.message_id == previous.message_id,
+                ConversationOperation.sequence > previous.sequence,
+                ConversationOperation.status == "queued",
+            ).values(status="cancelled", completed_at=datetime.now(UTC)))
         db.execute(
             update(WorkspaceCandidate)
             .where(
@@ -1801,7 +1929,7 @@ def create_conversation(
             "use_space_knowledge": payload.use_space_knowledge,
             "phase": "idle",
             "draft_text": "",
-            "active_view": "list",
+            "active_view": "plan",
             "search_query": "",
             "filters": {},
             "chat_width": 360,
@@ -1826,6 +1954,7 @@ def get_or_create_workspace(
     db: DbSession,
 ) -> ConversationView:
     collection = ensure_collection(db, account, collection_id)
+    db.refresh(collection, with_for_update=True)
     existing = db.scalar(
         select(Conversation)
         .where(
@@ -2234,6 +2363,7 @@ def confirm_test_brief(
     db: DbSession,
 ) -> ConversationTurnView:
     conversation = _ensure_conversation(db, account.id, conversation_id)
+    _require_idle_conversation(db, conversation)
     if not settings.is_agent_model_allowed(payload.model_id):
         raise HTTPException(status_code=422, detail="generation_model_not_configured")
     brief = db.scalar(
@@ -2333,6 +2463,11 @@ def confirm_test_brief(
         )
     )
     prompt = str(brief_content.get("test_objective") or "生成测试用例")
+    # Preserve explicit quantities and scope that a brief summary may omit.
+    if active_operation:
+        original_request = db.get(ConversationMessage, active_operation.message_id)
+        if original_request:
+            prompt = original_request.content[:8000]
     job = GenerationJob(
         space_id=conversation.space_id,
         account_id=account.id,
@@ -2501,6 +2636,7 @@ def commit_workspace_candidates(
     db: DbSession,
 ) -> list[TestCaseView]:
     conversation = _ensure_conversation(db, account.id, conversation_id)
+    _require_idle_conversation(db, conversation)
     if conversation.collection_id is None:
         raise HTTPException(status_code=409, detail="conversation_collection_required")
     query = select(WorkspaceCandidate).where(
@@ -2572,6 +2708,7 @@ def commit_workspace_candidates(
         if operation is not None:
             operation.status = "completed"
             operation.result = {
+                **dict(operation.result),
                 "candidate_ids": [str(item.id) for item in candidates],
                 "test_case_ids": [str(item.id) for item in created],
             }
@@ -2587,7 +2724,10 @@ def commit_workspace_candidates(
             status="completed",
             target_case_ids=[str(item.id) for item in created],
             citations=[],
-            message_metadata={"action": "candidates_committed"},
+            message_metadata={
+                "action": "candidates_committed",
+                "operation_id": str(active_operation_id) if active_operation_id else None,
+            },
         )
     )
     db.commit()
@@ -2681,6 +2821,8 @@ def _expand_conversation_targets(
             if committed_ids:
                 case_ids.extend(UUID(str(item)) for item in committed_ids)
                 continue
+            if source.intent in ANALYSIS_INTENTS | {"CASE_QUERY"}:
+                case_ids.extend(UUID(str(item)) for item in dict(source.target).get("case_ids", []))
             result_ids = [
                 UUID(str(item)) for item in dict(source.result).get("candidate_ids", [])
             ]
@@ -2799,6 +2941,13 @@ def send_message(
     db: DbSession,
 ) -> ConversationTurnView:
     conversation = _ensure_conversation(db, account.id, conversation_id)
+    _require_idle_conversation(db, conversation)
+    if payload.source_operation_id:
+        source_operation = db.get(ConversationOperation, payload.source_operation_id)
+        if source_operation is None or source_operation.conversation_id != conversation.id:
+            raise HTTPException(status_code=422, detail="previous_result_not_found")
+        if source_operation.status not in {"completed", "awaiting_confirmation"}:
+            raise HTTPException(status_code=409, detail="source_task_not_ready")
     context = dict(conversation.context)
     payload = payload.model_copy(
         update={
@@ -2932,26 +3081,23 @@ def send_message(
             confidence=float(draft["confidence"]),
             status=(
                 "awaiting_intent"
-                if needs_intent_confirmation(
-                    str(draft["intent"]), float(draft["confidence"])
-                )
+                if needs_intent_confirmation(str(draft["intent"]), float(draft["confidence"]))
                 else "queued"
             ),
             target={
                 "kind": draft.get("target_kind", "none"),
-                "selectors": [
-                    item.model_dump(mode="json") for item in payload.targets
-                ],
+                "selectors": [item.model_dump(mode="json") for item in payload.targets],
                 "case_ids": [str(item) for item in payload.target_case_ids],
-                "candidate_refs": [
-                    item.ref for item in payload.target_candidate_snapshots
-                ],
+                "candidate_refs": [item.ref for item in payload.target_candidate_snapshots],
             },
             payload={
                 "instruction": str(draft["instruction"]),
                 "action": str(draft.get("action") or ""),
                 "reason_codes": list(draft.get("reason_codes") or []),
                 "depends_on": draft.get("depends_on"),
+                "source_operation_id": str(payload.source_operation_id)
+                if payload.source_operation_id
+                else None,
             },
             requires_confirmation=bool(draft.get("requires_confirmation")),
         )
@@ -3023,6 +3169,7 @@ def confirm_message_intent(
     if user_message is None or user_message.role != "user":
         raise HTTPException(status_code=404, detail="conversation_message_not_found")
     conversation = _ensure_conversation(db, account.id, user_message.conversation_id)
+    _require_idle_conversation(db, conversation)
     if user_message.status != "awaiting_intent":
         raise HTTPException(status_code=409, detail="message_not_awaiting_intent")
     request_payload = user_message.message_metadata.get("request", {})
@@ -3221,7 +3368,7 @@ def continue_operation_in_new_conversation(
             "use_space_knowledge": True,
             "phase": "maintenance",
             "draft_text": instruction,
-            "active_view": "list",
+            "active_view": "plan",
             "search_query": "",
             "filters": {},
             "chat_width": 360,
@@ -3244,6 +3391,38 @@ def continue_operation_in_new_conversation(
     db.commit()
     db.refresh(conversation)
     return _conversation_view(db, conversation)
+
+
+@router.patch(
+    "/conversation-operations/{operation_id}/review", response_model=ConversationOperationView
+)
+def update_task_review(
+    operation_id: UUID,
+    payload: TaskReviewDecisionUpdate,
+    account: CurrentAccount,
+    db: DbSession,
+) -> ConversationOperationView:
+    operation = db.scalar(select(ConversationOperation).where(
+        ConversationOperation.id == operation_id,
+    ).with_for_update())
+    if operation is None:
+        raise HTTPException(status_code=404, detail="conversation_operation_not_found")
+    _ensure_conversation(db, account.id, operation.conversation_id)
+    if operation.status != "completed" or operation.intent not in ANALYSIS_INTENTS:
+        raise HTTPException(status_code=409, detail="source_task_not_ready")
+    findings = dict(operation.result).get("analysis_report", {}).get("findings", [])
+    indexes = {*payload.selected, *payload.ignored, *payload.keep_by_finding}
+    if any(index < 0 or index >= len(findings) for index in indexes):
+        raise HTTPException(status_code=422, detail="invalid_finding_selection")
+    for index, ref in payload.keep_by_finding.items():
+        if ref not in findings[index].get("case_refs", []):
+            raise HTTPException(status_code=422, detail="invalid_finding_selection")
+    operation.result = {
+        **dict(operation.result),
+        "review_decisions": payload.model_dump(mode="json"),
+    }
+    db.commit()
+    return _operation_view(operation)
 
 
 @router.post(
@@ -3270,6 +3449,39 @@ def cancel_conversation_operation(
             status_code=409,
             detail="conversation_operation_not_cancellable",
         )
+    if operation.intent == "CASE_GENERATE" and operation.status == "awaiting_confirmation":
+        db.execute(update(WorkspaceCandidate).where(
+            WorkspaceCandidate.conversation_id == operation.conversation_id,
+            WorkspaceCandidate.generation_job_id == operation.related_job_id,
+            WorkspaceCandidate.status == "candidate",
+        ).values(status="excluded"))
+        db.execute(update(WorkspaceTestBrief).where(
+            WorkspaceTestBrief.source_operation_id == operation.id,
+            WorkspaceTestBrief.status.in_(["draft", "confirmed"]),
+        ).values(status="superseded"))
+        operation.result = {**dict(operation.result), "discarded": True}
+        conversation = db.get(Conversation, operation.conversation_id)
+        if conversation and str(dict(conversation.context).get("active_operation_id")) == str(
+            operation.id
+        ):
+            conversation.context = {**dict(conversation.context), "active_operation_id": None,
+                                    "active_job_id": None, "phase": "maintenance"}
+        db.add(_new_assistant_message(
+            operation.conversation_id, content="已放弃本次生成方案，候选结果保留在任务历史中。",
+            intent=operation.intent, confidence=1.0, status="completed", target_case_ids=[],
+            metadata={"operation_id": str(operation.id), "action": "rejected"},
+        ))
+    else:
+        db.add(_new_assistant_message(
+            operation.conversation_id, content="任务已结束，可继续对话或发起新任务。",
+            intent=operation.intent, confidence=1.0, status="completed", target_case_ids=[],
+            metadata={"operation_id": str(operation.id), "action": "cancelled"},
+        ))
+    db.execute(update(ConversationOperation).where(
+        ConversationOperation.message_id == operation.message_id,
+        ConversationOperation.sequence > operation.sequence,
+        ConversationOperation.status == "queued",
+    ).values(status="cancelled", completed_at=datetime.now(UTC)))
     operation.status = "cancelled"
     operation.completed_at = datetime.now(UTC)
     db.commit()
@@ -3296,6 +3508,7 @@ def resume_conversation_operation(
     if operation is None:
         raise HTTPException(status_code=404, detail="conversation_operation_not_found")
     conversation = _ensure_conversation(db, account.id, operation.conversation_id)
+    _require_idle_conversation(db, conversation)
     if operation.status not in {
         "queued",
         "awaiting_intent",
@@ -3359,10 +3572,29 @@ def resume_conversation_operation(
                 source_operation_id=source.id,
             )
         ]
+    predecessor_context = ""
+    if predecessors:
+        preferred = [item for item in predecessors if item.intent == (
+            "COVERAGE_ANALYZE" if operation.intent == "CASE_GENERATE" else "CASE_REVIEW"
+        )]
+        previous = max(preferred or predecessors, key=lambda item: item.sequence)
+        report = dict(previous.result).get("analysis_report")
+        if report and operation.intent in {"CASE_GENERATE", "CASE_MODIFY"}:
+            predecessor_context = (
+                "\n依据前置检查结果处理以下建议（保持需求依据，不编造业务规则）：\n"
+                + json.dumps(report, ensure_ascii=False)
+            )
+            operation.payload = {**dict(operation.payload), "source_operation_id": str(previous.id)}
+            if not resume_targets:
+                resume_targets = [
+                    ConversationTarget(kind="previous_result", source_operation_id=previous.id)
+                ]
     request_data = dict(user_message.message_metadata).get("request", {})
     request_data.update(
         {
-            "content": str(operation.payload.get("instruction") or user_message.content),
+            "content": str(operation.payload.get("instruction") or user_message.content)
+            + ("\n补充说明：" + supplement.content if supplement.content else "")
+            + predecessor_context[:5000],
             "intent_override": operation.intent,
             "targets": [item.model_dump(mode="json") for item in resume_targets],
             "target_case_ids": [str(item) for item in supplement.target_case_ids]
@@ -3372,6 +3604,15 @@ def resume_conversation_operation(
             ],
         }
     )
+    request_data["content"] = request_data["content"][:8000]
+    if supplement.content:
+        db.add(ConversationMessage(
+            conversation_id=conversation.id, role="user", content=supplement.content,
+            intent=operation.intent, intent_confidence=1.0, status="completed",
+            target_case_ids=[], citations=[],
+            message_metadata={"operation_id": str(operation.id), "clarification": True},
+        ))
+        operation.payload = {**dict(operation.payload), "instruction": request_data["content"]}
     message_input = ConversationMessageCreate.model_validate(request_data)
     message_input = _expand_conversation_targets(db, conversation, message_input)
     if supplement.intent is not None:
@@ -3389,7 +3630,8 @@ def resume_conversation_operation(
         operation.confidence,
         operation.id,
         confirmed_targets=bool(
-            supplement.targets
+            resume_targets
+            or supplement.targets
             or supplement.target_case_ids
             or supplement.target_candidate_snapshots
         ),
@@ -3450,6 +3692,7 @@ def retry_conversation_message(
         account.id,
         failed_message.conversation_id,
     )
+    _require_idle_conversation(db, conversation)
     failed_job = db.get(GenerationJob, failed_message.related_job_id)
     if failed_job is None:
         raise HTTPException(status_code=404, detail="generation_job_not_found")
@@ -3637,6 +3880,7 @@ def apply_change_set(
         )
         if (
             test_case is None
+            or test_case.deleted_at is not None
             or str(test_case.current_revision_id) != item["base_revision_id"]
         ):
             change_set.status = "conflict"
@@ -3774,7 +4018,14 @@ def apply_change_set(
                 },
             )
             created_cases.append(test_case)
-        updated_items.append({**item, "status": "applied", "applied_snapshot": merged})
+        updated_items.append(
+            {
+                **item,
+                "status": "applied",
+                "applied_snapshot": merged,
+                "accepted_fields": sorted(accepted),
+            }
+        )
 
     change_set.items = updated_items
     change_set.status = "applied"
@@ -3787,8 +4038,11 @@ def apply_change_set(
     if operation is not None:
         operation.status = "completed"
         operation.result = {
+            **dict(operation.result),
             "change_set_id": str(change_set.id),
-            "updated_refs": [str(item["ref"]) for item in updated_items if item["status"] == "applied"],
+            "updated_refs": [
+                str(item["ref"]) for item in updated_items if item["status"] == "applied"
+            ],
         }
         operation.completed_at = datetime.now(UTC)
     deleted_count = sum(
@@ -3819,6 +4073,7 @@ def apply_change_set(
             message_metadata={
                 "change_set_id": str(change_set.id),
                 "action": "applied",
+                "operation_id": str(operation.id) if operation else None,
             },
         )
     )
@@ -3874,6 +4129,7 @@ def reject_change_set(
                 message_metadata={
                     "change_set_id": str(change_set.id),
                     "action": "rejected",
+                    "operation_id": str(operation.id) if operation else None,
                 },
             )
         )

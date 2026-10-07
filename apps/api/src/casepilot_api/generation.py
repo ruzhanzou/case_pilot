@@ -1,6 +1,7 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -16,6 +17,7 @@ from casepilot_api.config import get_settings
 from casepilot_api.database import get_db_session
 from casepilot_api.models import (
     Account,
+    CaseChangeSet,
     CaseCollection,
     Conversation,
     ConversationMessage,
@@ -291,6 +293,35 @@ def retry_generation(
     status = job.status.value if hasattr(job.status, "value") else str(job.status)
     if status != "failed":
         raise HTTPException(status_code=409, detail="only_failed_generation_can_retry")
+    if job.operation != "generate":
+        raise HTTPException(status_code=409, detail="only_generation_job_can_retry")
+    conversation_id = job.input_payload.get("conversation_id")
+    if conversation_id:
+        from casepilot_api.conversations import _require_idle_conversation
+
+        conversation = db.scalar(select(Conversation).where(
+            Conversation.id == UUID(str(conversation_id)),
+        ).with_for_update())
+        if conversation is not None:
+            _require_idle_conversation(db, conversation)
+            operation_id = job.input_payload.get("conversation_operation_id")
+            operation = (
+                db.get(ConversationOperation, UUID(str(operation_id))) if operation_id else None
+            )
+            active_job_id = conversation.context.get("active_job_id")
+            active_operation_id = conversation.context.get("active_operation_id")
+            if (
+                (active_job_id and str(active_job_id) != str(job.id))
+                or (active_operation_id and str(active_operation_id) != str(operation_id))
+                or (operation and operation.related_job_id != job.id)
+                or conversation.context.get("confirmed_brief_version")
+                != job.input_payload.get("confirmed_test_brief_version")
+            ):
+                raise HTTPException(status_code=409, detail="retry_context_mismatch")
+            conversation.context = {
+                **dict(conversation.context), "phase": "generating", "active_job_id": str(job.id),
+                "active_operation_id": str(operation_id) if operation_id else None,
+            }
     job.status = "queued"
     job.stage = "queued"
     job.error_code = None
@@ -356,10 +387,26 @@ def cancel_generation(
         .where(ConversationMessage.related_job_id == job.id)
         .values(
             status="cancelled",
-            content="已停止生成。已确认的结构化测试说明仍保留，可随时重新开始。",
-            message_metadata={"cancelled": True},
+            content="任务已结束，未应用的结果不会写入正式用例。可继续对话或重新发起任务。",
+            message_metadata=ConversationMessage.message_metadata.op("||")({"cancelled": True}),
         )
     )
+    operation = db.scalar(select(ConversationOperation).where(
+        ConversationOperation.related_job_id == job.id,
+    ))
+    if operation is not None:
+        operation.status = "cancelled"
+        operation.completed_at = datetime.now(UTC)
+        if operation.related_change_set_id:
+            db.execute(update(CaseChangeSet).where(
+                CaseChangeSet.id == operation.related_change_set_id,
+                CaseChangeSet.status.not_in(["applied", "rejected"]),
+            ).values(status="rejected"))
+        db.execute(update(ConversationOperation).where(
+            ConversationOperation.message_id == operation.message_id,
+            ConversationOperation.sequence > operation.sequence,
+            ConversationOperation.status == "queued",
+        ).values(status="cancelled", completed_at=datetime.now(UTC)))
     conversation_id = job.input_payload.get("conversation_id")
     if conversation_id:
         conversation = db.get(Conversation, UUID(str(conversation_id)))
@@ -372,6 +419,7 @@ def cancel_generation(
                     else "idle"
                 ),
                 "active_job_id": None,
+                "active_operation_id": None,
             }
     db.commit()
     task_client.control.revoke(str(job.id), terminate=False)

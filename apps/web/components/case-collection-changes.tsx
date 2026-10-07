@@ -1,91 +1,48 @@
 "use client";
 
-import type { CaseChangeSetDto, ConversationOperationPlanDto, TestCaseDto } from "@/lib/casepilot-api";
+import type { CaseChangeSetDto, TestCaseDto } from "@/lib/casepilot-api";
 import { useI18n } from "@/lib/i18n";
 
 type Props = {
   cases: TestCaseDto[];
-  operations: ConversationOperationPlanDto | null;
-  phase: string;
-  candidateCount: number;
-  includedCount: number;
-  selectedCase: TestCaseDto | null;
-  changeSet: CaseChangeSetDto | null;
+  changeSet: CaseChangeSetDto;
   acceptedFields: Record<string, string[]>;
   busy: boolean;
-  onCreate: () => void;
-  onViewBrief: () => void;
-  onViewCandidates: () => void;
-  onCommitCandidates: () => Promise<void>;
-  onEdit: (testCase: TestCaseDto) => void;
-  onPrepareDelete: (caseIds: string[]) => Promise<void>;
   onToggleField: (ref: string, field: string) => void;
   onApply: () => Promise<void>;
   onReject: () => Promise<void>;
 };
 
-const kinds = ["CASE_GENERATE", "CASE_MODIFY", "CASE_DELETE"] as const;
-
-export function CaseCollectionChanges({ cases, operations, phase, candidateCount, includedCount, selectedCase, changeSet, acceptedFields, busy, onCreate, onViewBrief, onViewCandidates, onCommitCandidates, onEdit, onPrepareDelete, onToggleField, onApply, onReject }: Props) {
+export function CaseCollectionChanges({ cases, changeSet, acceptedFields, busy, onToggleField, onApply, onReject }: Props) {
   const { pick } = useI18n();
-  const operationByKind = Object.fromEntries(kinds.map((kind) => [kind, operations?.operations.findLast((item) => item.intent === kind)]));
+  const readOnly = changeSet.status !== "ready";
   const isDeleteChange = Boolean(changeSet?.items.some((item) => item.operation === "delete"));
-  const operationStatus = (status: string) => ({
-    queued: pick("Queued", "排队中"), running: pick("In progress", "处理中"),
-    awaiting_confirmation: pick("Awaiting review", "待审阅"),
-    awaiting_target: pick("Select cases", "待选择用例"),
-    awaiting_intent: pick("Confirm intent", "待确认意图"),
-    completed: pick("Completed", "已完成"), failed: pick("Failed", "失败"),
-    cancelled: pick("Cancelled", "已取消"), skipped: pick("Skipped", "已跳过"),
-  }[status] ?? status);
 
   return (
-    <details key={`${changeSet?.id ?? "none"}:${phase}`} open={Boolean(changeSet) || phase === "candidate_review"} className="collection-changes" aria-label={pick("Collection changes", "集合变更")}>
-      <summary className="collection-changes__heading">
-        <div><strong>{pick("Collection changes", "集合变更")}</strong><span>{pick("Create, edit, and delete cases in this workspace", "在工作区处理用例的新增、修改和删除")}</span></div>
-        {changeSet && <span className="collection-changes__badge">{pick("Pending confirmation", "待确认")}</span>}
-      </summary>
-      <div className="collection-changes__cards">
-        <div>
-          <strong>{pick("Add", "新增")}</strong>
-          <small>{operationByKind.CASE_GENERATE ? pick(`Request: ${operationStatus(operationByKind.CASE_GENERATE.status)}`, `请求状态：${operationStatus(operationByKind.CASE_GENERATE.status)}`) : pick("New or generated cases", "新建或生成用例")}</small>
-          {phase === "candidate_review" ? <>
-            <p>{pick(`${includedCount} of ${candidateCount} candidates selected`, `已选择 ${includedCount} / ${candidateCount} 条候选用例`)}</p>
-            <div><button type="button" onClick={onViewCandidates}>{pick("Review candidates", "审阅候选")}</button><button type="button" className="is-primary" disabled={!includedCount || busy} onClick={() => void onCommitCandidates()}>{pick("Add selected", "纳入已选用例")}</button></div>
-          </> : <div><button type="button" disabled={busy || !["maintenance", "idle"].includes(phase)} onClick={onCreate}>{pick("New case", "新建用例")}</button>{["brief_review", "generating"].includes(phase) && <button type="button" onClick={onViewBrief}>{pick("View generation brief", "查看生成说明")}</button>}</div>}
-        </div>
-        <div>
-          <strong>{pick("Edit", "修改")}</strong>
-          <small>{operationByKind.CASE_MODIFY ? pick(`Request: ${operationStatus(operationByKind.CASE_MODIFY.status)}`, `请求状态：${operationStatus(operationByKind.CASE_MODIFY.status)}`) : pick("Edit the selected official case", "修改选中的正式用例")}</small>
-          <p>{selectedCase?.case_key ?? pick("Select a case first", "请先选择用例")}</p>
-          <button type="button" disabled={!selectedCase || phase !== "maintenance" || busy} onClick={() => selectedCase && onEdit(selectedCase)}>{pick("Edit selected case", "编辑选中用例")}</button>
-        </div>
-        <div>
-          <strong>{pick("Delete", "删除")}</strong>
-          <small>{operationByKind.CASE_DELETE ? pick(`Request: ${operationStatus(operationByKind.CASE_DELETE.status)}`, `请求状态：${operationStatus(operationByKind.CASE_DELETE.status)}`) : pick("Deletion requires a separate review", "删除需单独审阅确认")}</small>
-          <p>{selectedCase?.case_key ?? pick("Select a case first", "请先选择用例")}</p>
-          <button type="button" disabled={!selectedCase || phase !== "maintenance" || busy || Boolean(changeSet)} onClick={() => selectedCase && void onPrepareDelete([selectedCase.id])}>{pick("Review deletion", "审阅删除")}</button>
-        </div>
-      </div>
-      {changeSet?.status === "ready" && (
+    <section className="collection-changes collection-changes--inline" aria-label={pick("Review pending case changes", "审阅待确认用例变更")}>
+      <div className="collection-changes__heading"><strong>{readOnly ? pick("Change result", "变更结果") : pick("Pending changes", "待确认变更")}</strong><span className="collection-changes__badge">{changeSet.status === "no_changes" ? pick("No changes needed", "无需修改") : changeSet.status === "applied" ? pick("Applied", "已应用") : changeSet.status === "rejected" ? pick("Not applied", "未应用") : changeSet.status === "conflict" ? pick("Version conflict", "版本冲突") : pick("Pending confirmation", "待确认")}</span></div>
+      {changeSet.status === "conflict" && <p role="alert">{pick("Cases changed after this proposal was created. Start a new rewrite using current versions.", "用例在方案生成后发生了变化，请基于最新版本重新发起改写。")}</p>}
+      {changeSet && (
         <div className="collection-changes__review">
           <div><strong>{isDeleteChange ? pick("Deletion review", "删除审阅") : pick("Edit review", "修改审阅")}</strong><span>{pick(`${changeSet.items.length} affected cases`, `涉及 ${changeSet.items.length} 条用例`)}</span></div>
-          <p>{pick("Check each field before applying. Unchecked changes will be kept as they are.", "请逐项检查；未勾选的变更不会应用。")}</p>
+          <p>{readOnly ? pick("Saved proposal and processing record. Historical results cannot be applied again.", "以下为保存的变更方案与处理记录，历史结果不可重复应用。") : pick("Check each field before applying. Unchecked changes will be kept as they are.", "请逐项检查；未勾选的变更不会应用。")}</p>
           <div className="collection-changes__items">{changeSet.items.map((item) => (
             <details key={item.ref} open={isDeleteChange || changeSet.items.length === 1}>
               <summary>{String(item.base_snapshot.case_key ?? cases.find((testCase) => testCase.id === item.ref)?.case_key ?? item.ref)} · {String(item.base_snapshot.title ?? "")}</summary>
+              {item.reason && <p>{item.reason}</p>}
+              {!item.field_diff.length && <p>{pick("No changes needed for this case.", "此用例无需修改。")}</p>}
               {item.field_diff.map((diff) => (
                 <div className="collection-changes__field" key={diff.field}>
-                  <label><input type="checkbox" disabled={busy} checked={acceptedFields[item.ref]?.includes(diff.field) ?? false} onChange={() => onToggleField(item.ref, diff.field)} />{diff.field === "delete" ? pick("Soft delete this case", "软删除此用例") : diff.field}</label>
+                  <label><input type="checkbox" disabled={busy || readOnly} checked={readOnly ? item.status === "applied" && (!item.accepted_fields || item.accepted_fields.includes(diff.field)) : acceptedFields[item.ref]?.includes(diff.field) ?? false} onChange={() => onToggleField(item.ref, diff.field)} />{diff.field === "delete" ? pick("Soft delete this case", "软删除此用例") : diff.field}</label>
                   {diff.field !== "delete" && <div className="collection-changes__comparison"><div><small>{pick("Before", "原内容")}</small><pre>{formatValue(diff.before)}</pre></div><div><small>{pick("After", "修改后")}</small><pre>{formatValue(diff.after)}</pre></div></div>}
                 </div>
               ))}
             </details>
           ))}</div>
-          <div className="collection-changes__actions"><button type="button" disabled={busy} onClick={() => void onReject()}>{pick("Cancel changes", "取消变更")}</button><button type="button" className={isDeleteChange ? "is-danger" : "is-primary"} disabled={busy || !changeSet.items.some((item) => (acceptedFields[item.ref] ?? []).length > 0)} onClick={() => void onApply()}>{isDeleteChange ? pick("Apply selected deletions", "确认删除已选用例") : pick("Apply selected changes", "应用已选修改")}</button></div>
+          {!readOnly && <div className="collection-changes__actions"><button type="button" disabled={busy} onClick={() => void onReject()}>{pick("Cancel changes", "取消变更")}</button><button type="button" className={isDeleteChange ? "is-danger" : "is-primary"} disabled={busy || !changeSet.items.some((item) => (acceptedFields[item.ref] ?? []).length > 0)} onClick={() => void onApply()}>{isDeleteChange ? pick("Apply selected deletions", "确认删除已选用例") : pick("Apply selected changes", "应用已选修改")}</button></div>}
         </div>
       )}
-    </details>
+    </section>
   );
 }
 
