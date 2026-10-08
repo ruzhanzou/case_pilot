@@ -26,6 +26,32 @@ def common_module_path(modules: list[str]) -> str:
 
 
 def resolve_scope(instruction: str, cases: list[dict]) -> dict | None:
+    """Negative guard clauses must never become additional mutation targets."""
+    guards = re.findall(
+        r"(?:不要|无需|禁止|勿|不)(?:修改|改写|调整|删除|影响)[^，,。；;\n]*",
+        instruction,
+    )
+    positive = instruction
+    for guard in guards:
+        positive = positive.replace(guard, "")
+    scope = _resolve_scope(positive, cases)
+    if not guards:
+        return scope
+    # If an explicit positive scope overlaps a protected case/module, ask for
+    # clarification instead of silently including the protected assets.
+    protected = set()
+    guard_text = " ".join(guards).casefold()
+    for case in cases:
+        aliases = [str(case.get("case_key", "")), str(case.get("title", "")),
+                   *module_parts(str(case.get("module", "")))]
+        if any(alias and alias.casefold() in guard_text for alias in aliases):
+            protected.add(str(case["id"]))
+    if scope is None or protected.intersection(scope.get("ids", [])):
+        return {"ids": [], "modules": [], "error": "请明确需要修改的范围，避免影响要求保留的用例。"}
+    return scope
+
+
+def _resolve_scope(instruction: str, cases: list[dict]) -> dict | None:
     """None means implicit selection; an explicit empty/error scope must not fall back."""
     text = re.sub(r"\s*(?:/|>|::|／)\s*", "/", instruction).casefold()
     if re.search(r"排除|除外|除了|\b(?:except|excluding)\b", text):
@@ -40,7 +66,6 @@ def resolve_scope(instruction: str, cases: list[dict]) -> dict | None:
             )
             for value in [str(case.get("case_key", ""))]
         )
-        or (len(str(case.get("title", ""))) >= 4 and str(case["title"]).casefold() in text)
     ]
     requested_keys = re.findall(
         r"(?<![a-z0-9_-])(?:CP|CASE|TC|MAP\d*)-[A-Za-z0-9-]+(?![a-z0-9_-])", instruction, re.I
@@ -50,6 +75,10 @@ def resolve_scope(instruction: str, cases: list[dict]) -> dict | None:
         return {"ids": [], "modules": [], "error": "未找到指定编号的用例，请检查编号或当前集合。"}
     if keys:
         return {"ids": [str(case["id"]) for case in keys], "modules": []}
+    titles = [case for case in cases if len(str(case.get("title", ""))) >= 4
+              and str(case["title"]).casefold() in text]
+    if titles:
+        return {"ids": [str(case["id"]) for case in titles], "modules": []}
     paths = {str(case.get("module", "")) for case in cases if case.get("module")}
     aliases: dict[str, set[str]] = {}
     for path in paths:
@@ -78,13 +107,21 @@ def resolve_scope(instruction: str, cases: list[dict]) -> dict | None:
         if not any(alias != other and alias in other for other in matched)
     ]
     explicit_modules = re.findall(
-        r"模块[「“\"]([^」”\"]+)[」”\"]|([^\s，,、；;]+?)模块", instruction
+        r'模块[「“"]([^」”"]+)[」”"]|[「“"]([^」”"]+)[」”"]\s*模块'
+        r'|([^\s，,、；;。「」“”"]+?)模块(?![「“"])', instruction
     )
-    for quoted, label in explicit_modules:
-        name = quoted or label
-        if name.endswith(("当前", "整个", "本", "某个")):
+    for after, before, label in explicit_modules:
+        name = after or before or label
+        if name.endswith(("当前", "整个", "本", "某个", "所属")):
             continue
-        if not any(name.casefold().endswith(alias.casefold()) for alias in aliases):
+        if not (after or before):
+            name = re.sub(
+                r"^(?:(?:请|仅|只|先|再|全部|所有|对|把|将|给|和|与|及|的)|"
+                r"(?:修改|改写|重写|调整|删除|查询|查看|检查|评审|分析|生成|编写|补充)|"
+                r"(?:review|modify|rewrite|delete|query|check))+", "", name, flags=re.I,
+            )
+        normalized_name = "/".join(module_parts(name)).casefold()
+        if normalized_name not in {alias.casefold() for alias in aliases}:
             return {
                 "ids": [],
                 "modules": [],
@@ -128,7 +165,8 @@ def filter_priority(instruction: str, cases: list[dict]) -> list[dict]:
 def requested_new_module(instruction: str) -> str:
     """Extract the explicit module name in an additive request, preserving its path."""
     match = re.search(
-        r"(?:新增|增加|添加|创建)(?:一个|个)?\s*[「“\"]?([^，,。；;\n」”\"]+?)模块"
+        r"(?:新增|增加|添加|创建)(?:一个|个)?\s*(?:名为|名称为)?\s*(?:[「“\"]([^」”\"]+)[」”\"]\s*(?:的)?(?:空)?模块"
+        r"|([^，,。；;\n「」“”\"]+?)模块)"
         r"|\b(?:add|create)\s+(?:a\s+)?(?:new\s+)?module\s+[\"']?([\w /-]+)",
         instruction, re.I,
     )

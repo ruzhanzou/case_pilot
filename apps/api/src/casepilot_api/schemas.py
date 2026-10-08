@@ -680,6 +680,7 @@ class ConversationTurnView(BaseModel):
 
 class ChangeSetApplyRequest(BaseModel):
     accepted_fields: dict[str, list[str]] = Field(default_factory=dict)
+    review_refs: list[str] | None = None
 
 
 class CaseChangeSetView(BaseModel):

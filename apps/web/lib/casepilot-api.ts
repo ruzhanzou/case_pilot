@@ -649,6 +649,9 @@ export type CaseChangeItemDto = {
   base_version?: number;
   base_snapshot: Record<string, unknown>;
   proposed_snapshot: Record<string, unknown>;
+  previous_snapshot?: Record<string, unknown> | null;
+  proposal_version?: number;
+  previous_change_set_id?: string | null;
   applied_snapshot?: Record<string, unknown>;
   accepted_fields?: string[];
   field_diff: {
@@ -666,7 +669,7 @@ export type CaseChangeSetDto = {
   generation_job_id: string | null;
   instruction: string;
   scope: string;
-  status: "generating" | "ready" | "applied" | "rejected" | "conflict" | "failed" | "no_changes";
+  status: "generating" | "ready" | "applied" | "rejected" | "conflict" | "failed" | "no_changes" | "superseded";
   items: CaseChangeItemDto[];
   created_at: string;
   applied_at: string | null;
@@ -1405,10 +1408,11 @@ export function getCaseChangeSet(
 export function applyCaseChangeSet(
   changeSetId: string,
   acceptedFields: Record<string, string[]> = {},
+  reviewRefs?: string[],
 ): Promise<CaseChangeSetApplyDto> {
   return apiRequest(`/api/v1/case-change-sets/${changeSetId}/apply`, {
     method: "POST",
-    body: JSON.stringify({ accepted_fields: acceptedFields }),
+    body: JSON.stringify({ accepted_fields: acceptedFields, review_refs: reviewRefs }),
   });
 }
 

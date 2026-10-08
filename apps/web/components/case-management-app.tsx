@@ -20,6 +20,7 @@ import {
   deleteCollection,
   deleteTestCase,
   getCaseProjectNavigation,
+  getCollection,
   getConversation,
   getPlaylistCreationSession,
   listCollections,
@@ -100,6 +101,7 @@ export function CaseManagementApp({
   const router = useRouter();
   const applyingRouteRef = useRef(true);
   const internalRoutePathRef = useRef("");
+  const loadedSpaceRef = useRef("");
   const collectionSelectionRef = useRef(0);
   const routePath = casePilotPath(route);
   const routePage = route.page;
@@ -190,7 +192,9 @@ export function CaseManagementApp({
   };
 
   const refreshCases = async (collectionId: string, preferredId?: string) => {
-    const result = await listTestCases(collectionId);
+    const [result, refreshedCollection] = await Promise.all([
+      listTestCases(collectionId), getCollection(collectionId),
+    ]);
     setCases(result);
     setSelectedCaseId((current) => {
       if (preferredId && result.some((item) => item.id === preferredId)) {
@@ -202,7 +206,7 @@ export function CaseManagementApp({
     setCollections((current) =>
       current.map((collection) =>
         collection.id === collectionId
-          ? { ...collection, case_count: result.length }
+          ? { ...refreshedCollection, case_count: result.length }
           : collection,
       ),
     );
@@ -669,7 +673,7 @@ export function CaseManagementApp({
   }, [activeRoute, router]);
 
   useEffect(() => {
-    if (routePath === internalRoutePathRef.current) {
+    if (routePath === internalRoutePathRef.current && loadedSpaceRef.current === activeSpaceId) {
       internalRoutePathRef.current = "";
       return;
     }
@@ -685,6 +689,7 @@ export function CaseManagementApp({
         ? await listTestCases(initialCollection.id)
         : [];
       if (!active) return;
+      loadedSpaceRef.current = activeSpaceId;
       setCollections(
         availableCollections.map((collection) =>
           collection.id === initialCollection?.id

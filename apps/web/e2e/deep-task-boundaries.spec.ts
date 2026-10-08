@@ -9,7 +9,7 @@ async function setup(page: Page, kind: 'failed' | 'ambiguous' | 'no_changes' | '
   const collection = { id: 'alpha', space_id: 'space', name: '任务边界验收 · 受控场景', lifecycle_status: 'maintenance', case_count: 1, mind_map_notes: [] };
   const snapshot = { title: '登录成功', module: '账号登录', priority: 'P1', case_type: '功能', tags: [], preconditions: [], steps: [{action: '提交凭据', expected: '进入首页'}] };
   let status = kind === 'failed' ? 'failed' : kind === 'ambiguous' ? 'awaiting_intent' : 'completed';
-  let intent = kind === 'ambiguous' ? 'UNRESOLVED' : kind === 'no_changes' ? 'CASE_MODIFY' : 'KNOWLEDGE_QA';
+  let intent = kind === 'ambiguous' ? 'UNRESOLVED' : kind === 'history' ? 'CASE_QUERY' : 'CASE_MODIFY';
   let view = 'plan'; let created = false;
   const operation = () => ({ id: 'operation', source_message_id: 'request', sequence: 0, intent, status, confidence: 1, target: {}, payload: {}, result: kind === 'no_changes' ? { no_changes: true } : {}, related_job_id: null, related_change_set_id: kind === 'no_changes' ? 'change' : null, created_at: '2026-10-07T01:00:00Z' });
   const workspace = () => ({ id: 'workspace', space_id: 'space', collection_id: 'alpha', context: { phase: 'maintenance', active_view: view }, candidates: [], test_briefs: [], workflow_runs: [],
@@ -36,7 +36,7 @@ async function setup(page: Page, kind: 'failed' | 'ambiguous' | 'no_changes' | '
 test('failed task releases input and retries the same history entry', async ({ page }) => {
   const s = await setup(page, 'failed'); await expect(page.locator('.principle-composer textarea')).toBeEnabled();
   await page.screenshot({ path: `${evidence}/01-failed.png`, fullPage: true });
-  await page.getByRole('button', { name: 'Retry task', exact: true }).click();
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
   await expect(page.locator('.case-task-detail > header')).toContainText('Completed');
   await expect(page.locator('.case-task-history > button')).toHaveCount(1); expect(s.calls).toHaveLength(1);
   await page.screenshot({ path: `${evidence}/02-retried.png`, fullPage: true });
@@ -60,7 +60,9 @@ test('no-change result is terminal without an apply action', async ({ page }) =>
 });
 
 test('new task replaces selected historical detail and opens workspace', async ({ page }) => {
-  await setup(page, 'history'); await page.locator('.case-task-history > button').click();
+  await setup(page, 'history');
+  await page.getByRole('button', { name: /Result history/ }).click();
+  await page.locator('.case-task-history > button').click();
   await page.getByRole('button', { name: 'Test case list', exact: true }).click();
   await page.locator('.principle-composer textarea').fill('查询账号登录用例'); await page.locator('.principle-composer button[type="submit"]').click();
   await expect(page.getByRole('button', { name: 'Case workspace', exact: true })).toHaveClass(/is-active/);

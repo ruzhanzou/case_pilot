@@ -18,6 +18,7 @@ from casepilot_agent.contracts import (
     SourceRef,
     StructuredResultT,
     TestCaseBatch,
+    TestCaseDraft,
     TestPointPlan,
 )
 
@@ -45,13 +46,17 @@ def _explicit_rewrite_candidate(
 ) -> RewriteCandidate | None:
     """Apply exact field assignments locally; leave semantic rewrites to the model."""
     instruction = " ".join(request.instruction.strip().split())
+    if re.search(r"不要|无需|禁止|勿|不(?:修改|改写|改动|调整|改变)", instruction):
+        return None
     unsupported_fields = ("前置条件", "执行步骤", "操作步骤", "标签", "自动化", "来源")
     if any(field in instruction for field in unsupported_fields):
         return None
 
     def quoted_value(field_pattern: str) -> str:
         match = re.search(
-            rf"(?:{field_pattern})[^。；;\n]{{0,18}}?[「“\"]([^」”\"]+)[」”\"]",
+            rf"(?:{field_pattern})\s*(?:统一|全部)?\s*"
+            r"(?:改为|改成|修改为|调整为|设置为|设为|替换为|更新为|补充为|为|是|[:：])\s*"
+            r"[「“\"]([^」”\"]+)[」”\"]",
             instruction,
             flags=re.IGNORECASE,
         )
@@ -70,7 +75,10 @@ def _explicit_rewrite_candidate(
         "case_type": quoted_value(r"用例类型|类型"),
         "expected": quoted_value(r"预期结果|校验点"),
     }
-    priority_match = re.search(r"优先级[^。；;\n]{0,12}?(P[012])", instruction, re.I)
+    priority_match = re.search(
+        r"优先级\s*(?:统一|全部)?\s*(?:改为|改成|修改为|调整为|设置为|设为|为|[:：])\s*(P[012])\b",
+        instruction, re.I,
+    )
     values["priority"] = priority_match.group(1).upper() if priority_match else ""
 
     if not any(values.values()):
@@ -97,8 +105,6 @@ def _explicit_rewrite_candidate(
         for field in after
         if before.get(field) != after[field]
     ]
-    if not diff:
-        return None
     return RewriteCandidate(
         proposed=proposed,
         diff=diff,
@@ -385,11 +391,11 @@ def requested_case_count(request: GenerationRequest) -> int | None:
     # A total takes precedence over a per-module quantity in a summarized brief.
     patterns = (
         r"(?:总计|共计|合计|总共|共)\s*([1-9]\d{0,3})\s*条",
-        r"(?:生成|编写|设计|创建|恰好)[^。；;\n]{0,24}?"
-        r"(?<!\d)([1-9]\d{0,3})\s*条\s*(?:测试)?用例",
+        r"(?:生成|编写|设计|创建|新增|增加|补充|恰好)[^。；;\n]{0,24}?"
+        r"(?<!\d)([1-9]\d{0,3})\s*条\s*(?:新(?:的)?\s*)?(?:候选\s*)?(?:测试)?用例",
     )
-    for pattern in patterns:
-        for text in texts:
+    for text in texts:
+        for pattern in patterns:
             match = re.search(pattern, text)
             if match:
                 count = int(match.group(1))
@@ -397,6 +403,30 @@ def requested_case_count(request: GenerationRequest) -> int | None:
                     raise ValueError("单次生成最多支持500条用例，请缩小范围后重试")
                 return count
     return None
+
+
+def rebase_rewrite_candidate(base: TestCaseDraft, candidate: RewriteCandidate) -> RewriteCandidate:
+    """Review cumulative changes against persisted data, including prior draft edits."""
+    before, after = base.model_dump(mode="json"), candidate.proposed.model_dump(mode="json")
+    fields = (
+        "title",
+        "module",
+        "priority",
+        "case_type",
+        "tags",
+        "preconditions",
+        "steps",
+        "source_refs",
+    )
+    return candidate.model_copy(
+        update={
+            "diff": [
+                FieldDiff(field=field, before=before[field], after=after[field])
+                for field in fields
+                if before.get(field) != after.get(field)
+            ]
+        }
+    )
 
 
 class GenerationPipeline:
@@ -464,8 +494,13 @@ class GenerationPipeline:
         for group_index, group in enumerate(point_groups):
             planned = execute_stage(
                 "test_point.generated",
-                "只为本批 feature_points 规划测试点；每个功能点恰好3个：正常、异常、边界。"
-                "标明优先级、类型、可执行性，每个测试点使用 point_id_prefix 开头的唯一ID。"
+                (
+                    f"只为本批 feature_points 规划共不超过{requested_count}个测试点，"
+                    "优先覆盖用户明确指定的场景，不自动增加范围外的边界或异常场景。"
+                    if requested_count and requested_count <= 10
+                    else "只为本批 feature_points 规划测试点；每个功能点恰好3个：正常、异常、边界。"
+                )
+                + "标明优先级、类型、可执行性，每个测试点使用 point_id_prefix 开头的唯一ID。"
                 "覆盖矩阵只保留需求、功能点和测试点编号映射，不输出解释性长文。",
                 {
                     **common,
@@ -563,9 +598,12 @@ class GenerationPipeline:
                 "enhancement.completed",
                 "只返回质量报告要求新增或修改的对象，不得复制无关对象。可新增功能点"
                 "修复引用缺口；除整类对象缺失外，每类最多返回 3 项。定向修复边界、"
-                "异常、权限、状态、并发、幂等和历史缺陷场景。",
+                "异常、权限、状态、并发、幂等和历史缺陷场景。"
+                "如果requested_case_count有值，必须保持用例总数不变，复用现有用例ID，"
+                "通过完善现有用例及测试点关联修复覆盖缺口，不得新增用例。",
                 {
                     "prompt": request.prompt,
+                    "requested_case_count": requested_count,
                     "requirement": enhanced.requirement.model_dump(mode="json"),
                     "current_inventory": {
                         "feature_points": [

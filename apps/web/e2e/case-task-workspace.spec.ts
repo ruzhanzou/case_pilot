@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test.use({ viewport: { width: 1600, height: 1000 } });
 
-test("task history keeps each result and locks messaging during execution", async ({ page }) => {
+test("conversation owns progress and summaries while workstation owns results", async ({ page }, testInfo) => {
   let running = true;
   let sends = 0;
   const collection = { id: "alpha", space_id: "space", name: "Account quality workspace", lifecycle_status: "maintenance", case_count: 0, mind_map_notes: [] };
@@ -43,24 +43,31 @@ test("task history keeps each result and locks messaging during execution", asyn
   const composer = page.getByRole("textbox", { name: "Conversation message", exact: true });
   await expect(composer).toBeDisabled();
   await expect(page.locator(".case-conversation-running")).toBeVisible();
-  await expect(page.locator(".case-task-running")).toContainText("Task is running");
-  await expect(page.locator(".case-task-running")).toContainText("2 batches completed in this stage");
-  await expect(page.locator(".case-task-history > button")).toHaveCount(3);
+  await expect(page.locator(".conversation-task-flow")).toBeVisible();
+  await expect(page.locator(".conversation-task-flow li")).toHaveCount(3);
+  await expect(page.locator(".case-task-workspace .task-workflow")).toHaveCount(0);
+  await expect(page.locator(".case-task-running")).toContainText("Follow progress or provide details in the conversation");
+  await page.getByRole("button", { name: "Result history" }).click();
   await page.locator(".case-task-history > button").filter({ hasText: "Query test cases" }).click();
-  await expect(page.locator(".case-task-result")).toContainText("Found 4 account login cases.");
-  await expect(page.locator(".case-task-result")).not.toContainText("Passwords require");
+  await expect(page.locator(".case-task-result")).toHaveCount(0);
+  await expect(page.locator("#case-message-result-1")).toContainText("Found 4 account login cases.");
   await expect(composer).toBeDisabled();
   expect(sends).toBe(0);
   running = false;
   await page.reload();
   await expect(composer).toBeEnabled();
   await expect(page.locator(".case-conversation-running")).toHaveCount(0);
-  await expect(page.locator(".case-task-result")).toContainText("Coverage review complete");
+  await expect(page.locator(".case-task-result")).toHaveCount(0);
   await expect(page.locator("#case-message-result-3")).toContainText("Coverage review complete");
-  await page.locator(".case-task-history > button").filter({ hasText: "Knowledge Q&A" }).click();
-  await expect(page.locator(".case-task-result")).toContainText("Passwords require at least 8 characters.");
-  await page.locator(".case-task-request summary").click();
-  await page.locator(".case-task-request button").click();
-  await expect(page.locator("#case-message-result-2")).toBeInViewport();
-  await page.screenshot({ path: "../../artifacts/case-task-workspace.png", fullPage: true });
+  await page.getByRole("button", { name: "Result history" }).click();
+  await expect(page.locator(".case-task-history > button").filter({ hasText: "Knowledge Q&A" })).toHaveCount(0);
+  await page.locator(".case-task-history > button").filter({ hasText: "Query test cases" }).click();
+  await expect(page.locator(".case-task-workspace")).not.toContainText("Passwords require at least 8 characters.");
+  await page.getByRole("button", { name: "View request in conversation" }).click();
+  await expect(page.locator("#case-message-request-1")).toBeInViewport();
+  await page.getByRole("button", { name: "Generate cases", exact: true }).click();
+  await expect(composer).toHaveValue("Generate cases for the current collection: ");
+  await expect(composer).toBeFocused();
+  expect(sends).toBe(0);
+  await page.screenshot({ path: testInfo.outputPath("conversation-workstation.png"), fullPage: true });
 });

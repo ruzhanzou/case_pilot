@@ -61,7 +61,7 @@ test("coverage finding starts a linked generation, streams completion, and retai
   await page.getByRole("button", { name: "Case workspace", exact: true }).click();
   await expect(page.locator(".case-task-history > button")).toHaveCount(2);
   await expect(page.getByRole("region", { name: "Candidate results" })).toContainText("Locked account is rejected");
-  await page.getByRole("button", { name: "Source task · Analyze coverage" }).click();
+  await page.getByRole("button", { name: "Source result · Analyze coverage" }).click();
   await expect(page.locator(".case-review-plan")).toContainText("Locked account cannot sign in");
   await page.screenshot({ path: "../../artifacts/case-intent-workflows.png", fullPage: true });
 });
@@ -98,6 +98,7 @@ test("restored task group advances in order and pauses for confirmation", async 
   await expect(page.getByRole("textbox", { name: "Conversation message", exact: true })).toBeEnabled();
   await expect(page.locator(".case-task-history > button")).toHaveCount(4);
   await expect(page.locator(".case-task-history")).toContainText("Waiting for previous task");
+  await page.getByRole("button", { name: /Result history/ }).click();
   await page.locator(".case-task-history > button").filter({ hasText: "Modify test cases" }).click();
   await expect(page.locator(".case-task-detail > header")).toContainText("Awaiting confirmation");
   expect(calls).toHaveLength(3);

@@ -8,6 +8,7 @@ from casepilot_api.case_scope import (
     filter_priority,
     module_contains,
     resolve_scope,
+    requested_new_module,
 )
 from casepilot_api.conversations import classify_intent
 
@@ -34,6 +35,19 @@ CASES = [
         "priority": "P0",
     },
 ]
+
+
+@pytest.mark.parametrize("text,expected", [
+    ('新增「发票管理」模块，并生成10条用例', '发票管理'),
+    ('新增「审计日志」空模块，只创建模块节点，不生成用例', '审计日志'),
+    ('新增名为「审计日志」的空模块，只创建模块节点，不生成用例', '审计日志'),
+    ('创建“订单/发票”模块', '订单/发票'),
+    ('新增退款模块', '退款'),
+    ('新增空模块', '空'),
+    ('create module Invoice', 'Invoice'),
+])
+def test_new_module_names_support_quoted_names_and_empty_modules(text, expected):
+    assert requested_new_module(text) == expected
 
 
 @pytest.mark.parametrize(
@@ -243,3 +257,72 @@ def test_delete_redundant_module_does_not_prepare_whole_module_deletion(monkeypa
 def test_unclassified_module_target_remains_supported():
     assert module_contains("", "")
     assert not module_contains("", "支付")
+
+
+@pytest.mark.parametrize("text", [
+    '请改写「支付」模块下全部用例，不修改账号模块或其他模块。',
+    '请改写“支付”模块下全部用例，其他字段保持原样。',
+    '改写模块"支付"的前置条件，不影响账号/登录模块。',
+    '改写支付模块用例，不修改TC-2。',
+])
+def test_quoted_module_and_negative_guards_do_not_expand_scope(text):
+    result = resolve_scope(text, CASES)
+    assert not result.get("error")
+    assert set(result["ids"]) == {CASES[0]["id"], CASES[1]["id"]}
+
+
+def test_unknown_quoted_module_still_requires_clarification():
+    assert resolve_scope('改写「不存在」模块，不修改支付模块', CASES)["error"]
+
+
+def test_negative_only_and_overlapping_guards_never_fall_back_to_all():
+    assert resolve_scope("不要修改支付模块", CASES)["error"]
+    assert resolve_scope("修改全部用例，不修改支付模块", CASES)["error"]
+    assert resolve_scope("修改支付模块，不修改TC-1", CASES)["error"]
+
+
+def test_preserving_module_field_does_not_name_an_unknown_module():
+    result = resolve_scope(
+        "改写「支付」模块的全部用例：将优先级改为 P0。"
+        "保留各条用例原有测试目标、所属模块和其他内容，不修改账号模块。",
+        CASES,
+    )
+    assert not result.get("error")
+    assert set(result["ids"]) == {CASES[0]["id"], CASES[1]["id"]}
+
+
+@pytest.mark.parametrize('instruction', ['修改「未支付」模块的优先级为P0', '修改未支付模块的优先级为P0'])
+def test_unknown_module_suffix_cannot_select_existing_module(instruction):
+    cases = [{**CASES[0], 'module': '支付'}]
+    assert resolve_scope(instruction, cases)['error']
+
+
+def test_explicit_case_key_takes_precedence_over_new_title_matching_other_case():
+    cases = [
+        {**CASES[0], 'case_key': 'TC-1', 'title': '支付成功验证'},
+        {**CASES[1], 'case_key': 'TC-2', 'title': '支付失败验证'},
+    ]
+    assert resolve_scope('修改 TC-1 的标题为「支付失败验证」', cases)['ids'] == [cases[0]['id']]
+
+
+def test_semantic_target_without_module_marker_cannot_bypass_explicit_missing_module(monkeypatch):
+    from types import SimpleNamespace
+    from casepilot_api import conversations
+    from casepilot_api.schemas import ConversationMessageCreate
+    monkeypatch.setattr(conversations, '_load_scope_snapshots', lambda db, conversation: CASES)
+    conversation = SimpleNamespace(collection_id=uuid4(), context={'phase': 'maintenance'})
+    payload = ConversationMessageCreate(content='修改「未支付」模块，优先级统一改为P0。')
+    _, error = conversations._resolve_action_scope(None, conversation, payload, 'CASE_MODIFY', '未支付')
+    assert error and '未找到指定模块' in error
+
+
+def test_semantic_generation_can_intentionally_create_unknown_module(monkeypatch):
+    from types import SimpleNamespace
+    from casepilot_api import conversations
+    from casepilot_api.schemas import ConversationMessageCreate
+    monkeypatch.setattr(conversations, '_load_scope_snapshots', lambda db, conversation: CASES)
+    conversation = SimpleNamespace(collection_id=uuid4(), context={'phase': 'maintenance'})
+    payload = ConversationMessageCreate(content='新增「发票」模块，生成10条用例。', target_case_ids=[CASES[0]['id']])
+    resolved, error = conversations._resolve_action_scope(None, conversation, payload, 'CASE_GENERATE', '发票')
+    assert error is None
+    assert resolved.target_case_ids == []

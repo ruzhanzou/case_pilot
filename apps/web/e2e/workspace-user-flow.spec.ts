@@ -8,10 +8,13 @@ async function setup(page: Page, kind: "coverage" | "review" | "modify" | "delet
   let cases = [0, 1].map((i) => ({ ...snapshot, id: `case${i}`, case_key: `TC-${i}`,
     collection_ids: ["alpha"], current_revision_id: `rev${i}`, revision_number: 1, source: "test" }));
   let settled = "";
+  const originalCases = cases.map((item) => ({ ...item }));
   let submitted: Record<string, string[]> | undefined;
   const collection = { id: "alpha", space_id: "space", name: "User flow", lifecycle_status: "maintenance", case_count: 2, mind_map_notes: [] };
-  const change = () => ({ id: "change", conversation_id: "workspace", status: settled || "ready", items: cases.map((item) => ({
+  const change = () => ({ id: "change", conversation_id: "workspace", status: settled || "ready", items: originalCases.map((item) => ({
     ref: item.id, target_type: "formal", operation: kind, base_snapshot: item,
+    status: settled === "applied" && submitted?.[item.id]?.length ? "applied" : settled ? "rejected" : "pending",
+    accepted_fields: submitted?.[item.id] ?? [],
     proposed_snapshot: { ...item, title: "Updated title" },
     field_diff: [{ field: kind === "delete" ? "delete" : "title", before: item.title, after: "Updated title" }],
   })) });
@@ -92,21 +95,23 @@ for (const kind of ["modify", "delete"] as const) {
     await review.locator("details").nth(1).evaluate((el: HTMLDetailsElement) => { el.open = true; });
     await review.locator('input[type="checkbox"]').nth(1).uncheck();
     await review.getByRole("button", { name: kind === "delete" ? "Apply selected deletions" : "Apply selected changes" }).click();
-    await expect(review).toHaveCount(0);
+    await expect(page.locator('.collection-changes__badge')).toHaveText('Applied');
+    await expect(review.getByRole('button', { name: /Apply selected/ })).toHaveCount(0);
     expect(state.submitted()).toEqual({ case0: [kind === "delete" ? "delete" : "title"], case1: [] });
     expect(state.cases().find((item) => item.id === "case1")?.revision_number).toBe(1);
     await expect(page).toHaveURL(/workbench\/collections\/alpha/);
+    await page.getByRole('button', { name: 'Test case list', exact: true }).click();
     await page.reload();
-    await expect(page.locator(".collection-changes__review")).toHaveCount(0);
     await expect(page.locator(".principle-case-row")).toHaveCount(kind === "delete" ? 1 : 2);
   });
 }
 
-test("cancel leaves cases unchanged and removes pending review", async ({ page }) => {
+test("cancel leaves cases unchanged and retains a read-only review", async ({ page }) => {
   const state = await setup(page, "delete");
   await page.getByRole("button", { name: "Case workspace", exact: true }).click();
   await page.getByRole("button", { name: "Cancel changes", exact: true }).click();
-  await expect(page.locator(".collection-changes__review")).toHaveCount(0);
+  await expect(page.locator('.collection-changes__badge')).toHaveText('Not applied');
+  await expect(page.getByRole('button', { name: 'Apply selected deletions', exact: true })).toHaveCount(0);
   expect(state.submitted()).toBeUndefined();
   expect(state.cases()).toHaveLength(2);
 });

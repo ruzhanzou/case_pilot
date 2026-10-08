@@ -618,14 +618,25 @@ export function CaseMindMap({
   const focusNote = useRef<string | null>(null);
   useEffect(() => {
     let active = true;
-    getCollection(collection.id).then((saved) => {
+    const savedNotes = collection.mind_map_notes !== undefined
+      ? Promise.resolve(collection.mind_map_notes)
+      : getCollection(collection.id).then((saved) => saved.mind_map_notes ?? []);
+    savedNotes.then((saved) => {
       if (!active) return;
-      notesRef.current = saved.mind_map_notes ?? [];
-      setNotes(notesRef.current);
+      if (JSON.stringify(notesRef.current) !== JSON.stringify(saved)) {
+        const addedModule = saved.find((note) => note.kind === "module" &&
+          !notesRef.current.some((previous) => previous.id === note.id));
+        if (addedModule) {
+          focusNote.current = addedModule.id;
+          setFocusRequest(null);
+        }
+        notesRef.current = saved;
+        setNotes(saved);
+      }
       setNotesReady(true);
     }).catch((error) => { if (active) setNotesError(error instanceof Error ? error.message : String(error)); });
     return () => { active = false; };
-  }, [collection.id]);
+  }, [collection.id, collection.mind_map_notes]);
   const saveNotes = useCallback(async (change: (current: MindMapNote[]) => MindMapNote[]) => {
     if (notesSaving.current) throw new Error(pick("Wait for the current save to finish", "请等待当前保存完成"));
     notesSaving.current = true;
@@ -1203,9 +1214,11 @@ export function CaseMindMap({
   }, [graphNodesById, onNodesChange]);
   useEffect(() => {
     const id = focusNote.current;
-    if (!id || !flowNodes.some((node) => node.id === id)) return;
+    const node = flowNodes.find((item) => item.id === id);
+    if (!id || !node) return;
     const frame = window.requestAnimationFrame(() => {
-      void flowRef.current?.fitView({ nodes: [{ id }], maxZoom: 1, padding: 0.4, duration: 250 });
+      // A new off-screen node may not be measured yet when virtualization is on.
+      void flowRef.current?.setCenter(node.position.x + 140, node.position.y + 40, { zoom: 0.9, duration: 250 });
       focusNote.current = null;
     });
     return () => window.cancelAnimationFrame(frame);

@@ -427,3 +427,56 @@ def test_latest_explicit_test_object_survives_a_follow_up_question() -> None:
     assert _extract_explicit_test_object("测试对象为豆包APP") == "豆包APP"
     assert _extract_explicit_test_object("测试对象不是明确了吗") == ""
     assert _test_object_from_messages(messages) == "豆包APP"
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        (
+            "改写「账号登录」模块的全部用例：将这些用例的优先级统一改为 P0，"
+            "并在每条用例的前置条件中补充「账号登录服务正常运行」。"
+            "保留各条用例原有测试目标、所属模块和其他内容，不修改订单库存模块。",
+            "CASE_MODIFY",
+        ),
+        (
+            "为账号登录模块生成2条密码重置用例，不改写或删除现有用例，先生成候选供我审阅。",
+            "CASE_GENERATE",
+        ),
+        ("改写当前用例的前置条件，不要删除现有用例。", "CASE_MODIFY"),
+        ("查询当前集合的用例，不要生成或删除用例。", "CASE_QUERY"),
+        ("不要删除当前用例", "KNOWLEDGE_QA"),
+        ("为已登录用户修改密码生成测试用例", "CASE_GENERATE"),
+    ],
+)
+def test_preservation_constraints_do_not_override_requested_action(content, expected):
+    assert classify_intent(content, phase="maintenance")[0] == expected
+
+
+def test_semantic_target_scope_does_not_filter_by_desired_priority(monkeypatch) -> None:
+    from casepilot_api import conversations
+    case_id = uuid4()
+    monkeypatch.setattr(conversations, "_load_scope_snapshots", lambda *args: [
+        {"id": str(case_id), "case_key": "TC-1", "module": "账号登录", "priority": "P1"},
+        {"id": str(uuid4()), "case_key": "TC-2", "module": "订单库存", "priority": "P0"},
+    ])
+    conversation = SimpleNamespace(collection_id=uuid4(), context={})
+    payload = ConversationMessageCreate(content="把账号登录模块的优先级设为P0，保留其他内容")
+    resolved, error = conversations._resolve_action_scope(
+        None, conversation, payload, "CASE_MODIFY", "账号登录模块"
+    )
+    assert error is None
+    assert resolved.target_case_ids == [case_id]
+
+
+def test_semantic_target_cannot_drop_protected_module(monkeypatch) -> None:
+    from casepilot_api import conversations
+    monkeypatch.setattr(conversations, "_load_scope_snapshots", lambda *args: [
+        {"id": str(uuid4()), "case_key": "TC-1", "module": "账号登录", "priority": "P1"},
+        {"id": str(uuid4()), "case_key": "TC-2", "module": "订单库存", "priority": "P1"},
+    ])
+    conversation = SimpleNamespace(collection_id=uuid4(), context={})
+    payload = ConversationMessageCreate(content="修改全部用例为P0，不要修改订单库存模块")
+    _, error = conversations._resolve_action_scope(
+        None, conversation, payload, "CASE_MODIFY", "全部用例"
+    )
+    assert error is not None

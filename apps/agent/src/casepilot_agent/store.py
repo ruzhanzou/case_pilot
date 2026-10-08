@@ -1319,6 +1319,26 @@ class JobStore:
             )
         )
 
+        previous_id = job["input_payload"].get("previous_change_set_id")
+        if previous_id:
+            replaced = connection.execute(
+                update(case_change_sets).where(
+                    case_change_sets.c.id == UUID(str(previous_id)),
+                    case_change_sets.c.conversation_id
+                    == UUID(job["input_payload"]["conversation_id"]),
+                    case_change_sets.c.status == "ready",
+                ).values(status="superseded")
+            )
+            if replaced.rowcount:
+                connection.execute(update(conversation_operations).where(
+                    conversation_operations.c.related_change_set_id == UUID(str(previous_id)),
+                ).values(
+                    status="cancelled", completed_at=datetime.now(UTC),
+                    result=conversation_operations.c.result.op("||")({
+                        "superseded_by": str(change_set_id),
+                    }),
+                ))
+
     def create_grouped_candidate(
         self,
         connection: Connection,

@@ -1,0 +1,200 @@
+import { expect, test, type Page } from '@playwright/test';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+test.skip(process.env.CASEPILOT_REAL_ACCEPTANCE !== '1', 'Requires live API and model');
+test.describe.configure({ mode: 'serial' });
+test.use({ viewport: { width: 1600, height: 1000 }, video: { mode: 'on', size: { width: 1600, height: 1000 } }, trace: 'on', actionTimeout: 30000 });
+const dir = resolve(process.env.CASEPILOT_ACCEPTANCE_OUTPUT ?? '../../output/workstation-e2e');
+const api = `${process.env.CASEPILOT_E2E_API_URL}/api/v1`;
+const manifestPath = `${dir}/manifest.json`;
+async function setup(page: Page) {
+  mkdirSync(dir, { recursive: true });
+  await page.addInitScript(() => localStorage.setItem('casepilot.locale.v1', 'zh-CN'));
+  const r = await page.request.post(`${api}/auth/login`, { data: { email: 'demo@casepilot.local', password: 'CasePilot123!' } });
+  expect(r.ok()).toBeTruthy();
+  return r.json();
+}
+async function shot(page: Page, name: string) {
+  await page.screenshot({ path: `${dir}/${name}.png`, fullPage: true });
+  console.log(`EVIDENCE ${name}`);
+}
+
+test('01 collection CRUD and structured case creation through UI', async ({ page }) => {
+  test.setTimeout(180000);
+  const account = await setup(page);
+  const stamp = Date.now();
+  const name = `工作区端到端验收-${stamp}`;
+  const renamed = `${name}-已更新`;
+  await page.goto('/');
+  await page.getByRole('button', { name: '用例资产管理', exact: true }).click();
+  async function createCollection(label: string) {
+    await page.getByRole('button', { name: '创建用例集合', exact: true }).click();
+    await page.getByLabel('集合名称', { exact: true }).fill(label);
+    await page.getByLabel('集合说明', { exact: true }).fill('独立端到端验收：账号登录、订单库存；包含模块改写、单用例改写、功能补充。');
+    await page.getByRole('button', { name: '创建集合', exact: true }).click();
+    await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible();
+  }
+  await createCollection(name);
+  await shot(page, '01-collection-created');
+  await page.getByRole('button', { name: '编辑集合', exact: true }).click();
+  await page.getByLabel('集合名称', { exact: true }).fill(renamed);
+  await page.getByRole('button', { name: '保存修改', exact: true }).click();
+  await expect(page.getByRole('heading', { name: renamed, exact: true })).toBeVisible();
+  await page.getByLabel('搜索用例集合', { exact: true }).fill(renamed);
+  await expect(page.locator('.collection-item')).toHaveCount(1);
+  await shot(page, '02-collection-renamed-and-found');
+  const collections = await (await page.request.get(`${api}/spaces/${account.spaces[0].id}/collections`)).json();
+  const collection = collections.find((c: {name:string}) => c.name === renamed);
+  expect(collection).toBeTruthy();
+  const disposable = `${name}-删除验证`;
+  await page.getByLabel('搜索用例集合', { exact: true }).fill('');
+  await createCollection(disposable);
+  await shot(page, '03-collection-before-delete');
+  page.once('dialog', async dialog => { expect(dialog.message()).toContain(disposable); await dialog.accept(); });
+  await page.getByRole('button', { name: '删除集合', exact: true }).click();
+  await expect.poll(async () => (await (await page.request.get(`${api}/spaces/${account.spaces[0].id}/collections`)).json()).some((c: {name:string}) => c.name === disposable)).toBe(false);
+  await page.getByLabel('搜索用例集合', { exact: true }).fill(disposable);
+  await expect(page.locator('.collection-item')).toHaveCount(0);
+  await shot(page, '04-collection-deleted');
+  await page.getByLabel('搜索用例集合', { exact: true }).fill(renamed);
+  await page.locator('.collection-item').click();
+  const seeds = [
+    { key: `LIVE-${stamp}-1`, title: '正确账号密码登录成功', module: '账号登录', action: '输入正确账号密码，点击登录', expected: '登录成功，进入首页' },
+    { key: `LIVE-${stamp}-2`, title: '错误密码登录失败', module: '账号登录', action: '输入正确账号和错误密码，点击登录', expected: '提示账号或密码错误，不创建会话' },
+    { key: `LIVE-${stamp}-3`, title: '库存不足禁止下单', module: '订单库存', action: '库存为0时提交数量为1的订单', expected: '提示库存不足，不创建订单' },
+  ];
+  for (const seed of seeds) {
+    await page.getByRole('button', { name: '新建用例', exact: true }).first().click();
+    await page.getByLabel('用例编号', { exact: true }).fill(seed.key);
+    await page.getByLabel('用例名称', { exact: true }).fill(seed.title);
+    await page.getByLabel('所属模块', { exact: true }).fill(seed.module);
+    await page.getByPlaceholder('执行前必须满足的环境、数据或账号条件').fill('测试环境可用，账号已注册且启用');
+    await page.getByLabel('执行操作', { exact: true }).fill(seed.action);
+    await page.getByLabel('预期结果／校验点', { exact: true }).fill(seed.expected);
+    await page.getByRole('button', { name: '创建用例', exact: true }).click();
+    await expect(page.getByRole('heading', { name: seed.title, exact: true })).toBeVisible();
+  }
+  const cases = await (await page.request.get(`${api}/collections/${collection.id}/test-cases`)).json();
+  expect(cases).toHaveLength(3);
+  writeFileSync(manifestPath, JSON.stringify({ collection, cases, collectionCrud: 'passed', url: `${process.env.CASEPILOT_E2E_BASE_URL}/workbench/collections/${collection.id}` }, null, 2));
+  await page.reload();
+  await expect(page.getByRole('heading', { name: renamed, exact: true })).toBeVisible();
+  await shot(page, '05-three-cases-persisted');
+});
+
+test('02 query, rewrite case, rewrite module, add feature, delete confirmation and persistence', async ({ page }) => {
+  test.setTimeout(1200000);
+  await setup(page);
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  const collectionId = manifest.collection.id;
+  const records: unknown[] = []; const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const save = () => writeFileSync(`${dir}/workflow-results.json`, JSON.stringify({ records, errors, url: page.url() }, null, 2));
+  const readCases = async () => (await (await page.request.get(`${api}/collections/${collectionId}/test-cases`)).json());
+  await page.goto(`/workbench/collections/${collectionId}`);
+  await expect(page.locator('.principle-workbench')).toBeVisible();
+  await expect.poll(async () => (await page.request.get(`${api}/collections/${collectionId}/workspace`)).status()).toBe(200);
+  const state = await (await page.request.get(`${api}/collections/${collectionId}/workspace`)).json();
+  await page.getByRole('combobox', { name: '生成模型' }).selectOption('doubao-seed-2.0-lite');
+  const cid = state.id;
+  manifest.conversationId = cid; writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+  const composer = page.locator('.principle-composer textarea');
+  async function send(content: string, expected: string) {
+    await expect(composer).toBeEnabled({ timeout: 240000 });
+    await composer.fill(content);
+    const response = page.waitForResponse(r => r.url().endsWith(`/conversations/${cid}/messages`) && r.request().method() === 'POST', { timeout: 180000 });
+    await page.locator('.principle-composer button[type=submit]').click();
+    const res = await response; expect(res.ok(), await res.text()).toBeTruthy();
+    const body = await res.json();
+    records.push({ request: content, expected, response: body }); save();
+    expect(body.intent ?? body.assistant_message.intent).toBe(expected);
+    expect(body.assistant_message.status, body.assistant_message.content).not.toMatch(/awaiting_clarification|awaiting_target|awaiting_intent/);
+    await expect(composer).toBeEnabled({ timeout: 300000 });
+    const current = await (await page.request.get(`${api}/conversations/${cid}`)).json();
+    records.push({ state: current }); save();
+    const failed = current.operation_history?.find((op: {id:string;status:string}) => op.id === body.operation_plan?.operations?.[0]?.id && op.status === 'failed');
+    expect(failed).toBeUndefined();
+    return body;
+  }
+  const original = await readCases();
+  await send('查询当前整个集合的全部用例，只查询不修改。', 'CASE_QUERY');
+  await expect(page.locator('.task-query-table tbody tr')).toHaveCount(3);
+  expect(await readCases()).toEqual(original);
+  await expect(page.locator('.case-task-workspace .task-workflow')).toHaveCount(0);
+  await expect(page.locator('.conversation-task-flow')).toBeVisible();
+  await shot(page, '06-query-results-and-conversation');
+  await page.getByRole('searchbox', { name: '搜索查询结果' }).fill('库存');
+  await expect(page.locator('.task-query-table tbody tr')).toHaveCount(1);
+  await shot(page, '07-query-filter');
+  const order = original.find((c: {module:string}) => c.module === '订单库存');
+  const beforeRewrite = await readCases();
+  await send(`改写用例 ${order.case_key}：仅将标题改为「库存不足时拒绝创建订单」，其他字段保持不变。`, 'CASE_MODIFY');
+  const review = page.locator('.collection-changes__review');
+  await expect(review).toContainText('库存不足时拒绝创建订单', { timeout: 240000 });
+  await expect(page.locator('.collection-changes__comparison')).toBeVisible();
+  expect(await readCases()).toEqual(beforeRewrite);
+  await shot(page, '08-case-rewrite-before-after');
+  await review.getByRole('button', { name: '应用已选修改', exact: true }).click();
+  await expect.poll(async () => (await readCases()).find((c: {id:string}) => c.id === order.id)?.title).toBe('库存不足时拒绝创建订单');
+  const afterRewrite = await readCases();
+  expect(afterRewrite.find((c: {id:string}) => c.id === order.id).revision_number).toBe(order.revision_number + 1);
+  expect(afterRewrite.filter((c: {id:string}) => c.id !== order.id)).toEqual(original.filter((c: {id:string}) => c.id !== order.id));
+  await shot(page, '09-case-rewrite-applied');
+  await send('改写「账号登录」模块的全部用例：将这些用例的优先级统一改为 P0，并在每条用例的前置条件中补充「账号登录服务正常运行」。保留各条用例原有测试目标、所属模块和其他内容，不修改订单库存模块。', 'CASE_MODIFY');
+  await expect(review).toContainText('P0', { timeout: 240000 });
+  await expect(review.locator('.collection-changes__items > details')).toHaveCount(2);
+  expect(await readCases()).toEqual(afterRewrite);
+  await review.locator('.collection-changes__items > details').evaluateAll(items => items.forEach(item => item.setAttribute('open', '')));
+  await shot(page, '10-module-rewrite-before-after');
+  await review.getByRole('button', { name: '应用已选修改', exact: true }).click();
+  await expect.poll(async () => (await readCases()).filter((c: {module:string;priority:string}) => c.module === '账号登录' && c.priority === 'P0').length).toBe(2);
+  const afterModule = await readCases();
+  expect(afterModule.find((c: {id:string}) => c.id === order.id)).toEqual(afterRewrite.find((c: {id:string}) => c.id === order.id));
+  for (const c of afterModule.filter((c: {module:string}) => c.module === '账号登录')) expect(c.preconditions.join(' ')).toContain('账号登录服务正常运行');
+  await shot(page, '11-module-rewrite-applied');
+  await send('为当前集合的「账号登录」模块增加密码重置功能，生成恰好2条新的候选用例，所属模块必须为「账号登录」：1. 已注册邮箱申请重置，收到有效期10分钟的链接并成功设置8到20位新密码；2. 超过10分钟的过期链接禁止重置并提示重新申请。测试对象为账号登录系统。覆盖上述正常和过期场景，不改写或删除现有用例，先生成候选供我审阅。', 'CASE_GENERATE');
+  const generate = page.getByRole('button', { name: /确认范围并生成用例|确认并生成用例/ }).first();
+  await expect(generate).toBeEnabled({ timeout: 300000 });
+  expect(await readCases()).toEqual(afterModule);
+  await shot(page, '12-feature-scope-confirmation');
+  await generate.click();
+  await shot(page, '13-feature-generation-progress');
+  const commit = page.locator('.task-result-cases').getByRole('button', { name: '纳入已选候选', exact: true });
+  await expect(commit).toBeEnabled({ timeout: 600000 });
+  const generated = await (await page.request.get(`${api}/conversations/${cid}`)).json();
+  const candidates = generated.candidates.filter((c: {status:string}) => c.status === 'candidate');
+  expect(candidates).toHaveLength(2);
+  for (const c of candidates) expect(c.snapshot.module).toBe('账号登录');
+  expect(await readCases()).toEqual(afterModule);
+  await page.locator('.task-result-cases > details').evaluateAll(items => items.forEach(item => item.setAttribute('open', '')));
+  await shot(page, '14-feature-candidate-results');
+  await commit.click();
+  await expect.poll(async () => (await readCases()).length, { timeout: 60000 }).toBe(5);
+  await page.reload(); await expect(composer).toBeEnabled();
+  const afterGeneration = await readCases();
+  expect(afterGeneration.filter((c: {module:string}) => c.module === '账号登录')).toHaveLength(4);
+  await page.getByRole('button', { name: '用例脑图', exact: true }).click();
+  await shot(page, '15-feature-added-and-persisted');
+  const target = original.find((c: {title:string}) => c.title === '错误密码登录失败');
+  await send(`删除用例 ${target.case_key}，保留其他全部用例。`, 'CASE_DELETE');
+  await expect(review).toContainText(target.case_key);
+  expect(await readCases()).toEqual(afterGeneration);
+  await shot(page, '16-workstation-delete-confirmation');
+  await review.getByRole('button', { name: '取消变更', exact: true }).click();
+  await expect(page.locator('.collection-changes__badge')).toHaveText('未应用');
+  expect(await readCases()).toEqual(afterGeneration);
+  await send(`删除用例 ${target.case_key}，保留其他全部用例。`, 'CASE_DELETE');
+  await expect(review.getByRole('button', { name: '确认删除已选用例', exact: true })).toBeEnabled();
+  let nativeDialogs = 0; page.on('dialog', async dialog => { nativeDialogs++; await dialog.dismiss(); });
+  await review.getByRole('button', { name: '确认删除已选用例', exact: true }).click();
+  await expect.poll(async () => (await readCases()).length).toBe(4);
+  expect(nativeDialogs).toBe(0);
+  await page.reload(); await expect(composer).toBeEnabled();
+  const final = await readCases();
+  expect(final.some((c: {id:string}) => c.id === target.id)).toBe(false);
+  await page.getByRole('button', { name: '用例脑图', exact: true }).click();
+  await shot(page, '17-final-workspace');
+  records.push({ passed: ['query-and-filter', 'case-rewrite', 'module-rewrite', 'module-feature-generation', 'delete-cancel', 'delete-confirm', 'refresh-persistence'], finalCases: final }); save();
+  expect(errors).toEqual([]);
+});

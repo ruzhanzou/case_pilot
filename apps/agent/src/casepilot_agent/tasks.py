@@ -36,6 +36,7 @@ from casepilot_agent.pipeline import (
     GenerationQualityError,
     enforce_test_object_clarification,
     extract_explicit_test_object,
+    rebase_rewrite_candidate,
 )
 from casepilot_agent.providers import create_embedding_provider, create_provider
 from casepilot_agent.store import (
@@ -1107,6 +1108,7 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
         pipeline = GenerationPipeline(create_provider(settings.provider))
         items: list[dict[str, Any]] = []
         instruction = str(payload["instruction"])
+        previous_proposals = dict(payload.get("previous_proposals", {}))
         for target in payload.get("formal_targets", []):
             case_id = UUID(target["case_id"])
             base_revision_id = UUID(target["base_revision_id"])
@@ -1116,14 +1118,17 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
                     case_id,
                     base_revision_id,
                 )
+            previous = previous_proposals.get(str(case_id))
+            working = previous["proposed_snapshot"] if previous else snapshot
             candidate = pipeline.rewrite(
                 RewriteRequest(
-                    test_case=TestCaseDraft.model_validate(snapshot),
+                    test_case=TestCaseDraft.model_validate(working),
                     instruction=instruction,
                     conversation_memory=list(payload.get("conversation_memory", [])),
                     model_id=str(payload.get("model_id", "auto")),
                 )
             )
+            candidate = rebase_rewrite_candidate(TestCaseDraft.model_validate(snapshot), candidate)
             candidate_payload = candidate.model_dump(mode="json")
             items.append(
                 {
@@ -1133,6 +1138,11 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
                     "base_revision_id": str(base_revision_id),
                     "candidate_revision_id": None,
                     "base_snapshot": snapshot,
+                    "previous_snapshot": working if previous else None,
+                    "proposal_version": (
+                        int(previous.get("proposal_version", 1)) + 1 if previous else 1
+                    ),
+                    "previous_change_set_id": payload.get("previous_change_set_id"),
                     "proposed_snapshot": candidate_payload["proposed"],
                     "field_diff": candidate_payload["diff"],
                     "reason": candidate_payload["reason"],
@@ -1143,14 +1153,20 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
         for target in payload.get("candidate_targets", []):
             ref = str(target["ref"])
             draft = _candidate_snapshot_to_draft(ref, dict(target["snapshot"]))
+            previous = previous_proposals.get(ref)
+            working = (
+                _candidate_snapshot_to_draft(ref, previous["proposed_snapshot"])
+                if previous else draft
+            )
             candidate = pipeline.rewrite(
                 RewriteRequest(
-                    test_case=draft,
+                    test_case=working,
                     instruction=instruction,
                     conversation_memory=list(payload.get("conversation_memory", [])),
                     model_id=str(payload.get("model_id", "auto")),
                 )
             )
+            candidate = rebase_rewrite_candidate(draft, candidate)
             candidate_payload = candidate.model_dump(mode="json")
             items.append(
                 {
@@ -1158,6 +1174,11 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
                     "target_type": "candidate",
                     "base_version": int(target.get("version", 1)),
                     "base_snapshot": draft.model_dump(mode="json"),
+                    "previous_snapshot": working.model_dump(mode="json") if previous else None,
+                    "proposal_version": (
+                        int(previous.get("proposal_version", 1)) + 1 if previous else 1
+                    ),
+                    "previous_change_set_id": payload.get("previous_change_set_id"),
                     "proposed_snapshot": candidate_payload["proposed"],
                     "field_diff": candidate_payload["diff"],
                     "reason": candidate_payload["reason"],

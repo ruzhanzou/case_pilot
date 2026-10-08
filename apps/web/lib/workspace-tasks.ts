@@ -57,6 +57,7 @@ export function workspaceTasks(conversation: ConversationDto | null): WorkspaceT
   for (const task of tasks) {
     if (task.operation) {
       const op = task.operation;
+      if (op.result.change_set_status === "conflict") task.status = "conflict";
       task.message.metadata = {
         ...task.message.metadata,
         ...(op.result.analysis_report ? { analysis_report: op.result.analysis_report } : {}),
@@ -64,7 +65,8 @@ export function workspaceTasks(conversation: ConversationDto | null): WorkspaceT
       };
       const predecessor = tasks.find((item) => item.groupId && item.groupId === task.groupId && item.operation?.sequence === op.sequence - 1);
       if (op.status === "queued" && predecessor && !["completed", "skipped"].includes(predecessor.status)) task.waitingOn = predecessor.id;
-      if (task.message.metadata.action === "rejected" || (op.status === "cancelled" && (op.related_change_set_id || op.result.discarded))) task.status = "not_applied";
+      if (op.result.superseded_by) task.status = "superseded";
+      else if (task.message.metadata.action === "rejected" || (op.status === "cancelled" && (op.related_change_set_id || op.result.discarded))) task.status = "not_applied";
     }
   }
   return tasks.reverse().sort((a, b) => (b.operation?.created_at ?? b.message.created_at ?? "").localeCompare(a.operation?.created_at ?? a.message.created_at ?? "") || (b.operation?.sequence ?? 0) - (a.operation?.sequence ?? 0));

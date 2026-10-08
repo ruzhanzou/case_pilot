@@ -53,7 +53,7 @@ def test_english_multi_intent_plan_preserves_generation_then_deletion() -> None:
     assert plan.operations[1].requires_confirmation is True
 
 
-def test_english_multi_intent_survives_model_router_failure(
+def test_model_failure_does_not_dispatch_rule_based_writes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fail_router(*args, **kwargs):
@@ -73,10 +73,8 @@ def test_english_multi_intent_survives_model_router_failure(
         timeout_seconds=5,
         tracing_enabled=False,
     )
-    assert [item.intent for item in plan.operations] == [
-        "CASE_GENERATE",
-        "CASE_DELETE",
-    ]
+    assert [item.intent for item in plan.operations] == ["UNRESOLVED"]
+    assert plan.operations[0].requires_confirmation
 
 
 def test_negated_generation_is_not_an_explicit_write_request() -> None:
@@ -92,34 +90,36 @@ def test_negated_generation_is_not_an_explicit_write_request() -> None:
         ("Can you explain how to generate test cases?", "idle"),
     ],
 )
-def test_model_plan_cannot_turn_information_question_into_write(
-    content: str, phase: str
-) -> None:
-    plan = IntentPlanDraft.model_validate({
-        "operations": [{
-            "intent": "CASE_GENERATE",
-            "instruction": content,
-            "confidence": 0.99,
-        }],
-    })
-    validated = agent_router._validate_model_plan(
-        content, plan, has_targets=False, phase=phase
+def test_model_plan_cannot_turn_information_question_into_write(content: str, phase: str) -> None:
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "CASE_GENERATE",
+                    "instruction": content,
+                    "confidence": 0.99,
+                }
+            ],
+        }
     )
+    validated = agent_router._validate_model_plan(content, plan, has_targets=False, phase=phase)
     assert validated.operations[0].intent == "KNOWLEDGE_QA"
 
 
 def test_model_plan_cannot_turn_negated_generation_into_write() -> None:
     content = "请不要生成测试用例"
-    plan = IntentPlanDraft.model_validate({
-        "operations": [{
-            "intent": "CASE_GENERATE",
-            "instruction": content,
-            "confidence": 0.99,
-        }],
-    })
-    validated = agent_router._validate_model_plan(
-        content, plan, has_targets=False, phase="idle"
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "CASE_GENERATE",
+                    "instruction": content,
+                    "confidence": 0.99,
+                }
+            ],
+        }
     )
+    validated = agent_router._validate_model_plan(content, plan, has_targets=False, phase="idle")
     assert validated.operations[0].intent == "KNOWLEDGE_QA"
 
 
@@ -276,9 +276,7 @@ def test_sdk_router_uses_the_configured_chat_completions_provider(
     agents.Agent = FakeAgent
     agents.OpenAIChatCompletionsModel = FakeModel
     agents.Runner = FakeRunner
-    agents.set_tracing_disabled = lambda disabled: captured.update(
-        tracing_disabled=disabled
-    )
+    agents.set_tracing_disabled = lambda disabled: captured.update(tracing_disabled=disabled)
     openai.AsyncOpenAI = FakeClient
     monkeypatch.setitem(sys.modules, "agents", agents)
     monkeypatch.setitem(sys.modules, "openai", openai)
@@ -304,6 +302,266 @@ def test_sdk_router_uses_the_configured_chat_completions_provider(
 def test_unique_coverage_in_dedup_request_does_not_create_an_extra_review():
     plan = deterministic_plan(
         "检查账号登录模块重复冗余用例，说明重复依据和独有覆盖，只检查不修改。",
-        classify_intent, has_targets=False,
+        classify_intent,
+        has_targets=False,
     )
     assert [operation.intent for operation in plan.operations] == ["CASE_DEDUP"]
+
+
+def test_positive_write_preserves_negative_constraints_and_low_confidence() -> None:
+    content = "修改账号登录模块的前置条件，不要修改标题和步骤"
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "CASE_MODIFY",
+                    "instruction": content,
+                    "confidence": 0.6,
+                    "target_kind": "module",
+                    "target_text": "账号登录模块",
+                    "action_evidence": "修改账号登录模块的前置条件",
+                    "constraints": ["不要修改标题和步骤"],
+                }
+            ]
+        }
+    )
+    draft = agent_router._validate_model_plan(
+        content, plan, has_targets=False, phase="idle"
+    ).operations[0]
+    assert draft.intent == "CASE_MODIFY"
+    assert draft.constraints == ["不要修改标题和步骤"]
+    assert not agent_router.draft_needs_confirmation(draft.model_dump())
+
+
+def test_unknown_target_retains_intent_and_asks_specific_question() -> None:
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "CASE_MODIFY",
+                    "instruction": "修改优先级为P0",
+                    "confidence": 0.98,
+                }
+            ]
+        }
+    )
+    draft = agent_router._validate_model_plan(
+        "修改优先级为P0", plan, has_targets=False, phase="idle"
+    ).operations[0]
+    assert draft.intent == "CASE_MODIFY"
+    assert draft.clarification_questions
+
+
+def test_high_rule_confidence_still_uses_semantic_router(monkeypatch) -> None:
+    called = []
+
+    def semantic(*args, **kwargs):
+        called.append(args[0])
+        return IntentPlanDraft.model_validate(
+            {
+                "operations": [
+                    {
+                        "intent": "CASE_QUERY",
+                        "instruction": args[0],
+                        "confidence": 0.6,
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr(agent_router, "sdk_plan", semantic)
+    plan = plan_intents(
+        "查询全部用例",
+        lambda text: ("CASE_QUERY", 0.99),
+        has_targets=False,
+        phase="idle",
+        target_context=[],
+        provider="openai_compatible",
+        model_name="test",
+        base_url="test",
+        api_key="test",
+        timeout_seconds=5,
+        tracing_enabled=False,
+    )
+    assert called == ["查询全部用例"]
+    assert not agent_router.draft_needs_confirmation(plan.operations[0].model_dump())
+
+
+def test_dependencies_cannot_reference_future_operations() -> None:
+    with pytest.raises(ValueError, match="dependency_must_reference"):
+        IntentPlanDraft.model_validate(
+            {
+                "operations": [
+                    {
+                        "intent": "CASE_QUERY",
+                        "instruction": "查询",
+                        "confidence": 0.99,
+                        "depends_on": 0,
+                    }
+                ]
+            }
+        )
+
+
+def test_model_cannot_invent_action_evidence() -> None:
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "CASE_DELETE",
+                    "instruction": "删除所有用例",
+                    "confidence": 0.99,
+                    "action_evidence": "删除所有用例",
+                }
+            ]
+        }
+    )
+    draft = agent_router._validate_model_plan(
+        "看看现有用例", plan, has_targets=False, phase="idle"
+    ).operations[0]
+    assert draft.intent == "UNRESOLVED"
+
+
+def test_setting_priority_without_modify_keyword_is_an_explicit_action() -> None:
+    content = "把账号登录模块用例的优先级设为P0，标题和步骤保持不变。"
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "CASE_MODIFY",
+                    "instruction": content,
+                    "confidence": 0.95,
+                    "target_kind": "module",
+                    "target_text": "账号登录模块用例",
+                    "action_evidence": "把账号登录模块用例的优先级设为P0",
+                }
+            ]
+        }
+    )
+    draft = agent_router._validate_model_plan(
+        content, plan, has_targets=False, phase="idle"
+    ).operations[0]
+    assert draft.intent == "CASE_MODIFY"
+    assert not draft.clarification_questions
+
+
+def test_human_review_is_not_an_extra_agent_task() -> None:
+    content = "生成2条用例，供我审阅"
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "CASE_GENERATE",
+                    "instruction": content,
+                    "confidence": 1,
+                    "action_evidence": "生成2条用例",
+                },
+                {
+                    "intent": "CASE_REVIEW",
+                    "instruction": "审阅新用例",
+                    "confidence": 1,
+                    "action_evidence": "供我审阅",
+                    "depends_on": 0,
+                },
+            ]
+        }
+    )
+    validated = agent_router._validate_model_plan(content, plan, has_targets=False, phase="idle")
+    assert [op.intent for op in validated.operations] == ["CASE_GENERATE"]
+
+
+def test_action_evidence_can_quote_two_original_fragments_with_ellipsis() -> None:
+    content = "为账号登录模块增加密码找回功能的2条测试用例。"
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "CASE_GENERATE",
+                    "instruction": content,
+                    "confidence": 1,
+                    "action_evidence": "增加...测试用例",
+                    "target_kind": "module",
+                    "target_text": "账号登录模块",
+                }
+            ]
+        }
+    )
+    validated = agent_router._validate_model_plan(content, plan, has_targets=False, phase="idle")
+    assert validated.operations[0].intent == "CASE_GENERATE"
+
+
+def test_singleton_dependency_array_keeps_dependency_validation() -> None:
+    operations = [
+        {"intent": "CASE_GENERATE", "instruction": "生成", "confidence": 1},
+        {"intent": "CASE_MODIFY", "instruction": "修改", "confidence": 1, "depends_on": [0]},
+    ]
+    assert IntentPlanDraft.model_validate({"operations": operations}).operations[1].depends_on == 0
+    operations[1]["depends_on"] = [1]
+    with pytest.raises(ValueError, match="dependency_must_reference"):
+        IntentPlanDraft.model_validate({"operations": operations})
+
+
+def test_preservation_before_action_does_not_negate_the_action() -> None:
+    content = "不要修改标题，只修改账号登录模块的前置条件，补充账号已启用。"
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "CASE_MODIFY",
+                    "instruction": content,
+                    "confidence": 1,
+                    "action_evidence": "修改账号登录模块的前置条件",
+                    "target_kind": "module",
+                    "target_text": "账号登录模块",
+                }
+            ]
+        }
+    )
+    validated = agent_router._validate_model_plan(content, plan, has_targets=False, phase="idle")
+    assert validated.operations[0].intent == "CASE_MODIFY"
+
+
+@pytest.mark.parametrize("suffix,accepted", [("，只查询不修改。", True), ("，排除账号登录模块。", False)])
+def test_collection_query_recovers_literal_quantity_without_losing_exclusions(suffix, accepted):
+    content = "查询当前集合的全部100条用例" + suffix
+    plan = IntentPlanDraft.model_validate({"operations": [{
+        "intent": "CASE_QUERY", "instruction": content, "confidence": 1,
+        "action_evidence": "查询当前集合的全部100条用例",
+        "target_kind": "none", "target_text": "当前集合的全部用例",
+    }]})
+    result = agent_router._validate_model_plan(content, plan, has_targets=False, phase="idle").operations[0]
+    assert bool(result.clarification_questions) is not accepted
+    if accepted:
+        assert result.target_text == "当前集合的全部100条用例"
+        assert result.target_kind == "condition"
+
+
+@pytest.mark.parametrize("target,accepted", [
+    ("账号登录模块的全部10条用例，其他9个模块不得改动", True),
+    ("账号登录模块的全部10条用例", True),
+    ("账号登录模块的全部100条用例", False),
+    ("账号登录模块的全部10条用例，排除管理员", False),
+])
+def test_module_scope_accepts_literal_fragments_but_not_invented_scope(target, accepted):
+    content = "整体重写「账号登录」模块的全部10条用例，保留原标题，其他9个模块不得改动。"
+    plan = IntentPlanDraft.model_validate({"operations": [{
+        "intent": "CASE_MODIFY", "instruction": content, "confidence": 1,
+        "action_evidence": "整体重写「账号登录」模块的全部10条用例",
+        "target_kind": "module", "target_text": target,
+    }]})
+    result = agent_router._validate_model_plan(content, plan, has_targets=False, phase="idle").operations[0]
+    assert bool(result.clarification_questions) is not accepted
+    if accepted: assert "账号登录」模块的全部10条用例" in result.target_text
+
+
+def test_new_module_generation_uses_the_explicit_action_name():
+    content = '新增「发票管理」模块，并生成恰好10条新的候选用例。现有100条用例不得修改。'
+    plan = IntentPlanDraft.model_validate({"operations": [{
+        "intent": "CASE_GENERATE", "instruction": content, "confidence": 1,
+        "action_evidence": '新增「发票管理」模块，并生成恰好10条新的候选用例',
+        "target_kind": "module", "target_text": "当前集合新增的发票管理模块",
+    }]})
+    result = agent_router._validate_model_plan(content, plan, has_targets=False, phase="maintenance").operations[0]
+    assert result.target_text == '发票管理'
+    assert result.clarification_questions == []
+    assert result.intent == 'CASE_GENERATE'

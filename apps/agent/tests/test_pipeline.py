@@ -475,3 +475,76 @@ def test_total_quantity_wins_over_per_module_brief_quantity():
         )
         == 100
     )
+
+
+def test_explicit_candidate_quantity_wins_over_expanded_brief() -> None:
+    from casepilot_agent.pipeline import requested_case_count
+    assert requested_case_count(GenerationRequest(
+        prompt="为登录模块生成恰好2条新的候选用例，链接有效期10分钟",
+        markdown_content="覆盖正常、异常、边界，共6条用例",
+    )) == 2
+
+
+def test_repeated_rewrite_diff_keeps_prior_draft_changes_until_apply():
+    from casepilot_agent.pipeline import rebase_rewrite_candidate
+    provider = MockProvider()
+    base = provider.generate(GenerationRequest(prompt="登录测试用例")).test_cases[0]
+    pipeline = GenerationPipeline(provider)
+    first = pipeline.rewrite(RewriteRequest(test_case=base, instruction="仅将标题改为「登录成功并进入首页」"))
+    second = pipeline.rewrite(RewriteRequest(test_case=first.proposed, instruction="仅将优先级改为P2"))
+    rebased = rebase_rewrite_candidate(base, second)
+    assert rebased.proposed.title == "登录成功并进入首页"
+    assert rebased.proposed.priority == "P2"
+    diffs = {item.field: item for item in rebased.diff}
+    assert diffs["title"].before == base.title
+    assert diffs["priority"].before == base.priority
+    assert base.title != first.proposed.title
+
+
+def test_reverting_a_prior_draft_field_removes_it_from_cumulative_diff():
+    from casepilot_agent.pipeline import rebase_rewrite_candidate
+    provider = MockProvider()
+    base = provider.generate(GenerationRequest(prompt="登录测试用例")).test_cases[0]
+    pipeline = GenerationPipeline(provider)
+    first = pipeline.rewrite(RewriteRequest(test_case=base, instruction="仅将标题改为「新标题」"))
+    restored = first.model_copy(update={"proposed": base.model_copy(deep=True)})
+    assert rebase_rewrite_candidate(base, restored).diff == []
+
+
+def test_repeating_an_explicit_value_does_not_invoke_model_or_invent_changes():
+    provider = MockProvider()
+    base = provider.generate(GenerationRequest(prompt="登录测试用例")).test_cases[0]
+    def must_not_call(_request):
+        raise AssertionError("An already satisfied assignment must not invoke the model")
+    provider.rewrite = must_not_call
+    result = GenerationPipeline(provider).rewrite(RewriteRequest(
+        test_case=base, instruction=f"仅将标题改为「{base.title}」，其他字段保持不变。",
+    ))
+    assert result.diff == []
+    assert result.proposed == base
+
+
+def test_explicit_rewrite_does_not_assign_module_from_a_later_title_value():
+    from casepilot_agent.pipeline import _explicit_rewrite_candidate
+    base = MockProvider().generate(GenerationRequest(prompt='登录测试用例')).test_cases[0]
+    candidate = _explicit_rewrite_candidate(RewriteRequest(test_case=base, instruction=(
+        '仅修改「账号登录」模块：标题改为「新版登录验证」，优先级改为P0，其他字段保持不变。'
+        '不要修改「订单库存」模块。'
+    )))
+    assert candidate is None  # Scope/guard prose is handled semantically, never guessed as an assignment.
+
+
+def test_explicit_module_assignment_still_changes_only_the_module():
+    from casepilot_agent.pipeline import _explicit_rewrite_candidate
+    base = MockProvider().generate(GenerationRequest(prompt='登录测试用例')).test_cases[0]
+    candidate = _explicit_rewrite_candidate(RewriteRequest(test_case=base, instruction='所属模块改为「账号/登录」'))
+    assert candidate is not None
+    assert candidate.proposed.module == '账号/登录'
+    assert {diff.field for diff in candidate.diff} == {'module'}
+
+
+def test_negated_assignments_cannot_enter_the_fast_assignment_path():
+    from casepilot_agent.pipeline import _explicit_rewrite_candidate
+    base = MockProvider().generate(GenerationRequest(prompt='登录测试用例')).test_cases[0]
+    for instruction in ['不要将标题改为「错误标题」', '标题改为「新标题」，优先级不要改为P0']:
+        assert _explicit_rewrite_candidate(RewriteRequest(test_case=base, instruction=instruction)) is None

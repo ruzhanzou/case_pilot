@@ -15,7 +15,7 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from casepilot_api.agent_router import (
-    needs_intent_confirmation,
+    draft_needs_confirmation,
     normalize_routing_text,
     plan_intents,
 )
@@ -445,6 +445,16 @@ def classify_intent(
     phase: str = "idle",
 ) -> tuple[str, float]:
     normalized = " ".join(normalize_routing_text(content).strip().split())
+    # Trailing preservation constraints are not additional requested actions.
+    # Keep standalone negations intact so their existing QA/clarification path applies.
+    normalized = re.sub(
+        r"[，,。；;]\s*(?:请)?(?:不要|无需|不用|禁止|暂不|不)"
+        r"(?:改写|修改|删除|生成|新增|移除)"
+        r"(?:(?:或|和|、)(?:改写|修改|删除|生成|新增|移除))*"
+        r"[^，,。；;]*",
+        "",
+        normalized,
+    )
     compact = normalized.casefold().strip("。！？!?，, ")
     asks_about_capabilities = ("casepilot" in compact or "你" in compact) and any(
         term in compact for term in CAPABILITY_TERMS
@@ -552,7 +562,7 @@ def classify_intent(
     explicitly_generates_cases = bool(
         re.search(
             r"(?:生成|设计|编写|创建|新增|增加|补充|重新生成|重新设计)"
-            r".{0,40}?(?:测试)?用例",
+            r"[^。；;]{0,40}?(?:测试)?用例",
             normalized,
         )
     )
@@ -1265,6 +1275,7 @@ def _resolve_action_scope(
     conversation: Conversation,
     payload: ConversationMessageCreate,
     intent: str,
+    scope_text: str | None = None,
 ) -> tuple[ConversationMessageCreate, str | None]:
     if conversation.collection_id is None:
         return payload, None
@@ -1286,7 +1297,20 @@ def _resolve_action_scope(
         ]
     else:
         snapshots = _load_scope_snapshots(db, conversation)
-    scope = resolve_scope(payload.content, snapshots)
+    explicit_scope = None
+    if scope_text:
+        # A shortened semantic target must not bypass explicit names/guards in
+        # the operation instruction (e.g. a missing module ending in a known name).
+        explicit_scope = resolve_scope(payload.content, snapshots)
+        # Preserve explicit exclusions even when the model extracts a shorter target phrase.
+        guards = re.findall(
+            r"(?:不要|无需|禁止|勿|不)(?:修改|改写|调整|删除|影响)[^，,。；;\n]*",
+            payload.content,
+        )
+        scope_text = "，".join([scope_text, *guards])
+    scope = explicit_scope if explicit_scope and explicit_scope.get("error") else resolve_scope(
+        scope_text if scope_text is not None else payload.content, snapshots
+    )
     if intent == "CASE_DELETE" and re.search(
         r"冗余|重复|相似|无效|过时|\b(?:duplicate|redundant|obsolete|invalid)",
         payload.content,
@@ -1336,7 +1360,9 @@ def _resolve_action_scope(
     scope_ids = set(scope["ids"])
     selected = [item for item in snapshots if str(item["id"]) in scope_ids]
     if intent != "CASE_GENERATE":
-        selected = filter_priority(payload.content, selected)
+        selected = filter_priority(
+            scope_text if scope_text is not None else payload.content, selected
+        )
     ids = {str(item["id"]) for item in selected}
     return payload.model_copy(
         update={
@@ -1439,10 +1465,24 @@ def _start_action(
         db.add(assistant)
         db.flush()
         return assistant, {"type": "module_created", "module_path": new_module}, None
+    operation = db.get(ConversationOperation, operation_id) if operation_id else None
+    plan = dict(operation.payload).get("plan", {}) if operation else {}
+    questions = plan.get("clarification_questions", [])
+    if questions and not confirmed_targets:
+        assistant = _new_assistant_message(
+            conversation.id, content="\n".join(questions), intent=intent,
+            confidence=confidence, status="awaiting_clarification", target_case_ids=[],
+        )
+        db.add(assistant)
+        db.flush()
+        return assistant, {"type": "clarification"}, None
+    scope_text = plan.get("target_text") if plan.get("routing_source") == "semantic" else None
     if confirmed_targets or (payload.source_operation_id and payload.targets):
         payload, scope_error = _expand_conversation_targets(db, conversation, payload), None
     else:
-        payload, scope_error = _resolve_action_scope(db, conversation, payload, intent)
+        payload, scope_error = _resolve_action_scope(
+            db, conversation, payload, intent, scope_text or None
+        )
     if scope_error:
         assistant = _new_assistant_message(
             conversation.id,
@@ -1688,6 +1728,30 @@ def _start_action(
         "conversation_memory": conversation_memory,
         "conversation_operation_id": str(operation_id) if operation_id else None,
     }
+    previous_items = {}
+    if intent == "CASE_MODIFY" and payload.source_operation_id:
+        source = db.get(ConversationOperation, payload.source_operation_id)
+        previous = db.get(CaseChangeSet, source.related_change_set_id) if (
+            source and source.related_change_set_id
+        ) else None
+        if previous and previous.status == "ready":
+            previous_items = {item["ref"]: item for item in previous.items}
+            for current in case_context:
+                earlier = previous_items.get(current["ref"])
+                if earlier is None:
+                    raise HTTPException(status_code=422, detail="previous_result_not_found")
+                if current["target_type"] == "formal" and (
+                    current["snapshot"].get("current_revision_id")
+                    != earlier.get("base_revision_id")
+                ):
+                    raise HTTPException(status_code=409, detail="revision_conflict")
+                if current["target_type"] == "candidate":
+                    actual = next(item for item in payload.target_candidate_snapshots
+                                  if item.ref == current["ref"])
+                    if actual.version != earlier.get("base_version"):
+                        raise HTTPException(status_code=409, detail="candidate_changed")
+            input_payload["previous_change_set_id"] = str(previous.id)
+            input_payload["previous_proposals"] = previous_items
     if intent == "CASE_GENERATE":
         input_payload["target_module_path"] = requested_new_module(
             payload.content
@@ -2696,7 +2760,13 @@ def commit_workspace_candidates(
         )
         .values(status="excluded")
     )
-    active_operation_id = dict(conversation.context).get("active_operation_id")
+    generation_job_ids = {item.generation_job_id for item in candidates}
+    source_generation = db.scalar(select(ConversationOperation).where(
+        ConversationOperation.conversation_id == conversation.id,
+        ConversationOperation.intent == "CASE_GENERATE",
+        ConversationOperation.related_job_id.in_(generation_job_ids),
+    ).order_by(ConversationOperation.created_at.desc()))
+    active_operation_id = str(source_generation.id) if source_generation else None
     conversation.context = {
         **dict(conversation.context),
         "phase": "maintenance",
@@ -2821,8 +2891,21 @@ def _expand_conversation_targets(
             if committed_ids:
                 case_ids.extend(UUID(str(item)) for item in committed_ids)
                 continue
-            if source.intent in ANALYSIS_INTENTS | {"CASE_QUERY"}:
+            if source.intent in ANALYSIS_INTENTS | {"CASE_QUERY", "CASE_MODIFY"}:
                 case_ids.extend(UUID(str(item)) for item in dict(source.target).get("case_ids", []))
+            if source.intent == "CASE_MODIFY":
+                for ref in dict(source.target).get("candidate_refs", []):
+                    candidate = db.scalar(select(WorkspaceCandidate).where(
+                        WorkspaceCandidate.conversation_id == conversation.id,
+                        WorkspaceCandidate.ref == ref,
+                        WorkspaceCandidate.status == "candidate",
+                    ))
+                    if candidate is not None and candidate.ref not in candidate_refs:
+                        candidate_snapshots.append(ConversationTargetSnapshot(
+                            ref=candidate.ref, version=candidate.version,
+                            snapshot=dict(candidate.snapshot),
+                        ))
+                        candidate_refs.add(candidate.ref)
             result_ids = [
                 UUID(str(item)) for item in dict(source.result).get("candidate_ids", [])
             ]
@@ -2942,6 +3025,26 @@ def send_message(
 ) -> ConversationTurnView:
     conversation = _ensure_conversation(db, account.id, conversation_id)
     _require_idle_conversation(db, conversation)
+    if not (payload.source_operation_id or payload.targets or payload.target_case_ids
+            or payload.target_candidate_snapshots) and re.search(
+        r"这一版|这版|上一版|刚才(?:的|改)|不满意|同一条用例", payload.content
+    ):
+        sources = list(db.scalars(select(ConversationOperation).where(
+            ConversationOperation.conversation_id == conversation.id,
+            ConversationOperation.intent == "CASE_MODIFY",
+            ConversationOperation.status.in_({"awaiting_confirmation", "completed"}),
+            ConversationOperation.related_change_set_id.is_not(None),
+        ).order_by(ConversationOperation.created_at.desc()).limit(2)))
+        pending = [item for item in sources if item.status == "awaiting_confirmation"]
+        source = (pending[0] if len(pending) == 1
+                  else sources[0] if sources and not pending else None)
+        if source is not None:
+            payload = payload.model_copy(update={
+                "source_operation_id": source.id,
+                "targets": [ConversationTarget(
+                    kind="previous_result", source_operation_id=source.id
+                )],
+            })
     if payload.source_operation_id:
         source_operation = db.get(ConversationOperation, payload.source_operation_id)
         if source_operation is None or source_operation.conversation_id != conversation.id:
@@ -3062,7 +3165,7 @@ def send_message(
         intent_confidence=confidence,
         status=(
             "awaiting_intent"
-            if needs_intent_confirmation(intent, confidence)
+            if draft_needs_confirmation(operation_drafts[0])
             else "completed"
         ),
         target_case_ids=[str(item) for item in payload.target_case_ids],
@@ -3073,6 +3176,11 @@ def send_message(
     db.flush()
     operations: list[ConversationOperation] = []
     for sequence, draft in enumerate(operation_drafts):
+        use_input_targets = (draft.get("routing_source") != "semantic"
+                             or draft.get("target_kind") == "previous_result") or bool(re.search(
+            r"选中|所选|当前用例|这些用例|这条用例|selected|current case|these cases",
+            str(draft.get("target_text", "")), re.I,
+        ))
         operation = ConversationOperation(
             conversation_id=conversation.id,
             message_id=user_message.id,
@@ -3081,16 +3189,20 @@ def send_message(
             confidence=float(draft["confidence"]),
             status=(
                 "awaiting_intent"
-                if needs_intent_confirmation(str(draft["intent"]), float(draft["confidence"]))
+                if draft_needs_confirmation(draft)
                 else "queued"
             ),
             target={
                 "kind": draft.get("target_kind", "none"),
-                "selectors": [item.model_dump(mode="json") for item in payload.targets],
-                "case_ids": [str(item) for item in payload.target_case_ids],
-                "candidate_refs": [item.ref for item in payload.target_candidate_snapshots],
+                "selectors": [item.model_dump(mode="json") for item in payload.targets]
+                if use_input_targets else [],
+                "case_ids": [str(item) for item in payload.target_case_ids]
+                if use_input_targets else [],
+                "candidate_refs": [item.ref for item in payload.target_candidate_snapshots]
+                if use_input_targets else [],
             },
             payload={
+                "plan": {"version": 2, **draft},
                 "instruction": str(draft["instruction"]),
                 "action": str(draft.get("action") or ""),
                 "reason_codes": list(draft.get("reason_codes") or []),
@@ -3112,7 +3224,7 @@ def send_message(
         }
     assistant: ConversationMessage | None = None
     action: dict[str, Any] = {}
-    if not needs_intent_confirmation(intent, confidence):
+    if not draft_needs_confirmation(operation_drafts[0]):
         operations[0].status = "running"
         operation_payload = payload.model_copy(
             update={"content": str(operation_drafts[0]["instruction"])}
@@ -3148,7 +3260,7 @@ def send_message(
         assistant_message=_message_view(assistant) if assistant else None,
         intent=intent,
         intent_confidence=confidence,
-        requires_intent_confirmation=needs_intent_confirmation(intent, confidence),
+        requires_intent_confirmation=draft_needs_confirmation(operation_drafts[0]),
         action=action,
         operation_plan=_operation_plan_view(operations),
     )
@@ -3562,8 +3674,9 @@ def resume_conversation_operation(
             key=lambda item: item.sequence,
             reverse=True,
         )
+        dependency = dict(operation.payload).get("depends_on")
         source = next(
-            (item for item in ordered_predecessors if dict(item.result).get("candidate_ids")),
+            (item for item in ordered_predecessors if item.sequence == dependency),
             ordered_predecessors[0],
         )
         resume_targets = [
@@ -3613,6 +3726,39 @@ def resume_conversation_operation(
             message_metadata={"operation_id": str(operation.id), "clarification": True},
         ))
         operation.payload = {**dict(operation.payload), "instruction": request_data["content"]}
+    semantic_plan = dict(operation.payload).get("plan", {}).get("routing_source") == "semantic"
+    if supplement.content and semantic_plan:
+        phase = str(dict(conversation.context).get("phase", "idle"))
+        replanned = plan_intents(
+            request_data["content"],
+            lambda clause: classify_intent(clause, bool(resume_targets), phase),
+            has_targets=bool(
+                resume_targets
+                or supplement.target_case_ids
+                or supplement.target_candidate_snapshots
+            ),
+            phase=str(dict(conversation.context).get("phase", "idle")),
+            target_context=[item.model_dump(mode="json") for item in resume_targets],
+            provider=settings.agent_provider, model_name=settings.agent_model,
+            base_url=settings.agent_base_url, api_key=settings.agent_api_key,
+            timeout_seconds=settings.agent_timeout_seconds,
+            tracing_enabled=settings.agent_tracing_enabled,
+        )
+        if len(replanned.operations) == 1 and replanned.operations[0].intent == operation.intent:
+            draft = replanned.operations[0].model_dump(mode="json")
+            request_data["content"] = draft["instruction"]
+            operation.payload = {
+                **dict(operation.payload), "instruction": draft["instruction"],
+                "plan": {"version": 2, **draft},
+            }
+            operation.target = {**dict(operation.target), "kind": draft["target_kind"]}
+        else:
+            existing_plan = dict(operation.payload).get("plan", {})
+            operation.payload = {**dict(operation.payload), "plan": {
+                **existing_plan, "clarification_questions": [
+                    "请补充当前任务的目标和修改要求；新的任务请另行发送。"
+                ],
+            }}
     message_input = ConversationMessageCreate.model_validate(request_data)
     message_input = _expand_conversation_targets(db, conversation, message_input)
     if supplement.intent is not None:
@@ -3854,6 +4000,18 @@ def get_change_set(
     return _change_set_view(_ensure_change_set(db, account.id, change_set_id))
 
 
+def _mark_change_set_conflict(db: DbSession, change_set: CaseChangeSet) -> None:
+    change_set.status = "conflict"
+    operation = db.scalar(select(ConversationOperation).where(
+        ConversationOperation.related_change_set_id == change_set.id
+    ))
+    if operation is not None:
+        operation.status = "failed"
+        operation.completed_at = datetime.now(UTC)
+        operation.result = {**dict(operation.result), "change_set_status": "conflict"}
+    db.commit()
+
+
 @router.post(
     "/case-change-sets/{change_set_id}/apply",
     response_model=CaseChangeSetApplyView,
@@ -3865,12 +4023,24 @@ def apply_change_set(
     db: DbSession,
 ) -> CaseChangeSetApplyView:
     change_set = _ensure_change_set(db, account.id, change_set_id)
-    if change_set.status == "applied":
+    db.refresh(change_set, with_for_update=True)
+    if change_set.status in {"applied", "rejected"}:
         return CaseChangeSetApplyView(change_set=_change_set_view(change_set))
     if change_set.status != "ready":
         raise HTTPException(status_code=409, detail="change_set_not_ready")
 
-    formal_items = [item for item in change_set.items if item["target_type"] == "formal"]
+    if payload.review_refs is not None and (not payload.review_refs or
+        not set(payload.review_refs) <= {item["ref"] for item in change_set.items}):
+        raise HTTPException(status_code=422, detail="invalid_review_refs")
+    review_items = [item for item in change_set.items
+                    if item.get("status") not in {"applied", "rejected"}
+                    and (payload.review_refs is None or item["ref"] in payload.review_refs)]
+    if not review_items:
+        return CaseChangeSetApplyView(change_set=_change_set_view(change_set))
+    reviewing = {item["ref"] for item in review_items}
+    write_items = [item for item in review_items if payload.review_refs is None
+                   or payload.accepted_fields.get(item["ref"], ["all"])]
+    formal_items = [item for item in write_items if item["target_type"] == "formal"]
     formal_cases: dict[str, TestCase] = {}
     for item in formal_items:
         test_case = db.scalar(
@@ -3883,13 +4053,12 @@ def apply_change_set(
             or test_case.deleted_at is not None
             or str(test_case.current_revision_id) != item["base_revision_id"]
         ):
-            change_set.status = "conflict"
-            db.commit()
+            _mark_change_set_conflict(db, change_set)
             raise HTTPException(status_code=409, detail="revision_conflict")
         formal_cases[item["ref"]] = test_case
 
     candidate_cases: dict[str, WorkspaceCandidate] = {}
-    for item in change_set.items:
+    for item in write_items:
         if item["target_type"] != "candidate":
             continue
         candidate = db.scalar(
@@ -3902,8 +4071,7 @@ def apply_change_set(
             .with_for_update()
         )
         if candidate is None or candidate.version != int(item.get("base_version", 1)):
-            change_set.status = "conflict"
-            db.commit()
+            _mark_change_set_conflict(db, change_set)
             raise HTTPException(status_code=409, detail="candidate_changed")
         candidate_cases[item["ref"]] = candidate
 
@@ -3911,6 +4079,9 @@ def apply_change_set(
     candidate_snapshots: list[dict] = []
     updated_items: list[dict] = []
     for item in change_set.items:
+        if item["ref"] not in reviewing:
+            updated_items.append(item)
+            continue
         if item["ref"] in payload.accepted_fields:
             accepted = set(payload.accepted_fields[item["ref"]])
         else:
@@ -3918,6 +4089,10 @@ def apply_change_set(
         accepted &= {str(diff["field"]) for diff in item.get("field_diff", [])}
         if not accepted:
             updated_items.append({**item, "status": "rejected"})
+            if item.get("candidate_revision_id"):
+                candidate_revision = db.get(CandidateRevision, UUID(item["candidate_revision_id"]))
+                if candidate_revision is not None and candidate_revision.status == "pending":
+                    candidate_revision.status = "rejected"
             continue
         if item.get("operation") == "delete":
             test_case = formal_cases[item["ref"]]
@@ -4028,27 +4203,57 @@ def apply_change_set(
         )
 
     change_set.items = updated_items
-    change_set.status = "applied"
-    change_set.applied_at = datetime.now(UTC)
+    pending_count = sum(item.get("status") not in {"applied", "rejected"} for item in updated_items)
+    has_applied = any(item.get("status") == "applied" for item in updated_items)
+    change_set.status = "ready" if pending_count else "applied" if has_applied else "rejected"
+    change_set.applied_at = datetime.now(UTC) if not pending_count and has_applied else None
     operation = db.scalar(
         select(ConversationOperation).where(
             ConversationOperation.related_change_set_id == change_set.id
         )
     )
     if operation is not None:
-        operation.status = "completed"
+        operation.status = "awaiting_confirmation" if pending_count else "completed"
         operation.result = {
             **dict(operation.result),
             "change_set_id": str(change_set.id),
+            "scope_versions": {
+                **dict(operation.result.get("scope_versions", {})),
+                **{str(case.id): str(case.current_revision_id) for case in created_cases},
+            },
             "updated_refs": [
-                str(item["ref"]) for item in updated_items if item["status"] == "applied"
+                str(item["ref"]) for item in updated_items if item.get("status") == "applied"
             ],
         }
-        operation.completed_at = datetime.now(UTC)
+        operation.completed_at = None if pending_count else datetime.now(UTC)
     deleted_count = sum(
         item.get("operation") == "delete" and item.get("status") == "applied"
         for item in updated_items
     )
+    deleted_ids = {
+        str(item["test_case_id"]) for item in updated_items
+        if item.get("operation") == "delete" and item.get("status") == "applied"
+    }
+    if deleted_ids:
+        conversation = db.get(Conversation, change_set.conversation_id)
+        if conversation is not None:
+            context = dict(conversation.context)
+            kept_targets = []
+            for selection in context.get("selected_targets", []):
+                target = dict(selection.get("target", {}))
+                target["case_ids"] = [
+                    value for value in target.get("case_ids", []) if value not in deleted_ids
+                ]
+                if (
+                    target.get("kind") != "case"
+                    or target["case_ids"]
+                    or target.get("candidate_refs")
+                ):
+                    kept_targets.append({**selection, "target": target})
+            context["selected_targets"] = kept_targets
+            if context.get("selected_case_id") in deleted_ids:
+                context["selected_case_id"] = ""
+            conversation.context = context
     has_deletions = any(
         item.get("operation") == "delete" for item in updated_items
     )
@@ -4056,8 +4261,9 @@ def apply_change_set(
         f"已确认软删除 {deleted_count} 条用例，审计记录已保留。"
         if has_deletions
         else (
-            f"已应用 {sum(item['status'] == 'applied' for item in updated_items)} 条用例变更。"
-            "正式用例已创建新 Revision，候选用例已保留新快照版本。"
+            f"已采纳 {sum(item.get('status') == 'applied' for item in updated_items)} 条用例变更，"
+            f"已丢弃 {sum(item.get('status') == 'rejected' for item in updated_items)} 条建议，"
+            f"剩余 {pending_count} 条待审阅。"
         )
     )
     db.add(
@@ -4067,12 +4273,12 @@ def apply_change_set(
             content=result_message,
             intent=operation.intent if operation is not None else "CASE_MODIFY",
             intent_confidence=1.0,
-            status="completed",
+            status="awaiting_confirmation" if pending_count else "completed",
             target_case_ids=[str(item["ref"]) for item in updated_items],
             citations=[],
             message_metadata={
                 "change_set_id": str(change_set.id),
-                "action": "applied",
+                "action": "partially_reviewed" if pending_count else change_set.status,
                 "operation_id": str(operation.id) if operation else None,
             },
         )
@@ -4097,6 +4303,12 @@ def reject_change_set(
     db: DbSession,
 ) -> CaseChangeSetView:
     change_set = _ensure_change_set(db, account.id, change_set_id)
+    db.refresh(change_set, with_for_update=True)
+    if change_set.status == "ready" and any(item.get("status") == "applied" for item in change_set.items):
+        refs = [item["ref"] for item in change_set.items if item.get("status") not in {"applied", "rejected"}]
+        return apply_change_set(change_set_id, ChangeSetApplyRequest(
+            accepted_fields={ref: [] for ref in refs}, review_refs=refs,
+        ), account, db).change_set
     if change_set.status in {"generating", "ready"}:
         change_set.status = "rejected"
         operation = db.scalar(
@@ -4104,9 +4316,15 @@ def reject_change_set(
                 ConversationOperation.related_change_set_id == change_set.id
             )
         )
+        stopped_followers = 0
         if operation is not None:
             operation.status = "cancelled"
             operation.completed_at = datetime.now(UTC)
+            stopped_followers = db.execute(update(ConversationOperation).where(
+                ConversationOperation.message_id == operation.message_id,
+                ConversationOperation.sequence > operation.sequence,
+                ConversationOperation.status == "queued",
+            ).values(status="cancelled", completed_at=datetime.now(UTC))).rowcount
         for item in change_set.items:
             candidate_id = item.get("candidate_revision_id")
             if candidate_id:
@@ -4117,7 +4335,10 @@ def reject_change_set(
             ConversationMessage(
                 conversation_id=change_set.conversation_id,
                 role="assistant",
-                content="已拒绝本次修改，原用例内容保持不变。",
+                content="已拒绝本次修改，原用例内容保持不变。" + (
+                    "同一请求中尚未执行的后续任务已停止，如需继续请重新发起。"
+                    if stopped_followers else ""
+                ),
                 intent=operation.intent if operation is not None else "CASE_MODIFY",
                 intent_confidence=1.0,
                 status="completed",
