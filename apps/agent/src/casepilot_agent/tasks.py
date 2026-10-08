@@ -18,10 +18,10 @@ from casepilot_agent.contracts import (
     KnowledgeAnswer,
     QualityIssue,
     RequirementAnalysis,
+    RewriteCaseDraft,
     RewriteRequest,
     SourceRef,
     StructuredResultT,
-    TestCaseDraft,
     UsageMetadata,
 )
 from casepilot_agent.knowledge import (
@@ -1036,7 +1036,7 @@ def rewrite_test_case(job_id: str) -> dict[str, Any]:
         pipeline = GenerationPipeline(create_provider(settings.provider))
         candidate = pipeline.rewrite(
             RewriteRequest(
-                test_case=TestCaseDraft.model_validate(snapshot),
+                test_case=RewriteCaseDraft.model_validate(snapshot),
                 instruction=payload["instruction"],
                 conversation_memory=list(payload.get("conversation_memory", [])),
                 model_id=payload.get("model_id", "auto"),
@@ -1072,7 +1072,7 @@ def rewrite_test_case(job_id: str) -> dict[str, Any]:
 def _candidate_snapshot_to_draft(
     ref: str,
     snapshot: dict[str, Any],
-) -> TestCaseDraft:
+) -> RewriteCaseDraft:
     normalized = {
         **snapshot,
         "id": str(snapshot.get("id") or snapshot.get("case_key") or ref),
@@ -1092,7 +1092,7 @@ def _candidate_snapshot_to_draft(
         "test_point_ids": list(snapshot.get("test_point_ids", [])),
         "source_refs": list(snapshot.get("source_refs", [])),
     }
-    return TestCaseDraft.model_validate(normalized)
+    return RewriteCaseDraft.model_validate(normalized)
 
 
 @celery_app.task(name="casepilot.agent.rewrite_batch")
@@ -1125,13 +1125,15 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
             working = previous["proposed_snapshot"] if previous else snapshot
             candidate = pipeline.rewrite(
                 RewriteRequest(
-                    test_case=TestCaseDraft.model_validate(working),
+                    test_case=RewriteCaseDraft.model_validate(working),
                     instruction=instruction,
                     conversation_memory=list(payload.get("conversation_memory", [])),
                     model_id=str(payload.get("model_id", "auto")),
                 )
             )
-            candidate = rebase_rewrite_candidate(TestCaseDraft.model_validate(snapshot), candidate)
+            candidate = rebase_rewrite_candidate(
+                RewriteCaseDraft.model_validate(snapshot), candidate
+            )
             candidate_payload = candidate.model_dump(mode="json")
             items.append(
                 {
@@ -1217,8 +1219,14 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
                     },
                 )
                 item["candidate_revision_id"] = str(candidate_id)
-            output["items"] = items
-            store.persist_change_set(connection, job=job, items=items)
+            items = store.persist_change_set(connection, job=job, items=items)
+            pending = [item for item in items if item.get("status") not in {"applied", "rejected"}]
+            changed_count = sum(bool(item["field_diff"]) for item in pending)
+            output.update(
+                items=items,
+                no_changes=changed_count == 0,
+                unchanged_count=sum(not item["field_diff"] for item in pending),
+            )
             store.update_job(
                 connection,
                 parsed_job_id,
@@ -1231,7 +1239,7 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
                 connection,
                 job,
                 content=(f"已检查 {len(items)} 条用例，{changed_count} 条待确认修改，"
-                         f"{len(items) - changed_count} 条无需修改。"),
+                         f"{output['unchanged_count']} 条无需修改。"),
                 metadata_values={
                     "change_set_id": str(payload["change_set_id"]),
                     "item_count": len(items),

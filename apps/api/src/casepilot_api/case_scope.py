@@ -3,6 +3,42 @@
 import re
 
 
+def unsupported_mutation_condition(instruction: str) -> bool:
+    """Recognize content predicates that the deterministic resolver cannot honor.
+
+    Quoted assignments describe the new content, not selection predicates.
+    A confirmed UI selection may bypass this check in the action handler.
+    """
+    text = re.sub(
+        r'(?:标题|名称|所属模块|模块|用例类型|类型|预期结果|校验点)\s*'
+        r'(?:统一|全部)?\s*(?:改为|改成|修改为|调整为|设置为|设为|替换为|更新为|补充为|为|是|[:：])'
+        r'\s*[「“"].*?[」”"]',
+        "", instruction,
+    )
+    # A known module is not sufficient if an additional unsupported predicate
+    # follows it. Keep only the subset grammar we actually resolve locally.
+    module_text = re.sub(r'模块\s*[「“"][^」”"]+[」”"]', "模块", text)
+    for match in re.finditer(r"模块(?:中|里|内|下)?([^，,。；;\n]*?)用例", module_text):
+        qualifier = re.sub(
+            r"全部|所有|当前|这些|剩余|未采纳(?:建议)?|未审阅|待审阅建议|未纳入|候选"
+            r"|测试|的|中|里|内|下|P[0-2]|\d+\s*条|\s", "", match[1], flags=re.I
+        )
+        if qualifier:
+            return True
+    return bool(
+        re.search(
+            r"(?:涉及|关于|有关|相关|包含|含有|满足|符合|不含|不包括|排除|除了|除外)"
+            r"[^，,。；;\n]*?(?:用例|场景)"
+            r"|(?:标题|名称|步骤|预期|前置条件)(?:中|里)?(?:包含|含有|含|为|是)[^，,。；;\n]*?用例"
+            r"|(?:失败|成功|异常|正常|超时)(?:场景)?的(?:测试)?用例"
+            r"|\b(?:cases?|tests?)\s+(?:that|which|where|containing|involving|tagged|with|matching)\b"
+            r"|\b(?:except|excluding)\b",
+            text,
+            re.I,
+        )
+    )
+
+
 def module_parts(value: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in re.split(r"\s*(?:/|>|::|／)\s*", value) if part.strip())
 

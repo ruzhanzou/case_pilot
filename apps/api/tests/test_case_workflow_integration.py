@@ -187,6 +187,12 @@ async def test_analysis_to_candidates_keeps_history_and_blocks_overlapping_messa
                 json={"content": clarification, "target_case_ids": [case["id"]]},
             )
             assert resumed.status_code == 202, resumed.text
+            assert resumed.json()["assistant_message"]["metadata"]["modification_confirmation"]
+            resumed = await client.post(
+                f"/api/v1/conversation-operations/{clarification_id}/resume",
+                json={"confirm_modification": True},
+            )
+            assert resumed.status_code == 202, resumed.text
             from casepilot_api.models import GenerationJob
 
             with get_session_factory()() as db:
@@ -278,3 +284,72 @@ async def test_end_running_task_cancels_group_and_unlocks_conversation(monkeypat
             if account_id:
                 db.execute(delete(Account).where(Account.id == UUID(account_id)))
             db.commit()
+
+
+@pytest.mark.asyncio
+async def test_stale_ui_autosave_and_worker_context_merge_preserve_latest_task(monkeypatch):
+    from types import SimpleNamespace
+
+    from casepilot_agent.store import JobStore
+    from sqlalchemy import update
+
+    from casepilot_api.models import Conversation
+    from casepilot_api.schemas import WorkspaceStateUpdate
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        registration = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": f"context-race-{uuid4().hex}@casepilot.test",
+                "display_name": "Context race test",
+                "password": "CasePilot123!",
+            },
+        )
+        assert registration.status_code == 201
+        account = registration.json()
+        space_id = UUID(account["spaces"][0]["id"])
+        account_id = UUID(account["id"])
+        try:
+            collections = (await client.get(f"/api/v1/spaces/{space_id}/collections")).json()
+            workspace = (
+                await client.put(f"/api/v1/collections/{collections[0]['id']}/workspace")
+            ).json()
+            conversation_id = UUID(workspace["id"])
+            session_factory = get_session_factory()
+            latest = str(uuid4())
+            with session_factory() as stale:
+                loaded = stale.get(Conversation, conversation_id)
+                # Hold the old ORM snapshot, then commit a newer task elsewhere.
+                original = dict(loaded.context)
+                with session_factory() as writer:
+                    writer.execute(
+                        update(Conversation)
+                        .where(Conversation.id == conversation_id)
+                        .values(context={**original, "active_mutation_operation_id": latest})
+                    )
+                    writer.commit()
+                assert loaded.context == original
+                monkeypatch.setattr(conversations, "_conversation_view", lambda db, row: row)
+                conversations.update_workspace_state(
+                    conversation_id,
+                    WorkspaceStateUpdate(draft_text="draft after new task"),
+                    SimpleNamespace(id=account_id),
+                    stale,
+                )
+                assert loaded.context["active_mutation_operation_id"] == latest
+                assert loaded.context["draft_text"] == "draft after new task"
+            store = JobStore(conversations.settings.database_url, conversations.settings.redis_url)
+            with store.connection() as connection:
+                store.update_workspace_context(
+                    connection, conversation_id, phase="candidate_review"
+                )
+            with session_factory() as db:
+                context = db.get(Conversation, conversation_id).context
+                assert context["active_mutation_operation_id"] == latest
+                assert context["draft_text"] == "draft after new task"
+                assert context["phase"] == "candidate_review"
+        finally:
+            with get_session_factory()() as db:
+                db.execute(delete(Space).where(Space.id == space_id))
+                db.execute(delete(Account).where(Account.id == account_id))
+                db.commit()

@@ -161,6 +161,7 @@ const operationStatusLabels: Record<string, string> = {
   running: "正在执行",
   awaiting_confirmation: "等待确认",
   awaiting_intent: "等待选择操作",
+  awaiting_target: "待确认或补充",
   completed: "已完成",
   skipped: "已跳过",
   failed: "执行失败",
@@ -201,6 +202,7 @@ const englishWorkflowStageLabels: Record<string, string> = {
 };
 const englishOperationStatusLabels: Record<string, string> = {
   queued: "Queued", running: "Running", awaiting_confirmation: "Awaiting confirmation",
+  awaiting_target: "Confirm or clarify",
   awaiting_intent: "Choose an action", completed: "Completed", skipped: "Skipped",
   failed: "Failed", cancelled: "Cancelled",
 };
@@ -1140,6 +1142,22 @@ export function CaseWorkbench({
     }
   };
 
+  const confirmModification = async (operationId: string) => {
+    setBusy(true);
+    setError("");
+    try {
+      const turn = await resumeConversationOperation(operationId, { confirmModification: true });
+      if (turn.action.job_id) {
+        openReviewPlan(operationId);
+        await waitAndRefresh(turn.action.job_id);
+      } else await refreshWorkspace();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : pick("Confirmation failed", "修改确认失败"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const confirmOperation = async (
     operationId: string,
     intent: ConversationIntent,
@@ -1718,6 +1736,9 @@ export function CaseWorkbench({
                 {conversationTask?.message.id === message.id && conversationTask.operation?.status === "awaiting_target" && (
                   <div className="principle-review-followups">
                     <span>{pick("Reply below to clarify this task.", "直接在下方回复，即可补充当前任务。")}</span>
+                    {message.metadata.modification_confirmation === true && (
+                      <button type="button" disabled={busy || conversationRunning} onClick={() => void confirmModification(conversationTask.operation!.id)}>{pick("Confirm modification", "确认修改并生成建议")}</button>
+                    )}
                     <button type="button" disabled={conversationRunning} onClick={() => { setResumeTaskId(conversationTask.id); promptRef.current?.focus(); }}>{pick("Provide details", "补充信息")}</button>
                     <button type="button" disabled={conversationRunning} onClick={() => { setResumeTaskId(""); void discardTask(conversationTask); }}>{pick("End task", "结束任务")}</button>
                   </div>
@@ -1849,7 +1870,7 @@ export function CaseWorkbench({
           </div>
         </div>
 
-        {activeMutationTask && <div className="principle-change-set-link" role="status" data-testid="active-mutation-task-notice">
+        {activeMutationTask && activeMutationTask.status !== "awaiting_target" && <div className="principle-change-set-link" role="status" data-testid="active-mutation-task-notice">
           <span>{pick("This task is still open. Further edits stay here until you accept or abandon it. Queries are separate tasks.", "当前任务尚未结束，后续修改将继续此任务；查询会单独建立任务。请在工作区完成采纳或放弃，之后才可开始新的生成或修改任务。")}</span>
           <button type="button" onClick={() => openReviewPlan(activeMutationTask.id)}>{pick("Go to workstation review", "前往工作区审阅")}</button>
         </div>}

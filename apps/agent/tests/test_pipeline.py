@@ -553,3 +553,48 @@ def test_negated_assignments_cannot_enter_the_fast_assignment_path():
     base = MockProvider().generate(GenerationRequest(prompt='登录测试用例')).test_cases[0]
     for instruction in ['不要将标题改为「错误标题」', '标题改为「新标题」，优先级不要改为P0']:
         assert _explicit_rewrite_candidate(RewriteRequest(test_case=base, instruction=instruction)) is None
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "并补充断网后重试的验证",
+        "并增加审计日志断言",
+        "并重写异常分支",
+    ],
+)
+def test_exact_assignment_does_not_swallow_semantic_changes(extra):
+    from unittest.mock import Mock
+
+    provider = Mock()
+    original = MockProvider().generate(GenerationRequest(prompt="登录")).test_cases[0]
+    request = RewriteRequest(
+        test_case=original, instruction=f"把当前用例标题改为「弱网登录校验」，{extra}"
+    )
+    GenerationPipeline(provider).rewrite(request)
+    provider.rewrite.assert_called_once_with(request)
+
+
+@pytest.mark.parametrize("count", [1, 5, 100])
+def test_rewrite_preserves_legal_existing_case_shape(count):
+    from pydantic import ValidationError
+
+    from casepilot_agent.contracts import RewriteCandidate, RewriteCaseDraft, TestCaseDraft
+
+    base = (
+        MockProvider()
+        .generate(GenerationRequest(prompt="登录"))
+        .test_cases[0]
+        .model_dump(mode="json")
+    )
+    base.update(preconditions=[], steps=[base["steps"][0]] * count)
+    original = RewriteCaseDraft.model_validate(base)
+    result = GenerationPipeline(MockProvider()).rewrite(
+        RewriteRequest(test_case=original, instruction="标题改为「现有用例标题调整」")
+    )
+    assert result.proposed.preconditions == []
+    assert len(result.proposed.steps) == count
+    assert result.proposed.steps == original.steps
+    assert RewriteCandidate.model_validate(result.model_dump()).proposed.title == "现有用例标题调整"
+    with pytest.raises(ValidationError):
+        TestCaseDraft.model_validate(base)

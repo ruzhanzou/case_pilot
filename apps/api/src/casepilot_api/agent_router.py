@@ -333,7 +333,7 @@ def _validate_model_plan(
                 operation.clarification_questions = []
             else:
                 operation.clarification_questions = ["请指定要处理的模块名称、用例编号或选中用例。"]
-        operation.requires_confirmation = operation.intent in {"CASE_DELETE", "UNRESOLVED"}
+        operation.requires_confirmation = operation.intent in {"CASE_MODIFY", "CASE_DELETE", "UNRESOLVED"}
         operation.action = DEFAULT_ACTIONS[operation.intent]
     return IntentPlanDraft(operations=plan.operations)
 
@@ -401,7 +401,7 @@ def deterministic_plan(
                 confidence=confidence,
                 target_kind=target_kind,
                 requires_confirmation=(
-                    intent == "CASE_DELETE" or needs_intent_confirmation(intent, confidence)
+                    intent in {"CASE_MODIFY", "CASE_DELETE"} or needs_intent_confirmation(intent, confidence)
                 ),
                 reason_codes=["RULE_ROUTER"],
                 depends_on=len(operations) - 1 if operations else None,
@@ -451,7 +451,9 @@ def sdk_plan(
             "target_text只包含作用范围与排除条件，不包含拟修改的内容。修改后的P0不是筛选原用例的条件。"
             "instruction完整保留该操作的目标、修改内容和约束。不要将保留约束拆成操作。"
             "供我审阅、等我确认是用户自己确认结果的交付要求，绝不能拆成AI评审任务。"
-            "明确请求修改且附带不要改其他字段时仍是修改。不要因为confidence较低重复确认完整的请求。"
+            "明确请求修改且附带不要改其他字段时仍是修改。修改和重写会在对话区由用户确认后执行。"
+            "对于只有优化一下、重写一下而未提供改动方向的请求，询问需要修改哪些内容或希望达到什么效果；"
+            "已有明确修改要求时不重复提问，把修改目标与保留要求分别写入changes和constraints。"
             "selected_targets只是可用上下文，只有当前消息明确指向选中/当前用例时才引用，不能继承旧目标。"
             "若selected_targets提供previous_result且用户说这一版不满意、保留刚才修改、再调整，"
             "这是对已有方案的CASE_MODIFY，target_kind=previous_result，不必再次询问目标。"

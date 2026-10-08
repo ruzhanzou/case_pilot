@@ -14,11 +14,11 @@ from casepilot_agent.contracts import (
     QualityReport,
     RequirementAnalysis,
     RewriteCandidate,
+    RewriteCaseDraft,
     RewriteRequest,
     SourceRef,
     StructuredResultT,
     TestCaseBatch,
-    TestCaseDraft,
     TestPointPlan,
 )
 
@@ -52,6 +52,8 @@ def _explicit_rewrite_candidate(
     if any(field in instruction for field in unsupported_fields):
         return None
 
+    assignment_spans: list[tuple[int, int]] = []
+
     def quoted_value(field_pattern: str) -> str:
         match = re.search(
             rf"(?:{field_pattern})\s*(?:统一|全部)?\s*"
@@ -60,6 +62,8 @@ def _explicit_rewrite_candidate(
             instruction,
             flags=re.IGNORECASE,
         )
+        if match:
+            assignment_spans.append(match.span())
         return match.group(1).strip() if match else ""
 
     mentioned = {
@@ -77,13 +81,30 @@ def _explicit_rewrite_candidate(
     }
     priority_match = re.search(
         r"优先级\s*(?:统一|全部)?\s*(?:改为|改成|修改为|调整为|设置为|设为|为|[:：])\s*(P[012])\b",
-        instruction, re.I,
+        instruction,
+        re.I,
     )
     values["priority"] = priority_match.group(1).upper() if priority_match else ""
 
     if not any(values.values()):
         return None
     if any(mentioned[field] and not values[field] for field in mentioned):
+        return None
+
+    if priority_match:
+        assignment_spans.append(priority_match.span())
+    # Only complete assignment commands qualify. Anything left that asks for
+    # semantic work must reach the provider rather than silently disappear.
+    remainder = instruction
+    for start, end in sorted(assignment_spans, reverse=True):
+        remainder = remainder[:start] + remainder[end:]
+    if not re.fullmatch(
+        r"[\s，,。；;、]*(?:请)?(?:仅|只)?(?:把|将)?(?:当前|这个|选中|所选)?(?:的)?"
+        r"(?:用例(?:\s+[A-Za-z0-9_-]+)?)?(?:的)?[\s，,。；;、]*"
+        r"(?:(?:并|和|及|同时)(?:把|将)?[\s，,。；;、]*)*"
+        r"(?:其他字段保持不变[\s，,。；;、]*)?",
+        remainder,
+    ):
         return None
 
     proposed = request.test_case.model_copy(deep=True)
@@ -405,7 +426,9 @@ def requested_case_count(request: GenerationRequest) -> int | None:
     return None
 
 
-def rebase_rewrite_candidate(base: TestCaseDraft, candidate: RewriteCandidate) -> RewriteCandidate:
+def rebase_rewrite_candidate(
+    base: RewriteCaseDraft, candidate: RewriteCandidate
+) -> RewriteCandidate:
     """Review cumulative changes against persisted data, including prior draft edits."""
     before, after = base.model_dump(mode="json"), candidate.proposed.model_dump(mode="json")
     fields = (

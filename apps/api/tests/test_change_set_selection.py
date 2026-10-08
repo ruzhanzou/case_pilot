@@ -34,10 +34,11 @@ def test_unselected_case_does_not_write_revision_or_delete(monkeypatch, operatio
         instruction="Selected changes", scope="current", status="ready", items=[item],
         created_at=datetime.now(UTC), applied_at=None)
     db = Mock()
-    db.scalar.side_effect = [case, None]
+    db.scalar.return_value = None
     monkeypatch.setattr(conversations, "_ensure_change_set", lambda *args: change)
     result = conversations.apply_change_set(change.id,
         ChangeSetApplyRequest(accepted_fields={str(case_id): fields}), SimpleNamespace(id=uuid4()), db)
+    assert db.scalar.call_count == 1  # Only the operation lookup; no case lock.
     assert case.current_revision_id == revision_id
     assert case.deleted_at is None
     assert result.change_set.items[0]["status"] == "rejected"
@@ -322,7 +323,7 @@ def test_only_unaccepted_suggestions_are_in_rewrite_scope(monkeypatch):
     from casepilot_api.schemas import ConversationMessageCreate
     source_id,change_id=uuid4(),uuid4()
     candidates=[SimpleNamespace(id=uuid4(),ref=f'TC-{i}',version=1,snapshot={'title':f'场景{i}','module':'预约变更'}) for i in range(10)]
-    source=SimpleNamespace(related_change_set_id=change_id)
+    source=SimpleNamespace(id=source_id, related_change_set_id=change_id)
     change=SimpleNamespace(status='ready',items=[{'ref':c.ref,'status':'applied' if i<3 else 'ready'} for i,c in enumerate(candidates)])
     db=Mock();db.get.side_effect=lambda model,key: source if key==source_id else change;db.scalars.return_value=candidates
     conversation=SimpleNamespace(id=uuid4(),collection_id=uuid4(),context={'phase':'candidate_review'})
@@ -395,3 +396,107 @@ def test_followup_delete_rejects_foreign_query():
 def test_inventory_query_detects_module_totals(content, expected):
     assert conversations._is_inventory_query('CASE_QUERY', content) is expected
     assert not conversations._is_inventory_query('CASE_DELETE', content)
+
+
+@pytest.mark.parametrize("status", ["awaiting_clarification", "failed"])
+def test_followup_uses_last_valid_proposal_after_unsuccessful_round(status):
+    conversation_id = uuid4()
+    first = SimpleNamespace(
+        id=uuid4(),
+        conversation_id=conversation_id,
+        related_change_set_id=uuid4(),
+        payload={},
+        intent="CASE_MODIFY",
+    )
+    failed = SimpleNamespace(
+        id=uuid4(),
+        conversation_id=conversation_id,
+        related_change_set_id=uuid4() if status == "failed" else None,
+        payload={"source_operation_id": str(first.id)},
+        status=status,
+    )
+    db = Mock()
+    rows = {first.id: first, first.related_change_set_id: SimpleNamespace(status="ready")}
+    if failed.related_change_set_id:
+        rows[failed.related_change_set_id] = SimpleNamespace(status="failed")
+    db.get.side_effect = lambda _model, key: rows[key]
+    assert conversations._rewrite_proposal_source(db, failed) is first
+
+
+@pytest.mark.parametrize("status", ["applied", "rejected", "conflict", "no_changes"])
+def test_followup_does_not_resurrect_older_reviewed_or_conflicting_proposals(status):
+    source = SimpleNamespace(
+        id=uuid4(), related_change_set_id=uuid4(), payload={"source_operation_id": str(uuid4())}
+    )
+    db = Mock()
+    db.get.return_value = SimpleNamespace(status=status)
+    assert conversations._rewrite_proposal_source(db, source) is source
+    assert db.get.call_count == 1
+
+
+@pytest.mark.parametrize("target_type", ["formal", "candidate"])
+def test_unchecked_stale_case_requires_no_version_lookup(monkeypatch, target_type):
+    ref = str(uuid4())
+    change = SimpleNamespace(
+        id=uuid4(),
+        conversation_id=uuid4(),
+        generation_job_id=None,
+        instruction="Only selected",
+        scope="current",
+        status="ready",
+        items=[
+            {
+                "ref": ref,
+                "target_type": target_type,
+                "status": "ready",
+                "field_diff": [{"field": "title"}],
+            }
+        ],
+        created_at=datetime.now(UTC),
+        applied_at=None,
+    )
+    db = Mock()
+    db.scalar.return_value = None
+    monkeypatch.setattr(conversations, "_ensure_change_set", lambda *args: change)
+    result = conversations.apply_change_set(
+        change.id, ChangeSetApplyRequest(accepted_fields={ref: []}), SimpleNamespace(id=uuid4()), db
+    )
+    assert result.change_set.status == "rejected"
+    assert db.scalar.call_count == 1
+    assert "conversation_operations" in str(db.scalar.call_args.args[0])
+
+
+@pytest.mark.parametrize('key', ['candidate_ids', 'test_case_ids', 'query_cases'])
+def test_successful_result_is_not_replaced_by_its_earlier_source(key):
+    source = SimpleNamespace(
+        id=uuid4(), related_change_set_id=None,
+        payload={'source_operation_id': str(uuid4())}, result={key: ['existing-result']},
+    )
+    db = Mock()
+    assert conversations._rewrite_proposal_source(db, source) is source
+    db.get.assert_not_called()
+
+
+def test_stale_superseded_source_follows_the_current_proposal():
+    conversation_id = uuid4()
+    current_change_id = uuid4()
+    old = SimpleNamespace(
+        id=uuid4(),
+        conversation_id=conversation_id,
+        related_change_set_id=uuid4(),
+        payload={},
+        result={"superseded_by": str(current_change_id)},
+    )
+    current = SimpleNamespace(
+        id=uuid4(),
+        conversation_id=conversation_id,
+        related_change_set_id=current_change_id,
+        payload={},
+        result={},
+    )
+    db = Mock()
+    db.get.side_effect = lambda model, key: SimpleNamespace(
+        status="ready" if key == current_change_id else "superseded"
+    )
+    db.scalar.return_value = current
+    assert conversations._rewrite_proposal_source(db, old) is current

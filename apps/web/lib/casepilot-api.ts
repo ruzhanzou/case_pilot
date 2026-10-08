@@ -1247,6 +1247,7 @@ export function confirmConversationIntent(
 export function resumeConversationOperation(
   operationId: string,
   input?: {
+    confirmModification?: boolean;
     content?: string;
     intent?: ConversationIntent;
     targets?: ConversationTarget[];
@@ -1257,6 +1258,7 @@ export function resumeConversationOperation(
   return apiRequest(`/api/v1/conversation-operations/${operationId}/resume`, {
     method: "POST",
     body: JSON.stringify({
+      confirm_modification: input?.confirmModification ?? false,
       intent: input?.intent,
       content: input?.content,
       targets: input?.targets ?? [],

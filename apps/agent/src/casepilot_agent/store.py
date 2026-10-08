@@ -603,14 +603,11 @@ class JobStore:
         conversation_id: UUID,
         **values: Any,
     ) -> None:
-        current = connection.execute(
-            select(conversations.c.context).where(conversations.c.id == conversation_id)
-        ).scalar_one_or_none()
         connection.execute(
             update(conversations)
             .where(conversations.c.id == conversation_id)
             .values(
-                context={**dict(current or {}), **values},
+                context=conversations.c.context.op("||")(values),
                 updated_at=datetime.now(UTC),
             )
         )
@@ -1310,23 +1307,32 @@ class JobStore:
         *,
         job: dict[str, Any],
         items: list[dict[str, Any]],
-    ) -> None:
+    ) -> list[dict[str, Any]]:
         if job["input_payload"].get("task_revision"):
-            items = [{**item, "proposal_version": job["input_payload"]["task_revision"]} for item in items]
+            items = [
+                {**item, "proposal_version": job["input_payload"]["task_revision"]}
+                for item in items
+            ]
         previous = job["input_payload"].get("previous_proposals", {})
         if previous:
             touched = {item["ref"] for item in items}
             version = max(int(item.get("proposal_version", 1)) for item in previous.values()) + 1
             items = [{**item, "proposal_version": version} for item in items] + [
                 {**item, "previous_snapshot": item["proposed_snapshot"], "proposal_version": version}
-                for ref, item in previous.items() if ref not in touched
+                for ref, item in previous.items()
+                if ref not in touched
             ]
         change_set_id = UUID(str(job["input_payload"]["change_set_id"]))
         connection.execute(
             update(case_change_sets)
             .where(case_change_sets.c.id == change_set_id)
             .values(
-                status="ready" if any(item.get("field_diff") for item in items) else "no_changes",
+                status="ready"
+                if any(
+                    item.get("field_diff") and item.get("status") not in {"applied", "rejected"}
+                    for item in items
+                )
+                else "no_changes",
                 items=items,
             )
         )
@@ -1334,22 +1340,33 @@ class JobStore:
         previous_id = job["input_payload"].get("previous_change_set_id")
         if previous_id:
             replaced = connection.execute(
-                update(case_change_sets).where(
+                update(case_change_sets)
+                .where(
                     case_change_sets.c.id == UUID(str(previous_id)),
                     case_change_sets.c.conversation_id
                     == UUID(job["input_payload"]["conversation_id"]),
                     case_change_sets.c.status == "ready",
-                ).values(status="superseded")
+                )
+                .values(status="superseded")
             )
             if replaced.rowcount:
-                connection.execute(update(conversation_operations).where(
-                    conversation_operations.c.related_change_set_id == UUID(str(previous_id)),
-                ).values(
-                    status="cancelled", completed_at=datetime.now(UTC),
-                    result=conversation_operations.c.result.op("||")({
-                        "superseded_by": str(change_set_id),
-                    }),
-                ))
+                connection.execute(
+                    update(conversation_operations)
+                    .where(
+                        conversation_operations.c.related_change_set_id == UUID(str(previous_id)),
+                    )
+                    .values(
+                        status="cancelled",
+                        completed_at=datetime.now(UTC),
+                        result=conversation_operations.c.result.op("||")(
+                            {
+                                "superseded_by": str(change_set_id),
+                            }
+                        ),
+                    )
+                )
+
+        return items
 
     def create_grouped_candidate(
         self,

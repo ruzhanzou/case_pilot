@@ -29,7 +29,37 @@ test('generation partial adoption followed by substantive repeated natural langu
   const formal=async()=>await (await page.request.get(`${api}/collections/${journal.collection.id}/test-cases`)).json();
   const notice=page.getByTestId('active-mutation-task-notice');const candidates=page.locator('.task-result-cases');const review=page.locator('.collection-changes__review');
   const stage=async(name:string,work:()=>Promise<void>)=>{if(journal.stages[name])return;await test.step(name,work);journal.stages[name]=true;save();};
-  const request=async(name:string,content:string)=>{if(journal.responses[name]?.action.type==='clarification'){journal.observations.push({name,clarification:journal.responses[name]});delete journal.responses[name];save();}if(!journal.responses[name]){journal.responses[name]=await send(page,content);save();}if(journal.responses[name].requires_intent_confirmation){journal.intentFallback=journal.responses[name];save();const confirmation=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/confirm-intent'),{timeout:180000});await page.locator('.conversation-intent-confirmation').getByRole('button',{name:'修改用例',exact:true}).click();const r=await confirmation;expect(r.ok()).toBeTruthy();journal.responses[name]=await r.json();save();}return journal.responses[name];};
+  const request = async (name: string, content: string) => {
+    const stored = journal.responses[name];
+    if (process.env.CASEPILOT_CHAIN_RESUME && stored?.action.change_set_id) {
+      const change = await (await page.request.get(`${api}/case-change-sets/${stored.action.change_set_id}`)).json();
+      if (change.status === 'failed') {
+        journal.observations.push({ name, failedAttempt: stored, change });
+        save();
+        const retried = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/resume'), { timeout: 180000 });
+        await page.getByRole('button', { name: '重试任务', exact: true }).click();
+        const response = await retried;
+        expect(response.ok(), await response.text()).toBeTruthy();
+        journal.responses[name] = await response.json();
+        save();
+      }
+    }
+    if (journal.responses[name]?.action.type === 'clarification') {
+      journal.observations.push({ name, clarification: journal.responses[name] });
+      delete journal.responses[name];
+      save();
+    }
+    if (!journal.responses[name]) { journal.responses[name] = await send(page, content); save(); }
+    if (journal.responses[name].requires_intent_confirmation) {
+      journal.intentFallback = journal.responses[name]; save();
+      const confirmation = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/confirm-intent'), { timeout: 180000 });
+      await page.locator('.conversation-intent-confirmation').getByRole('button', { name: '修改用例', exact: true }).click();
+      const response = await confirmation;
+      expect(response.ok()).toBeTruthy();
+      journal.responses[name] = await response.json(); save();
+    }
+    return journal.responses[name];
+  };
   const openReview=async()=>{await expect(page.locator('.principle-composer textarea')).toBeEnabled({timeout:300000});await notice.getByRole('button',{name:'前往工作区审阅',exact:true}).click();const latest=(await state()).operation_history.filter((o:any)=>o.intent==='CASE_MODIFY').at(-1);if(latest?.related_change_set_id){const c=await(await page.request.get(`${api}/case-change-sets/${latest.related_change_set_id}`)).json();if(c.items.length)await expect(review).toContainText(`修改方案 V${Math.max(...c.items.map((i:any)=>i.proposal_version??1))}`);}};
   const ready=async(turn:any)=>{
     expect(turn.action.change_set_id,JSON.stringify(turn.action)).toBeTruthy();

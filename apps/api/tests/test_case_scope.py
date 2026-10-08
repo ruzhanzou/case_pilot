@@ -350,3 +350,38 @@ def test_preserve_title_and_module_is_not_a_module_name():
     content='还是“预约变更”模块这10条候选，改成页面测试。保留必要的业务边界、原标题和模块，其他模块不要动。'
     assert resolve_scope(content,cases)['ids'] == ['one']
     assert resolve_scope('修改“预约变更”模块，保留“预约变更”模块。',cases).get('error')
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "把登录模块中涉及短信验证码的用例优先级改为P0",
+        "仅修改登录模块里包含验证码的用例",
+        "修改登录模块中失败场景的用例",
+        "Modify login cases that involve SMS verification",
+        "修改「登录模块中涉及验证码的用例」，优先级改为P0",
+        "修改登录模块中标签为安全的用例",
+        "修改登录模块中步骤少于3个的用例",
+    ],
+)
+def test_mutation_conditions_cannot_expand_to_whole_module(text):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from casepilot_api.conversations import _resolve_action_scope
+    from casepilot_api.schemas import ConversationMessageCreate
+
+    db = Mock()
+    conversation = SimpleNamespace(collection_id=uuid4())
+    _, error = _resolve_action_scope(
+        db, conversation, ConversationMessageCreate(content=text), "CASE_MODIFY", "登录"
+    )
+    assert error and "选择具体用例" in error
+    db.execute.assert_not_called()
+
+
+def test_quoted_new_content_is_not_a_scope_condition():
+    from casepilot_api.case_scope import unsupported_mutation_condition
+
+    assert not unsupported_mutation_condition("当前用例标题改为「涉及短信验证码的用例」")
+    assert not unsupported_mutation_condition("修改登录模块的P1用例，优先级改为P0")

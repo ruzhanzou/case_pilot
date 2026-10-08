@@ -338,3 +338,56 @@ def test_agents_sdk_provider_skips_degraded_model_for_later_generation_stages(
 
     assert captured["models"] == ["local", "doubao-test", "doubao-test"]
     assert captured["timeouts"] == [45, 120, 120]
+
+
+def test_batch_instruction_is_scoped_to_one_existing_case(monkeypatch):
+    import json
+
+    from agents import Runner
+
+    from casepilot_agent.contracts import (
+        GenerationRequest,
+        QualityReport,
+        RewriteCandidate,
+        RewriteRequest,
+    )
+    from casepilot_agent.providers import agents_sdk
+    from casepilot_agent.providers.mock import MockProvider
+
+    original = MockProvider().generate(GenerationRequest(prompt="登录")).test_cases[0]
+    candidate = RewriteCandidate(
+        proposed=original, diff=[], reason="无需改动", quality=QualityReport(passed=True, score=100)
+    )
+    captured = {}
+
+    def run(agent, prompt, **kwargs):
+        captured.update(
+            instructions=agent.instructions,
+            prompt=json.loads(prompt),
+            output=agent.output_type.output_type,
+        )
+        return SimpleNamespace(
+            final_output=candidate, context_wrapper=SimpleNamespace(usage=SimpleNamespace())
+        )
+
+    def no_generation_skill():
+        raise AssertionError("Existing-case rewrite must not load new-case generation rules")
+
+    monkeypatch.setattr(Runner, "run_sync", run)
+    monkeypatch.setattr(agents_sdk, "load_test_case_generation_skill", no_generation_skill)
+    provider = AgentsSdkProvider(
+        base_url="https://example.test/v1",
+        api_key="test-only",
+        model="test",
+        pro_model="test",
+        local_model="test",
+        timeout=1,
+    )
+    result = provider.rewrite(
+        RewriteRequest(test_case=original, instruction="重写剩余未纳入的2条候选用例")
+    )
+    assert result.proposed.id == original.id
+    assert captured["prompt"]["input"]["test_case"]["id"] == original.id
+    assert "proposed 必须是单个完整用例对象" in captured["instructions"]
+    assert "未要求修改的内容逐字保留" in captured["instructions"]
+    assert captured["output"] is RewriteCandidate

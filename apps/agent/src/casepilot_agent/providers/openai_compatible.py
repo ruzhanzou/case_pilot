@@ -7,6 +7,7 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from casepilot_agent.contracts import (
+    SINGLE_CASE_REWRITE_INSTRUCTION,
     GenerationRequest,
     GenerationResult,
     RewriteCandidate,
@@ -76,6 +77,8 @@ class OpenAICompatibleProvider:
 
     def rewrite(self, request: RewriteRequest) -> RewriteCandidate:
         prompt = (
+            SINGLE_CASE_REWRITE_INSTRUCTION
+            + "\n"
             "你是测试用例改写 Agent。只按指令修改必要字段，返回完整候选、字段 diff、"
             "修改理由和质量报告，不能声称已覆盖原版本。\n"
             f"schema={json.dumps(RewriteCandidate.model_json_schema(), ensure_ascii=False)}\n"

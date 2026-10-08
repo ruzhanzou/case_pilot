@@ -6,6 +6,16 @@ from pydantic import BaseModel, Field
 
 EMBEDDING_DIMENSIONS = 2048
 
+SINGLE_CASE_REWRITE_INSTRUCTION = (
+    "本次调用只改写 input.test_case（原用例）这一条用例，保留其 id。"
+    "批量选择已由服务端完成，服务端会逐条调用；用户原始指令中的两条、多条、全部、"
+    "剩余等数量和范围描述仅为背景，不得在本次输出中增加、选择或重建其他用例。"
+    "只修改明确要求的字段，未要求修改的内容逐字保留，已有步骤不因生成规范而缩减。"
+    "proposed 必须是单个完整用例对象，不能是数组；diff 必须是该用例的字段差异数组，"
+    "每项直接包含 field、before、after，不得按 case_id 或 field_diffs 再分组。"
+    "返回修改理由和质量报告，不声称已保存。"
+)
+
 
 class CaseStatus(StrEnum):
     PENDING = "pending"
@@ -87,7 +97,9 @@ class TestStep(BaseModel):
     )
 
 
-class TestCaseDraft(BaseModel):
+class RewriteCaseDraft(BaseModel):
+    """Existing assets use the same limits as the case management API."""
+
     id: str
     title: str = Field(
         min_length=1,
@@ -101,13 +113,13 @@ class TestCaseDraft(BaseModel):
     automated: bool = False
     status: CaseStatus = CaseStatus.PENDING
     preconditions: list[str] = Field(
-        min_length=1,
+        min_length=0,
         max_length=50,
         description="test_setup：环境、状态、身份、权限和测试数据前提；无前提时明确写无特殊前置条件。",
     )
     steps: list[TestStep] = Field(
         min_length=1,
-        max_length=4,
+        max_length=100,
         description=(
             "兼容存储结构：依次将 steps[].action 作为 test_procedure，"
             "steps[].expected 作为同序 test_validation。"
@@ -115,6 +127,19 @@ class TestCaseDraft(BaseModel):
     )
     test_point_ids: list[str]
     source_refs: list[SourceRef] = Field(default_factory=list)
+
+
+class TestCaseDraft(RewriteCaseDraft):
+    """Newly generated cases retain the compact generation contract."""
+
+    preconditions: list[str] = Field(
+        min_length=1, max_length=50,
+        description=RewriteCaseDraft.model_fields["preconditions"].description,
+    )
+    steps: list[TestStep] = Field(
+        min_length=1, max_length=4,
+        description=RewriteCaseDraft.model_fields["steps"].description,
+    )
 
 
 class QualityIssue(BaseModel):
@@ -199,7 +224,7 @@ class GenerationResult(BaseModel):
 
 
 class RewriteRequest(BaseModel):
-    test_case: TestCaseDraft
+    test_case: RewriteCaseDraft
     instruction: str = Field(min_length=1, max_length=8000)
     conversation_memory: list[dict[str, str]] = Field(
         default_factory=list,
@@ -215,7 +240,7 @@ class FieldDiff(BaseModel):
 
 
 class RewriteCandidate(BaseModel):
-    proposed: TestCaseDraft
+    proposed: RewriteCaseDraft
     diff: list[FieldDiff]
     reason: str
     quality: QualityReport

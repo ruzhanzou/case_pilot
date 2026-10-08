@@ -7,6 +7,7 @@ from typing import TypeVar
 from pydantic import BaseModel
 
 from casepilot_agent.contracts import (
+    SINGLE_CASE_REWRITE_INSTRUCTION,
     GenerationRequest,
     GenerationResult,
     RewriteCandidate,
@@ -125,7 +126,7 @@ class AgentsSdkProvider:
         )
         generation_skill = (
             load_test_case_generation_skill()
-            if stage.startswith(
+            if stage != "test_case.rewritten" and stage.startswith(
                 (
                     "requirement.",
                     "feature.",
@@ -154,6 +155,8 @@ class AgentsSdkProvider:
                 "生成用例时，source_refs 中的 source_id、document_id、chunk_id 只能逐字使用输入 evidence 提供的来源标识，禁止自行编造。"
                 "引用用户输入、对话或结构化测试说明时，这三个字段必须为 null，仅填写 label、locator 和 excerpt；测试说明版本号不是知识库来源标识。\n"
                 f"{generation_skill}\n"
+                + (SINGLE_CASE_REWRITE_INSTRUCTION if stage == "test_case.rewritten" else "")
+                + "\n"
                 "输出必须且只能是符合下列 JSON Schema 的 JSON 对象；"
                 "不得输出 Markdown、代码围栏、标题或 JSON 之外的解释文字。\n"
                 f"JSON Schema: {output_schema}"
@@ -227,7 +230,7 @@ class AgentsSdkProvider:
     def rewrite(self, request: RewriteRequest) -> RewriteCandidate:
         result, _ = self._run(
             stage="test_case.rewritten",
-            instruction="只修改指令明确要求的字段并返回完整候选与字段差异",
+            instruction=SINGLE_CASE_REWRITE_INSTRUCTION,
             payload=request.model_dump(mode="json"),
             result_type=RewriteCandidate,
             model_id=request.model_id,

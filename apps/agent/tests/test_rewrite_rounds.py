@@ -47,3 +47,52 @@ def test_cancelled_batch_stops_before_next_model_call_and_keeps_cancelled_state(
     provider.rewrite.assert_not_called()
     failure.assert_not_called()
     store.persist_change_set.assert_not_called()
+
+
+def test_worker_reports_merged_pending_changes_when_current_subset_is_unchanged(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from casepilot_agent import tasks
+    from casepilot_agent.contracts import GenerationRequest
+    from casepilot_agent.providers.mock import MockProvider
+
+    draft = (
+        MockProvider()
+        .generate(GenerationRequest(prompt="登录"))
+        .test_cases[0]
+        .model_dump(mode="json")
+    )
+    pending = {
+        "ref": "one",
+        "target_type": "candidate",
+        "status": "ready",
+        "proposal_version": 1,
+        "proposed_snapshot": draft,
+        "field_diff": [{"field": "priority"}],
+    }
+    payload = {
+        "instruction": f"标题改为「{draft['title']}」",
+        "change_set_id": str(uuid4()),
+        "conversation_id": str(uuid4()),
+        "previous_change_set_id": str(uuid4()),
+        "candidate_targets": [{"ref": "two", "snapshot": draft, "version": 1}],
+        "previous_proposals": {"one": pending},
+    }
+    job = {"input_payload": payload}
+    store = Mock()
+    store.connection.return_value = MagicMock()
+    store.claim_job.return_value = job
+    persist = JobStore.persist_change_set
+    store.persist_change_set.side_effect = lambda connection, **kwargs: persist(
+        store, connection, **kwargs
+    )
+    monkeypatch.setattr(tasks, "JobStore", lambda *args: store)
+    monkeypatch.setattr(tasks, "create_provider", lambda *args: MockProvider())
+    monkeypatch.setattr(tasks, "ensure_not_cancelled", lambda *args: None)
+    monkeypatch.setattr(tasks, "lock_active_job", lambda *args: None)
+    output = tasks.rewrite_test_cases_batch(str(uuid4()))
+    assert output["no_changes"] is False
+    assert len(output["items"]) == 2
+    assert output["unchanged_count"] == 1
+    assert store.update_job.call_args.kwargs["output_payload"] == output
+    assert "1 条待确认修改" in store.complete_job_message.call_args.kwargs["content"]

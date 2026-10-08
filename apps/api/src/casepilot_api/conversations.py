@@ -34,6 +34,7 @@ from casepilot_api.case_scope import (
     module_contains,
     requested_new_module,
     resolve_scope,
+    unsupported_mutation_condition,
 )
 from casepilot_api.config import get_settings
 from casepilot_api.database import get_db_session
@@ -1289,25 +1290,90 @@ def _open_mutation_operation(db, conversation, exclude_id=None):
     return pending[0] if pending else None
 
 
+def _rewrite_proposal_source(db, source):
+    """Skip unsuccessful rounds without losing the last reviewable proposal."""
+    seen = set()
+    while source is not None and source.id not in seen:
+        seen.add(source.id)
+        change_id = getattr(source, "related_change_set_id", None)
+        if change_id:
+            change = db.get(CaseChangeSet, change_id)
+            if change is not None and change.status == "superseded":
+                successor_id = dict(source.result).get("superseded_by")
+                if successor_id:
+                    successor = db.scalar(select(ConversationOperation).where(
+                        ConversationOperation.conversation_id == source.conversation_id,
+                        ConversationOperation.related_change_set_id == UUID(successor_id),
+                    ))
+                    if successor is not None:
+                        source = successor
+                        continue
+            # Applied/discarded/conflicting proposals are boundaries, not drafts
+            # to resurrect. Only failed attempts may fall back to their parent.
+            if change is not None and change.status != "failed":
+                return source
+        # Generation/query results are valid target sources without a change set.
+        result = dict(getattr(source, "result", {}) or {})
+        if any(result.get(key) for key in (
+            "candidate_ids", "workspace_candidate_ids", "test_case_ids", "query_cases"
+        )):
+            return source
+        parent_id = dict(source.payload).get("source_operation_id")
+        if not parent_id:
+            return source
+        parent = db.get(ConversationOperation, UUID(str(parent_id)))
+        if parent is None or parent.conversation_id != source.conversation_id:
+            return source
+        source = parent
+    return source
+
+
 def _link_rewrite_round(db, conversation, operation, payload, original_instruction=None):
     """A mutation task stays open until a review action closes it."""
     if operation is None or operation.intent not in {"CASE_MODIFY", "CASE_GENERATE"}:
         return payload
     if not dict(operation.payload).get("task_id"):
         source = _open_mutation_operation(db, conversation, operation.id)
-        operation.payload = {**dict(operation.payload),
-            "task_id": str(dict(source.payload).get("task_id") or source.id) if source else str(operation.id),
-            "task_intent": dict(source.payload).get("task_intent", source.intent) if source else operation.intent,
+        operation.payload = {
+            **dict(operation.payload),
+            "task_id": str(dict(source.payload).get("task_id") or source.id)
+            if source
+            else str(operation.id),
+            "task_intent": dict(source.payload).get("task_intent", source.intent)
+            if source
+            else operation.intent,
             "task_revision": int(dict(source.payload).get("task_revision", 1)) + 1 if source else 1,
-            "source_operation_id": str(source.id) if source else None}
-    conversation.context = {**dict(conversation.context),
+            "source_operation_id": str(source.id) if source else None,
+        }
+        if source is None and payload.source_operation_id:
+            evidence = db.get(ConversationOperation, payload.source_operation_id)
+            if (
+                evidence is not None
+                and evidence.conversation_id == conversation.id
+                and evidence.intent in ANALYSIS_INTENTS | {"CASE_QUERY"}
+            ):
+                operation.payload = {
+                    **dict(operation.payload),
+                    "source_operation_id": str(evidence.id),
+                }
+    conversation.context = {
+        **dict(conversation.context),
         "active_mutation_task_id": operation.payload["task_id"],
-        "active_mutation_operation_id": str(operation.id)}
+        "active_mutation_operation_id": str(operation.id),
+    }
     source_id = dict(operation.payload).get("source_operation_id")
     if source_id:
         updates = {"source_operation_id": UUID(source_id)}
-        if operation.intent == "CASE_MODIFY" and not (payload.targets or payload.target_case_ids or payload.target_candidate_snapshots):
-            updates["targets"] = [ConversationTarget(kind="previous_result", source_operation_id=UUID(source_id))]
+        if operation.intent == "CASE_MODIFY" and not (
+            payload.targets or payload.target_case_ids or payload.target_candidate_snapshots
+        ):
+            source = _rewrite_proposal_source(db, db.get(ConversationOperation, UUID(source_id)))
+            updates["targets"] = [
+                ConversationTarget(
+                    kind="previous_result",
+                    source_operation_id=source.id if source else UUID(source_id),
+                )
+            ]
         payload = payload.model_copy(update=updates)
     return payload
 
@@ -1375,6 +1441,11 @@ def _resolve_action_scope(
 ) -> tuple[ConversationMessageCreate, str | None]:
     if conversation.collection_id is None:
         return payload, None
+    if intent in {"CASE_MODIFY", "CASE_DELETE"} and any(
+        unsupported_mutation_condition(text)
+        for text in (payload.content, scope_text or "")
+    ):
+        return payload, "无法准确确定这个条件对应的用例，请先查询并选择具体用例，再确认修改范围。"
     if (intent in {"CASE_DELETE", "CASE_MODIFY"}
             and re.search(r"(?:刚才|上次|上述|前面)查询(?:到|出)?的", payload.content)
             and not payload.target_case_ids and not payload.target_candidate_snapshots
@@ -1434,6 +1505,7 @@ def _resolve_action_scope(
     review_scope_text = re.sub(r"(?:保留|保持)[^，,。；;\n]*", "", payload.content)
     if intent == "CASE_MODIFY" and re.search(r"未采纳(?:建议)?|未审阅|待审阅建议", review_scope_text):
         source = db.get(ConversationOperation, payload.source_operation_id) if payload.source_operation_id else None
+        source = _rewrite_proposal_source(db, source)
         previous = db.get(CaseChangeSet, source.related_change_set_id) if source and source.related_change_set_id else None
         if previous is None or previous.status != "ready":
             return payload, "当前没有可继续修改的待审阅建议，请明确用例范围。"
@@ -1562,6 +1634,7 @@ def _start_action(
     confidence: float,
     operation_id: UUID | None = None,
     confirmed_targets: bool = False,
+    confirm_modification: bool = False,
 ) -> tuple[ConversationMessage, dict[str, Any], str | None]:
     collection_gate = _collection_gate(
         db,
@@ -1642,6 +1715,13 @@ def _start_action(
     payload = _link_rewrite_round(db, conversation, operation, payload)
     plan = dict(operation.payload).get("plan", {}) if operation else {}
     questions = plan.get("clarification_questions", [])
+    if intent == "CASE_MODIFY" and re.fullmatch(
+        r"\s*(?:请|帮我)?(?:重写|改写|优化|修改)(?:一下)?[^，,。；;：:\n]{0,100}(?:用例|一下)[。！!]?\s*",
+        payload.content,
+    ) and not re.search(r"标题|步骤|优先级|预期|前置|补充|增加|删除|改为|改成|覆盖", payload.content):
+        questions = [
+            "希望修改哪些内容或达到什么效果？请补充重写方向，以及需要保留的内容。"
+        ]
     if _is_inventory_query(intent, payload.content) and "TARGET_EVIDENCE_NOT_IN_REQUEST" in plan.get("reason_codes", []):
         questions = []
     if (questions and (intent == "CASE_QUERY" or (plan.get("changes") and intent == "CASE_MODIFY"))
@@ -1651,7 +1731,18 @@ def _start_action(
         # Candidate membership is authoritative; the model need not ask the user
         # to repeat identities for an explicitly named remaining-candidate set.
         questions = []
-    if questions and not confirmed_targets and not (payload.source_operation_id and payload.targets and plan.get("target_kind") == "none"):
+    target_questions = all(
+        re.search(r"指定|指明|哪.*用例|范围|编号|模块名称", question)
+        for question in questions
+    )
+    if questions and not confirm_modification and not (
+        target_questions and (
+            confirmed_targets or (
+                payload.source_operation_id and payload.targets
+                and plan.get("target_kind") == "none"
+            )
+        )
+    ):
         assistant = _new_assistant_message(
             conversation.id, content="\n".join(questions), intent=intent,
             confidence=confidence, status="awaiting_clarification", target_case_ids=[],
@@ -1664,8 +1755,15 @@ def _start_action(
         payload, scope_error = _expand_conversation_targets(db, conversation, payload), None
     else:
         payload, scope_error = _resolve_action_scope(
-            db, conversation, payload, intent, scope_text or None
+            db, conversation,
+            payload.model_copy(update={"content": payload.content.rsplit("\n补充说明：", 1)[-1]})
+            if "\n补充说明：" in payload.content else payload,
+            intent, scope_text or None
         )
+        if operation:
+            payload = payload.model_copy(update={
+                "content": str(operation.payload.get("instruction") or payload.content),
+            })
     if scope_error:
         assistant = _new_assistant_message(
             conversation.id,
@@ -1914,6 +2012,46 @@ def _start_action(
         db.add(assistant)
         db.flush()
         return assistant, {"type": "clarification"}, None
+    if intent == "CASE_MODIFY" and operation is not None:
+        operation.requires_confirmation = True
+        # Confirmation is bound to exact resolved assets and their current contents.
+        # A supplement or a changed asset always needs a fresh preview.
+        confirmation = {
+            "instruction": payload.content,
+            "cases": case_context,
+        }
+        pending = dict(operation.payload).get("modification_confirmation")
+        if not confirm_modification or pending != confirmation:
+            operation.payload = {
+                **dict(operation.payload), "modification_confirmation": confirmation,
+            }
+            if not case_context:
+                content = "请指定要修改的模块、用例编号或选中用例。"
+            else:
+                labels = [
+                    str(item["snapshot"].get("case_key") or item["ref"])
+                    + "：" + str(item["snapshot"].get("title") or "")
+                    for item in case_context[:10]
+                ]
+                content = (
+                    f"请确认本轮修改：共 {len(case_context)} 条用例。\n"
+                    + "\n".join(f"- {label}" for label in labels)
+                    + ("\n其余用例包含在本次已解析范围内。" if len(case_context) > 10 else "")
+                    + "\n\n修改要求：\n" + payload.content
+                    + "\n\n确认后生成修改建议，审阅采纳后才会保存。"
+                    + "也可以补充范围、修改要求或保留约束。"
+                )
+            assistant = _new_assistant_message(
+                conversation.id, content=content, intent=intent, confidence=confidence,
+                status="awaiting_clarification", target_case_ids=target_ids,
+                metadata={"modification_confirmation": bool(case_context)},
+            )
+            db.add(assistant)
+            db.flush()
+            return assistant, {"type": "clarification"}, None
+        operation.payload = {
+            **dict(operation.payload), "modification_confirmation": None,
+        }
     conversation_memory = _agent_conversation_memory(db, conversation.id)
     provided_test_object = _test_object_from_memory(conversation_memory)
     input_payload = {
@@ -1937,7 +2075,9 @@ def _start_action(
     }
     previous_items = {}
     if intent == "CASE_MODIFY" and payload.source_operation_id:
-        source = db.get(ConversationOperation, payload.source_operation_id)
+        source = _rewrite_proposal_source(
+            db, db.get(ConversationOperation, payload.source_operation_id)
+        )
         previous = db.get(CaseChangeSet, source.related_change_set_id) if (
             source and source.related_change_set_id
         ) else None
@@ -2528,8 +2668,12 @@ def update_workspace_state(
     model_id = updates.get("model_id")
     if model_id and not settings.is_agent_model_allowed(model_id):
         raise HTTPException(status_code=422, detail="generation_model_not_configured")
-    conversation.context = {**dict(conversation.context), **updates}
-    conversation.updated_at = datetime.now(UTC)
+    # UI autosaves may have loaded an older snapshot while a model request held
+    # the conversation lock. Merge in SQL so they cannot rewind task pointers.
+    db.execute(update(Conversation).where(Conversation.id == conversation.id).values(
+        context=Conversation.context.op("||")(updates),
+        updated_at=datetime.now(UTC),
+    ).execution_options(synchronize_session=False))
     db.commit()
     db.refresh(conversation)
     return _conversation_view(db, conversation)
@@ -3899,6 +4043,13 @@ def resume_conversation_operation(
     user_message = db.get(ConversationMessage, operation.message_id)
     if user_message is None:
         raise HTTPException(status_code=404, detail="conversation_message_not_found")
+    if supplement.confirm_modification and (
+        operation.intent != "CASE_MODIFY"
+        or not dict(operation.payload).get("modification_confirmation")
+        or supplement.content or supplement.intent or supplement.targets
+        or supplement.target_case_ids or supplement.target_candidate_snapshots
+    ):
+        raise HTTPException(status_code=422, detail="modification_confirmation_invalid")
     resume_targets = list(supplement.targets)
     if (
         not resume_targets
@@ -3981,12 +4132,20 @@ def resume_conversation_operation(
             target_case_ids=[], citations=[],
             message_metadata={"operation_id": str(operation.id), "clarification": True},
         ))
-        operation.payload = {**dict(operation.payload), "instruction": request_data["content"]}
+        operation.payload = {
+            **dict(operation.payload), "instruction": request_data["content"],
+            "modification_confirmation": None,
+        }
     semantic_plan = dict(operation.payload).get("plan", {}).get("routing_source") == "semantic"
     if supplement.content and semantic_plan:
+        # A complete correction replaces the old scope. Short answers still need
+        # the original request to explain what is being changed.
+        planning_content = request_data["content"]
+        if classify_intent(supplement.content, bool(resume_targets))[0] == operation.intent:
+            planning_content = supplement.content
         phase = str(dict(conversation.context).get("phase", "idle"))
         replanned = plan_intents(
-            request_data["content"],
+            planning_content,
             lambda clause: classify_intent(clause, bool(resume_targets), phase),
             has_targets=bool(
                 resume_targets
@@ -4031,11 +4190,11 @@ def resume_conversation_operation(
         operation.intent,
         operation.confidence,
         operation.id,
+        confirm_modification=supplement.confirm_modification,
         confirmed_targets=bool(
-            resume_targets
-            or supplement.targets
-            or supplement.target_case_ids
+            supplement.targets or supplement.target_case_ids
             or supplement.target_candidate_snapshots
+            or (not supplement.content and resume_targets)
         ),
     )
     _operation_runtime_status(operation, assistant, action)
@@ -4309,8 +4468,12 @@ def apply_change_set(
     if not review_items:
         return CaseChangeSetApplyView(change_set=_change_set_view(change_set))
     reviewing = {item["ref"] for item in review_items}
-    write_items = [item for item in review_items if payload.review_refs is None
-                   or payload.accepted_fields.get(item["ref"], ["all"])]
+    write_items = [
+        item for item in review_items
+        if set(payload.accepted_fields.get(
+            item["ref"], [diff["field"] for diff in item.get("field_diff", [])]
+        )) & {diff["field"] for diff in item.get("field_diff", [])}
+    ]
     formal_items = [item for item in write_items if item["target_type"] == "formal"]
     formal_cases: dict[str, TestCase] = {}
     for item in formal_items:

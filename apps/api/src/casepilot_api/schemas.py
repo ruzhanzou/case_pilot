@@ -456,6 +456,7 @@ class ConversationOperationContinueRequest(BaseModel):
 
 
 class ConversationOperationResumeRequest(BaseModel):
+    confirm_modification: bool = False
     content: str | None = Field(default=None, min_length=1, max_length=8000)
     intent: str | None = Field(
         default=None,
