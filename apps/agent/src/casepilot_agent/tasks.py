@@ -1110,6 +1110,7 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
         instruction = str(payload["instruction"])
         previous_proposals = dict(payload.get("previous_proposals", {}))
         for target in payload.get("formal_targets", []):
+            ensure_not_cancelled(store, parsed_job_id)
             case_id = UUID(target["case_id"])
             base_revision_id = UUID(target["base_revision_id"])
             with store.connection() as connection:
@@ -1119,6 +1120,8 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
                     base_revision_id,
                 )
             previous = previous_proposals.get(str(case_id))
+            if previous and previous.get("status") in {"applied", "rejected"}:
+                previous = None
             working = previous["proposed_snapshot"] if previous else snapshot
             candidate = pipeline.rewrite(
                 RewriteRequest(
@@ -1151,9 +1154,12 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
                 }
             )
         for target in payload.get("candidate_targets", []):
+            ensure_not_cancelled(store, parsed_job_id)
             ref = str(target["ref"])
             draft = _candidate_snapshot_to_draft(ref, dict(target["snapshot"]))
             previous = previous_proposals.get(ref)
+            if previous and previous.get("status") in {"applied", "rejected"}:
+                previous = None
             working = (
                 _candidate_snapshot_to_draft(ref, previous["proposed_snapshot"])
                 if previous else draft
@@ -1241,6 +1247,8 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
             },
         )
         return output
+    except GenerationCancelled:
+        return {"job_id": job_id, "status": "cancelled"}
     except Exception as error:
         with store.connection() as connection:
             job = store.get_job(connection, parsed_job_id)

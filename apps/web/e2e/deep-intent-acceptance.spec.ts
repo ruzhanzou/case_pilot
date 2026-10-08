@@ -196,7 +196,7 @@ test('15-module-scope 新增模块范围与测试对象正确且可放弃方案'
   expect(state.context.generation_target_module_path).toBe('密码重置');
   expect(state.test_briefs.at(-1).content.test_object).toBe('密码重置模块');
   await s.shot('01-correct-module-scope');
-  await page.getByRole('button', { name: '放弃本次方案', exact: true }).click();
+  await page.getByRole('button', { name: '放弃当前任务', exact: true }).click();
   await expect.poll(async () => (await s.state()).operation_history.at(-1).status).toBe('cancelled');
   await expect(page.locator('.principle-messages')).toContainText('已放弃本次生成方案');
   expect(await s.readCases()).toEqual(s.cases); await s.shot('02-proposal-discarded');

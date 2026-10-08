@@ -48,6 +48,7 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
             )
 
     agents.Agent = FakeAgent
+    agents.ModelSettings = SimpleNamespace
     agents.AgentOutputSchema = FakeAgentOutputSchema
     agents.ModelBehaviorError = RuntimeError
     agents.OpenAIChatCompletionsModel = FakeModel
@@ -82,6 +83,7 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
     assert captured["model"]["model"] == "doubao-test"
     output_schema = captured["agent"]["output_type"]
     assert output_schema.output_type is KnowledgeAnswer
+    assert captured["agent"]["model_settings"].extra_body == {"response_format": {"type": "json_object"}}
     assert output_schema.strict_json_schema is False
     assert captured["tracing_disabled"] is True
     assert usage.token_usage["total_tokens"] == 18
@@ -145,6 +147,7 @@ def test_agents_sdk_provider_uses_fast_fallback_for_structured_generation(
             )
 
     agents.Agent = FakeAgent
+    agents.ModelSettings = SimpleNamespace
     agents.AgentOutputSchema = FakeAgentOutputSchema
     agents.ModelBehaviorError = FakeModelBehaviorError
     agents.OpenAIChatCompletionsModel = FakeModel
@@ -232,6 +235,7 @@ def test_agents_sdk_provider_streams_text_deltas(
             return FakeStreamResult()
 
     agents.Agent = FakeAgent
+    agents.ModelSettings = SimpleNamespace
     agents.ModelSettings = FakeModelSettings
     agents.OpenAIChatCompletionsModel = FakeModel
     agents.Runner = FakeRunner
@@ -302,6 +306,7 @@ def test_agents_sdk_provider_skips_degraded_model_for_later_generation_stages(
             )
 
     agents.Agent = FakeAgent
+    agents.ModelSettings = SimpleNamespace
     agents.AgentOutputSchema = FakeAgentOutputSchema
     agents.ModelBehaviorError = ValueError
     agents.OpenAIChatCompletionsModel = FakeModel

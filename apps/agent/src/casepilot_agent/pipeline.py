@@ -478,9 +478,10 @@ class GenerationPipeline:
         features = execute_stage(
             "feature.generated",
             "基于需求分析生成可追溯功能点，覆盖用户指定的全部模块，不得合并或遗漏模块。"
+            "每个用户指定的顶层模块只生成1个功能点，将其子规则放入描述，不要拆成多个模块。"
             "未指定模块时生成 2 至 4 个功能点。每个功能点关联需求编号和证据来源。"
             "描述保持精炼，不重复展开测试步骤。",
-            {**common, "requirement": requirement.model_dump(mode="json")},
+            {**common, "requirement": requirement.model_dump(mode="json"), "feature_scope_policy": "one_per_requested_module"},
             FeaturePlan,
             request.model_id,
         )
@@ -501,12 +502,17 @@ class GenerationPipeline:
                     else "只为本批 feature_points 规划测试点；每个功能点恰好3个：正常、异常、边界。"
                 )
                 + "标明优先级、类型、可执行性，每个测试点使用 point_id_prefix 开头的唯一ID。"
-                "覆盖矩阵只保留需求、功能点和测试点编号映射，不输出解释性长文。",
+                "覆盖矩阵只保留需求、功能点和测试点编号映射，不输出解释性长文。"
+                "final_case_count是最终用例总量，不是本批测试点数量；严格遵守max_test_points和allowed_feature_ids，不重规划其他功能点。",
                 {
                     **common,
                     "requirement": requirement.model_dump(mode="json"),
                     "feature_points": FeaturePlan(feature_points=group).model_dump(mode="json"),
                     "point_id_prefix": f"TP-{group_index + 1}-",
+                    "requested_case_count": None,
+                    "final_case_count": requested_count,
+                    "max_test_points": requested_count if requested_count and requested_count <= 10 else 3 * len(group),
+                    "allowed_feature_ids": [feature.id for feature in group],
                 },
                 TestPointPlan,
                 request.model_id,

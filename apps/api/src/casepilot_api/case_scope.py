@@ -31,6 +31,11 @@ def resolve_scope(instruction: str, cases: list[dict]) -> dict | None:
         r"(?:不要|无需|禁止|勿|不)(?:修改|改写|调整|删除|影响)[^，,。；;\n]*",
         instruction,
     )
+    guards += re.findall(
+        r"(?:其他|其余)(?:\s*\d+\s*个)?模块(?:的用例)?(?:不要动|不动|不变|保持不变|不得改动|不要改动)",
+        instruction,
+    )
+    guards += re.findall(r"(?:保留|保持)[^，,。；;\n]*", instruction)
     positive = instruction
     for guard in guards:
         positive = positive.replace(guard, "")
@@ -62,7 +67,8 @@ def _resolve_scope(instruction: str, cases: list[dict]) -> dict | None:
         if any(
             value
             and re.search(
-                r"(?<![a-z0-9_-])" + re.escape(value.casefold()) + r"(?![a-z0-9_-])", text
+                (r"(?:用例|候选|编号|\bid|#)[\s:：#「“\"]*" if value.isdigit() else r"(?<![a-z0-9_-])")
+                + re.escape(value.casefold()) + r"(?![a-z0-9_-])", text
             )
             for value in [str(case.get("case_key", ""))]
         )

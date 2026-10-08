@@ -1184,6 +1184,8 @@ class JobStore:
             raise ValueError("base_revision_not_found")
         return {
             "id": row["case_key"],
+            "case_key": row["case_key"],
+            "revision_number": row["revision_number"],
             "title": row["title"],
             "module": row["module"],
             "case_type": row["case_type"],
@@ -1309,6 +1311,16 @@ class JobStore:
         job: dict[str, Any],
         items: list[dict[str, Any]],
     ) -> None:
+        if job["input_payload"].get("task_revision"):
+            items = [{**item, "proposal_version": job["input_payload"]["task_revision"]} for item in items]
+        previous = job["input_payload"].get("previous_proposals", {})
+        if previous:
+            touched = {item["ref"] for item in items}
+            version = max(int(item.get("proposal_version", 1)) for item in previous.values()) + 1
+            items = [{**item, "proposal_version": version} for item in items] + [
+                {**item, "previous_snapshot": item["proposed_snapshot"], "proposal_version": version}
+                for ref, item in previous.items() if ref not in touched
+            ]
         change_set_id = UUID(str(job["input_payload"]["change_set_id"]))
         connection.execute(
             update(case_change_sets)

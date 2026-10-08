@@ -300,6 +300,7 @@ export function CaseWorkbench({
   const [mapFocusVersion, setMapFocusVersion] = useState(0);
   const [resumeTaskId, setResumeTaskId] = useState("");
   const [refineSourceId, setRefineSourceId] = useState("");
+  const [reviewVersion, setReviewVersion] = useState({ taskId: "", latestId: "", operationId: "" });
   const [historicalChangeSet, setHistoricalChangeSet] = useState<CaseChangeSetDto | null>(null);
   const [resultLoadError, setResultLoadError] = useState("");
   const [planMessageId, setPlanMessageId] = useState("");
@@ -436,15 +437,28 @@ export function CaseWorkbench({
         message.content.trim() || workflowByMessageId.has(message.id),
     ) ?? [];
   const tasks = useMemo(() => workspaceTasks(workspace), [workspace]);
+  const activeMutationTask = tasks.find(task => task.id === String(workspace?.context.active_mutation_task_id ?? ""));
   const resultTasks = tasks.filter((task) => !["KNOWLEDGE_QA", "UNRESOLVED"].includes(task.message.intent ?? ""));
-  const selectedTask = resultTasks.find((task) => task.id === planMessageId || task.messageIds.includes(planMessageId))
+  const selectedTask = resultTasks.find((task) => task.id === planMessageId || task.messageIds.includes(planMessageId) || task.versions?.some(version => version.id === planMessageId))
     ?? resultTasks.find((task) => task.status === "running")
     ?? resultTasks.find((task) => task.status.startsWith("awaiting_")) ?? resultTasks[0];
   const activePlanMessage = selectedTask?.message;
   const conversationRunning = busy || queueRunning || workspaceIsRunning(workspace);
-  const selectedChangeSetId = String(activePlanMessage?.metadata.change_set_id ?? "");
-  const selectedTaskChangeSet = historicalChangeSet?.id === selectedChangeSetId ? historicalChangeSet
+  const taskVersions = selectedTask?.versions ?? (selectedTask ? [selectedTask] : []);
+  const chosenVersion = reviewVersion.taskId === selectedTask?.id && reviewVersion.latestId === selectedTask?.operation?.id
+    ? taskVersions.find(version => version.operation?.id === reviewVersion.operationId) : undefined;
+  const generatingRevision = taskVersions.length > 1 && ["running", "queued"].includes(selectedTask?.status ?? "");
+  const resultVersion = chosenVersion ?? (generatingRevision ? taskVersions[taskVersions.length - 2] : selectedTask);
+  const historicalVersion = resultVersion?.operation?.id !== selectedTask?.operation?.id;
+  const selectedChangeSetId = String(resultVersion?.message.metadata.change_set_id ?? "");
+  const loadedTaskChangeSet = historicalChangeSet?.id === selectedChangeSetId ? historicalChangeSet
     : activeChangeSet?.id === selectedChangeSetId ? activeChangeSet : null;
+  const selectedTaskChangeSet = loadedTaskChangeSet && historicalVersion && loadedTaskChangeSet.status === "ready"
+    ? { ...loadedTaskChangeSet, status: "superseded" as const } : loadedTaskChangeSet;
+  const pendingCandidateRefs = [...new Set([activeChangeSet, historicalChangeSet].flatMap(change =>
+    change?.status === "ready" && workspace?.operation_history?.some(op => op.related_change_set_id === change.id && op.status === "awaiting_confirmation")
+      ? change.items.filter(item => item.target_type === "candidate" && !["applied", "rejected"].includes(item.status ?? "")).map(item => item.ref) : []))];
+  const selectedCandidatesNeedReview = candidates.some(candidate => candidate.included && pendingCandidateRefs.includes(candidate.ref));
   const selectedScopeChanged = taskScopeChanged(selectedTask, cases);
   useEffect(() => {
     if (!selectedChangeSetId) return;
@@ -456,13 +470,16 @@ export function CaseWorkbench({
       if (result.status === "ready") setAcceptedFields(reviewSelections.current[result.id] ?? Object.fromEntries(result.items.map((item) => [item.ref, item.field_diff.map((diff) => diff.field)])));
     }, () => { if (!cancelled) setResultLoadError(pick("Unable to load this task result. Select the task again to retry.", "任务结果加载失败，请切换任务后重试。")); });
     return () => { cancelled = true; };
-  }, [selectedChangeSetId, selectedTask?.status, pick]);
+  }, [selectedChangeSetId, selectedTask?.status, selectedTask?.operation?.status, pick]);
   const activePlanReport = activePlanMessage?.metadata.analysis_report as CaseReviewReport | undefined;
   const changedSinceReview = selectedScopeChanged || Boolean(activePlanMessage && messages.slice(messages.findIndex((item) => item.id === activePlanMessage.id) + 1).some(
     (message) => ["applied", "candidates_committed"].includes(String(message.metadata.action)),
   ));
   const openReviewPlan = (messageId?: string) => {
-    if (messageId) setPlanMessageId(messageId);
+    if (messageId) {
+      setPlanMessageId(messageId);
+      setReviewVersion({ taskId: "", latestId: "", operationId: "" });
+    }
     viewTouchedRef.current = true;
     setArtifactOpen(false);
     setViewMode("plan");
@@ -990,7 +1007,8 @@ export function CaseWorkbench({
       : useSelectedTargets
         ? selectedTargets.map((item) => item.target)
         : [];
-    if (refineSourceId && !explicitTargets.length) structuredTargets = [{ kind: "previous_result", source_operation_id: refineSourceId }];
+    const refinementSourceId = /^(?:查询|查看|列出|查找|搜索|query\b|list\b|find\b|search\b)/i.test(content) ? "" : refineSourceId;
+    if (refinementSourceId && !explicitTargets.length) structuredTargets = [{ kind: "previous_result", source_operation_id: refinementSourceId }];
     let resolvedCaseId = selectedCaseId;
     let inferredCurrentCase = false;
     if (
@@ -1037,8 +1055,7 @@ export function CaseWorkbench({
             scope: "current",
             knowledgeSourceIds: sourceIds,
             useSpaceKnowledge: true,
-            sourceOperationId: refineSourceId || undefined,
-            intentOverride: refineSourceId ? "CASE_MODIFY" : undefined,
+            sourceOperationId: refinementSourceId || undefined,
             targets: structuredTargets,
           });
       setRefineSourceId("");
@@ -1234,6 +1251,13 @@ export function CaseWorkbench({
     candidate: WorkspaceCandidateDto,
     included: boolean,
   ) => {
+    const updateSelection = (value: boolean) => setWorkspace(current => current ? {
+      ...current,
+      candidates: current.candidates.map(item => item.id === candidate.id ? { ...item, included: value } : item),
+      candidate_history: current.candidate_history?.map(item => item.id === candidate.id ? { ...item, included: value } : item),
+    } : current);
+    setBusy(true);
+    updateSelection(included);
     try {
       await updateWorkspaceCandidate(candidate.id, {
         baseVersion: candidate.version,
@@ -1241,7 +1265,10 @@ export function CaseWorkbench({
       });
       await refreshWorkspace();
     } catch (caught) {
+      updateSelection(candidate.included);
       setError(caught instanceof Error ? caught.message : pick("Failed to save candidate status", "候选状态保存失败"));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -1274,8 +1301,9 @@ export function CaseWorkbench({
       });
       setNotice(pick(`${committed.length} cases added to the official collection`, `已纳入 ${committed.length} 条正式用例`));
       setArtifactOpen(false);
-      setViewMode("list");
-      await continueTaskQueue(await refreshWorkspace());
+      const refreshed = await refreshWorkspace();
+      setViewMode(refreshed?.context.active_mutation_task_id ? "plan" : "list");
+      await continueTaskQueue(refreshed);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : pick("Failed to add candidates", "候选纳入失败"));
     } finally {
@@ -1581,6 +1609,8 @@ export function CaseWorkbench({
                   ? pick("Processing your request. A summary will appear here; case results will appear in the workstation.", "正在处理请求。这里将展示结果摘要，用例结果将在工作区展示。")
                   : message.intent === "CASE_GENERATE"
                     ? pick("Candidate cases are ready for review in the workspace.", "候选用例已准备好，请在工作区审阅并纳入集合。")
+                    : Number(message.metadata.task_revision ?? 1) > 1
+                      ? pick(`Updated ${message.target_case_ids?.length ?? 0} cases this round. This task contains ${message.metadata.task_case_count ?? message.target_case_ids?.length ?? 0} cases for review.`, `本轮调整 ${message.target_case_ids?.length ?? 0} 条用例，本任务共 ${message.metadata.task_case_count ?? message.target_case_ids?.length ?? 0} 条用例待审阅，请在工作区确认。`)
                     : pick(`Prepared changes for ${message.target_case_ids?.length ?? 0} cases. Review and confirm them in the workspace.`, `已准备 ${message.target_case_ids?.length ?? 0} 条用例的变更，请在工作区审阅确认。`);
             return (
               <article
@@ -1806,6 +1836,7 @@ export function CaseWorkbench({
                     <Sparkles size={14} />{pick("View case result", "查看用例结果")}
                   </button>
                 )}
+                {Boolean(message.metadata.workstation_task_id) && <button type="button" className="principle-artifact-link" onClick={() => openReviewPlan(String(message.metadata.workstation_task_id))}>{pick("Go to workstation review", "前往工作区审阅")}</button>}
                 {message.citations.length > 0 && (
                   <small>
                     {pick("Sources: ", "来源：")}
@@ -1818,7 +1849,11 @@ export function CaseWorkbench({
           </div>
         </div>
 
-        {activeChangeSet && (
+        {activeMutationTask && <div className="principle-change-set-link" role="status" data-testid="active-mutation-task-notice">
+          <span>{pick("This task is still open. Further edits stay here until you accept or abandon it. Queries are separate tasks.", "当前任务尚未结束，后续修改将继续此任务；查询会单独建立任务。请在工作区完成采纳或放弃，之后才可开始新的生成或修改任务。")}</span>
+          <button type="button" onClick={() => openReviewPlan(activeMutationTask.id)}>{pick("Go to workstation review", "前往工作区审阅")}</button>
+        </div>}
+        {activeChangeSet && !activeMutationTask && (
           <div className="principle-change-set-link">
             <span>{pick(`${activeChangeSet.items.filter(item => !["applied", "rejected"].includes(item.status ?? "")).length} cases awaiting change review`, `${activeChangeSet.items.filter(item => !["applied", "rejected"].includes(item.status ?? "")).length} 条用例待审阅变更`)}</span>
             <button type="button" onClick={() => openReviewPlan(tasks.find((task) => task.message.metadata.change_set_id === activeChangeSet.id)?.id)}>{pick("Review in workspace", "在工作区审阅")}</button>
@@ -2247,7 +2282,7 @@ export function CaseWorkbench({
                 )}
               </div>
               <span>
-                {pick(
+                {phase === "candidate_review" ? pick(`${candidates.length} candidates awaiting review · ${cases.length} official cases`, `${candidates.length} 条候选待审阅 · ${cases.length} 条正式用例`) : pick(
                   `${visibleCases.length} test cases · ${new Set([...visibleCases.map((item) => item.module), ...(selectedCollection.mind_map_notes ?? []).filter((note) => note.kind === "module").map((note) => note.module)]).size} modules`,
                   `${visibleCases.length} 条用例 · ${new Set([...visibleCases.map((item) => item.module), ...(selectedCollection.mind_map_notes ?? []).filter((note) => note.kind === "module").map((note) => note.module)]).size} 个模块`,
                 )}
@@ -2257,7 +2292,7 @@ export function CaseWorkbench({
                   type="button"
                   className="is-primary"
                   onClick={() => void commitCandidates()}
-                  disabled={!candidates.some((item) => item.included) || busy}
+                  disabled={!candidates.some((item) => item.included) || selectedCandidatesNeedReview || busy}
                 >
                   <Save size={16} /> {pick("Add to official collection", "纳入正式集合")}
                 </button>
@@ -2271,6 +2306,7 @@ export function CaseWorkbench({
               statusLabels={localizedOperationStatusLabels}
               running={conversationRunning}
               onDiscard={(task) => void discardTask(task)}
+              activeTaskId={activeMutationTask?.id}
               onConversation={(id) => {
                 if (id) document.getElementById(`case-message-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
                 else promptRef.current?.focus();
@@ -2283,10 +2319,17 @@ export function CaseWorkbench({
                 else setViewMode("list");
               }}
             >
+            {taskVersions.length > 1 && <div className="case-task-revisions" aria-label={pick("Revision history", "修改版本历史")}>
+              <label>{pick("Revision", "修改版本")} <select aria-label={pick("Review revision", "查看修改版本")} value={resultVersion?.operation?.id ?? ""} onChange={event => setReviewVersion({ taskId: selectedTask!.id, latestId: selectedTask!.operation!.id, operationId: event.target.value })}>
+                {taskVersions.map((version, index) => <option key={version.id} value={version.operation?.id}>V{index + 1}{index === taskVersions.length - 1 ? pick(" · Latest", " · 最新") : ""} · {String(version.operation?.payload.instruction ?? version.request?.content ?? "")}</option>)}
+              </select></label>
+              {historicalVersion && <button type="button" onClick={() => setReviewVersion({ taskId: "", latestId: "", operationId: "" })}>{pick("Back to latest revision", "返回最新版本")}</button>}
+              <p role="status">{generatingRevision ? pick("Updating this task. The previous proposal remains available while the new revision is prepared.", "正在更新本任务，生成期间可继续查看上一版方案。") : historicalVersion ? pick("Viewing a historical revision. Return to the latest revision to continue editing or accept changes.", "当前为历史版本，返回最新版本后可继续修改或采纳。") : selectedTask?.id === activeMutationTask?.id ? pick("All revisions belong to this task. Continue editing until you are satisfied, then accept the changes.", "这些版本属于同一任务，可继续修改，满意后再采纳。") : pick("This task has ended. Further changes start a new task; these revisions remain available for review.", "当前任务已结束，再次修改会新建任务；历史版本仍可在此审阅。")}</p>
+            </div>}
             {selectedScopeChanged && <p className="task-version-notice">{pick("This result is based on earlier case versions. Review again before preparing changes.", "此结果基于历史用例版本，请重新检查后再生成变更。")}</p>}
             {selectedChangeSetId && !selectedTaskChangeSet && <p role="status">{resultLoadError || pick("Loading task result…", "正在加载任务结果…")}</p>}
-            {selectedTask && workspace && <CaseTaskArtifacts
-              task={selectedTask} conversation={workspace} cases={cases} busy={conversationRunning}
+            {selectedTask && workspace && !historicalVersion && <CaseTaskArtifacts
+              task={selectedTask} conversation={workspace} cases={cases} busy={conversationRunning} pendingCandidateRefs={pendingCandidateRefs}
               onLocate={(id) => { setSelectedCaseId(id); setCandidateDraft(candidates.find((item) => item.id === id) ?? null); setViewMode("list"); setInspectorHidden(false); }}
               onToggleCandidate={(candidate) => void toggleCandidate(candidate, !candidate.included)}
               onRefine={selectedTask.operation ? () => { setRefineSourceId(selectedTask.operation!.id); promptRef.current?.focus(); } : undefined}
@@ -2324,7 +2367,7 @@ export function CaseWorkbench({
                 const source = tasks.find((task) => candidatesForTask(task, workspace).some((item) => refs.has(item.ref)));
                 if (source) openReviewPlan(source.id);
               }}
-              onRefine={selectedTask?.operation ? () => {
+              onRefine={!historicalVersion && selectedTask?.operation ? () => {
                 setRefineSourceId(selectedTask.operation!.id);
                 promptRef.current?.focus();
               } : undefined}

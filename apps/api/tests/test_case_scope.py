@@ -326,3 +326,27 @@ def test_semantic_generation_can_intentionally_create_unknown_module(monkeypatch
     resolved, error = conversations._resolve_action_scope(None, conversation, payload, 'CASE_GENERATE', '发票')
     assert error is None
     assert resolved.target_case_ids == []
+
+
+def test_numeric_candidate_identity_requires_an_explicit_reference():
+    cases=[{'id':'candidate-2','case_key':'2','title':'错误密码登录','module':'账号登录'},
+           {'id':'candidate-3','case_key':'3','title':'锁定账号登录','module':'账号登录'}]
+    assert resolve_scope('重写剩余未纳入的2条候选用例，最多3步',cases) is None
+    assert resolve_scope('修改候选 2 的步骤',cases)['ids'] == ['candidate-2']
+    assert resolve_scope('修改用例编号3的前置条件',cases)['ids'] == ['candidate-3']
+
+
+def test_other_modules_unchanged_is_a_guard_not_an_unknown_module():
+    cases=[{'id':'one','case_key':'TC-1','title':'目标用例','module':'预约变更'},
+           {'id':'two','case_key':'TC-2','title':'保留用例','module':'签到与释放'}]
+    result=resolve_scope('整体重写“预约变更”模块的全部10条候选，其他模块不要动。',cases)
+    assert result['ids'] == ['one']
+    assert resolve_scope('其他模块不要动。',cases).get('error')
+
+
+def test_preserve_title_and_module_is_not_a_module_name():
+    cases=[{'id':'one','case_key':'TC-1','title':'目标用例','module':'预约变更'},
+           {'id':'two','case_key':'TC-2','title':'保留用例','module':'签到与释放'}]
+    content='还是“预约变更”模块这10条候选，改成页面测试。保留必要的业务边界、原标题和模块，其他模块不要动。'
+    assert resolve_scope(content,cases)['ids'] == ['one']
+    assert resolve_scope('修改“预约变更”模块，保留“预约变更”模块。',cases).get('error')

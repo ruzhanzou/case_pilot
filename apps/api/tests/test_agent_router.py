@@ -565,3 +565,116 @@ def test_new_module_generation_uses_the_explicit_action_name():
     assert result.target_text == '发票管理'
     assert result.clarification_questions == []
     assert result.intent == 'CASE_GENERATE'
+
+
+def test_explicit_whole_collection_modification_does_not_need_target_clarification():
+    content = '将当前集合全部用例的优先级改为P0，其他字段不变。'
+    plan = IntentPlanDraft.model_validate({'operations': [{
+        'intent': 'CASE_MODIFY', 'instruction': content, 'confidence': 1,
+        'action_evidence': '改为', 'target_kind': 'none', 'target_text': '当前集合全部用例的优先级',
+    }]})
+    result = agent_router._validate_model_plan(content, plan, has_targets=False, phase='maintenance').operations[0]
+    assert result.target_kind == 'condition'
+    assert result.target_text == '当前集合全部用例'
+    assert not result.clarification_questions
+
+
+def test_explicit_case_key_survives_model_scope_paraphrase():
+    content = '重写用例 QA-1791437437142-1 的步骤和预期：校验登录响应HTTP 200。'
+    plan = IntentPlanDraft.model_validate({'operations': [{
+        'intent': 'CASE_MODIFY', 'instruction': content, 'confidence': 1,
+        'action_evidence': '重写用例 QA-1791437437142-1 的步骤和预期',
+        'target_kind': 'case', 'target_text': '编号为QA-1791437437142-1的用例',
+    }]})
+    result = agent_router._validate_model_plan(content, plan, has_targets=False, phase='maintenance').operations[0]
+    assert result.target_text == 'QA-1791437437142-1'
+    assert result.clarification_questions == []
+
+
+def test_remaining_candidates_use_literal_action_scope_after_partial_adoption():
+    content='重写剩余未纳入的2条候选用例，已纳入正式集合的用例不得改动。补充前置条件。'
+    plan=IntentPlanDraft.model_validate({'operations':[{
+        'intent':'CASE_MODIFY','instruction':content,'confidence':1,
+        'action_evidence':'重写剩余未纳入的2条候选用例','target_kind':'previous_result',
+        'target_text':'剩余未纳入的候选用例',
+    }]})
+    result=agent_router._validate_model_plan(content,plan,has_targets=False,phase='candidate_review').operations[0]
+    assert not result.clarification_questions
+    assert result.target_text == '重写剩余未纳入的2条候选用例'
+
+
+def test_pending_candidate_multi_intent_scope_does_not_absorb_other_clauses():
+    content='先查询剩余未纳入的候选用例，然后修改查到的候选：增加前置条件。'
+    plan=IntentPlanDraft.model_validate({'operations':[
+        {'intent':'CASE_QUERY','instruction':'查询剩余候选','confidence':1,'action_evidence':'先查询剩余未纳入的候选用例','target_kind':'condition','target_text':'当前任务剩余未纳入的候选'},
+        {'intent':'CASE_MODIFY','instruction':'修改候选','confidence':1,'action_evidence':'然后修改查到的候选','target_kind':'previous_result','target_text':'上述查询结果','depends_on':0},
+    ]})
+    result=agent_router._validate_model_plan(content,plan,has_targets=False,phase='candidate_review')
+    assert result.operations[0].target_text == '先查询剩余未纳入的候选用例'
+    assert result.operations[1].target_text == '然后修改查到的候选'
+    assert all(not op.clarification_questions for op in result.operations)
+
+
+@pytest.mark.parametrize("intent,accepted", [("CASE_GENERATE", True), ("CASE_MODIFY", False)])
+def test_literal_multi_module_generation_scope(intent, accepted):
+    content = '生成30条测试用例，分为“预约创建”“预约变更”“签到与释放”三个模块，每个模块10条。'
+    plan = IntentPlanDraft.model_validate({'operations': [{
+        'intent': intent, 'instruction': content, 'confidence': 1,
+        'action_evidence': '生成30条测试用例', 'target_kind': 'module',
+        'target_text': '会议室预约的三个功能模块',
+    }]})
+    result = agent_router._validate_model_plan(content, plan, has_targets=False, phase='maintenance').operations[0]
+    assert bool(result.clarification_questions) is not accepted
+    if accepted:
+        assert result.target_text == '分为“预约创建”“预约变更”“签到与释放”三个模块'
+
+
+def test_candidate_module_rewrite_uses_literal_action_scope():
+    content='整体重写“预约变更”模块的全部10条候选。其他模块不要动。'
+    plan=IntentPlanDraft.model_validate({'operations':[{
+        'intent':'CASE_MODIFY','instruction':content,'confidence':1,
+        'action_evidence':'整体重写“预约变更”模块的全部10条候选',
+        'target_kind':'module','target_text':'预约变更模块全部待纳入候选用例',
+    }]})
+    result=agent_router._validate_model_plan(content,plan,has_targets=False,phase='candidate_review').operations[0]
+    assert not result.clarification_questions
+    assert result.target_text == '整体重写“预约变更”模块的全部10条候选'
+
+
+@pytest.mark.parametrize('ids,ambiguous,raises', [(['one'],False,False),(['outside'],False,True),(['one'],True,True)])
+def test_query_selector_supplies_schema_and_rejects_ungrounded_ids(monkeypatch,ids,ambiguous,raises):
+    import sys
+    from types import ModuleType, SimpleNamespace
+    agents, openai = ModuleType('agents'), ModuleType('openai')
+    captured={}
+    def agent(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(**kwargs)
+    agents.Agent=agent
+    agents.AgentOutputSchema=lambda *args,**kwargs:None
+    agents.ModelSettings=SimpleNamespace
+    agents.OpenAIChatCompletionsModel=lambda **kwargs:None
+    agents.set_tracing_disabled=lambda value:None
+    agents.Runner=SimpleNamespace(run_sync=lambda *args,**kwargs:SimpleNamespace(final_output=agent_router.QueryCaseSelection(ids=ids,ambiguous=ambiguous)))
+    openai.AsyncOpenAI=lambda **kwargs:None
+    monkeypatch.setitem(sys.modules,'agents',agents)
+    monkeypatch.setitem(sys.modules,'openai',openai)
+    kwargs=dict(model_name='test',base_url='https://example.invalid',api_key='test',timeout_seconds=1,tracing_enabled=False)
+    if raises:
+        with pytest.raises(ValueError):
+            agent_router.select_query_case_ids('目标场景',[{'id':'one','title':'目标场景'}],**kwargs)
+    else:
+        assert agent_router.select_query_case_ids('目标场景',[{'id':'one','title':'目标场景'}],**kwargs)==['one']
+    assert 'JSON Schema:' in captured['instructions']
+    assert 'ambiguous' in captured['instructions']
+
+
+def test_topic_query_keeps_original_scope_instead_of_model_paraphrase():
+    content='查询“预约查询”模块中关于无结果展示和取消后状态展示的用例，只列出来，不修改。'
+    plan=IntentPlanDraft.model_validate({'operations':[{
+        'intent':'CASE_QUERY','instruction':content,'confidence':1,
+        'action_evidence':'查询','target_kind':'condition','target_text':'预约查询模块的两类场景',
+    }]})
+    result=agent_router._validate_model_plan(content,plan,has_targets=False,phase='maintenance').operations[0]
+    assert not result.clarification_questions
+    assert '无结果展示和取消后状态展示' in result.target_text

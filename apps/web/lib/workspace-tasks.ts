@@ -11,6 +11,7 @@ export type WorkspaceTask = {
   sourceTaskId?: string;
   groupId?: string;
   waitingOn?: string;
+  versions?: WorkspaceTask[];
 };
 
 export function workspaceTasks(conversation: ConversationDto | null): WorkspaceTask[] {
@@ -69,7 +70,46 @@ export function workspaceTasks(conversation: ConversationDto | null): WorkspaceT
       else if (task.message.metadata.action === "rejected" || (op.status === "cancelled" && (op.related_change_set_id || op.result.discarded))) task.status = "not_applied";
     }
   }
-  return tasks.reverse().sort((a, b) => (b.operation?.created_at ?? b.message.created_at ?? "").localeCompare(a.operation?.created_at ?? a.message.created_at ?? "") || (b.operation?.sequence ?? 0) - (a.operation?.sequence ?? 0));
+  // A rewrite operation records one round; its source chain is one user task.
+  const byId = new Map(tasks.map(task => [task.id, task]));
+  const rootId = (task: WorkspaceTask): string => {
+    if (task.operation?.payload.task_id) return String(task.operation.payload.task_id);
+    const visited = new Set<string>();
+    let current = task;
+    while (current.message.intent === "CASE_MODIFY" && current.sourceTaskId && !visited.has(current.id)) {
+      visited.add(current.id);
+      const source = byId.get(current.sourceTaskId);
+      if (!source || source.message.intent !== "CASE_MODIFY") break;
+      current = source;
+    }
+    return String(current.operation?.payload.task_id ?? current.id);
+  };
+  const groups = new Map<string, WorkspaceTask[]>();
+  for (const task of tasks) {
+    const id = ["CASE_MODIFY", "CASE_GENERATE"].includes(task.message.intent ?? "") ? rootId(task) : task.id;
+    groups.set(id, [...(groups.get(id) ?? []), task]);
+  }
+  const merged = [...groups.entries()].map(([id, rounds]) => {
+    if (rounds.length === 1) return { ...rounds[0], id };
+    // Source links, rather than timestamps alone, order rounds saved within one millisecond.
+    const depth = (task: WorkspaceTask) => {
+      let n = 0; const seen = new Set<string>(); let source = task.sourceTaskId;
+      while (source && byId.has(source) && !seen.has(source)) {
+        seen.add(source); n++; source = byId.get(source)?.sourceTaskId;
+      }
+      return n;
+    };
+    rounds.sort((a, b) => depth(a) - depth(b) || (a.operation?.created_at ?? "").localeCompare(b.operation?.created_at ?? ""));
+    const latest = rounds[rounds.length - 1];
+    return { ...latest, id, versions: rounds, sourceTaskId: rounds[0].sourceTaskId,
+      messageIds: rounds.flatMap(round => round.messageIds) };
+  });
+  const activeId = String(conversation.context.active_mutation_task_id ?? "");
+  for (const task of merged) {
+    if (task.id === activeId && task.status === "completed") task.status = "awaiting_confirmation";
+    if (task.operation?.result.task_closed && task.versions?.some(round => (round.operation?.result.test_case_ids as string[] | undefined)?.length)) task.status = "completed";
+  }
+  return merged.reverse().sort((a, b) => (b.operation?.created_at ?? b.message.created_at ?? "").localeCompare(a.operation?.created_at ?? a.message.created_at ?? "") || (b.operation?.sequence ?? 0) - (a.operation?.sequence ?? 0));
 }
 
 export function workspaceIsRunning(conversation: ConversationDto | null) {
@@ -85,10 +125,12 @@ export function taskScopeChanged(task: WorkspaceTask | undefined, cases: TestCas
 }
 
 export function candidatesForTask(task: WorkspaceTask | undefined, conversation: ConversationDto | null): WorkspaceCandidateDto[] {
-  if (!task || task.message.intent !== "CASE_GENERATE" || !conversation) return [];
+  if (!task || !conversation) return [];
+  const generation = task.message.intent === "CASE_GENERATE" ? task : task.versions?.findLast(round => round.operation?.intent === "CASE_GENERATE");
+  if (!generation) return [];
   const candidates = conversation.candidate_history ?? conversation.candidates;
-  const ids = new Set(task.operation?.result.candidate_ids as string[] ?? []);
-  return candidates.filter((candidate) => ids.has(candidate.id) || (candidate.generation_job_id && candidate.generation_job_id === task.operation?.related_job_id));
+  const ids = new Set(generation.operation?.result.candidate_ids as string[] ?? []);
+  return candidates.filter(candidate => ids.has(candidate.id) || (candidate.generation_job_id && candidate.generation_job_id === generation.operation?.related_job_id));
 }
 
 export function nextWorkspaceOperation(conversation: ConversationDto | null) {

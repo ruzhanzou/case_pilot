@@ -83,6 +83,7 @@ class AgentsSdkProvider:
             Agent,
             AgentOutputSchema,
             ModelBehaviorError,
+            ModelSettings,
             OpenAIChatCompletionsModel,
             Runner,
             set_tracing_disabled,
@@ -150,12 +151,18 @@ class AgentsSdkProvider:
                 "即使界面、历史回复、资料或 JSON Schema 为英文也不能改用英文。"
                 "仅当用户明确指定其他输出语言时遵从该指定。JSON 字段名、枚举、ID、代码保持原值。"
                 "只完成当前阶段，未知事实必须作为假设或待确认项。\n"
+                "生成用例时，source_refs 中的 source_id、document_id、chunk_id 只能逐字使用输入 evidence 提供的来源标识，禁止自行编造。"
+                "引用用户输入、对话或结构化测试说明时，这三个字段必须为 null，仅填写 label、locator 和 excerpt；测试说明版本号不是知识库来源标识。\n"
                 f"{generation_skill}\n"
                 "输出必须且只能是符合下列 JSON Schema 的 JSON 对象；"
                 "不得输出 Markdown、代码围栏、标题或 JSON 之外的解释文字。\n"
                 f"JSON Schema: {output_schema}"
             ),
             model=model,
+            # Compatible endpoints may ignore non-strict JSON Schema formatting.
+            # Request valid JSON at the transport layer; SDK validation still
+            # enforces the complete domain schema before any result is saved.
+            model_settings=ModelSettings(extra_body={"response_format": {"type": "json_object"}}),
             # Several domain contracts intentionally contain defaults and optional
             # fields that are valid Pydantic schemas but not strict JSON schemas.
             # Keep SDK-side parsing/validation without rejecting those contracts.

@@ -17,15 +17,16 @@ type Props = {
   onConversation: (id?: string) => void;
   onArtifact: (task: Task) => void;
   onDiscard?: (task: Task) => void;
+  activeTaskId?: string;
   children?: ReactNode;
 };
 
-export function CaseTaskWorkspace({ tasks, selectedId, onSelect, labels, statusLabels, running, onConversation, onArtifact, onDiscard, children }: Props) {
+export function CaseTaskWorkspace({ tasks, selectedId, onSelect, labels, statusLabels, running, onConversation, onArtifact, onDiscard, activeTaskId, children }: Props) {
   const { pick, locale } = useI18n();
   const [historyOpen, setHistoryOpen] = useState(false);
   const task = tasks.find((item) => item.id === selectedId) ?? tasks[0];
   const isRunning = task && !task.waitingOn && ["queued", "running"].includes(task.status);
-  const taskLabel = (item: Task) => item.message.metadata.action === "module_created" ? pick("Create module", "创建模块") : labels[item.message.intent!];
+  const taskLabel = (item: Task) => item.message.metadata.action === "module_created" ? pick("Create module", "创建模块") : labels[(item.operation?.payload.task_intent ?? item.message.intent) as ConversationIntent];
   const sourceTask = tasks.find((item) => item.id === task?.sourceTaskId);
   const statusLabel = (status: string) => statusLabels[status] ?? ({
     superseded: pick("Superseded", "已被新方案替代"),
@@ -52,10 +53,10 @@ export function CaseTaskWorkspace({ tasks, selectedId, onSelect, labels, statusL
             </button>)}
           </nav>
           <div className="case-task-detail" key={task.id}>
-            <header><div><h3>{taskLabel(task)}</h3>{task.message.created_at && <time dateTime={task.message.created_at}>{new Date(task.message.created_at).toLocaleString(locale === "en" ? "en-US" : "zh-CN")}</time>}</div><div className="case-task-detail__actions"><span className="case-task-status" data-status={task.status}>{icon(task.status)}{statusLabel(task.status)}</span><button type="button" aria-expanded={historyOpen} aria-controls="case-task-history" onClick={() => setHistoryOpen(!historyOpen)}><History size={15} />{pick("Result history", "历史结果")} · {tasks.length}</button></div></header>
+            <header><div><h3>{taskLabel(task)}{task.versions && <small> · V{task.versions.length}</small>}</h3>{task.message.created_at && <time dateTime={task.message.created_at}>{new Date(task.message.created_at).toLocaleString(locale === "en" ? "en-US" : "zh-CN")}</time>}</div><div className="case-task-detail__actions"><span className="case-task-status" data-status={task.status}>{icon(task.status)}{statusLabel(task.status)}</span><button type="button" aria-expanded={historyOpen} aria-controls="case-task-history" onClick={() => setHistoryOpen(!historyOpen)}><History size={15} />{pick("Result history", "历史结果")} · {tasks.length}</button></div></header>
             {(task.waitingOn || isRunning || task.status.startsWith("awaiting_") && task.status !== "awaiting_confirmation" || ["failed", "cancelled"].includes(task.status)) && <div className="case-task-running" role="status"><p>{pick("Results will appear here. Follow progress or provide details in the conversation.", "结果将在这里展示，请在对话区查看进度或补充信息。")}</p><button type="button" onClick={() => onConversation(task.messageIds.at(-1))}>{pick("View conversation", "查看对话")}</button></div>}
             {task.message.metadata.action === "module_created" && <button type="button" onClick={() => onArtifact(task)}>{pick("View module", "查看模块")}</button>}
-            {onDiscard && task.operation && task.message.intent === "CASE_GENERATE" && task.status === "awaiting_confirmation" && <button type="button" disabled={running} onClick={() => onDiscard(task)}>{pick("Discard this proposal", "放弃本次方案")}</button>}
+            {onDiscard && task.operation && (task.id === activeTaskId || task.message.intent === "CASE_GENERATE" && task.status === "awaiting_confirmation") && <button type="button" disabled={running} onClick={() => onDiscard(task)}>{pick("Abandon this task", "放弃当前任务")}</button>}
             {children}
             <div className="case-task-context">
               <button type="button" onClick={() => onConversation(task.request?.id ?? task.messageIds.at(-1))}><MessageSquare size={14} />{pick("View request in conversation", "在对话区查看需求")}</button>

@@ -81,3 +81,39 @@ test("read-only requests do not inherit a stale mutation selection", () => {
   assert.equal(requestsImplicitMutation("query cases, do not modify"), false);
   assert.equal(requestsImplicitMutation("修改标题，不要删除"), true);
 });
+
+test("three rewrite rounds form one stable task with inspectable history", () => {
+  const state = conversation([]);
+  const base = { sequence: 0, confidence: 1, target: {}, result: {}, requires_confirmation: true, related_job_id: null, error_code: null, created_at: "2026-10-08" };
+  state.operation_history = [
+    { ...base, id: "v3", intent: "CASE_MODIFY", status: "awaiting_confirmation", payload: { source_operation_id: "v2", task_id: "v1" }, related_change_set_id: "c3" },
+    { ...base, id: "query", intent: "CASE_QUERY", status: "completed", payload: {}, related_change_set_id: null },
+    { ...base, id: "v1", intent: "CASE_MODIFY", status: "cancelled", payload: {}, related_change_set_id: "c1" },
+    { ...base, id: "v2", intent: "CASE_MODIFY", status: "cancelled", payload: { source_operation_id: "v1" }, related_change_set_id: "c2" },
+    { ...base, id: "separate", intent: "CASE_MODIFY", status: "awaiting_confirmation", payload: {}, related_change_set_id: "other" },
+  ];
+  const tasks = workspaceTasks(state);
+  assert.equal(tasks.length, 3);
+  const task = tasks.find(t => t.id === "v1")!;
+  assert.equal(task.operation?.id, "v3");
+  assert.equal(task.message.metadata.change_set_id, "c3");
+  assert.deepEqual(task.versions?.map(t => t.id), ["v1", "v2", "v3"]);
+  assert.equal(task.status, "awaiting_confirmation");
+});
+
+test("generation reviews stay open and explicit new roots do not rejoin closed tasks", () => {
+  const state = conversation([]);
+  const base = { sequence: 0, confidence: 1, target: {}, result: {}, requires_confirmation: true, related_job_id: null, error_code: null, created_at: "2026-10-08", related_change_set_id: null };
+  state.context = { active_mutation_task_id: "generate" };
+  state.operation_history = [
+    { ...base, id: "generate", intent: "CASE_GENERATE", status: "awaiting_confirmation", payload: { task_id: "generate" } },
+    { ...base, id: "query", intent: "CASE_QUERY", status: "completed", payload: {} },
+    { ...base, id: "rewrite", intent: "CASE_MODIFY", status: "completed", payload: { task_id: "generate", source_operation_id: "generate" } },
+    { ...base, id: "new", intent: "CASE_MODIFY", status: "awaiting_confirmation", payload: { task_id: "new", source_operation_id: "rewrite" } },
+  ];
+  const tasks = workspaceTasks(state);
+  assert.equal(tasks.length, 3);
+  assert.equal(tasks.find(t => t.id === "generate")?.status, "awaiting_confirmation");
+  assert.deepEqual(tasks.find(t => t.id === "generate")?.versions?.map(t => t.id), ["generate", "rewrite"]);
+  assert.equal(tasks.find(t => t.id === "new")?.operation?.id, "new");
+});

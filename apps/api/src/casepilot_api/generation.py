@@ -26,6 +26,7 @@ from casepilot_api.models import (
     GenerationJobStage,
     KnowledgeDocument,
     KnowledgeSource,
+    WorkspaceCandidate,
 )
 from casepilot_api.schemas import (
     GenerationAnswersRequest,
@@ -411,16 +412,20 @@ def cancel_generation(
     if conversation_id:
         conversation = db.get(Conversation, UUID(str(conversation_id)))
         if conversation is not None:
-            conversation.context = {
-                **dict(conversation.context),
-                "phase": (
-                    "brief_review"
-                    if conversation.context.get("confirmed_brief_version")
-                    else "idle"
-                ),
-                "active_job_id": None,
-                "active_operation_id": None,
-            }
+            context = dict(conversation.context)
+            phase = "brief_review" if context.get("confirmed_brief_version") else "idle"
+            if operation is not None and operation.intent == "CASE_MODIFY":
+                phase = "candidate_review" if db.scalar(select(WorkspaceCandidate.id).where(
+                    WorkspaceCandidate.conversation_id == conversation.id,
+                    WorkspaceCandidate.status == "candidate",
+                ).limit(1)) else "maintenance"
+                source_id = dict(operation.payload).get("source_operation_id")
+                if source_id:
+                    source = db.get(ConversationOperation, UUID(str(source_id)))
+                    if source is not None and dict(source.payload).get("task_id") == context.get("active_mutation_task_id"):
+                        context["active_mutation_operation_id"] = str(source.id)
+            conversation.context = {**context, "phase": phase,
+                                    "active_job_id": None, "active_operation_id": None}
     db.commit()
     task_client.control.revoke(str(job.id), terminate=False)
     Redis.from_url(settings.redis_url, decode_responses=True).rpush(

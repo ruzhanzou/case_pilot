@@ -420,6 +420,11 @@ def test_large_generation_batches_preserve_exact_quantity_and_unique_cases():
     batches = []
 
     def execute(stage, instruction, payload, result_type, model_id):
+        if stage == "test_point.generated":
+            assert payload["requested_case_count"] is None
+            assert payload["final_case_count"] == 100
+            assert payload["max_test_points"] == 3
+            assert payload["allowed_feature_ids"] == [payload["feature_points"]["feature_points"][0]["id"]]
         if stage == "test_case.generated":
             count = payload["batch_count"]
             start = payload["batch_start_index"]

@@ -17,24 +17,29 @@ type Props = {
   onBrief: (version: number) => void;
   onGenerate: () => void;
   onRefine?: () => void;
+  pendingCandidateRefs?: string[];
 };
 
-export function CaseTaskArtifacts({ task, conversation, busy, cases, onLocate, onToggleCandidate, onCommit, onBrief, onGenerate, onRefine }: Props) {
+export function CaseTaskArtifacts({ task, conversation, busy, cases, onLocate, onToggleCandidate, onCommit, onBrief, onGenerate, onRefine, pendingCandidateRefs = [] }: Props) {
   const { pick } = useI18n();
   if (task.message.intent === "CASE_QUERY") {
     const snapshots = task.operation?.result.query_cases;
     if (!Array.isArray(snapshots)) return null;
     return <QueryResults key={task.id} snapshots={snapshots as TestCaseDto[]} cases={cases} onLocate={onLocate} />;
   }
-  if (task.message.intent !== "CASE_GENERATE") return null;
+  const generation = task.message.intent === "CASE_GENERATE" ? task : task.versions?.findLast(round => round.operation?.intent === "CASE_GENERATE");
+  if (!generation) return null;
   const candidates = candidatesForTask(task, conversation);
-  const brief = conversation.test_briefs.filter((item) => item.source_operation_id === task.operation?.id).at(-1);
+  const brief = conversation.test_briefs.filter((item) => item.source_operation_id === generation.operation?.id).at(-1);
   const currentBrief = conversation.test_briefs.at(-1);
   const canConfirmBrief = brief && brief.id === currentBrief?.id && conversation.context.phase === "brief_review" && !brief.content.open_questions.some((item) => item.blocking);
-  const canCommit = candidates.some((item) => item.status === "candidate" && item.included) && !["cancelled", "not_applied"].includes(task.status);
+  const canEdit = candidates.some((item) => item.status === "candidate") && !["cancelled", "not_applied"].includes(task.status);
+  const needsReview = candidates.some(item => item.status === "candidate" && item.included && pendingCandidateRefs.includes(item.ref));
+  const canCommit = canEdit && !needsReview && candidates.some((item) => item.status === "candidate" && item.included);
   return <div className="task-generation-results">
     {brief && <section className="task-brief-result"><header><strong>{pick("Test scope", "测试范围")} · V{brief.version}</strong><button type="button" onClick={() => onBrief(brief.version)}>{pick("View full brief", "查看完整说明")}</button></header><p>{brief.content.test_object}</p><p>{brief.content.scope.join(" · ")}</p>{brief.content.open_questions.length > 0 && <ul>{brief.content.open_questions.map((item, index) => <li key={item.id ?? index}>{item.question}</li>)}</ul>}{canConfirmBrief && <button type="button" disabled={busy} onClick={onGenerate}>{pick("Confirm scope and generate", "确认范围并生成用例")}</button>}</section>}
-    {candidates.length > 0 && <section className="task-result-cases" aria-label={pick("Candidate results", "候选结果")}><header><h4>{pick(`${candidates.length} candidate cases`, `${candidates.length} 条候选用例`)}</h4>{canCommit && onRefine && <button type="button" disabled={busy} onClick={onRefine}>{pick("Refine candidates", "继续调整候选")}</button>}{canCommit && <button type="button" disabled={busy} onClick={onCommit}>{pick("Add selected candidates", "纳入已选候选")}</button>}</header>
+    {candidates.length > 0 && <section className="task-result-cases" aria-label={pick("Candidate results", "候选结果")}><header><h4>{pick(`${candidates.length} candidate cases`, `${candidates.length} 条候选用例`)}</h4>{canEdit && onRefine && <button type="button" disabled={busy} onClick={onRefine}>{pick("Refine candidates", "继续调整候选")}</button>}{canEdit && <button type="button" disabled={busy || !canCommit} onClick={onCommit}>{pick("Add selected candidates", "纳入已选候选")}</button>}</header>
+      {needsReview && <p role="status">{pick("Review the AI changes for selected candidates before adding them to the official collection.", "所选候选存在待审阅的 AI 修改，请先采纳或丢弃建议，再纳入正式集合。")}</p>}
       {candidates.map((candidate) => <details key={candidate.id}><summary>{candidate.status === "candidate" && <input type="checkbox" aria-label={pick(`Include ${candidate.ref}`, `纳入 ${candidate.ref}`)} checked={candidate.included} disabled={busy} onClick={(event) => event.stopPropagation()} onChange={() => onToggleCandidate(candidate)} />}<strong>{candidate.ref} · {String(candidate.snapshot.title ?? "")}</strong><small>V{candidate.version} · {candidate.status === "incorporated" ? pick("Added", "已纳入") : candidate.status === "excluded" ? pick("Not included", "未纳入") : candidate.status === "archived" ? pick("Historical candidate", "历史候选") : pick("Awaiting review", "待审阅")}</small></summary><p>{String(candidate.snapshot.module ?? "")} · {pick("Priority", "优先级")}：{String(candidate.snapshot.priority ?? "—")} · {String(candidate.snapshot.case_type ?? "")}</p><p><strong>{pick("Preconditions", "前置条件")}</strong>：{((candidate.snapshot.preconditions ?? []) as string[]).join("；") || "—"}</p><Streamdown>{((candidate.snapshot.steps ?? []) as { action: string; expected: string }[]).map((step, index) => `${index + 1}. ${step.action}\n\n   ${pick("Expected", "预期")}：${step.expected}`).join("\n\n")}</Streamdown>{candidate.status === "candidate" && <button type="button" onClick={() => onLocate(candidate.id)}>{pick("Edit candidate", "编辑候选")}</button>}</details>)}
     </section>}
   </div>;

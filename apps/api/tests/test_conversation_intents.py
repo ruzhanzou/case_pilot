@@ -480,3 +480,12 @@ def test_semantic_target_cannot_drop_protected_module(monkeypatch) -> None:
         None, conversation, payload, "CASE_MODIFY", "全部用例"
     )
     assert error is not None
+
+
+@pytest.mark.parametrize('content,intent', [
+    ('先删除“预约查询”模块吧。','CASE_DELETE'),
+    ('如何删除“预约查询”模块？','KNOWLEDGE_QA'),
+    ('不要删除“预约查询”模块。','KNOWLEDGE_QA'),
+])
+def test_module_deletion_is_not_lost_in_safe_fallback(content,intent):
+    assert classify_intent(content,phase='candidate_review')[0] == intent
