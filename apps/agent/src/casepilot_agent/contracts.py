@@ -249,6 +249,14 @@ class RewriteCandidate(BaseModel):
     quality: QualityReport
 
 
+class RewriteBatchItem(RewriteCandidate):
+    ref: str
+
+
+class RewriteBatch(BaseModel):
+    items: list[RewriteBatchItem]
+
+
 class KnowledgeAnswer(BaseModel):
     answer: str
     citations: list[SourceRef] = Field(default_factory=list)

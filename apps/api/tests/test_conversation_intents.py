@@ -489,3 +489,16 @@ def test_semantic_target_cannot_drop_protected_module(monkeypatch) -> None:
 ])
 def test_module_deletion_is_not_lost_in_safe_fallback(content,intent):
     assert classify_intent(content,phase='candidate_review')[0] == intent
+
+
+@pytest.mark.parametrize(("content", "expected"), [
+    ("为账号安全系统生成恰好12条候选用例，每个场景1条", "账号安全系统"),
+    ("针对订单系统编写至少12条测试用例", "订单系统"),
+    ("为登录功能生成10+用例", "登录功能"),
+    ("生成12条账号登录测试用例", "账号登录"),
+    ("生成恰好12条候选用例", ""),
+    ("为12306系统生成12条候选用例", "12306系统"),
+    ("生成12306系统测试用例", "12306系统"),
+])
+def test_case_count_never_becomes_test_object(content, expected):
+    assert _extract_explicit_test_object(content) == expected

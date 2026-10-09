@@ -19,6 +19,7 @@ from casepilot_api.agent_router import (
     normalize_routing_text,
     plan_intents,
     select_query_case_ids,
+    select_case_scope,
 )
 from casepilot_api.auth import CurrentAccount, require_space_membership
 from casepilot_api.case_management import (
@@ -29,10 +30,14 @@ from casepilot_api.case_management import (
     write_audit,
 )
 from casepilot_api.case_scope import (
+    PREVIOUS_QUERY_REFERENCE,
     common_module_path,
     filter_priority,
+    has_content_condition,
     module_contains,
     requested_new_module,
+    resolve_literal_content,
+    resolve_module_priority_union,
     resolve_scope,
     unsupported_mutation_condition,
 )
@@ -335,19 +340,31 @@ def _extract_explicit_test_object(content: str) -> str:
         return f"{module}模块"
 
     candidate = ""
-    for pattern in (
+    count_prefix = False
+    for pattern_index, pattern in enumerate((
         r"(?:测试对象|被测对象)\s*(?:是|为|：|:|包括|包含)\s*(.+)",
         r"(?:测试对象|被测对象)\s+(.+)",
         r"(?:为|针对|围绕)\s*(.+?)\s*(?:生成|设计|编写|创建)"
-        r"(?:相关)?(?:测试)?用例",
+        r"(?:相关|恰好|至少|至多|不少于|不超过|大约|约|总共|共)?\s*"
+        r"(?:[0-9一二两三四五六七八九十百]+[+＋]?\s*(?:条|个)?\s*)?"
+        r"(?:候选)?(?:测试)?用例",
         r"(?:生成|设计|编写|创建)\s*(.+?)\s*(?:测试)?用例",
-    ):
+    )):
         match = re.search(pattern, normalized, flags=re.IGNORECASE)
         if match:
             candidate = match.group(1)
+            count_prefix = pattern_index == 3
             break
 
     candidate = candidate.strip(" ：:，,。；;“”\"'的")
+    # Count and candidate qualifiers describe the output, not the test object.
+    if count_prefix:
+        candidate = re.sub(
+            r"^(?:恰好|至少|至多|不少于|不超过|大约|约|总共|共)?\s*"
+            r"[0-9一二两三四五六七八九十百]+\s*"
+            r"(?:[+＋]?\s*(?:条|个)\s*(?:候选)?\s*|[+＋]\s*(?:候选)?\s*|候选?$|$)",
+            "", candidate,
+        )
     embedded_object = re.search(r"\s为\s*(.+)", candidate)
     if embedded_object:
         candidate = embedded_object.group(1).strip()
@@ -1269,6 +1286,11 @@ def _load_scope_snapshots(db: Session, conversation: Conversation) -> list[dict]
             TestCaseRevision.title,
             TestCaseRevision.module,
             TestCaseRevision.priority,
+            TestCaseRevision.description,
+            TestCaseRevision.case_type,
+            TestCaseRevision.tags,
+            TestCaseRevision.preconditions,
+            TestCaseRevision.steps,
         )
         .join(TestCaseRevision, TestCaseRevision.id == TestCase.current_revision_id)
         .join(CollectionCaseMembership, CollectionCaseMembership.test_case_id == TestCase.id)
@@ -1441,22 +1463,123 @@ def _inventory_summary(case_context: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _resolve_model_scope(db, conversation, payload, intent):
+    formal = [{**case, "kind": "formal"} for case in _load_scope_snapshots(db, conversation)]
+    candidates = list(db.scalars(select(WorkspaceCandidate).where(
+        WorkspaceCandidate.conversation_id == conversation.id,
+        WorkspaceCandidate.status == "candidate",
+    )))
+    catalog = formal + [{**dict(c.snapshot), "id": str(c.id), "case_key": c.ref,
+                        "kind": "candidate"} for c in candidates]
+    allowed = {str(case["id"]) for case in catalog}
+    ref_ids = {str(case.get("case_key", "")): str(case["id"]) for case in catalog}
+    selected = _expand_conversation_targets(db, conversation, payload)
+    selected_ids = {str(ref) for ref in selected.target_case_ids}
+    selected_ids.update(ref_ids[item.ref] for item in selected.target_candidate_snapshots
+                        if item.ref in ref_ids)
+    latest = db.scalar(select(ConversationOperation).where(
+        ConversationOperation.conversation_id == conversation.id,
+        ConversationOperation.intent == "CASE_QUERY",
+        ConversationOperation.status == "completed",
+    ).order_by(ConversationOperation.created_at.desc()).limit(1))
+    latest_query = None
+    if latest is not None and latest.conversation_id == conversation.id:
+        target = dict(latest.target)
+        query_ids = {str(ref) for ref in target.get("case_ids", [])}
+        query_ids.update(ref_ids[ref] for ref in target.get("candidate_refs", []) if ref in ref_ids)
+        latest_query = {"ids": sorted(query_ids & allowed), "operation_id": str(latest.id)}
+    source = db.get(ConversationOperation, payload.source_operation_id) if payload.source_operation_id else None
+    if source is not None and source.conversation_id != conversation.id:
+        return payload, "引用的结果不属于当前对话，请重新选择。"
+    source = _rewrite_proposal_source(db, source)
+    previous = db.get(CaseChangeSet, source.related_change_set_id) if source and source.related_change_set_id else None
+    proposal = None
+    if previous is not None:
+        pending = [item for item in previous.items if item.get("status") not in {"applied", "rejected"}]
+        proposal = {"status": previous.status,
+                    "pending_ids": [ref_ids.get(str(item["ref"]), str(item["ref"])) for item in pending],
+                    "items": [{"ref": item["ref"], "snapshot": item.get("proposed_snapshot", {})}
+                              for item in pending]}
+    context = {"phase": dict(conversation.context).get("phase", "maintenance"),
+               "selected_ids": sorted(selected_ids & allowed),
+               "current_case_id": str(dict(conversation.context).get("selected_case_id") or ""),
+               "latest_query": latest_query, "proposal": proposal}
+    try:
+        decision = select_case_scope(payload.content, catalog, context, intent=intent,
+            model_name=settings.agent_model, base_url=settings.agent_base_url,
+            api_key=settings.agent_api_key, timeout_seconds=settings.agent_timeout_seconds,
+            tracing_enabled=settings.agent_tracing_enabled)
+    except Exception:
+        return payload, "用例范围分析暂时未完成，请重试；本次没有修改或删除用例。"
+    if decision.ambiguous:
+        return payload, decision.clarification or "请补充需要选择的用例范围。"
+    ids = set(decision.ids)
+    if not ids.issubset(allowed):
+        return payload, "模型返回的范围包含当前集合之外的用例，请重新描述目标。"
+    known_keys = {key.casefold() for key in ref_ids}
+    if any(key.casefold() not in known_keys for key in decision.referenced_case_keys):
+        return payload, "指定编号中有用例不在当前集合，请检查完整编号。"
+    reference_ids = None
+    if decision.reference == "previous_query":
+        if latest_query is None:
+            return payload, "没有可引用的查询结果，请先查询需要处理的用例。"
+        reference_ids = set(latest_query["ids"])
+    elif decision.reference == "previous_proposal":
+        reference_ids = set(proposal["pending_ids"]) if proposal else set()
+    elif decision.reference == "selection":
+        reference_ids = selected_ids & allowed
+        if not reference_ids and context["current_case_id"] in allowed:
+            reference_ids = {context["current_case_id"]}
+    if reference_ids is not None and not ids.issubset(reference_ids):
+        return payload, "选择结果超出了引用范围，请确认需要处理的用例。"
+    if decision.requested_count is not None and decision.requested_count != len(ids):
+        return payload, f"当前匹配 {len(ids)} 条用例，与指定数量不一致，请确认范围。"
+    if not ids and intent in {"CASE_MODIFY", "CASE_DELETE"}:
+        return payload, "当前范围没有匹配用例，请重新描述目标；本次没有修改或删除用例。"
+    return payload.model_copy(update={
+        "targets": [],
+        "target_case_ids": [UUID(str(case["id"])) for case in formal if str(case["id"]) in ids],
+        "target_candidate_snapshots": [ConversationTargetSnapshot(
+            ref=c.ref, version=c.version, snapshot=dict(c.snapshot))
+            for c in candidates if str(c.id) in ids],
+    }), None
+
+
 def _resolve_action_scope(
     db: Session,
     conversation: Conversation,
     payload: ConversationMessageCreate,
     intent: str,
     scope_text: str | None = None,
+    *,
+    mutation_scope: bool = False,
 ) -> tuple[ConversationMessageCreate, str | None]:
     if conversation.collection_id is None:
         return payload, None
+    if settings.agent_provider != "mock" and intent in ASSET_INTENTS:
+        return _resolve_model_scope(db, conversation, payload, intent)
+    # The deterministic implementation remains only for offline mock fixtures.
     if intent in {"CASE_MODIFY", "CASE_DELETE"} and any(
         unsupported_mutation_condition(text)
         for text in (payload.content, scope_text or "")
     ):
-        return payload, "无法准确确定这个条件对应的用例，请先查询并选择具体用例，再确认修改范围。"
+        if intent == "CASE_MODIFY":
+            # Resolve the complete condition read-only; the modification gate
+            # still previews and binds these exact assets before dispatch.
+            return _resolve_action_scope(
+                db, conversation, payload, "CASE_QUERY", scope_text, mutation_scope=True,
+            )
+        exact_exclusion = resolve_scope(
+            payload.content, _load_scope_snapshots(db, conversation),
+        ) if re.search(
+            r"排除|除了|\b(?:except|excluding)\b", payload.content, re.I,
+        ) else None
+        if not (exact_exclusion and "exclusion_scope_text" in exact_exclusion
+                and not has_content_condition(exact_exclusion["exclusion_scope_text"])):
+            return payload, ("无法准确确定这个条件对应的用例，"
+                             "请先查询并选择具体用例，再确认修改范围。")
     if (intent in {"CASE_DELETE", "CASE_MODIFY"}
-            and re.search(r"(?:刚才|上次|上述|前面)查询(?:到|出)?的", payload.content)
+            and PREVIOUS_QUERY_REFERENCE.search(payload.content)
             and not payload.target_case_ids and not payload.target_candidate_snapshots
             and not payload.targets):
         source = db.scalar(select(ConversationOperation).where(
@@ -1470,11 +1593,22 @@ def _resolve_action_scope(
             "targets": [ConversationTarget(kind="previous_result", source_operation_id=source.id)]})
         expanded = _expand_conversation_targets(db, conversation, linked)
         count = len(expanded.target_case_ids) + len(expanded.target_candidate_snapshots)
-        requested = re.search(r"([0-9]+|[一二两三四五六七八九十])条", payload.content)
+        reference_text = PREVIOUS_QUERY_REFERENCE.search(payload.content).group()
+        requested = re.search(r"([0-9]+|[一二两三四五六七八九十]+)\s*条", reference_text)
         number = None
         if requested:
             value = requested.group(1)
-            number = int(value) if value.isdigit() else {"一":1,"二":2,"两":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9,"十":10}[value]
+            digits = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+                      "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+            if value.isdigit():
+                number = int(value)
+            elif value in digits:
+                number = digits[value]
+            else:
+                tens = re.fullmatch(r"([一二两三四五六七八九])?十([一二三四五六七八九])?", value)
+                if tens is None:
+                    return payload, "无法确定指定的用例数量，请使用阿拉伯数字确认范围。"
+                number = digits.get(tens[1], 1) * 10 + digits.get(tens[2], 0)
         if count == 0 or (number is not None and number != count):
             return payload, f"上次查询可处理的用例有 {count} 条，请确认范围后继续。"
         return expanded, None
@@ -1538,6 +1672,10 @@ def _resolve_action_scope(
             "targets": [], "target_case_ids": [], "target_candidate_snapshots": [],
         }), None
     explicit_scope = None
+    if intent == "CASE_QUERY" and has_content_condition(payload.content):
+        # Model summaries can drop a branch or turn a search keyword into a
+        # module. Derive the candidate scope from the complete user predicate.
+        scope_text = None
     if scope_text:
         # A shortened semantic target must not bypass explicit names/guards in
         # the operation instruction (e.g. a missing module ending in a known name).
@@ -1548,7 +1686,10 @@ def _resolve_action_scope(
             payload.content,
         )
         scope_text = "，".join([scope_text, *guards])
-    scope = explicit_scope if explicit_scope and explicit_scope.get("error") else resolve_scope(
+    scope = explicit_scope if explicit_scope and (
+        explicit_scope.get("error")
+        or re.search(r"排除|除外|除了|\b(?:except|excluding)\b", payload.content, re.I)
+    ) else resolve_scope(
         scope_text if scope_text is not None else payload.content, snapshots
     )
     if scope is None and explicit_scope and explicit_scope.get("ids"):
@@ -1581,7 +1722,9 @@ def _resolve_action_scope(
     if scope is None:
         expanded = _expand_conversation_targets(db, conversation, payload)
         if expanded.targets or expanded.target_case_ids or expanded.target_candidate_snapshots:
-            if intent in ANALYSIS_INTENTS | {"CASE_QUERY"}:
+            if intent in ANALYSIS_INTENTS | {"CASE_QUERY"} and not (
+                intent == "CASE_QUERY" and has_content_condition(payload.content)
+            ):
                 allowed_ids = {
                     str(item["id"]) for item in filter_priority(payload.content, snapshots)
                 }
@@ -1597,20 +1740,41 @@ def _resolve_action_scope(
                         ],
                     }
                 )
-            return expanded, None
+            if intent != "CASE_QUERY" or not has_content_condition(payload.content):
+                return expanded, None
+            # Explicit UI/previous-result selections still need content filtering.
+            refs = {str(item) for item in expanded.target_case_ids}
+            refs.update(item.ref for item in expanded.target_candidate_snapshots)
+            scope = {"ids": [str(item["id"]) for item in snapshots
+                             if str(item["id"]) in refs or item.get("case_key") in refs]}
         if intent not in ANALYSIS_INTENTS | {"CASE_QUERY"}:
             return expanded, None
-        scope = {"ids": [str(item["id"]) for item in snapshots]}
+        if scope is None:
+            scope = {"ids": [str(item["id"]) for item in snapshots]}
     scope_ids = set(scope["ids"])
     selected = [item for item in snapshots if str(item["id"]) in scope_ids]
-    if intent != "CASE_GENERATE":
+    # Exact exclusions have already been resolved against collection identities.
+    # Reasking a model about removed IDs makes an unambiguous scope look missing.
+    condition_text = scope.get("exclusion_scope_text", payload.content)
+    if intent != "CASE_GENERATE" and not (
+        intent == "CASE_QUERY" and has_content_condition(condition_text)
+    ):
         selected = filter_priority(
-            scope_text if scope_text is not None else payload.content, selected
+            condition_text, selected,
+            mutation=mutation_scope or intent in {"CASE_MODIFY", "CASE_DELETE"},
         )
-    topic_condition = re.search(r"(?:关于|有关|涉及)(.+?)(?:的(?:测试)?用例|用例)", payload.content) if intent == "CASE_QUERY" else None
-    if topic_condition and selected:
+    topic_condition = intent == "CASE_QUERY" and has_content_condition(condition_text)
+    priority_union = (
+        resolve_module_priority_union(condition_text, selected) if topic_condition else None
+    )
+    literal = resolve_literal_content(condition_text, selected) if topic_condition else None
+    if priority_union is not None:
+        selected = priority_union
+    elif literal is not None:
+        selected = filter_priority(literal[1], literal[0], mutation=mutation_scope)
+    elif topic_condition and selected:
         try:
-            matched_ids = set(select_query_case_ids(topic_condition.group(1), selected,
+            matched_ids = set(select_query_case_ids(condition_text, selected,
                 model_name=settings.agent_model, base_url=settings.agent_base_url,
                 api_key=settings.agent_api_key, timeout_seconds=settings.agent_timeout_seconds,
                 tracing_enabled=settings.agent_tracing_enabled))
@@ -1752,7 +1916,11 @@ def _start_action(
     )
     if questions and not confirm_modification and not (
         target_questions and (
-            confirmed_targets or (
+            # Scope selection has the full catalog; routing only knows intent.
+            # Let the selector resolve scope questions instead of blocking it.
+            (settings.agent_provider != "mock" and intent in ASSET_INTENTS
+             and "TARGET_EVIDENCE_NOT_IN_REQUEST" in plan.get("reason_codes", []))
+            or confirmed_targets or (
                 payload.source_operation_id and payload.targets
                 and plan.get("target_kind") == "none"
             )
@@ -1906,7 +2074,7 @@ def _start_action(
         return assistant, {"type": "clarification"}, None
 
     if intent == "CASE_QUERY":
-        items = filter_priority(payload.content, [item["snapshot"] for item in case_context])
+        items = [item["snapshot"] for item in case_context]
         summary = (
             "当前范围没有匹配用例。"
             if not items
@@ -4242,9 +4410,13 @@ def resume_conversation_operation(
         operation.confidence,
         operation.id,
         confirm_modification=supplement.confirm_modification,
+        # Live textual corrections must be reselected, even when the UI sends
+        # its previous selection. Keep deterministic offline fixtures unchanged.
         confirmed_targets=bool(
-            supplement.targets or supplement.target_case_ids
-            or supplement.target_candidate_snapshots
+            (not supplement.content or settings.agent_provider == "mock") and (
+                supplement.targets or supplement.target_case_ids
+                or supplement.target_candidate_snapshots
+            )
             or (not supplement.content and resume_targets)
         ),
     )

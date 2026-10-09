@@ -278,11 +278,13 @@ class MockProvider:
         elif result_type is TestCaseBatch:
             scoped_points = payload.get("test_points", {}).get("test_points", [])
             if payload.get("brief_version") and scoped_points:
-                point = scoped_points[0]
-                case = baseline.test_cases[0]
-                case.title = f"{point['title']}（{payload.get('batch_start_index', 1)}）"
-                case.test_point_ids = [point["id"]]
-                result = TestCaseBatch(test_cases=[case])
+                cases = []
+                for index, point in enumerate(scoped_points):
+                    case = baseline.test_cases[0].model_copy(deep=True)
+                    case.title = f"{point['title']}（{payload.get('batch_start_index', 1) + index}）"
+                    case.test_point_ids = [point["id"]]
+                    cases.append(case)
+                result = TestCaseBatch(test_cases=cases)
             else:
                 result = TestCaseBatch(test_cases=baseline.test_cases)
         elif result_type is EnhancementResult:

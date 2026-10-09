@@ -14,6 +14,13 @@ export type WorkspaceTask = {
   versions?: WorkspaceTask[];
 };
 
+/** Assignment values must not be inferred as existing case selections. */
+export function scopeReferenceText(instruction: string): string {
+  return instruction
+    .replace(/(?:标题|名称|描述|所属模块|模块|用例类型|类型|前置条件|步骤|预期结果|校验点)\s*(?:统一|全部)?\s*(?:改为|改成|修改为|调整为|设置为|设为|替换为|更新为|补充为)\s*(?:「[^」]*」|“[^”]*”|"[^"]*")/g, "")
+    .replace(/(?:标题|名称|描述|标签|前置条件|步骤|预期结果|预期)(?:中|里|内)?(?:不包含|不含|包含|含有|含)\s*(?:「[^」]+」|“[^”]+”|"[^"]+"|[^，,。；;\n「」“”"]+?(?=的?(?:正式|候选|测试)?用例))/g, "");
+}
+
 export function workspaceTasks(conversation: ConversationDto | null): WorkspaceTask[] {
   if (!conversation) return [];
   const operations = conversation.operation_history ?? conversation.operation_plan?.operations ?? [];
@@ -121,7 +128,10 @@ export function taskScopeChanged(task: WorkspaceTask | undefined, cases: TestCas
   const versions = task?.operation?.result.scope_versions as Record<string, string> | undefined;
   if (!versions) return false;
   const current = new Map(cases.map((item) => [item.id, item.current_revision_id]));
-  return Object.entries(versions).some(([id, version]) => current.get(id) !== version);
+  const deletedByTask = new Set(task?.operation?.intent === "CASE_DELETE"
+    ? task.operation.result.updated_refs as string[] | undefined : []);
+  return Object.entries(versions).some(([id, version]) =>
+    !(deletedByTask.has(id) && !current.has(id)) && current.get(id) !== version);
 }
 
 export function candidatesForTask(task: WorkspaceTask | undefined, conversation: ConversationDto | null): WorkspaceCandidateDto[] {
@@ -130,7 +140,7 @@ export function candidatesForTask(task: WorkspaceTask | undefined, conversation:
   if (!generation) return [];
   const candidates = conversation.candidate_history ?? conversation.candidates;
   const ids = new Set(generation.operation?.result.candidate_ids as string[] ?? []);
-  return candidates.filter(candidate => ids.has(candidate.id) || (candidate.generation_job_id && candidate.generation_job_id === generation.operation?.related_job_id));
+  return candidates.filter(candidate => ids.has(candidate.id) || (candidate.generation_job_id && candidate.generation_job_id === (generation.operation?.related_job_id ?? generation.message.related_job_id)));
 }
 
 export function nextWorkspaceOperation(conversation: ConversationDto | null) {

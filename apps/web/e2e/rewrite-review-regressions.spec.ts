@@ -85,14 +85,23 @@ test.beforeEach(async ({ page }) => {
   page.on('pageerror', error => { throw error; });
 });
 
-test('R1 content condition never broadens modification to the entire module', async ({ page }, info) => {
+test('R1 content condition selects only matching cases before modification', async ({ page }, info) => {
   const s = await setup(page);
-  const turn = await send(page, '把登录模块中涉及短信验证码的用例优先级改为P0');
-  expect(turn.action.job_id).toBeFalsy();
-  expect(turn.action.change_set_id).toBeFalsy();
-  expect(turn.assistant_message?.status).toBe('awaiting_clarification');
+  let turn = await send(page, '把登录模块中涉及短信验证码的用例优先级改为P0');
+  const initial = turn;
+  if (turn.action.type === 'clarification') {
+    expect(turn.action.job_id).toBeFalsy();
+    expect(await s.read()).toEqual(s.original);
+    turn = await send(page, `只修改用例 ${s.original[0].case_key}，优先级改为P0，其他用例不变`);
+  }
+  const change = await ready(page, turn);
+  expect(change.items.map(item => item.ref)).toEqual([s.original[0].id]);
   expect(await s.read()).toEqual(s.original);
-  await evidence(page, info, { turn, cases: await s.read() });
+  await accept(page);
+  const after = await s.read();
+  expect(after.find(item => item.id === s.original[0].id)?.priority).toBe('P0');
+  expect(after.find(item => item.id === s.original[1].id)).toEqual(s.original[1]);
+  await evidence(page, info, { initial, turn, change, after });
 });
 
 test('R2 existing empty setup and five steps survive rewrite and save', async ({ page }, info) => {
@@ -218,4 +227,47 @@ test('R6 unchanged subset retains cumulative pending results and status', async 
   expect(after.find(c => c.id === s.original[0].id)?.title).toBe('待采纳的累计标题');
   expect(after.find(c => c.id === s.original[1].id)).toEqual(s.original[1]);
   await evidence(page, info, { change, operation, after });
+});
+
+test('R7 query body-only evidence then modify the previous results', async ({ page }, info) => {
+  const s = await setup(page);
+  const originals: TestCaseDto[] = [];
+  for (const [index, item] of s.original.entries()) {
+    const response = await page.request.patch(`${api}/test-cases/${item.id}`, { data: {
+      ...item, base_revision_id: item.current_revision_id, title: `登录校验${index + 1}`,
+      steps: [{ action: index === 0 ? '输入短信验证码并提交' : '输入密码并提交', expected: '登录成功' }],
+    } });
+    expect(response.ok()).toBeTruthy();
+    originals.push(await response.json());
+  }
+  await page.reload();
+  const query = await send(page, '查询登录模块中步骤包含短信验证码的用例');
+  expect(query.action.type).toBe('case_query');
+  expect(query.assistant_message?.target_case_ids).toEqual([originals[0].id]);
+  const turn = await send(page, '把刚才查询到的用例优先级改为P0，其他内容保持不变');
+  const change = await ready(page, turn);
+  expect(change.items.map(item => item.ref)).toEqual([originals[0].id]);
+  expect(await s.read()).toEqual(originals);
+  await accept(page);
+  const after = await s.read();
+  expect(after.find(item => item.id === originals[0].id)?.priority).toBe('P0');
+  expect(after.find(item => item.id === originals[1].id)).toEqual(originals[1]);
+  await evidence(page, info, { query, change, after });
+});
+
+test('R8 priority predicates survive semantic scope extraction', async ({ page }, info) => {
+  const s = await setup(page);
+  const target = s.original[0];
+  const edited = await page.request.patch(`${api}/test-cases/${target.id}`, { data: {
+    ...target, base_revision_id: target.current_revision_id, priority: 'P0',
+  } });
+  expect(edited.ok()).toBeTruthy();
+  await page.reload();
+  const query = await send(page, '查询登录模块优先级为P1的用例');
+  expect(query.action.type).toBe('case_query');
+  expect(query.assistant_message?.target_case_ids).toEqual([s.original[1].id]);
+  const negative = await send(page, '查询登录模块中优先级不是P0的用例');
+  expect(negative.action.type).toBe('case_query');
+  expect(negative.assistant_message?.target_case_ids).toEqual([s.original[1].id]);
+  await evidence(page, info, { query, negative, after: await s.read() });
 });

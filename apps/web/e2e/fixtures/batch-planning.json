@@ -1,0 +1,51 @@
+{
+  "planning": {
+    "feature_points": [
+      {
+        "id": "FP-280a6e81957c52a6",
+        "name": "A01 已启用未锁定账号正确密码登录验证",
+        "module": "账号安全系统/密码登录",
+        "description": "验证已启用未锁定账号输入正确密码时的登录响应结果",
+        "source_refs": [
+          {
+            "label": "用户需求规则",
+            "excerpt": "A01 已启用未锁定账号密码正确，HTTP 200且有access_token",
+            "locator": "",
+            "chunk_id": null,
+            "source_id": null,
+            "document_id": null
+          }
+        ],
+        "requirement_refs": [
+          "已启用未锁定账号输入正确密码，返回HTTP 200且返回access_token"
+        ]
+      }
+    ],
+    "test_points": [
+      {
+        "id": "TP-be995822d7a65e67",
+        "title": "A01 已启用未锁定账号正确密码登录验证",
+        "category": "功能测试",
+        "priority": "P0",
+        "scenario": "独立测试环境中，测试账号qa_user_001预置为已启用未锁定状态，执行密码登录操作",
+        "objective": "验证已启用未锁定账号输入正确密码后的响应结果是否符合业务规则",
+        "executable": true,
+        "source_refs": [
+          {
+            "label": "用户需求规则",
+            "excerpt": "已启用未锁定账号输入正确密码，返回HTTP 200且返回access_token",
+            "locator": "",
+            "chunk_id": null,
+            "source_id": null,
+            "document_id": null
+          }
+        ],
+        "priority_reason": "核心登录成功场景，是账号安全系统最基础核心功能，优先级最高",
+        "feature_point_ids": [
+          "FP-280a6e81957c52a6"
+        ],
+        "executable_analysis": "可在预置好账号状态的独立测试环境中执行"
+      }
+    ]
+  }
+}

@@ -7,8 +7,12 @@ from casepilot_agent.contracts import KnowledgeAnswer
 from casepilot_agent.providers.agents_sdk import AgentsSdkProvider
 
 
+@pytest.mark.parametrize("stage,timeouts", [
+    ("knowledge.answered", 0), ("test_case.generated", 1), ("test_case.generated", 2),
+    ("knowledge.answered", 1),
+])
 def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, stage: str, timeouts: int,
 ) -> None:
     captured: dict = {}
     agents = ModuleType("agents")
@@ -36,6 +40,9 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
         def run_sync(agent, prompt, max_turns):
             captured["prompt"] = prompt
             captured["max_turns"] = max_turns
+            captured["calls"] = captured.get("calls", 0) + 1
+            if captured["calls"] <= timeouts:
+                raise TimeoutError("transient provider timeout")
             return SimpleNamespace(
                 final_output=KnowledgeAnswer(answer="已回答"),
                 context_wrapper=SimpleNamespace(
@@ -69,13 +76,15 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
         local_model="local",
         timeout=5,
     )
-    result, usage = provider.complete(
-        stage="knowledge.answered",
-        instruction="回答问题",
-        payload={"question": "什么是边界值？"},
-        result_type=KnowledgeAnswer,
-        model_id="auto",
-    )
+    kwargs = dict(stage=stage, instruction="回答问题", payload={"question": "什么是边界值？", **({"batch_count": 20} if stage == "test_case.generated" else {})},
+                  result_type=KnowledgeAnswer, model_id="auto")
+    if timeouts == 2 or (stage == "knowledge.answered" and timeouts):
+        with pytest.raises(TimeoutError):
+            provider.complete(**kwargs)
+        assert captured["calls"] == (2 if stage == "test_case.generated" else 1)
+        return
+    result, usage = provider.complete(**kwargs)
+    assert captured["calls"] == timeouts + 1
 
     assert result.answer == "已回答"
     assert captured["client"]["base_url"] == "https://ark.example/v1"
@@ -84,6 +93,7 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
     output_schema = captured["agent"]["output_type"]
     assert output_schema.output_type is KnowledgeAnswer
     assert captured["agent"]["model_settings"].extra_body == {"response_format": {"type": "json_object"}}
+    assert captured["agent"]["model_settings"].max_tokens == (32048 if stage == "test_case.generated" else None)
     assert output_schema.strict_json_schema is False
     assert captured["tracing_disabled"] is True
     assert usage.token_usage["total_tokens"] == 18
@@ -184,8 +194,9 @@ def test_agents_sdk_provider_uses_fast_fallback_for_structured_generation(
     assert "上一次输出未通过 JSON Schema 校验" in prompts[2]
 
 
+@pytest.mark.parametrize("fails", [False, True])
 def test_agents_sdk_provider_streams_text_deltas(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, fails: bool,
 ) -> None:
     captured: dict = {}
     agents = ModuleType("agents")
@@ -194,6 +205,10 @@ def test_agents_sdk_provider_streams_text_deltas(
     class FakeClient:
         def __init__(self, **kwargs) -> None:
             captured["client"] = kwargs
+
+        async def close(self):
+            import asyncio
+            captured["closed_on_active_loop"] = asyncio.get_running_loop().is_running()
 
     class FakeModel:
         def __init__(self, **kwargs) -> None:
@@ -218,6 +233,8 @@ def test_agents_sdk_provider_streams_text_deltas(
         )
 
         async def stream_events(self):
+            if fails:
+                raise RuntimeError("stream interrupted")
             for delta in ("边界值用于", "验证输入范围的临界点。"):
                 yield SimpleNamespace(
                     type="raw_response_event",
@@ -255,13 +272,15 @@ def test_agents_sdk_provider_streams_text_deltas(
         timeout=5,
     )
     deltas: list[str] = []
-    result, usage = provider.complete_text_stream(
-        stage="knowledge.answered",
-        instruction="回答问题",
-        payload={"question": "什么是边界值？"},
-        model_id="auto",
-        on_delta=deltas.append,
-    )
+    kwargs = dict(stage="knowledge.answered", instruction="回答问题",
+                  payload={"question": "什么是边界值？"}, model_id="auto", on_delta=deltas.append)
+    if fails:
+        with pytest.raises(RuntimeError, match="stream interrupted"):
+            provider.complete_text_stream(**kwargs)
+        assert captured["closed_on_active_loop"] is True
+        return
+    result, usage = provider.complete_text_stream(**kwargs)
+    assert captured["closed_on_active_loop"] is True
 
     assert result == "边界值用于验证输入范围的临界点。"
     assert deltas == ["边界值用于", "验证输入范围的临界点。"]

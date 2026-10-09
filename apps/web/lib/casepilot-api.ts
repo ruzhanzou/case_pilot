@@ -384,6 +384,8 @@ export type GenerationQuestion = {
 };
 
 export type GenerationJobDetail = GenerationCompleted & {
+  generated_count?: number;
+  total_count?: number;
   id: string;
   status:
     | "queued"
@@ -438,6 +440,8 @@ export type KnowledgeUploadDto = {
 };
 
 export type GenerationStage = {
+  generated_count?: number;
+  total_count?: number;
   name: string;
   progress: number;
   count?: number;
@@ -891,6 +895,8 @@ export function watchGeneration(
             onStage({
               name: job.stage,
               progress: job.progress,
+              generated_count: job.generated_count,
+              total_count: job.total_count,
               count: job.stages?.filter((stage) => stage.stage === job.stage && stage.status === "completed").length ?? 0,
             });
           }
@@ -931,6 +937,8 @@ export function watchGeneration(
         name: event.type,
         progress: payload.progress ?? 0,
         count: payload.count,
+        generated_count: payload.generated_count,
+        total_count: payload.total_count,
       });
     };
     [
@@ -939,6 +947,8 @@ export function watchGeneration(
       "feature.generated",
       "test_point.generated",
       "test_case.generated",
+      "generation.batch_completed",
+      "rewrite.batch_completed",
       "enhancement.completed",
       "quality.completed",
       "knowledge.answered",

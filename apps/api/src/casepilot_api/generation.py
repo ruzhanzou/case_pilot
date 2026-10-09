@@ -132,11 +132,15 @@ def job_view(db: Session, job: GenerationJob) -> GenerationJobView:
         )
     ).all()
     return GenerationJobView(
+        generated_count=output.get("generated_count"),
+        total_count=output.get("total_count"),
         id=job.id,
         status=job.status.value if hasattr(job.status, "value") else str(job.status),
         stage=job.stage,
         space_id=job.space_id,
-        progress=STAGE_PROGRESS.get(job.stage, 0),
+        progress=(min(90, 40 + int(50 * output["generated_count"] / output["total_count"]))
+                  if job.status == "running" and output.get("generated_count") and output.get("total_count")
+                  else STAGE_PROGRESS.get(job.stage, 0)),
         error_code=public_error_code(job.error_code),
         questions=[
             item
@@ -413,6 +417,7 @@ def cancel_generation(
         conversation = db.get(Conversation, UUID(str(conversation_id)))
         if conversation is not None:
             context = dict(conversation.context)
+            restored_source = False
             phase = "brief_review" if context.get("confirmed_brief_version") else "idle"
             if operation is not None and operation.intent == "CASE_MODIFY":
                 phase = "candidate_review" if db.scalar(select(WorkspaceCandidate.id).where(
@@ -424,8 +429,17 @@ def cancel_generation(
                     source = db.get(ConversationOperation, UUID(str(source_id)))
                     if source is not None and dict(source.payload).get("task_id") == context.get("active_mutation_task_id"):
                         context["active_mutation_operation_id"] = str(source.id)
+                        restored_source = True
             conversation.context = {**context, "phase": phase,
                                     "active_job_id": None, "active_operation_id": None}
+            if operation is not None and not restored_source:
+                # A first-round cancellation has no previous draft to resume.
+                # Close its task as well as its job so new writes are not blocked.
+                from casepilot_api.conversations import _finish_mutation_task
+
+                _finish_mutation_task(db, operation, discard=True)
+                if not conversation.context.get("active_mutation_task_id"):
+                    conversation.context = {**dict(conversation.context), "selected_targets": []}
     db.commit()
     task_client.control.revoke(str(job.id), terminate=False)
     Redis.from_url(settings.redis_url, decode_responses=True).rpush(

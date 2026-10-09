@@ -40,7 +40,8 @@ export function CaseCollectionChanges({ cases, changeSet, acceptedFields, busy, 
 
   return (
     <section className="collection-changes collection-changes--inline" aria-label={pick("Review pending case changes", "审阅待确认用例变更")}>
-      <div className="collection-changes__heading"><strong>{readOnly ? pick("Change result", "变更结果") : pick("Pending changes", "待确认变更")}</strong><span className="collection-changes__badge">{changeSet.status === "superseded" ? pick("Superseded", "已有新版本") : changeSet.status === "no_changes" ? pick("No changes needed", "无需修改") : changeSet.status === "applied" ? pick("Applied", "已应用") : changeSet.status === "rejected" ? pick("Discarded", "已丢弃") : changeSet.status === "conflict" ? pick("Version conflict", "版本冲突") : pick("Pending confirmation", "待确认")}</span></div>
+      <div className="collection-changes__heading"><strong>{readOnly ? pick("Change result", "变更结果") : pick("Pending changes", "待确认变更")}</strong><span className="collection-changes__badge">{changeSet.status === "generating" ? pick("Generating preview", "改写预览生成中") : changeSet.status === "superseded" ? pick("Superseded", "已有新版本") : changeSet.status === "no_changes" ? pick("No changes needed", "无需修改") : changeSet.status === "applied" ? pick("Applied", "已应用") : changeSet.status === "rejected" ? pick("Discarded", "已丢弃") : changeSet.status === "conflict" ? pick("Version conflict", "版本冲突") : pick("Pending confirmation", "待确认")}</span></div>
+      {changeSet.status === "generating" && <p role="status" data-testid="rewrite-batch-preview">{pick("Completed batches appear here. Review and accept after all batches finish.", "已完成的批次会逐批展示；全部改写完成后，即可审阅并采纳。")}</p>}
       {changeSet.status === "conflict" && <p role="alert">{pick("Cases changed after this proposal was created. Start a new rewrite using current versions.", "用例在方案生成后发生了变化，请基于最新版本重新发起改写。")}</p>}
       {changeSet && (
         <div className="collection-changes__review">
@@ -67,7 +68,7 @@ export function CaseCollectionChanges({ cases, changeSet, acceptedFields, busy, 
             <details key={item.ref} open={isDeleteChange || changeSet.items.length === 1}>
               <summary>{String(item.base_snapshot.case_key ?? cases.find((testCase) => testCase.id === item.ref)?.case_key ?? item.ref)} · {String(item.base_snapshot.title ?? "")}{item.status === "applied" ? pick(" · Accepted", " · 已采纳") : item.status === "rejected" ? pick(" · Discarded", " · 已丢弃") : ""}</summary>
               <p>{pick("Module", "所属模块")}：{String(item.base_snapshot.module ?? "—")} · {pick("Base version", "基准版本")} V{String(item.base_snapshot.revision_number ?? item.base_version ?? 1)}</p>
-              {itemReadOnly && <p>{item.status === "applied" ? pick("Accepted — saved", "已采纳，已保存") : item.status === "rejected" || changeSet.status === "rejected" ? pick("Discarded — original kept", "已丢弃建议，原用例未改变") : pick("Historical proposal — not applied", "历史方案，尚未应用")}</p>}
+              {itemReadOnly && <p>{item.status === "applied" ? pick("Accepted — saved", "已采纳，已保存") : item.status === "rejected" || changeSet.status === "rejected" ? pick("Discarded — original kept", "已丢弃建议，原用例未改变") : changeSet.status === "generating" ? pick("Batch preview — not applied", "本批改写预览，尚未应用") : pick("Historical proposal — not applied", "历史方案，尚未应用")}</p>}
               {item.reason && <p>{item.reason}</p>}
               {!itemReadOnly && !isDeleteChange && !comparePrevious && onReviewItem && <div className="collection-changes__actions">
                 <button type="button" disabled={busy || !item.field_diff.length} onClick={() => void onReviewItem(item.ref, true)}>{pick("Accept this case", "采纳此用例")}</button>

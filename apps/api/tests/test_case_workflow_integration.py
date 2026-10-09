@@ -118,9 +118,24 @@ async def test_analysis_to_candidates_keeps_history_and_blocks_overlapping_messa
             assert turn.status_code == 202, turn.text
             generated = turn.json()
             generation_operation_id = generated["operation_plan"]["operations"][0]["id"]
+            preview_draft = {
+                "id": "C-LOCKED", "title": "锁定账户无法登录", "module": "登录", "priority": "P1",
+                "case_type": "功能", "preconditions": ["账户已锁定"],
+                "steps": [{"action": "提交凭据", "expected": "拒绝登录并显示锁定提示"}],
+            }
             with store.connection() as connection:
                 job_id = UUID(generated["action"]["job_id"])
                 job = store.get_job(connection, job_id)
+                store.persist_workspace_previews(connection, job, [preview_draft])
+                store.persist_workspace_previews(connection, job, [preview_draft])
+            preview = (await client.get(f"/api/v1/conversations/{workspace_id}")).json()
+            assert preview["candidates"] == []
+            assert len(preview["candidate_history"]) == 1
+            preview_id = preview["candidate_history"][0]["id"]
+            assert preview["candidate_history"][0]["status"] == "generating"
+            blocked = await client.post(f"/api/v1/workspaces/{workspace_id}/candidates/commit", json={})
+            assert blocked.status_code == 409
+            with store.connection() as connection:
                 candidate_ids = store.persist_workspace_candidates(
                     connection,
                     job,
@@ -145,6 +160,8 @@ async def test_analysis_to_candidates_keeps_history_and_blocks_overlapping_messa
                 )
                 store.complete_job_message(connection, job, content="已生成一条候选用例")
             result = (await client.get(f"/api/v1/conversations/{workspace_id}")).json()
+            assert result["candidates"][0]["id"] == preview_id
+            assert len(result["candidate_history"]) == 1
             assert len(result["operation_history"]) == 2
             assert result["operation_history"][1]["status"] == "awaiting_confirmation"
             assert result["operation_history"][1]["payload"]["source_operation_id"] == operation_id
@@ -187,7 +204,7 @@ async def test_analysis_to_candidates_keeps_history_and_blocks_overlapping_messa
                 json={"content": clarification, "target_case_ids": [case["id"]]},
             )
             assert resumed.status_code == 202, resumed.text
-            assert resumed.json()["assistant_message"]["metadata"]["modification_confirmation"]
+            assert resumed.json()["assistant_message"]["metadata"].get("modification_confirmation"), resumed.text
             resumed = await client.post(
                 f"/api/v1/conversation-operations/{clarification_id}/resume",
                 json={"confirm_modification": True},
@@ -212,7 +229,8 @@ async def test_analysis_to_candidates_keeps_history_and_blocks_overlapping_messa
 
 
 @pytest.mark.asyncio
-async def test_end_running_task_cancels_group_and_unlocks_conversation(monkeypatch):
+@pytest.mark.parametrize("modification", [False, True])
+async def test_end_running_task_cancels_group_and_unlocks_conversation(monkeypatch, modification):
     from casepilot_api import generation
 
     monkeypatch.setattr(conversations.settings, "agent_provider", "mock")
@@ -249,11 +267,16 @@ async def test_end_running_task_cancels_group_and_unlocks_conversation(monkeypat
             response = await client.post(
                 f"{url}/messages",
                 json={
-                    "content": "检查登录模块遗漏；检查登录模块冗余",
+                    "content": "将登录模块的用例标题改为「新登录标题」" if modification else "检查登录模块遗漏；检查登录模块冗余",
                 },
             )
             assert response.status_code == 202, response.text
             turn = response.json()
+            if modification:
+                preview_id = turn["operation_plan"]["operations"][0]["id"]
+                confirmed = await client.post(f"/api/v1/conversation-operations/{preview_id}/resume", json={"confirm_modification": True})
+                assert confirmed.status_code == 202, confirmed.text
+                turn = confirmed.json()
             job_id = turn["action"]["job_id"]
             assert (
                 await client.post(f"{url}/messages", json={"content": "你好"})
@@ -261,7 +284,11 @@ async def test_end_running_task_cancels_group_and_unlocks_conversation(monkeypat
             cancelled = await client.post(f"/api/v1/generation-jobs/{job_id}/cancel")
             assert cancelled.status_code == 200, cancelled.text
             state = (await client.get(url)).json()
-            assert len(state["operation_history"]) == 2
+            assert len(state["operation_history"]) == (1 if modification else 2)
+            if modification:
+                assert state["context"]["active_mutation_task_id"] is None
+                assert state["context"]["active_mutation_operation_id"] is None
+                assert state["operation_history"][0]["result"]["task_closed"] is True
             assert all(item["status"] == "cancelled" for item in state["operation_history"])
             message = next(
                 m for m in state["messages"] if m["id"] == turn["assistant_message"]["id"]

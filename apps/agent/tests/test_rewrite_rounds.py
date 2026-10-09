@@ -96,3 +96,17 @@ def test_worker_reports_merged_pending_changes_when_current_subset_is_unchanged(
     assert output["unchanged_count"] == 1
     assert store.update_job.call_args.kwargs["output_payload"] == output
     assert "1 条待确认修改" in store.complete_job_message.call_args.kwargs["content"]
+
+
+def test_rewrite_batch_preview_preserves_review_lock_and_prior_untouched_proposals():
+    previous = {'ref': 'previous', 'status': 'applied', 'proposed_snapshot': {'title': 'Already accepted'}}
+    preview = {'ref': 'current', 'status': 'ready', 'proposed_snapshot': {'title': 'Preview'}}
+    connection = Mock()
+    job = {'input_payload': {'change_set_id': str(uuid4()), 'previous_proposals': {'previous': previous}}}
+    JobStore.persist_change_set_preview(None, connection, job, [preview])
+    statement = connection.execute.call_args.args[0]
+    params = statement.compile().params
+    assert params['items'] == [preview, previous]
+    # The UPDATE requires generating status and never changes it to ready.
+    assert 'status' not in params
+    assert params['status_1'] == 'generating'

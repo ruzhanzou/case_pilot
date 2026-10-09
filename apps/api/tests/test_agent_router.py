@@ -678,3 +678,109 @@ def test_topic_query_keeps_original_scope_instead_of_model_paraphrase():
     result=agent_router._validate_model_plan(content,plan,has_targets=False,phase='maintenance').operations[0]
     assert not result.clarification_questions
     assert '无结果展示和取消后状态展示' in result.target_text
+
+
+def test_planning_preview_and_generation_are_one_task_with_literal_object():
+    content = "为账号安全系统生成恰好12条候选用例。先提供测试规划供确认，再生成候选。"
+    plan = IntentPlanDraft(operations=[
+        dict(intent="CASE_GENERATE", instruction="生成规划", confidence=1,
+             action_evidence="先提供测试规划供确认", target_kind="module",
+             target_text="账号安全系统模块"),
+        dict(intent="CASE_GENERATE", instruction="生成12条候选", confidence=1,
+             action_evidence="为账号安全系统生成恰好12条候选用例", depends_on=0,
+             target_kind="module", target_text="账号安全系统模块"),
+    ])
+    result = agent_router._validate_model_plan(content, plan, has_targets=False, phase="idle")
+    assert len(result.operations) == 1
+    operation = result.operations[0]
+    assert operation.intent == "CASE_GENERATE"
+    assert operation.depends_on is None
+    assert operation.target_text == "账号安全系统"
+    assert operation.clarification_questions == []
+
+
+def test_separate_generation_requests_are_not_merged():
+    content = "生成登录用例，然后生成支付用例"
+    plan = IntentPlanDraft(operations=[
+        dict(intent="CASE_GENERATE", instruction="生成登录用例", confidence=1,
+             action_evidence="生成登录用例", target_kind="none"),
+        dict(intent="CASE_GENERATE", instruction="生成支付用例", confidence=1,
+             action_evidence="生成支付用例", target_kind="none", depends_on=0),
+    ])
+    result = agent_router._validate_model_plan(content, plan, has_targets=False, phase="idle")
+    assert len(result.operations) == 2
+    assert result.operations[1].depends_on == 0
+
+
+@pytest.mark.parametrize('variant,expected', [('batch', 1), ('different', 2), ('ordered', 2), ('ambiguous', 2)])
+def test_shared_case_modification_is_one_batch(variant, expected):
+    content = '修改候选 TC-TP-aaa-1、TC-TP-bbb-1：前置条件增加审计账号，优先级统一改为P0，其他字段不变。'
+    if variant == 'ordered':
+        content = content.replace('、', '，然后修改候选 ')
+    operations = [dict(
+        intent='CASE_MODIFY', instruction=content, confidence=1,
+        action_evidence=key, target_kind='case', target_text=key,
+        changes=['前置条件增加审计账号', '优先级改为P0'], constraints=['其他字段不变'],
+        depends_on=None if index == 0 else 0,
+    ) for index, key in enumerate(['TC-TP-aaa-1', 'TC-TP-bbb-1'])]
+    if variant == 'different':
+        operations[1]['changes'] = ['优先级改为P2']
+    if variant == 'ambiguous':
+        operations[1]['clarification_questions'] = ['请确认范围']
+    result = agent_router._validate_model_plan(content, IntentPlanDraft(operations=operations), has_targets=False, phase='candidate_review')
+    assert len(result.operations) == expected
+    if expected == 1:
+        operation = result.operations[0]
+        assert operation.target_text == 'TC-TP-aaa-1、TC-TP-bbb-1'
+        assert operation.instruction == content
+        assert operation.requires_confirmation
+        assert operation.depends_on is None
+    else:
+        assert result.operations[1].depends_on == 0
+
+
+@pytest.mark.parametrize('intent', ['CASE_MODIFY', 'CASE_DELETE'])
+def test_previous_query_reference_survives_paraphrased_case_scope(intent):
+    content = '仅把刚才查询到的用例优先级改为P2，其他字段和其他用例保持不变' if intent == 'CASE_MODIFY' else '删除刚才查询到的用例，其他用例保持不变'
+    plan = IntentPlanDraft(operations=[dict(
+        intent=intent, instruction='处理上次结果', confidence=1,
+        action_evidence='改为' if intent == 'CASE_MODIFY' else '删除',
+        target_kind='case', target_text='上次查询结果中的两条用例',
+    )])
+    operation = agent_router._validate_model_plan(content, plan, has_targets=False, phase='maintenance').operations[0]
+    assert operation.target_text == '刚才查询到的用例'
+    assert operation.instruction == content
+    assert operation.target_kind == 'condition'
+    assert not operation.clarification_questions
+    assert operation.requires_confirmation
+
+
+@pytest.mark.parametrize('content,uses_model', [
+    ('删除刚才查询到的用例', False),
+    ('请删除刚才查到的两条用例。', False),
+    ('移除上次查询到的2条测试用例', False),
+    ('不要删除刚才查询到的用例', True),
+    ('如何删除刚才查询到的用例？', True),
+    ('删除刚才查询到的失败用例', True),
+    ('删除刚才查询到的用例，然后查询订单模块', True),
+    ('删除登录模块的用例', True),
+])
+def test_literal_previous_query_deletion_skips_model_but_not_confirmation(
+    monkeypatch, content, uses_model,
+):
+    from unittest.mock import Mock
+
+    model = Mock(return_value=IntentPlanDraft(operations=[agent_router.IntentOperationDraft(
+        intent='KNOWLEDGE_QA', instruction=content, confidence=1,
+    )]))
+    monkeypatch.setattr(agent_router, 'sdk_plan', model)
+    plan = plan_intents(content, classify_intent, has_targets=False,
+        phase='maintenance', target_context=[], provider='openai_compatible',
+        model_name='test', base_url='https://example.test/v1', api_key='test-only',
+        timeout_seconds=5, tracing_enabled=False)
+    assert model.called is uses_model
+    if not uses_model:
+        assert len(plan.operations) == 1
+        assert plan.operations[0].intent == 'CASE_DELETE'
+        assert plan.operations[0].requires_confirmation
+        assert plan.operations[0].reason_codes == ['EXPLICIT_PREVIOUS_QUERY_DELETE']

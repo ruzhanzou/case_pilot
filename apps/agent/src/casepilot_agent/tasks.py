@@ -868,11 +868,33 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
             )
             return result
 
+        def publish_batch(drafts, total):
+            if not payload.get("conversation_id") or store.is_integration_generation(job):
+                return
+            snapshots = [draft.model_dump(mode="json") for draft in drafts]
+            target_module = str(payload.get("target_module_path") or "").strip("/")
+            if target_module:
+                for draft in snapshots:
+                    if draft["module"] != target_module and not draft["module"].startswith(target_module + "/"):
+                        draft["module"] = target_module
+            with store.connection() as connection:
+                lock_active_job(store, connection, parsed_job_id)
+                store.persist_workspace_previews(connection, job, snapshots)
+                partial_output.update(test_cases=snapshots, generated_count=len(snapshots), total_count=total)
+                store.update_job(connection, parsed_job_id, output_payload=partial_output)
+            store.publish(parsed_job_id, {
+                "event": "generation.batch_completed", "job_id": job_id,
+                "progress": min(90, 40 + int(50 * len(snapshots) / total)),
+                "generated_count": len(snapshots), "total_count": total,
+                "artifact": {"test_cases": snapshots},
+            })
+
         result = pipeline.run(
             request,
             context=context,
             answers=dict(payload.get("answers", {})),
             execute_stage=execute_stage,
+            on_batch=publish_batch,
         )
         _apply_persisted_asset_quality(
             store,
@@ -1171,6 +1193,65 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
         items: list[dict[str, Any]] = []
         instruction = str(payload["instruction"])
         previous_proposals = dict(payload.get("previous_proposals", {}))
+        requests = {}
+        preview_bases = {}
+        ensure_not_cancelled(store, parsed_job_id)
+        for target in payload.get("formal_targets", []):
+            ref = str(target["case_id"])
+            with store.connection() as connection:
+                base = store.load_case_snapshot(connection, UUID(ref), UUID(target["base_revision_id"]))
+            previous = previous_proposals.get(ref)
+            working = previous["proposed_snapshot"] if previous and previous.get("status") not in {"applied", "rejected"} else base
+            preview_bases[ref] = (base, "formal", {"test_case_id": ref, "base_revision_id": target["base_revision_id"]})
+            requests[ref] = RewriteRequest(
+                context=_rewrite_reference_context(store, job, pipeline, reference_context, working),
+                test_case=RewriteCaseDraft.model_validate(working), instruction=instruction,
+                conversation_memory=list(payload.get("conversation_memory", [])),
+                model_id=str(payload.get("model_id", "auto")),
+            )
+        for target in payload.get("candidate_targets", []):
+            ref = str(target["ref"])
+            previous = previous_proposals.get(ref)
+            working = previous["proposed_snapshot"] if previous and previous.get("status") not in {"applied", "rejected"} else target["snapshot"]
+            preview_bases[ref] = (target["snapshot"], "candidate", {"base_version": int(target.get("version", 1))})
+            requests[ref] = RewriteRequest(
+                context=_rewrite_reference_context(store, job, pipeline, reference_context, working),
+                test_case=_candidate_snapshot_to_draft(ref, working), instruction=instruction,
+                conversation_memory=list(payload.get("conversation_memory", [])),
+                model_id=str(payload.get("model_id", "auto")),
+            )
+        def publish_rewrite_batch(completed, total):
+            preview_items = []
+            for ref, candidate in completed.items():
+                base, kind, extra = preview_bases[ref]
+                original = _candidate_snapshot_to_draft(ref, base)
+                rebased = rebase_rewrite_candidate(original, candidate).model_dump(mode="json")
+                previous = previous_proposals.get(ref)
+                preview_items.append({
+                    "ref": ref, "target_type": kind, **extra, "base_snapshot": base,
+                    "previous_snapshot": requests[ref].test_case.model_dump(mode="json") if previous else None,
+                    "candidate_revision_id": None, "proposed_snapshot": rebased["proposed"],
+                    "field_diff": rebased["diff"], "reason": rebased["reason"], "quality": rebased["quality"],
+                    "status": "ready", "proposal_version": int(payload.get("task_revision") or 1),
+                })
+            with store.connection() as connection:
+                lock_active_job(store, connection, parsed_job_id)
+                store.persist_change_set_preview(connection, job, preview_items)
+                store.update_job(connection, parsed_job_id, output_payload={
+                    "change_set_id": str(payload["change_set_id"]),
+                    "items": preview_items, "generated_count": len(completed), "total_count": total,
+                })
+            store.publish(parsed_job_id, {
+                "event": "rewrite.batch_completed", "job_id": job_id,
+                "progress": min(90, 40 + int(50 * len(completed) / total)),
+                "generated_count": len(completed), "total_count": total,
+            })
+
+        ensure_not_cancelled(store, parsed_job_id)
+        rewritten = pipeline.rewrite_many(
+            requests, before_batch=lambda: ensure_not_cancelled(store, parsed_job_id),
+            on_batch=publish_rewrite_batch,
+        )
         for target in payload.get("formal_targets", []):
             ensure_not_cancelled(store, parsed_job_id)
             case_id = UUID(target["case_id"])
@@ -1185,17 +1266,7 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
             if previous and previous.get("status") in {"applied", "rejected"}:
                 previous = None
             working = previous["proposed_snapshot"] if previous else snapshot
-            candidate = pipeline.rewrite(
-                RewriteRequest(
-                    context=_rewrite_reference_context(
-                        store, job, pipeline, reference_context, working
-                    ),
-                    test_case=RewriteCaseDraft.model_validate(working),
-                    instruction=instruction,
-                    conversation_memory=list(payload.get("conversation_memory", [])),
-                    model_id=str(payload.get("model_id", "auto")),
-                )
-            )
+            candidate = rewritten[str(case_id)]
             candidate = rebase_rewrite_candidate(
                 RewriteCaseDraft.model_validate(snapshot), candidate
             )
@@ -1231,17 +1302,7 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
                 _candidate_snapshot_to_draft(ref, previous["proposed_snapshot"])
                 if previous else draft
             )
-            candidate = pipeline.rewrite(
-                RewriteRequest(
-                    context=_rewrite_reference_context(
-                        store, job, pipeline, reference_context, working.model_dump(mode="json")
-                    ),
-                    test_case=working,
-                    instruction=instruction,
-                    conversation_memory=list(payload.get("conversation_memory", [])),
-                    model_id=str(payload.get("model_id", "auto")),
-                )
-            )
+            candidate = rewritten[ref]
             candidate = rebase_rewrite_candidate(draft, candidate)
             candidate_payload = candidate.model_dump(mode="json")
             items.append(

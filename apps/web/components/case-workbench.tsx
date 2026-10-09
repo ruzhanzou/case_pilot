@@ -150,6 +150,8 @@ const workflowStageLabels: Record<string, string> = {
   "feature.generated": "整理功能点",
   "test_point.generated": "规划测试点",
   "test_case.generated": "生成候选用例",
+  "generation.batch_completed": "本批候选已更新",
+  "rewrite.batch_completed": "本批改写已更新",
   "enhancement.completed": "补充边界与异常场景",
   "quality.completed": "执行质量检查",
   "knowledge.answered": "结合知识生成回答",
@@ -197,6 +199,8 @@ const englishWorkflowStageLabels: Record<string, string> = {
   "feature.generated": "Organizing features",
   "test_point.generated": "Planning test points",
   "test_case.generated": "Generating candidate cases",
+  "generation.batch_completed": "Batch preview updated",
+  "rewrite.batch_completed": "Rewrite preview updated",
   "enhancement.completed": "Adding boundary and negative scenarios",
   "quality.completed": "Running quality checks",
   "knowledge.answered": "Answering with workspace knowledge",
@@ -290,6 +294,7 @@ export function CaseWorkbench({
   const changeAppliedNotice = pick("Changes applied and recorded in the audit log", "变更已应用并记录审计");
   const [workspace, setWorkspace] = useState<ConversationDto | null>(null);
   const [prompt, setPrompt] = useState("");
+  const restoredDraftConversationRef = useRef("");
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const [modelId, setModelId] = useState<AgentModelId>("auto");
   const [models, setModels] = useState<{ id: string; label: string }[]>([]);
@@ -417,10 +422,10 @@ export function CaseWorkbench({
   const rewriteStatus: "idle" | "selected" | "running" | "review" | "applied" =
     !activeRewriteTargets.length
       ? "idle"
-      : activeChangeSet
-        ? "review"
-        : activeRewriteOperation?.status === "running"
-          ? "running"
+      : activeRewriteOperation?.status === "running" || activeChangeSet?.status === "generating"
+        ? "running"
+        : activeChangeSet?.status === "ready"
+          ? "review"
           : notice === changeAppliedNotice
             ? "applied"
             : "selected";
@@ -452,8 +457,10 @@ export function CaseWorkbench({
   const activePlanMessage = selectedTask?.message;
   const conversationRunning = busy || queueRunning || workspaceIsRunning(workspace);
   const runningLabel = pendingMessage !== null
-    ? pick("Understanding your request and planning tasks", "正在理解请求并安排任务")
-    : progress
+    ? pick("Thinking — understanding your request and selecting cases", "正在思考 · 理解需求并筛选用例")
+    : progress?.generated_count
+      ? pick(`Processed ${progress.generated_count}/${progress.total_count ?? "?"} cases`, `已处理 ${progress.generated_count}/${progress.total_count ?? "?"} 条`)
+      : progress
       ? localizedWorkflowStageLabels[progress.name] ?? pick("Processing your request", "正在处理请求")
       : pick("Preparing the next step", "正在准备下一步");
 
@@ -468,12 +475,14 @@ export function CaseWorkbench({
   const taskVersions = selectedTask?.versions ?? (selectedTask ? [selectedTask] : []);
   const chosenVersion = reviewVersion.taskId === selectedTask?.id && reviewVersion.latestId === selectedTask?.operation?.id
     ? taskVersions.find(version => version.operation?.id === reviewVersion.operationId) : undefined;
-  const generatingRevision = taskVersions.length > 1 && ["running", "queued"].includes(selectedTask?.status ?? "");
+  const hasLiveRewritePreview = activeChangeSet?.id === selectedTask?.operation?.related_change_set_id && activeChangeSet?.status === "generating" && activeChangeSet.items.length > 0;
+  const hasLiveGenerationPreview = candidatesForTask(selectedTask, workspace).some(item => item.status === "generating");
+  const generatingRevision = !hasLiveRewritePreview && !hasLiveGenerationPreview && taskVersions.length > 1 && ["running", "queued"].includes(selectedTask?.status ?? "");
   const resultVersion = chosenVersion ?? (generatingRevision ? taskVersions[taskVersions.length - 2] : selectedTask);
   const historicalVersion = resultVersion?.operation?.id !== selectedTask?.operation?.id;
   const selectedChangeSetId = String(resultVersion?.message.metadata.change_set_id ?? "");
-  const loadedTaskChangeSet = historicalChangeSet?.id === selectedChangeSetId ? historicalChangeSet
-    : activeChangeSet?.id === selectedChangeSetId ? activeChangeSet : null;
+  const loadedTaskChangeSet = activeChangeSet?.id === selectedChangeSetId ? activeChangeSet
+    : historicalChangeSet?.id === selectedChangeSetId ? historicalChangeSet : null;
   const selectedTaskChangeSet = loadedTaskChangeSet && historicalVersion && loadedTaskChangeSet.status === "ready"
     ? { ...loadedTaskChangeSet, status: "superseded" as const } : loadedTaskChangeSet;
   const pendingCandidateRefs = [...new Set([activeChangeSet, historicalChangeSet].flatMap(change =>
@@ -583,21 +592,13 @@ export function CaseWorkbench({
       : { kind: "case", case_ids: [testCase.id] };
   }, [candidates]);
 
-  const targetsFromInstruction = useCallback((instruction: string): ConversationTarget[] => {
-    const matches = visibleCases.filter((item) =>
-      (item.case_key.length >= 4 && instruction.includes(item.case_key)) ||
-      (item.title.length >= 4 && instruction.includes(item.title)),
-    );
-    if (matches.length) return matches.map(caseTarget);
-    const moduleMatches = [...new Set(visibleCases.map((item) => item.module).filter(Boolean))]
-      .filter((module) => instruction.includes(`模块「${module}」`) || instruction.includes(`模块“${module}”`));
-    return moduleMatches.length === 1 ? [{ kind: "module", module: moduleMatches[0] }] : [];
-  }, [caseTarget, visibleCases]);
-
   const selectedCollectionId = selectedCollection?.id ?? "";
   const applyWorkspaceResult = useCallback((result: ConversationDto) => {
     setWorkspace(result);
-    setPrompt(String(result.context.draft_text ?? ""));
+    if (restoredDraftConversationRef.current !== result.id) {
+      restoredDraftConversationRef.current = result.id;
+      setPrompt(String(result.context.draft_text ?? ""));
+    }
     const restoredModelId = String(result.context.model_id ?? "");
     if (restoredModelId) setModelId(restoredModelId);
     if (!viewTouchedRef.current && restoredViewCollectionIdRef.current !== selectedCollectionId) {
@@ -675,11 +676,29 @@ export function CaseWorkbench({
       setBusy(true);
       setCurrentJobId(jobId);
       setProgress({ name: "queued", progress: 0 });
+      let previewRefresh: Promise<void> | null = null;
+      let lastPreviewCount = 0;
       try {
         const job = await watchGeneration(
           jobId,
           (stage) => {
-            setProgress(stage);
+            if (stage.generated_count && stage.generated_count > lastPreviewCount && !previewRefresh) {
+              const count = stage.generated_count;
+              previewRefresh = getConversation(conversationId).then(async (result) => {
+                setWorkspace((current) => current?.id === result.id ? result : current);
+                const operation = result.operation_history?.find(item => item.related_job_id === jobId);
+                if (operation?.related_change_set_id && watchedJobRef.current === jobId) {
+                  const preview = await getCaseChangeSet(operation.related_change_set_id);
+                  if (watchedJobRef.current === jobId) setActiveChangeSet(preview);
+                }
+                lastPreviewCount = count;
+              }).catch(() => undefined).finally(() => { previewRefresh = null; });
+            }
+            setProgress((current) => ({
+              ...stage,
+              generated_count: stage.generated_count ?? current?.generated_count,
+              total_count: stage.total_count ?? current?.total_count,
+            }));
             setLiveStages((current) => {
               const existingIndex = current.findIndex(
                 (item) => item.name === stage.name,
@@ -706,11 +725,13 @@ export function CaseWorkbench({
             );
           },
         );
+        await previewRefresh;
         if (job.status === "failed") {
           throw new Error(job.error_code ?? pick("Task failed. Try again later.", "任务处理失败，请稍后重试"));
         }
         await refreshWorkspace();
       } catch (caught) {
+        await previewRefresh;
         await refreshWorkspace().catch(() => undefined);
         throw caught;
       } finally {
@@ -865,7 +886,9 @@ export function CaseWorkbench({
     if (promptSaveTimer.current) clearTimeout(promptSaveTimer.current);
     promptSaveTimer.current = setTimeout(() => {
       void updateWorkspaceState(workspace.id, { draft_text: prompt }).then(
-        setWorkspace,
+        (saved) => setWorkspace((current) => current?.id === saved.id
+          ? { ...current, context: { ...current.context, draft_text: saved.context.draft_text } }
+          : current),
         () => undefined,
       );
     }, 500);
@@ -1017,48 +1040,11 @@ export function CaseWorkbench({
     ) return;
     setPlanMessageId("");
     const content = prompt.trim();
-    const explicitTargets = targetsFromInstruction(content);
-    const refersToSelection = /(?:选中|所选|这些用例|当前用例|selected|these cases|current case)/i.test(content);
-    const useSelectedTargets = Boolean(
-      effectivePendingOperationId || refersToSelection,
-    );
-    let structuredTargets = explicitTargets.length
-      ? explicitTargets
-      : useSelectedTargets
-        ? selectedTargets.map((item) => item.target)
-        : [];
-    const refinementSourceId = /^(?:查询|查看|列出|查找|搜索|query\b|list\b|find\b|search\b)/i.test(content) ? "" : refineSourceId;
-    if (refinementSourceId && !explicitTargets.length) structuredTargets = [{ kind: "previous_result", source_operation_id: refinementSourceId }];
+    // Explicit UI selections are context; the server model resolves the request.
+    const structuredTargets = selectedTargets.map((item) => item.target);
+    const refinementSourceId = refineSourceId;
     let resolvedCaseId = selectedCaseId;
-    let inferredCurrentCase = false;
-    if (
-      !structuredTargets.length &&
-      selectedCase &&
-      /(?:当前用例(?!集)|这条用例|选中(?:的)?用例|current\s+(?:test\s+)?case|selected\s+(?:test\s+)?case)/i.test(content)
-    ) {
-      structuredTargets = [caseTarget(selectedCase)];
-      inferredCurrentCase = true;
-    }
-    const contextOnlyTarget = inferredCurrentCase &&
-      !/(?:修改|改写|调整|补充|新增|替换|删除|改成|改为|\b(?:modify|edit|update|rewrite|revise|delete|remove)\b)/i.test(content);
-    let resolvedSelections = contextOnlyTarget
-      ? selectedTargets
-      : !explicitTargets.length && useSelectedTargets && selectedTargets.length
-      ? selectedTargets
-      : structuredTargets.map((target) => {
-          const testCase = visibleCases.find((item) =>
-            target.kind === "case" && (
-              target.case_ids?.includes(item.id) ||
-              candidates.some((candidate) => candidate.id === item.id && target.candidate_refs?.includes(candidate.ref))
-            ),
-          );
-          const label = testCase?.title ?? target.module ?? pick("Selected cases", "已匹配用例");
-          return { key: JSON.stringify(target), label, target };
-        });
-    if (!contextOnlyTarget) {
-      setSelectedTargets(resolvedSelections);
-      setRewriteTargets(resolvedSelections);
-    }
+    let resolvedSelections = selectedTargets;
     setBusy(true);
     setPendingMessage(content);
     setRunningSeconds(0);
@@ -1100,7 +1086,7 @@ export function CaseWorkbench({
       }
       if (turn.action.type === "module_created") await onCasesChanged();
       const resolvedOperation = turn.operation_plan?.operations.find((item) => item.target.resolved);
-      if (resolvedOperation && !contextOnlyTarget) {
+      if (resolvedOperation) {
         const ids = new Set(resolvedOperation.target.case_ids as string[] ?? []);
         const refs = new Set(resolvedOperation.target.candidate_refs as string[] ?? []);
         const candidateIds = new Set(candidates.filter((item) => refs.has(item.ref)).map((item) => item.id));
@@ -1906,6 +1892,14 @@ export function CaseWorkbench({
                 <p style={{ whiteSpace: "pre-wrap" }}>{pendingMessage || pick("Continue this task", "继续当前任务")}</p>
               </article>
             )}
+            {pendingMessage !== null && (
+              <article className="principle-message is-assistant" role="status" aria-live="polite" data-testid="scope-thinking">
+                <span><LoaderCircle className="auth-spinner" size={16} /> {pick("Thinking…", "正在思考…")}</span>
+                <p>{pick("Understanding your request and selecting relevant cases…", "正在理解你的需求并筛选相关用例…")}</p>
+                <small aria-hidden="true">{pick(`Elapsed ${runningSeconds}s`, `已等待 ${runningSeconds} 秒`)}</small>
+                {runningSeconds >= 20 && <p>{pick("Still analyzing. Selected cases will appear when ready.", "仍在分析中，完成后会展示选中的用例。")}</p>}
+              </article>
+            )}
           </div>
         </div>
 
@@ -2395,6 +2389,7 @@ export function CaseWorkbench({
               labels={localizedIntentLabels}
               statusLabels={localizedOperationStatusLabels}
               running={conversationRunning}
+              hasLiveResults={hasLiveGenerationPreview || hasLiveRewritePreview}
               onDiscard={(task) => void discardTask(task)}
               activeTaskId={activeMutationTask?.id}
               onConversation={(id) => {

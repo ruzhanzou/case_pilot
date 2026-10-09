@@ -25,6 +25,7 @@ _STRUCTURED_GENERATION_STAGE_PREFIXES = (
     "test_point.",
     "test_case.",
     "enhancement.",
+    "rewrite.batch",
 )
 
 
@@ -101,7 +102,7 @@ class AgentsSdkProvider:
             resolved_model = self.model
         stage_timeout = (
             self.generation_timeout
-            if stage.startswith(("test_case.", "enhancement."))
+            if stage.startswith(("test_case.", "enhancement.", "rewrite.batch"))
             else self.timeout
         )
         # A non-default model gets a short first chance on structured generation
@@ -143,6 +144,8 @@ class AgentsSdkProvider:
             ensure_ascii=False,
             separators=(",", ":"),
         )
+        batch_count = len(payload.get("items", [])) if stage == "rewrite.batch" else int(payload.get("batch_count") or 0)
+        output_budget = min(32768, max(8192, batch_count * 1500 + 2048)) if batch_count else None
         agent = Agent(
             name="CasePilot Orchestrator",
             instructions=(
@@ -152,20 +155,23 @@ class AgentsSdkProvider:
                 "即使界面、历史回复、资料或 JSON Schema 为英文也不能改用英文。"
                 "仅当用户明确指定其他输出语言时遵从该指定。JSON 字段名、枚举、ID、代码保持原值。"
                 "只完成当前阶段，未知事实必须作为假设或待确认项。\n"
+                "生成用例时，不得把需求未规定的HTTP状态码、响应字段、错误文案或业务规则写成确定预期。"
+                "准备步骤可以描述已完成的操作或状态，不得自行补充其接口响应协议。"
+                "如必须依赖未知协议才能判定，明确标记待确认，不用常识补全。"
                 "生成用例时，source_refs 中的 source_id、document_id、chunk_id 只能逐字使用输入 evidence 提供的来源标识，禁止自行编造。"
                 "引用用户输入、对话或结构化测试说明时，这三个字段必须为 null，仅填写 label、locator 和 excerpt；测试说明版本号不是知识库来源标识。\n"
                 f"{generation_skill}\n"
                 + (SINGLE_CASE_REWRITE_INSTRUCTION if stage == "test_case.rewritten" else "")
                 + "\n"
                 "输出必须且只能是符合下列 JSON Schema 的 JSON 对象；"
-                "不得输出 Markdown、代码围栏、标题或 JSON 之外的解释文字。\n"
+                "不得输出 Markdown、代码围栏、标题或 JSON 之外的解释文字；使用紧凑 JSON，不要缩进。\n"
                 f"JSON Schema: {output_schema}"
             ),
             model=model,
             # Compatible endpoints may ignore non-strict JSON Schema formatting.
             # Request valid JSON at the transport layer; SDK validation still
             # enforces the complete domain schema before any result is saved.
-            model_settings=ModelSettings(extra_body={"response_format": {"type": "json_object"}}),
+            model_settings=ModelSettings(max_tokens=output_budget, extra_body={"response_format": {"type": "json_object"}}),
             # Several domain contracts intentionally contain defaults and optional
             # fields that are valid Pydantic schemas but not strict JSON schemas.
             # Keep SDK-side parsing/validation without rejecting those contracts.
@@ -181,6 +187,12 @@ class AgentsSdkProvider:
                 try:
                     result = Runner.run_sync(agent, prompt, max_turns=3)
                     break
+                except APITimeoutError:
+                    # Generation has no external writes before validation. Retry
+                    # a transient default-model timeout once, within this stage.
+                    if (attempt == 1 or resolved_model != self.model
+                            or not stage.startswith(_STRUCTURED_GENERATION_STAGE_PREFIXES)):
+                        raise
                 except ModelBehaviorError:
                     if attempt == 1 or (
                         allow_model_fallback and resolved_model != self.model
@@ -303,15 +315,20 @@ class AgentsSdkProvider:
         started_at = monotonic()
 
         async def consume() -> tuple[str, object]:
-            result = Runner.run_streamed(agent, prompt, max_turns=3)
-            async for event in result.stream_events():
-                if (
-                    event.type == "raw_response_event"
-                    and event.data.type == "response.output_text.delta"
-                    and event.data.delta
-                ):
-                    on_delta(event.data.delta)
-            return str(result.final_output or ""), result.context_wrapper.usage
+            try:
+                result = Runner.run_streamed(agent, prompt, max_turns=3)
+                async for event in result.stream_events():
+                    if (
+                        event.type == "raw_response_event"
+                        and event.data.type == "response.output_text.delta"
+                        and event.data.delta
+                    ):
+                        on_delta(event.data.delta)
+                return str(result.final_output or ""), result.context_wrapper.usage
+            finally:
+                # Close pooled connections before asyncio.run closes this loop,
+                # including when a stream fails or its consumer is cancelled.
+                await client.close()
 
         answer, usage = asyncio.run(consume())
         token_usage = {

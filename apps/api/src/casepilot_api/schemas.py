@@ -347,6 +347,8 @@ class GenerationStartRequest(BaseModel):
 
 
 class GenerationJobView(BaseModel):
+    generated_count: int | None = None
+    total_count: int | None = None
     id: UUID
     status: str
     stage: str

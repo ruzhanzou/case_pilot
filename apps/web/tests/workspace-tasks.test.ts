@@ -117,3 +117,39 @@ test("generation reviews stay open and explicit new roots do not rejoin closed t
   assert.deepEqual(tasks.find(t => t.id === "generate")?.versions?.map(t => t.id), ["generate", "rewrite"]);
   assert.equal(tasks.find(t => t.id === "new")?.operation?.id, "new");
 });
+
+
+test("new field values cannot become implicit target references", async () => {
+  const { scopeReferenceText } = await import("../lib/workspace-tasks");
+  for (const value of ["库存不足禁止下单", "CP-OTHER-123", "订单/退款"]) {
+    assert.equal(scopeReferenceText(`把刚才查到的用例标题改为「${value}」`), "把刚才查到的用例");
+    assert.equal(scopeReferenceText(`把用例 CP-001 标题改为「${value}」，其他字段不变`), "把用例 CP-001 ，其他字段不变");
+  }
+  assert.equal(scopeReferenceText('查询标题包含「订单」的用例'), '查询的用例');
+  assert.equal(scopeReferenceText('查询登录模块标题包含订单的用例'), '查询登录模块的用例');
+});
+
+
+test("deletion caused by this task is expected; unrelated revision changes still warn", async () => {
+  const { taskScopeChanged } = await import("../lib/workspace-tasks");
+  const state = conversation([]);
+  state.operation_history = [{ id: "delete", sequence: 0, intent: "CASE_DELETE", confidence: 1, status: "completed", target: {}, payload: {}, result: { scope_versions: { deleted: "v1", retained: "v2" }, updated_refs: ["deleted"] }, requires_confirmation: true, related_job_id: null, related_change_set_id: "change", error_code: null, created_at: "2026-10-09" }];
+  const [task] = workspaceTasks(state);
+  const cases = [{ id: "retained", current_revision_id: "v2" }] as import("../lib/casepilot-api").TestCaseDto[];
+  assert.equal(taskScopeChanged(task, cases), false);
+  assert.equal(taskScopeChanged(task, [{ ...cases[0], current_revision_id: "v3" }]), true);
+  assert.equal(taskScopeChanged(task, []), true);
+  task.operation!.result.updated_refs = [];
+  assert.equal(taskScopeChanged(task, cases), true);
+  task.operation!.result.updated_refs = ["deleted"];
+  task.operation!.intent = "CASE_QUERY";
+  assert.equal(taskScopeChanged(task, cases), true);
+});
+
+test("batch previews bind to the generating message when a saved brief has no operation", async () => {
+  const { candidatesForTask } = await import("../lib/workspace-tasks");
+  const state = conversation([message("generation", { intent: "CASE_GENERATE", status: "running", related_job_id: "current-job" })]);
+  const preview = { id: "preview", generation_job_id: "current-job", ref: "TC-1", version: 1, position: 0, snapshot: { id: "TC-1", title: "登录", module: "登录", case_type: "功能", priority: "P1" as const, tags: [], status: "pending", preconditions: [], steps: [], source_refs: [] }, included: false, status: "generating", updated_at: "" };
+  state.candidate_history = [preview, { ...preview, id: "unrelated", generation_job_id: "previous-job" }];
+  assert.deepEqual(candidatesForTask(workspaceTasks(state)[0], state).map(item => item.id), ["preview"]);
+});

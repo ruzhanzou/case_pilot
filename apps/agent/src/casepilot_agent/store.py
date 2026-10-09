@@ -1150,6 +1150,32 @@ class JobStore:
         )
         return version
 
+    def persist_workspace_previews(self, connection, job, drafts):
+        """Upsert validated batch previews without making them adoptable."""
+        conversation_id = UUID(str(job["input_payload"]["conversation_id"]))
+        now = datetime.now(UTC)
+        for position, draft in enumerate(drafts):
+            existing = connection.scalar(select(workspace_candidates.c.id).where(
+                workspace_candidates.c.generation_job_id == job["id"],
+                workspace_candidates.c.ref == str(draft["id"]),
+                workspace_candidates.c.status == "generating",
+            ))
+            if existing:
+                connection.execute(update(workspace_candidates).where(
+                    workspace_candidates.c.id == existing,
+                ).values(snapshot=draft, position=position, updated_at=now))
+                continue
+            version = (connection.scalar(select(func.max(workspace_candidates.c.version)).where(
+                workspace_candidates.c.conversation_id == conversation_id,
+                workspace_candidates.c.ref == str(draft["id"]),
+            )) or 0) + 1
+            connection.execute(insert(workspace_candidates).values(
+                id=uuid4(), conversation_id=conversation_id, generation_job_id=job["id"],
+                ref=str(draft["id"]), version=version, position=position, snapshot=draft,
+                included=False, status="generating", created_by=job["account_id"],
+                created_at=now, updated_at=now,
+            ))
+
     def persist_workspace_candidates(
         self,
         connection: Connection,
@@ -1187,6 +1213,17 @@ class JobStore:
         candidate_ids: list[str] = []
         for position, draft in enumerate(drafts):
             ref = str(draft["id"])
+            preview_id = connection.scalar(select(workspace_candidates.c.id).where(
+                workspace_candidates.c.generation_job_id == job["id"],
+                workspace_candidates.c.ref == ref,
+                workspace_candidates.c.status == "generating",
+            ))
+            if preview_id:
+                connection.execute(update(workspace_candidates).where(
+                    workspace_candidates.c.id == preview_id,
+                ).values(snapshot=draft, position=position, included=True, status="candidate", updated_at=now))
+                candidate_ids.append(str(preview_id))
+                continue
             version = (
                 connection.scalar(
                     select(func.max(workspace_candidates.c.version)).where(
@@ -1214,6 +1251,10 @@ class JobStore:
                 )
             )
             candidate_ids.append(str(candidate_id))
+        connection.execute(update(workspace_candidates).where(
+            workspace_candidates.c.generation_job_id == job["id"],
+            workspace_candidates.c.status == "generating",
+        ).values(status="archived", updated_at=now))
         self.update_workspace_context(
             connection,
             conversation_id,
@@ -1364,6 +1405,15 @@ class JobStore:
                 ),
             )
         )
+
+    def persist_change_set_preview(self, connection, job, items):
+        previous = dict(job["input_payload"].get("previous_proposals", {}))
+        touched = {item["ref"] for item in items}
+        combined = items + [item for ref, item in previous.items() if ref not in touched]
+        connection.execute(update(case_change_sets).where(
+            case_change_sets.c.id == UUID(str(job["input_payload"]["change_set_id"])),
+            case_change_sets.c.status == "generating",
+        ).values(items=combined))
 
     def persist_change_set(
         self,
