@@ -319,6 +319,8 @@ export function CaseWorkbench({
   >([]);
   const [queueRunning, setQueueRunning] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
+  const [runningSeconds, setRunningSeconds] = useState(0);
   const [currentJobId, setCurrentJobId] = useState("");
   const [progress, setProgress] = useState<GenerationStage | null>(null);
   const [liveStages, setLiveStages] = useState<GenerationStage[]>([]);
@@ -449,6 +451,20 @@ export function CaseWorkbench({
     ?? resultTasks.find((task) => task.status.startsWith("awaiting_")) ?? resultTasks[0];
   const activePlanMessage = selectedTask?.message;
   const conversationRunning = busy || queueRunning || workspaceIsRunning(workspace);
+  const runningLabel = pendingMessage !== null
+    ? pick("Understanding your request and planning tasks", "正在理解请求并安排任务")
+    : progress
+      ? localizedWorkflowStageLabels[progress.name] ?? pick("Processing your request", "正在处理请求")
+      : pick("Preparing the next step", "正在准备下一步");
+
+  useEffect(() => {
+    if (!conversationRunning) return;
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      setRunningSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [conversationRunning]);
   const taskVersions = selectedTask?.versions ?? (selectedTask ? [selectedTask] : []);
   const chosenVersion = reviewVersion.taskId === selectedTask?.id && reviewVersion.latestId === selectedTask?.operation?.id
     ? taskVersions.find(version => version.operation?.id === reviewVersion.operationId) : undefined;
@@ -619,11 +635,10 @@ export function CaseWorkbench({
     setSelectedTargets(normalizedTargets);
     setRewriteTargets(normalizedTargets);
     const activeJobId = String(result.context.active_job_id ?? "");
-    setCurrentJobId(activeJobId);
-    setBusy(
-      Boolean(activeJobId) && !result.workflow_runs.some((run) =>
-        run.job_id === activeJobId && terminalWorkflowStatuses.has(run.status)),
-    );
+    const jobIsRunning = Boolean(activeJobId) && !result.workflow_runs.some((run) =>
+      run.job_id === activeJobId && terminalWorkflowStatuses.has(run.status));
+    setCurrentJobId(jobIsRunning ? activeJobId : "");
+    setBusy(jobIsRunning);
     const restoredCandidate =
       result.candidates.find((item) => item.id === restoredCaseId) ??
       result.candidates[0] ??
@@ -819,7 +834,7 @@ export function CaseWorkbench({
   }, [onDirtyChange]);
 
   useEffect(() => {
-    if (!latestMessage) return;
+    if (!latestMessage && pendingMessage === null) return;
     if (currentJobId) {
       if (streamScrollTimerRef.current) return;
       streamScrollTimerRef.current = setTimeout(() => {
@@ -832,7 +847,7 @@ export function CaseWorkbench({
       animation: "smooth",
       ignoreEscapes: true,
     });
-  }, [currentJobId, latestMessage, scrollToBottom]);
+  }, [currentJobId, latestMessage, pendingMessage, scrollToBottom]);
 
   useEffect(
     () => () => {
@@ -1045,6 +1060,10 @@ export function CaseWorkbench({
       setRewriteTargets(resolvedSelections);
     }
     setBusy(true);
+    setPendingMessage(content);
+    setRunningSeconds(0);
+    setCurrentJobId("");
+    setProgress(null);
     setPrompt("");
     setError("");
     setNotice("");
@@ -1063,6 +1082,15 @@ export function CaseWorkbench({
             sourceOperationId: refinementSourceId || undefined,
             targets: structuredTargets,
           });
+      // Replace the optimistic echo with the server's messages before any
+      // follow-up requests, so slow state saves do not hide the accepted turn.
+      setWorkspace((current) => {
+        if (!current || current.id !== turn.conversation_id) return current;
+        const incoming = [turn.user_message, ...(turn.assistant_message ? [turn.assistant_message] : [])];
+        const ids = new Set(incoming.map((message) => message.id));
+        return { ...current, messages: [...current.messages.filter((message) => !ids.has(message.id)), ...incoming] };
+      });
+      setPendingMessage(null);
       setRefineSourceId("");
       if (turn.intent !== "SMALL_TALK") {
         viewTouchedRef.current = true;
@@ -1141,6 +1169,7 @@ export function CaseWorkbench({
       setPrompt(content);
       setError(caught instanceof Error ? caught.message : pick("Failed to process message", "消息处理失败"));
     } finally {
+      setPendingMessage(null);
       setBusy(false);
     }
   };
@@ -1571,7 +1600,7 @@ export function CaseWorkbench({
           ref={messagesScrollRef}
         >
           <div className="principle-messages-content" ref={messagesContentRef}>
-            {!messages.length && (
+            {!messages.length && pendingMessage === null && (
               <div className="principle-agent-intro">
                 <Bot size={20} />
                 <div>
@@ -1871,6 +1900,12 @@ export function CaseWorkbench({
               </article>
             );
             })}
+            {pendingMessage !== null && (
+              <article className="principle-message is-user" data-testid="pending-conversation-message">
+                <span>{pick("You", "你")}</span>
+                <p style={{ whiteSpace: "pre-wrap" }}>{pendingMessage || pick("Continue this task", "继续当前任务")}</p>
+              </article>
+            )}
           </div>
         </div>
 
@@ -1979,7 +2014,7 @@ export function CaseWorkbench({
           {resumeTaskId && <div className="case-conversation-running"><span>{pick("Replying to task clarification", "正在补充当前任务信息")}</span><button type="button" disabled={conversationRunning} onClick={() => setResumeTaskId("")}>{pick("Cancel reply", "取消补充")}</button></div>}
           {conversationRunning && <div className="case-conversation-running" role="status">
             <LoaderCircle size={16} className="auth-spinner" />
-            <span>{pick("Task running · messaging resumes when it finishes", "任务执行中 · 结束后可继续发送消息")}</span>
+            <span>{runningLabel}{progress && pendingMessage === null ? ` · ${progress.progress}%` : ""} · {pick(`Elapsed ${runningSeconds}s`, `已等待 ${runningSeconds} 秒`)}</span>
           </div>}
           {refineSourceId && <p role="status">{pick("Refining the selected result; earlier edits will be preserved.", "正在继续调整所选结果；未要求改变的已有修改将保留。")} <button type="button" onClick={() => setRefineSourceId("")}>{pick("Cancel", "取消续改")}</button></p>}
           <textarea
