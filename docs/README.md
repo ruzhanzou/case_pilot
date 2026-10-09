@@ -19,6 +19,9 @@
 
 ## 工程与验收
 
+- [自然语言端到端首轮验收报告（2026-10-09）](./test-reports/natural-language-e2e-2026-10-09.md)：真实模型完整链路、分批与取消、千条界面观察；保留4项问题及首次失败/复测证据。
+- [自然语言全量验收及修复复测报告](./test-reports/natural-language-full-acceptance-2026-10-09.md)：80条逐项判定、修复证据、性能样本与未关闭问题。
+- [自然语言深度验收评测集合（2026-10-09，80条设计场景）](./evaluations/casepilot-natural-language-eval-2026-10-09.md)：生成、修改、重写、多轮采纳、失败恢复、性能与易用性；含机器可读集合、预留表达及结果模板。
 - [自动化用例绑定上传接口](./automation-case-binding-api.md)：字段、批量上传与绑定状态。
 - [四段式用例生成与脑图端到端验收（2026-09-15）](./acceptance-four-section-mind-map-2026-09-15.md)
 - [产品原则重构与端到端验收 V1](./casepilot-product-principles-acceptance-v1.md)

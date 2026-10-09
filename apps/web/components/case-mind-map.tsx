@@ -449,17 +449,20 @@ function MapControls({
   onExpandAll,
   onGlobalView,
   largeMap,
+  ready,
 }: {
   onCollapseAll: () => void;
   onExpandAll: () => void;
   onGlobalView: () => void;
   largeMap: boolean;
+  ready: boolean;
 }) {
   const { pick } = useI18n();
   const { fitView, zoomIn, zoomOut, zoomTo } = useReactFlow();
   const zoomPercent = useStore(selectZoomPercent);
   // Avoid mounting/unmounting hundreds of cards across intermediate zoom frames.
   const zoomDuration = largeMap ? 0 : 160;
+  if (!ready) return null;
 
   return (
     <div className="case-map-controls" aria-label={pick("Mind map zoom controls", "脑图缩放工具")}>
@@ -471,7 +474,7 @@ function MapControls({
         <Plus size={17} />
       </button>
       <i />
-      <button type="button" aria-label={pick("Fit to canvas", "适应画布")} title={pick("Fit to canvas", "适应画布")} onClick={() => void fitView({ minZoom: 0.35, padding: 0.18, duration: largeMap ? 0 : 220 })}>
+      <button type="button" aria-label={pick("Fit to canvas", "适应画布")} title={pick("Fit to canvas", "适应画布")} onClick={() => void fitView({ includeHiddenNodes: true, minZoom: 0.35, padding: 0.18, duration: largeMap ? 0 : 220 })}>
         <Maximize2 size={16} />
       </button>
       <button type="button" aria-label={pick("Reset to 100 percent", "恢复百分之百")} onClick={() => void zoomTo(1, { duration: largeMap ? 0 : 180 })}>
@@ -521,7 +524,7 @@ function FullscreenControl({
       onClick={() => {
         void onToggleFullscreen().then(() => {
           window.requestAnimationFrame(() => {
-            void fitView({ padding: 0.12, duration: 220 });
+            void fitView({ includeHiddenNodes: true, padding: 0.12, duration: 220 });
           });
         });
       }}
@@ -576,6 +579,7 @@ export function CaseMindMap({
   const onSaveCase = saveCaseProp ? saveCase : undefined;
   const mapRef = useRef<HTMLDivElement>(null);
   const flowRef = useRef<ReactFlowInstance<MindMapNode, Edge> | null>(null);
+  const [flowReady, setFlowReady] = useState(false);
   const [localQuery, setLocalQuery] = useState("");
   const query = searchQuery ?? localQuery;
   const searchRef = useRef<HTMLInputElement>(null);
@@ -1104,6 +1108,18 @@ export function CaseMindMap({
       nextY += 100 + Math.max(3, visualLines(note.text.split("\n"))) * 18;
     }
     nodes.forEach((node) => {
+      // React Flow force-mounts nodes without handle bounds even with viewport
+      // virtualization. Seed layout estimates; ResizeObserver replaces them
+      // with actual content dimensions when a card enters the viewport.
+      const width = node.data.kind === "collection" || node.data.kind === "module" ? 190
+        : node.data.kind === "detail" ? 340
+        : node.data.kind === "case" && node.data.leavesHidden ? 420 : 260;
+      const height = node.data.kind === "case" && node.data.leavesHidden ? 80 : 220;
+      node.measured = { width, height };
+      node.handles = [
+        { type: "target", position: Position.Left, x: 0, y: height / 2 },
+        { type: "source", position: Position.Right, x: width, y: height / 2 },
+      ];
       if (notesReady && node.data.kind === "text") {
         node.data.onSaveText = (text) => saveNotes((current) => current.map((item) => item.id === node.id ? { ...item, text } : item));
         node.data.onDeleteText = () => saveNotes((current) => {
@@ -1237,7 +1253,7 @@ export function CaseMindMap({
           sameNodeData(previous.data, node.data)) {
           return previous;
         }
-        return { ...node, selected, position, measured: previous?.measured };
+        return { ...node, selected, position, measured: previous?.measured ?? node.measured };
       });
     });
   }, [graph.nodes, setFlowNodes]);
@@ -1257,15 +1273,18 @@ export function CaseMindMap({
   const selectedPosition = graphNodesById.get(`case-${selectedCaseId}`)?.position;
   const selectedX = selectedPosition?.x;
   const selectedY = selectedPosition?.y;
-  const previousLayout = useRef<{ id: string; x?: number; y?: number } | null>(null);
+  const selectedMeasured = flowNodes.find((node) => node.id === `case-${selectedCaseId}`)?.measured;
+  const selectedWidth = selectedMeasured?.width;
+  const selectedHeight = selectedMeasured?.height;
+  const previousLayout = useRef<{ id: string; x?: number; y?: number; width?: number; height?: number } | null>(null);
   useEffect(() => {
     const previous = previousLayout.current;
-    previousLayout.current = { id: selectedCaseId, x: selectedX, y: selectedY };
+    previousLayout.current = { id: selectedCaseId, x: selectedX, y: selectedY, width: selectedWidth, height: selectedHeight };
     if (!previous || previous.id !== selectedCaseId || selectedX === undefined || selectedY === undefined || centerCollapsedGraph.current ||
-      (previous.x === selectedX && previous.y === selectedY)) return;
+      (previous.x === selectedX && previous.y === selectedY && previous.width === selectedWidth && previous.height === selectedHeight)) return;
     const frame = window.requestAnimationFrame(() => setFocusRequest({ id: selectedCaseId, keyboard: false }));
     return () => window.cancelAnimationFrame(frame);
-  }, [selectedCaseId, selectedX, selectedY]);
+  }, [selectedCaseId, selectedX, selectedY, selectedWidth, selectedHeight]);
   useEffect(() => {
     if (!focusRequest) return;
     const node = flowNodes.find((item) => item.data.kind === "case" && item.data.caseId === focusRequest.id);
@@ -1289,7 +1308,7 @@ export function CaseMindMap({
       setFocusRequest(null);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [canvasSize.height, canvasSize.width, focusRequest, flowNodes]);
+  }, [canvasSize.height, canvasSize.width, focusRequest, flowNodes, flowReady]);
 
   useEffect(() => {
     if (!centerCollapsedGraph.current || (centerCollapsedGraph.current === "collapse" && flowNodes.some((node) => node.data.kind === "detail"))) return;
@@ -1427,8 +1446,9 @@ export function CaseMindMap({
       <ReactFlow
         onInit={(instance) => {
           flowRef.current = instance;
+          setFlowReady(true);
           if (selectedCaseId && graphNodesById.has(`case-${selectedCaseId}`)) {
-            setFocusRequest({ id: selectedCaseId, keyboard: false });
+            setFocusRequest((current) => current ?? { id: selectedCaseId, keyboard: false });
           }
         }}
         nodes={renderedNodes}
@@ -1455,6 +1475,7 @@ export function CaseMindMap({
       >
         <Background color="#cfdaea" gap={22} size={1} />
         <MapControls
+          ready={flowReady && !focusRequest}
           largeMap={cases.length >= 100}
           onGlobalView={showGlobalView}
           onCollapseAll={collapseAllCases}

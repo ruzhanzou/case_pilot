@@ -3,6 +3,7 @@ from collections.abc import Callable
 from typing import Any
 
 from casepilot_agent.contracts import (
+    GENERATION_GROUNDING_INSTRUCTION,
     AgentProvider,
     EnhancementResult,
     FeaturePlan,
@@ -13,8 +14,8 @@ from casepilot_agent.contracts import (
     QualityIssue,
     QualityReport,
     RequirementAnalysis,
-    RewriteCandidate,
     RewriteBatch,
+    RewriteCandidate,
     RewriteCaseDraft,
     RewriteRequest,
     SourceRef,
@@ -482,12 +483,14 @@ class GenerationPipeline:
             evidence = [item for item in plan.get("evidence", []) if item.get("chunk_id") in refs]
             batch = execute_stage(
                 "test_case.generated",
+                GENERATION_GROUNDING_INSTRUCTION +
                 "为本批每个测试点各生成1条可执行用例，一次返回本批全部用例，不重新规划或扩大范围。"
                 "必须逐条填写test_point_ids，且仅包含对应测试点ID；重复测试点按出现次数生成不同场景。"
                 "严格返回batch_count条。标题保留用户指定编号。使用batch_start_index唯一编号，"
                 "避免重复previous_titles。保留数值与例外，操作与预期一一对应。",
                 {
                     "prompt": request.prompt,
+                    "original_requirement": request.markdown_content or request.prompt,
                     "test_points": {"test_points": [point.model_dump(mode="json") for point in group]},
                     "feature_points": {"feature_points": [f.model_dump(mode="json") for f in selected_features]},
                     "context": {"evidence": evidence},
@@ -501,6 +504,36 @@ class GenerationPipeline:
             remaining = list(batch.test_cases)
             if len(remaining) != len(group):
                 raise ValueError("规划生成批次数量不符，请重试")
+            if self.provider.name != "mock":
+                # Audit before publishing even the first preview. Planning is
+                # derived material, so bring the original user evidence back
+                # into this stage instead of treating an invented plan detail
+                # as authoritative merely because it survived generation.
+                grounded = execute_stage(
+                    "test_case.grounded",
+                    GENERATION_GROUNDING_INSTRUCTION +
+                    "当前是独立的来源核对阶段，不是继续扩写。逐条删除候选中无原始来源支持的"
+                    "附加预期；保持已支持的动作和断言、用例数量、id及test_point_ids不变。"
+                    "引用最新用户要求解决版本冲突，不能把模型生成的规划或历史助手回复当作原始事实。",
+                    {
+                        "prompt": request.prompt,
+                        "user_requirements": [
+                            item for item in request.conversation_memory
+                            if item.get("role") == "user"
+                        ],
+                        "evidence": evidence,
+                        "test_cases": [case.model_dump(mode="json") for case in remaining],
+                        "batch_count": len(group),
+                    },
+                    TestCaseBatch, request.model_id,
+                )
+                identities = sorted((case.id, tuple(case.test_point_ids)) for case in remaining)
+                grounded_ids = sorted(
+                    (case.id, tuple(case.test_point_ids)) for case in grounded.test_cases
+                )
+                if identities != grounded_ids:
+                    raise ValueError("来源核对改变了规划用例身份或数量，请重试")
+                remaining = list(grounded.test_cases)
             for local_index, point in enumerate(group):
                 matches = [case for case in remaining if case.test_point_ids == [point.id]]
                 if not matches:

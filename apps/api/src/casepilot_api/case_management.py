@@ -394,6 +394,10 @@ def collection_to_view(db: Session, collection: CaseCollection) -> CaseCollectio
         .order_by(Conversation.updated_at.desc())
         .limit(1)
     )
+    return _collection_view(collection, case_count or 0, project, creator, latest_workspace_context)
+
+
+def _collection_view(collection, case_count, project, creator, latest_workspace_context):
     return CaseCollectionView(
         id=collection.id,
         space_id=collection.space_id,
@@ -632,7 +636,47 @@ def list_collections(
             .order_by(CaseCollection.created_at)
         )
     )
-    views = [collection_to_view(db, collection) for collection in collections]
+    # Fetch list metadata in bounded queries rather than four extra queries per
+    # collection. Workbench startup must not get slower with every past session.
+    ids = [collection.id for collection in collections]
+    if not ids:
+        return []
+    counts = dict(db.execute(
+        select(CollectionCaseMembership.collection_id, func.count(CollectionCaseMembership.id))
+        .join(TestCase, TestCase.id == CollectionCaseMembership.test_case_id)
+        .where(CollectionCaseMembership.collection_id.in_(ids), TestCase.deleted_at.is_(None))
+        .group_by(CollectionCaseMembership.collection_id)
+    ).all())
+    projects = {item.collection_id: item for item in db.scalars(
+        select(CaseProject).where(CaseProject.collection_id.in_(ids))
+    )}
+    creator_ids = dict(db.execute(
+        select(AuditEvent.resource_id, AuditEvent.actor_id)
+        .where(AuditEvent.resource_type == "case_collection", AuditEvent.resource_id.in_(ids),
+               AuditEvent.action == "collection.created", AuditEvent.actor_id.is_not(None))
+        .distinct(AuditEvent.resource_id)
+        .order_by(AuditEvent.resource_id, AuditEvent.created_at, AuditEvent.id)
+    ).all())
+    for collection_id, project in projects.items():
+        creator_ids.setdefault(collection_id, project.account_id)
+    creators = {item.id: item for item in db.scalars(
+        select(Account).where(Account.id.in_(set(creator_ids.values())))
+    )}
+    contexts = dict(db.execute(
+        select(Conversation.collection_id, Conversation.context)
+        .where(Conversation.collection_id.in_(ids), Conversation.status == "active")
+        .distinct(Conversation.collection_id)
+        .order_by(
+            Conversation.collection_id, Conversation.updated_at.desc(), Conversation.id.desc()
+        )
+    ).all())
+    views = [
+        _collection_view(
+            collection, counts.get(collection.id, 0), projects.get(collection.id),
+            creators.get(creator_ids.get(collection.id)), contexts.get(collection.id),
+        )
+        for collection in collections
+    ]
     return [item for item in views if matches_collection_search(item, q)] if q.strip() else views
 
 

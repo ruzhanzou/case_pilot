@@ -88,7 +88,20 @@ test(`large module mind map stays responsive and preserves editing: ${entry}`, a
   await expect.poll(() => map.locator(".react-flow__node").count()).toBeLessThan(120);
   const viewport = map.locator(".react-flow__viewport");
   const before = await viewport.getAttribute("style");
-  await page.mouse.move(1100, 600);
+  const panCanvas = async () => {
+    const point = await map.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      for (let y = rect.y + 70; y < Math.min(rect.bottom - 60, innerHeight - 10); y += 40) {
+        for (let x = rect.x + 12; x < Math.min(rect.right - 12, innerWidth - 10); x += 40) {
+          const target = document.elementFromPoint(x, y);
+          if (target?.classList.contains("react-flow__pane")) return { x, y };
+        }
+      }
+      throw new Error("No exposed canvas pane available for wheel panning");
+    });
+    await page.mouse.move(point.x, point.y);
+  };
+  await panCanvas();
   await page.mouse.wheel(0, 6000);
   await expect.poll(() => viewport.getAttribute("style")).not.toBe(before);
   await expect(editor).toHaveValue("Unsaved note survives panning");
@@ -104,7 +117,7 @@ test(`large module mind map stays responsive and preserves editing: ${entry}`, a
   const titleEditor = map.locator('.react-flow__node[data-id="case-case0"] textarea');
   await titleEditor.fill("Unsaved inline title");
   await expect.poll(() => map.locator(".react-flow__node").count()).toBeLessThan(120);
-  await page.mouse.move(1100, 600);
+  await panCanvas();
   await page.mouse.wheel(0, 6000);
   await expect(titleEditor).toHaveValue("Unsaved inline title");
   await titleEditor.dispatchEvent("keydown", { key: "Escape", bubbles: true });

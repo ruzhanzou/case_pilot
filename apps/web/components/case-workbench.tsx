@@ -150,6 +150,7 @@ const workflowStageLabels: Record<string, string> = {
   "feature.generated": "整理功能点",
   "test_point.generated": "规划测试点",
   "test_case.generated": "生成候选用例",
+  "test_case.grounded": "核对预期与需求来源",
   "generation.batch_completed": "本批候选已更新",
   "rewrite.batch_completed": "本批改写已更新",
   "enhancement.completed": "补充边界与异常场景",
@@ -199,6 +200,7 @@ const englishWorkflowStageLabels: Record<string, string> = {
   "feature.generated": "Organizing features",
   "test_point.generated": "Planning test points",
   "test_case.generated": "Generating candidate cases",
+  "test_case.grounded": "Checking expectations against requirements",
   "generation.batch_completed": "Batch preview updated",
   "rewrite.batch_completed": "Rewrite preview updated",
   "enhancement.completed": "Adding boundary and negative scenarios",
@@ -294,6 +296,11 @@ export function CaseWorkbench({
   const changeAppliedNotice = pick("Changes applied and recorded in the audit log", "变更已应用并记录审计");
   const [workspace, setWorkspace] = useState<ConversationDto | null>(null);
   const [prompt, setPrompt] = useState("");
+  const pendingDraftEdit = useRef<{ workspaceId: string; text: string } | null>(null);
+  const editPrompt = (text: string) => {
+    pendingDraftEdit.current = workspace ? { workspaceId: workspace.id, text } : null;
+    setPrompt(text);
+  };
   const restoredDraftConversationRef = useRef("");
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const [modelId, setModelId] = useState<AgentModelId>("auto");
@@ -420,7 +427,7 @@ export function CaseWorkbench({
     }));
   }, [activeRewriteOperation, candidates, visibleCases, rewriteTargets, selectedTargets]);
   const rewriteStatus: "idle" | "selected" | "running" | "review" | "applied" =
-    !activeRewriteTargets.length
+    !activeRewriteTargets.length || pendingWorkspaceOperation?.intent === "CASE_MODIFY"
       ? "idle"
       : activeRewriteOperation?.status === "running" || activeChangeSet?.status === "generating"
         ? "running"
@@ -647,7 +654,7 @@ export function CaseWorkbench({
     setCandidateDraft(
       restoredCandidate ? structuredClone(restoredCandidate) : null,
     );
-  }, [selectedCollectionId]);
+  }, [selectedCollectionId, setCandidateDraft]);
   const refreshWorkspace = useCallback(async () => {
     if (!selectedCollectionId) return null;
     const result = conversationId
@@ -880,15 +887,21 @@ export function CaseWorkbench({
   );
 
   useEffect(() => {
-    if (!workspace || prompt === String(workspace.context.draft_text ?? "")) {
+    const edit = pendingDraftEdit.current;
+    if (!workspace || !edit || edit.workspaceId !== workspace.id || edit.text !== prompt ||
+        prompt === String(workspace.context.draft_text ?? "")) {
       return;
     }
     if (promptSaveTimer.current) clearTimeout(promptSaveTimer.current);
     promptSaveTimer.current = setTimeout(() => {
       void updateWorkspaceState(workspace.id, { draft_text: prompt }).then(
-        (saved) => setWorkspace((current) => current?.id === saved.id
-          ? { ...current, context: { ...current.context, draft_text: saved.context.draft_text } }
-          : current),
+        (saved) => {
+          if (pendingDraftEdit.current !== edit) return;
+          pendingDraftEdit.current = null;
+          setWorkspace((current) => current?.id === saved.id
+            ? { ...current, context: { ...current.context, draft_text: saved.context.draft_text } }
+            : current);
+        },
         () => undefined,
       );
     }, 500);
@@ -1050,6 +1063,7 @@ export function CaseWorkbench({
     setRunningSeconds(0);
     setCurrentJobId("");
     setProgress(null);
+    pendingDraftEdit.current = null;
     setPrompt("");
     setError("");
     setNotice("");
@@ -1152,7 +1166,7 @@ export function CaseWorkbench({
         await continueTaskQueue(await refreshWorkspace());
       }
     } catch (caught) {
-      setPrompt(content);
+      editPrompt(content);
       setError(caught instanceof Error ? caught.message : pick("Failed to process message", "消息处理失败"));
     } finally {
       setPendingMessage(null);
@@ -1683,7 +1697,7 @@ export function CaseWorkbench({
                       <div className="principle-review-followups">
                         <span>{pick("Continue from these findings", "接下来可以")}</span>
                         <button type="button" disabled={busy || Boolean(prompt.trim())} onClick={() => {
-                          setPrompt(pick(
+                          editPrompt(pick(
                             `Explain the evidence and priorities for these findings, without changing cases: ${report?.summary} ${report?.findings.slice(0, 3).map((item) => item.title).join("; ")}`,
                             `请解释以下检查发现的依据和处理优先级，暂不修改用例：${report?.summary} ${report?.findings.slice(0, 3).map((item) => item.title).join("；")}`,
                           ));
@@ -1691,7 +1705,7 @@ export function CaseWorkbench({
                         }}>{pick("Discuss priorities", "继续分析处理优先级")}</button>
                         {message.intent === "COVERAGE_ANALYZE" && Boolean(report?.findings.length) && (
                           <button type="button" disabled={busy || Boolean(prompt.trim())} onClick={() => {
-                            setPrompt(pick(
+                            editPrompt(pick(
                               `Prepare additional candidate cases for the current collection based on these coverage suggestions, for my review before inclusion: ${report?.findings.map((item) => `${item.title}: ${item.recommendation}`).join("; ")}`,
                               `请针对以下覆盖建议，为当前集合补充候选用例，先供我审阅再纳入正式集合：${report?.findings.map((item) => `${item.title}：${item.recommendation}`).join("；")}`,
                             ));
@@ -2014,7 +2028,7 @@ export function CaseWorkbench({
           <textarea
             ref={promptRef}
             value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
+            onChange={(event) => editPrompt(event.target.value)}
             placeholder={
               conversationRunning ? pick("Task is running. Please wait for the result…", "任务正在执行，请等待结果…") : effectivePendingOperationId
                 ? pick("Provide details or select cases to continue this task", "补充需求或选择用例后，继续执行当前任务")
@@ -2193,7 +2207,7 @@ export function CaseWorkbench({
             [pick("Query cases", "查询用例"), pick("Query cases in the current collection", "查询当前集合的用例")],
             [pick("Generate cases", "生成用例"), pick("Generate cases for the current collection: ", "为当前集合生成用例：")],
             [pick("Modify cases", "修改用例"), pick("Modify cases: ", "修改用例：")],
-          ]).map(([label, instruction]) => <button type="button" key={label} disabled={conversationRunning || !workspace || Boolean(prompt.trim())} onClick={() => { setPrompt(instruction); promptRef.current?.focus(); }}>{label}</button>)}
+          ]).map(([label, instruction]) => <button type="button" key={label} disabled={conversationRunning || !workspace || Boolean(prompt.trim())} onClick={() => { editPrompt(instruction); promptRef.current?.focus(); }}>{label}</button>)}
           <small>{pick("Describe your request in the conversation; review results here.", "在对话区描述需求，在这里查看与处理结果。")}</small>
         </div>
 
@@ -2524,6 +2538,7 @@ export function CaseWorkbench({
                 cases={visibleCases}
                 selectedCaseId={selectedCaseId}
                 focusVersion={mapFocusVersion}
+                onSaveCase={phase === "maintenance" ? onSaveCase : undefined}
                 onSelectCase={(caseId) => {
                   setSelectedCaseId(caseId);
                   if (workspace) void updateWorkspaceState(workspace.id, { selected_case_id: caseId });

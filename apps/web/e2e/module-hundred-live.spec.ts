@@ -63,9 +63,9 @@ test('01 query all 100 cases individually and verify ten module scopes', async (
   await expect(result.locator('tbody tr')).toHaveCount(20); await shot(page, '01-hundred-query');
   for (let p = 2; p <= 5; p++) { await result.getByRole('button', { name: '下一页', exact: true }).click(); await expect(result.locator('footer')).toContainText(`第 ${p} / 5 页`); await expect(result.locator('tbody tr')).toHaveCount(20); }
   await expect(result.getByRole('button', { name: '下一页', exact: true })).toBeDisabled();
-  for (const module of new Set(original.map(c => c.module))) {
-    await result.getByLabel('按模块筛选').selectOption(module); await expect(result.locator('tbody tr')).toHaveCount(10);
-    for (const cell of await result.locator('tbody tr td:nth-child(3)').allTextContents()) expect(cell).toBe(module);
+  for (const moduleName of new Set(original.map(c => c.module))) {
+    await result.getByLabel('按模块筛选').selectOption(moduleName); await expect(result.locator('tbody tr')).toHaveCount(10);
+    for (const cell of await result.locator('tbody tr td:nth-child(3)').allTextContents()) expect(cell).toBe(moduleName);
   }
   await result.getByLabel('按模块筛选').selectOption('');
   const audit: unknown[] = [];

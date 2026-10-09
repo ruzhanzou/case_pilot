@@ -203,6 +203,7 @@ STAGE_PROGRESS = {
     "feature.generated": 38,
     "test_point.generated": 52,
     "test_case.generated": 72,
+    "test_case.grounded": 76,
     "enhancement.completed": 86,
     "quality.completed": 96,
 }
@@ -842,6 +843,7 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
                     "feature.generated",
                     "test_point.generated",
                     "test_case.generated",
+                    "test_case.grounded",
                     "enhancement.completed",
                 }:
                     partial_output.update(stage_output)

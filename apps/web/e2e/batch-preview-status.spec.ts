@@ -9,9 +9,10 @@ test('batch rewrite remains running after preview and cancellation keeps all ori
   const post = async (path: string, data: any) => { const r = await page.request.post(api + path, { data }); expect(r.ok(), await r.text()).toBeTruthy(); return r.json(); };
   const get = async (path: string) => { const r = await page.request.get(api + path); expect(r.ok()).toBeTruthy(); return r.json(); };
   await page.addInitScript(() => localStorage.setItem('casepilot.locale.v1', 'zh-CN'));
-  const account = await post('/auth/login', { email: 'demo@casepilot.local', password: 'CasePilot123!' });
-  const collection = await post(`/spaces/${account.spaces[0].id}/collections`, { name: `批量状态及取消-${Date.now()}` });
-  for (let i = 1; i <= 25; i++) await post(`/collections/${collection.id}/test-cases`, { case_key: `B-${i}`, title: `账号user_${i}登录`, module: '登录', priority: 'P1', case_type: '功能', preconditions: [`账号user_${i}可用`], steps: [{ action: `user_${i}以正确密码登录`, expected: '登录成功' }] });
+  const account = await post('/auth/register', { email: `batch-qa-${Date.now()}@casepilot.test`, display_name: '分批验收', password: 'CasePilot123!' });
+  const stamp = Date.now();
+  const collection = await post(`/spaces/${account.spaces[0].id}/collections`, { name: `批量状态及取消-${stamp}` });
+  for (let i = 1; i <= 25; i++) await post(`/collections/${collection.id}/test-cases`, { case_key: `B-${stamp}-${i}`, title: `账号user_${i}登录`, module: '登录', priority: 'P1', case_type: '功能', preconditions: [`账号user_${i}可用`], steps: [{ action: `user_${i}以正确密码登录`, expected: '登录成功' }] });
   const original = await get(`/collections/${collection.id}/test-cases`);
   await page.goto(`/workbench/collections/${collection.id}`);
   const composer = page.locator('.principle-composer textarea'); await expect(composer).toBeEnabled({ timeout: 60000 });

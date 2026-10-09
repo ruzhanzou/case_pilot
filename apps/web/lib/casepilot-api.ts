@@ -947,6 +947,7 @@ export function watchGeneration(
       "feature.generated",
       "test_point.generated",
       "test_case.generated",
+      "test_case.grounded",
       "generation.batch_completed",
       "rewrite.batch_completed",
       "enhancement.completed",

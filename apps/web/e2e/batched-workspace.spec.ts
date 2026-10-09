@@ -10,7 +10,7 @@ test('25 test points publish a durable batch, then rewrite all 25 with batch pre
   const get = async (path: string): Promise<any> => { const r = await page.request.get(api + path); expect(r.ok(), await r.text()).toBeTruthy(); return r.json(); };
   const post = async (path: string, data: any): Promise<any> => { const r = await page.request.post(api + path, { data }); expect(r.ok(), await r.text()).toBeTruthy(); return r.json(); };
   await page.addInitScript(() => localStorage.setItem('casepilot.locale.v1', 'zh-CN'));
-  const account = await post('/auth/login', { email: 'demo@casepilot.local', password: 'CasePilot123!' });
+  const account = await post('/auth/register', { email: `batch-qa-${Date.now()}@casepilot.test`, display_name: '分批验收', password: 'CasePilot123!' });
   const collection = await post(`/spaces/${account.spaces[0].id}/collections`, { name: `分批预览验收-${Date.now()}` });
   const conversation = await post('/conversations', { collection_id: collection.id, title: '25测试点批量生成与改写' });
   const content = JSON.parse(readFileSync(new URL('./fixtures/batch-planning.json', import.meta.url), 'utf8'));
@@ -22,7 +22,8 @@ test('25 test points publish a durable batch, then rewrite all 25 with batch pre
   const state = () => get(`/conversations/${conversation.id}`);
   const formal = () => get(`/collections/${collection.id}/test-cases`);
   await page.goto(`/workbench/conversations/${conversation.id}`);
-  await page.getByRole('button', { name: '确认规划并生成用例', exact: true }).click();
+  await expect(page.locator('.principle-composer textarea')).toBeVisible({ timeout: 60000 });
+  await page.getByRole('button', { name: /^确认(?:规划|范围)并生成用例$/ }).click({ timeout: 60000 });
   await expect.poll(async () => {
     const s = await state(); const failed = s.workflow_runs.find((r: any) => r.status === 'failed'); if (failed) throw new Error(JSON.stringify(failed));
     return s.candidate_history.filter((c: any) => c.status === 'generating').length;

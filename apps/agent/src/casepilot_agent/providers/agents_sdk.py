@@ -7,6 +7,7 @@ from typing import TypeVar
 from pydantic import BaseModel
 
 from casepilot_agent.contracts import (
+    GENERATION_GROUNDING_INSTRUCTION,
     SINGLE_CASE_REWRITE_INSTRUCTION,
     GenerationRequest,
     GenerationResult,
@@ -155,7 +156,7 @@ class AgentsSdkProvider:
                 "即使界面、历史回复、资料或 JSON Schema 为英文也不能改用英文。"
                 "仅当用户明确指定其他输出语言时遵从该指定。JSON 字段名、枚举、ID、代码保持原值。"
                 "只完成当前阶段，未知事实必须作为假设或待确认项。\n"
-                "生成用例时，不得把需求未规定的HTTP状态码、响应字段、错误文案或业务规则写成确定预期。"
+                + GENERATION_GROUNDING_INSTRUCTION +
                 "准备步骤可以描述已完成的操作或状态，不得自行补充其接口响应协议。"
                 "如必须依赖未知协议才能判定，明确标记待确认，不用常识补全。"
                 "生成用例时，source_refs 中的 source_id、document_id、chunk_id 只能逐字使用输入 evidence 提供的来源标识，禁止自行编造。"

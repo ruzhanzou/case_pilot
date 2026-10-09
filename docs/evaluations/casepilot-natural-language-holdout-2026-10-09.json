@@ -1,0 +1,16 @@
+{
+  "status": "reserved_not_executed",
+  "usage": "预留表达；不用于提示词调优。复用base_case_id的fixture、交错动作和全部断言。每组在独立会话替换原轮次，不追加到原指令之后。执行人员可见，因此不属于隔离存储的秘密测试集。",
+  "items": [
+    {"id":"H01","base_case_id":"NL-SCP-01","turns":["这次只处理编号 TC-PAY-01，把 priority 设成 P0，其余照旧。"]},
+    {"id":"H02","base_case_id":"NL-SCP-02","turns":["帮我找登录模块里操作步骤含有短信验证码的测试用例。","刚查出来的这些，优先级统一设成 P0。"]},
+    {"id":"H03","base_case_id":"NL-SCP-03","turns":["列出登录模块里所有非 P0 优先级的用例。"]},
+    {"id":"H04","base_case_id":"NL-SCP-08","turns":["编号 TC-LOGIN-01 的 title 换成“支付成功”；除了标题，别改其他字段。"]},
+    {"id":"H05","base_case_id":"NL-EDT-01","turns":["TC-LOGIN-01 只重命名成“验证码登录验收”，现有步骤和其他字段都保留。"]},
+    {"id":"H06","base_case_id":"NL-EDT-05","turns":["TC-LOGIN-01 改名“弱网登录校验”；还要验证没网时点重试，然后恢复网络再次登录成功。两个要求都要完成。"]},
+    {"id":"H07","base_case_id":"NL-MUL-01","turns":["TC-LOGIN-01 标题换成“新的登录标题”。","这条再设成 P0，刚换的名字保留。"]},
+    {"id":"H08","base_case_id":"NL-MUL-04","turns":["登录模块的用例都调成 P0。","还没接受的那些建议，把优先级换成 P2，已经接受的别动。"]},
+    {"id":"H09","base_case_id":"NL-MUL-08","turns":["TC-LOGIN-01 优先级设 P0。","纠正一下，是 P2。标题维持原样。"]},
+    {"id":"H10","base_case_id":"NL-MUL-10","turns":["TC-LOGIN-01 改名“待采纳标题”。","TC-LOGIN-02 名字设成“密码登录”。"]}
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "run_id": null,
+  "case_id": null,
+  "repeat": 1,
+  "commit": null,
+  "model": null,
+  "fixture_id": null,
+  "conversation_id": null,
+  "job_ids": [],
+  "change_set_ids": [],
+  "actual_inputs": [],
+  "expected_target_ids": [],
+  "actual_target_ids": [],
+  "evidence": {
+    "before": null,
+    "proposal": null,
+    "after": null,
+    "trace": null,
+    "screenshots": []
+  },
+  "timings_ms": {
+    "ack": null,
+    "queue": null,
+    "first_batch": null,
+    "ready": null,
+    "apply": null,
+    "ui_sync": null
+  },
+  "assertions": [],
+  "result": "NOT_RUN",
+  "first_attempt_result": null,
+  "recovered": false,
+  "failure_category": null,
+  "notes": null
+}

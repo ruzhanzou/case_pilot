@@ -18,8 +18,8 @@ from casepilot_api.agent_router import (
     draft_needs_confirmation,
     normalize_routing_text,
     plan_intents,
-    select_query_case_ids,
     select_case_scope,
+    select_query_case_ids,
 )
 from casepilot_api.auth import CurrentAccount, require_space_membership
 from casepilot_api.case_management import (
@@ -108,6 +108,7 @@ STAGE_PROGRESS = {
     "feature.generated": 38,
     "test_point.generated": 52,
     "test_case.generated": 72,
+    "test_case.grounded": 76,
     "enhancement.completed": 86,
     "quality.completed": 96,
     "knowledge.answered": 96,
@@ -1504,11 +1505,30 @@ def _resolve_model_scope(db, conversation, payload, intent):
                "selected_ids": sorted(selected_ids & allowed),
                "current_case_id": str(dict(conversation.context).get("selected_case_id") or ""),
                "latest_query": latest_query, "proposal": proposal}
+    # Proposal refs are stored as asset IDs; both IDs and visible case keys are
+    # legitimate references. Neither may resolve outside this catalog.
+    known_keys = {key.casefold() for key in ref_ids} | {ref.casefold() for ref in allowed}
     try:
-        decision = select_case_scope(payload.content, catalog, context, intent=intent,
-            model_name=settings.agent_model, base_url=settings.agent_base_url,
-            api_key=settings.agent_api_key, timeout_seconds=settings.agent_timeout_seconds,
-            tracing_enabled=settings.agent_tracing_enabled)
+        # A malformed model reference is not evidence that the user's target is
+        # missing. Allow one grounded correction, then apply every safety check
+        # below unchanged. Never silently remove unknown references or widen IDs.
+        for attempt in range(2):
+            decision = select_case_scope(payload.content, catalog, context, intent=intent,
+                model_name=settings.agent_model, base_url=settings.agent_base_url,
+                api_key=settings.agent_api_key, timeout_seconds=settings.agent_timeout_seconds,
+                tracing_enabled=settings.agent_tracing_enabled)
+            unknown_keys = [
+                key for key in decision.referenced_case_keys if key.casefold() not in known_keys
+            ]
+            if decision.ambiguous or not unknown_keys or attempt:
+                break
+            context = {**context, "validation_feedback": {
+                "unknown_references": unknown_keys,
+                "instruction": (
+                    "核对这些值是否真是用户指定的用例编号；赋值不应作为编号。"
+                    "真实缺失的编号必须澄清。"
+                ),
+            }}
     except Exception:
         return payload, "用例范围分析暂时未完成，请重试；本次没有修改或删除用例。"
     if decision.ambiguous:
@@ -1516,7 +1536,6 @@ def _resolve_model_scope(db, conversation, payload, intent):
     ids = set(decision.ids)
     if not ids.issubset(allowed):
         return payload, "模型返回的范围包含当前集合之外的用例，请重新描述目标。"
-    known_keys = {key.casefold() for key in ref_ids}
     if any(key.casefold() not in known_keys for key in decision.referenced_case_keys):
         return payload, "指定编号中有用例不在当前集合，请检查完整编号。"
     reference_ids = None

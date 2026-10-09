@@ -100,6 +100,7 @@ STAGE_PROGRESS = {
     "feature.generated": 38,
     "test_point.generated": 52,
     "test_case.generated": 72,
+    "test_case.grounded": 76,
     "enhancement.completed": 86,
     "quality.completed": 96,
     "completed": 100,

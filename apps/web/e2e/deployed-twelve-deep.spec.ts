@@ -31,10 +31,11 @@ test('fresh chat generates twelve then partial adoption, iterative edit, query, 
     catch (error) { journal.observations.push({ stage: name, error: String(error), at: new Date().toISOString() }); save(); throw error; }
   };
   await page.addInitScript(() => localStorage.setItem('casepilot.locale.v1', 'zh-CN'));
-  await page.goto('/');
-  await page.getByLabel('邮箱').fill('demo@casepilot.local');
-  await page.getByLabel('密码').fill('CasePilot123!');
-  await page.getByRole('button', { name: '登录并进入工作台' }).click();
+  const auth = journal.conversationId
+    ? await page.request.post(`${api}/auth/login`, { data: { email: 'demo@casepilot.local', password: 'CasePilot123!' } })
+    : await page.request.post(`${api}/auth/register`, { data: { email: `chain-${Date.now()}@casepilot.test`, display_name: '完整链路验收', password: 'CasePilot123!' } });
+  expect(auth.ok()).toBeTruthy();
+  await page.goto('/workbench');
   await expect(page.getByLabel('写给 CasePilot')).toBeVisible();
   if (journal.conversationId) await page.goto(`/workbench/conversations/${journal.conversationId}`);
   const composer = page.locator('.principle-composer textarea');

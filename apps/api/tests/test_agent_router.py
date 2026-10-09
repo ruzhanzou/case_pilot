@@ -784,3 +784,14 @@ def test_literal_previous_query_deletion_skips_model_but_not_confirmation(
         assert plan.operations[0].intent == 'CASE_DELETE'
         assert plan.operations[0].requires_confirmation
         assert plan.operations[0].reason_codes == ['EXPLICIT_PREVIOUS_QUERY_DELETE']
+
+
+def test_model_failure_does_not_turn_query_result_modification_into_query(monkeypatch):
+    from unittest.mock import Mock
+    monkeypatch.setattr(agent_router, 'sdk_plan', Mock(side_effect=TimeoutError()))
+    plan = plan_intents('把刚才查询到的用例优先级改为P0，其他内容保持不变',
+        classify_intent, has_targets=False, phase='maintenance', target_context=[],
+        provider='openai_compatible', model_name='test', base_url='https://example.test/v1',
+        api_key='test-only', timeout_seconds=5, tracing_enabled=False)
+    assert plan.operations[0].intent == 'UNRESOLVED'
+    assert plan.operations[0].requires_confirmation
