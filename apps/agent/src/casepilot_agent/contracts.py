@@ -72,6 +72,7 @@ class FeaturePoint(BaseModel):
 
 
 class TestPoint(BaseModel):
+    scenario: str = ""
     id: str
     title: str
     objective: str
@@ -201,6 +202,7 @@ class UsageMetadata(BaseModel):
 
 
 class GenerationRequest(BaseModel):
+    confirmed_plan: dict[str, Any] = Field(default_factory=dict)
     prompt: str = Field(min_length=1, max_length=8000)
     markdown_content: str = Field(default="", max_length=100_000)
     file_names: list[str] = Field(default_factory=list, max_length=10)
@@ -224,6 +226,7 @@ class GenerationResult(BaseModel):
 
 
 class RewriteRequest(BaseModel):
+    context: dict[str, Any] = Field(default_factory=dict)
     test_case: RewriteCaseDraft
     instruction: str = Field(min_length=1, max_length=8000)
     conversation_memory: list[dict[str, str]] = Field(

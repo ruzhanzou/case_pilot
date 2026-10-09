@@ -4,6 +4,7 @@ import { CaseTaskArtifacts } from "@/components/case-task-artifacts";
 import { ConversationTaskFlow } from "@/components/conversation-task-flow";
 import { CaseTaskWorkspace } from "@/components/case-task-workspace";
 import { candidatesForTask, workspaceTasks, workspaceIsRunning, shouldResumePendingTask, taskScopeChanged, nextWorkspaceOperation, type WorkspaceTask } from "@/lib/workspace-tasks";
+import { TestPlanningMap } from "@/components/test-planning-map";
 import { CaseMindMap } from "@/components/case-mind-map";
 import { CaseCollectionChanges } from "@/components/case-collection-changes";
 import { CaseEditorDialog } from "@/components/case-editor-dialog";
@@ -18,6 +19,7 @@ import {
   commitWorkspaceCandidates,
   confirmConversationIntent,
   confirmTestBrief,
+  saveTestBrief,
   downloadTestBrief,
   getCaseChangeSet,
   getConversation,
@@ -324,6 +326,7 @@ export function CaseWorkbench({
   const [notice, setNotice] = useState("");
   const [selectedBriefVersion, setSelectedBriefVersion] = useState(0);
   const [artifactOpen, setArtifactOpen] = useState(false);
+  const [briefView, setBriefView] = useState<"map" | "text">("map");
   const [chatWidth, setChatWidth] = useState(520);
   const [inspectorWidth, setInspectorWidth] = useState(300);
   const [inspectorHidden, setInspectorHidden] = useState(false);
@@ -594,7 +597,7 @@ export function CaseWorkbench({
     const workspacePhase = `${result.id}:${String(result.context.phase ?? "idle")}`;
     if (workspacePhase !== lastWorkspacePhaseRef.current) {
       lastWorkspacePhaseRef.current = workspacePhase;
-      setArtifactOpen(false);
+      setArtifactOpen(result.context.phase === "brief_review");
     }
     const savedChatWidth = Number(result.context.chat_width ?? 520);
     setChatWidth(savedChatWidth < 420 ? 520 : clampPanelWidth("chat", savedChatWidth));
@@ -1200,7 +1203,7 @@ export function CaseWorkbench({
     }
   };
 
-  const confirmBriefAndGenerate = async () => {
+  const confirmBriefAndGenerate = async (selectedPointIds: string[] = []) => {
     if (!workspace) return;
     setBusy(true);
     setProgress({ name: "queued", progress: 0 });
@@ -1213,6 +1216,7 @@ export function CaseWorkbench({
         workspace.id,
         activeBrief.version,
         modelId,
+        selectedPointIds,
       );
       await refreshWorkspace();
       if (turn.action.job_id) {
@@ -2204,6 +2208,10 @@ export function CaseWorkbench({
                     ))}
                 </select>
               </label>
+              {!!selectedBrief.content.planning?.test_points?.length && <>
+                <button type="button" aria-pressed={briefView === "map"} onClick={() => setBriefView("map")}>{pick("Planning map", "规划脑图")}</button>
+                <button type="button" aria-pressed={briefView === "text"} onClick={() => setBriefView("text")}>{pick("Test brief", "测试说明")}</button>
+              </>}
               <button type="button" onClick={() => void copyBrief()}>
                 <Copy size={16} />
                 {pick("Copy", "复制")}
@@ -2219,7 +2227,7 @@ export function CaseWorkbench({
               )}
               {selectedBrief.version === activeBrief?.version &&
                 ["draft", "confirmed"].includes(activeBrief.status) &&
-                phase === "brief_review" && (
+                ["brief_review", "candidate_review", "maintenance"].includes(phase) && (
                   <button
                     type="button"
                     className="is-primary"
@@ -2235,18 +2243,44 @@ export function CaseWorkbench({
                       ? pick("Starting generation…", "正在启动生成…")
                       : activeBrief.status === "confirmed"
                         ? pick("Retry generation", "重新生成用例")
-                        : pick("Confirm and generate", "确认并生成用例")}
+                        : pick("Confirm plan and generate", "确认规划并生成用例")}
                   </button>
                 )}
             </header>
-            <div className="principle-brief-guidance">
+            {(!selectedBrief.content.planning?.test_points?.length || briefView === "text") && <div className="principle-brief-guidance">
               {pick("This is a read-only Markdown artifact. Use the CasePilot conversation on the left to make changes.", "这是一份只读 Markdown 产物。如需调整，请在左侧与 CasePilot 对话。")}
-            </div>
-            <article className="principle-markdown" aria-label={pick("Structured test brief", "结构化测试说明")}>
+            </div>}
+            {briefView === "map" && !!selectedBrief.content.planning?.test_points?.length && <TestPlanningMap
+              key={workspace?.id}
+              planning={selectedBrief.content.planning}
+              generatedPointIds={candidates.flatMap((candidate) => (candidate.snapshot.test_point_ids ?? []) as string[])}
+              title={selectedBrief.content.test_object}
+              busy={busy}
+              editable={selectedBrief.version === activeBrief?.version && !conversationRunning && blockingQuestions.length === 0}
+              onGenerate={(ids) => void confirmBriefAndGenerate(ids)}
+              onSavePoint={async (pointId, title, scenario) => {
+                if (!workspace || !selectedBrief.content.planning) return;
+                setBusy(true);
+                setError("");
+                try {
+                  const content = structuredClone(selectedBrief.content);
+                  const point = content.planning!.test_points.find((item) => item.id === pointId)!;
+                  point.title = title;
+                  point.scenario = scenario;
+                  const saved = await saveTestBrief(workspace.id, content, selectedBrief.version);
+                  await refreshWorkspace();
+                  setSelectedBriefVersion(saved.version);
+                  setArtifactOpen(true);
+                } catch (caught) {
+                  setError(caught instanceof Error ? caught.message : "规划保存失败");
+                } finally { setBusy(false); }
+              }}
+            />}
+            {(!selectedBrief.content.planning?.test_points?.length || briefView === "text") && <article className="principle-markdown" aria-label={pick("Structured test brief", "结构化测试说明")}>
               <Streamdown key={selectedBrief.id}>
                 {selectedBrief.markdown_content}
               </Streamdown>
-            </article>
+            </article>}
             {selectedBrief.version === activeBrief?.version &&
               blockingQuestions.length > 0 && (
                 <div className="principle-brief-blocker">

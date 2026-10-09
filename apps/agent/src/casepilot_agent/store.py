@@ -155,6 +155,15 @@ def render_test_brief_markdown(version: int, content: dict[str, Any]) -> str:
         lines.append(f"- **待澄清**：{item.get('question', '')}")
         if item.get("impact"):
             lines.append(f"  - 影响：{item['impact']}")
+    planning = content.get("planning") or {}
+    if planning.get("test_points"):
+        lines.extend(["", "## 测试规划", ""])
+        for feature in planning.get("feature_points", []):
+            lines.append(f"- {feature['module']} / {feature['name']}")
+            for point in planning["test_points"]:
+                if feature["id"] in point["feature_point_ids"]:
+                    scenario = point.get("scenario") or feature["name"]
+                    lines.append(f"  - {scenario} / {point['title']}（待生成）")
     return "\n".join(lines).strip() + "\n"
 
 
@@ -792,6 +801,46 @@ class JobStore:
         connection.execute(insert(generation_stages).values(**values))
         return values
 
+    def read_task_documents(self, connection, *, space_id, document_ids):
+        """Read non-overlapping parent blocks from all explicitly attached documents."""
+        if not document_ids:
+            return []
+        documents = list(
+            connection.execute(
+                select(knowledge_documents)
+                .join(knowledge_sources, knowledge_sources.c.id == knowledge_documents.c.source_id)
+                .where(
+                    knowledge_documents.c.space_id == space_id,
+                    knowledge_documents.c.id.in_(document_ids),
+                    knowledge_sources.c.deleted_at.is_(None),
+                )
+            ).mappings()
+        )
+        if len(documents) != len(set(document_ids)) or any(
+            item["status"] != "ready" for item in documents
+        ):
+            raise ValueError("附件尚未就绪或已失效，请等待解析完成后重试")
+        rows = list(
+            connection.execute(
+                select(
+                    knowledge_chunks, knowledge_documents.c.original_name.label("document_name")
+                )
+                .join(
+                    knowledge_documents,
+                    knowledge_documents.c.id == knowledge_chunks.c.document_id,
+                )
+                .where(
+                    knowledge_chunks.c.space_id == space_id,
+                    knowledge_chunks.c.document_id.in_(document_ids),
+                    knowledge_chunks.c.chunk_type == "parent",
+                )
+                .order_by(knowledge_chunks.c.document_id, knowledge_chunks.c.ordinal)
+            ).mappings()
+        )
+        if {row["document_id"] for row in rows} != set(document_ids):
+            raise ValueError("附件没有可读取的正文，请检查扫描页或解析结果")
+        return [dict(row, rrf=0.0, distance=None, lexical=0.0, task_document=True) for row in rows]
+
     def retrieve_context(
         self,
         connection: Connection,
@@ -1111,12 +1160,27 @@ class JobStore:
         if not raw_conversation_id:
             return []
         conversation_id = UUID(str(raw_conversation_id))
+        planning = job["input_payload"].get("confirmed_plan") or {}
+        archive_filter = [
+            workspace_candidates.c.conversation_id == conversation_id,
+            workspace_candidates.c.status == "candidate",
+        ]
+        if planning:
+            selected = {point["id"] for point in planning.get("test_points", [])}
+            previous = connection.execute(
+                select(workspace_candidates.c.id, workspace_candidates.c.snapshot).where(
+                    *archive_filter
+                )
+            ).mappings()
+            replace_ids = [
+                item["id"]
+                for item in previous
+                if selected.intersection(item["snapshot"].get("test_point_ids", []))
+            ]
+            archive_filter.append(workspace_candidates.c.id.in_(replace_ids))
         connection.execute(
             update(workspace_candidates)
-            .where(
-                workspace_candidates.c.conversation_id == conversation_id,
-                workspace_candidates.c.status == "candidate",
-            )
+            .where(*archive_filter)
             .values(status="archived", updated_at=datetime.now(UTC))
         )
         now = datetime.now(UTC)

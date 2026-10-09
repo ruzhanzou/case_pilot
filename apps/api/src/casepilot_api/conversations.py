@@ -666,6 +666,15 @@ def render_test_brief_markdown(version: int, content: dict[str, Any]) -> str:
         lines.append(f"- **待澄清**：{item.get('question', '')}")
         if item.get("impact"):
             lines.append(f"  - 影响：{item['impact']}")
+    planning = content.get("planning") or {}
+    if planning.get("test_points"):
+        lines.extend(["", "## 测试规划", ""])
+        for feature in planning.get("feature_points", []):
+            lines.append(f"- {feature['module']} / {feature['name']}")
+            for point in planning["test_points"]:
+                if feature["id"] in point["feature_point_ids"]:
+                    scenario = point.get("scenario") or feature["name"]
+                    lines.append(f"  - {scenario} / {point['title']}（待生成）")
     return "\n".join(lines).strip() + "\n"
 
 
@@ -1522,6 +1531,12 @@ def _resolve_action_scope(
         snapshots = _load_scope_snapshots(db, conversation)
     if pending_review_refs is not None:
         snapshots = [item for item in snapshots if str(item["id"]) in pending_review_refs or item.get("case_key") in pending_review_refs]
+    # A fresh collection has no existing assets to protect or resolve.
+    # Business requirements such as “保持未登录” are generation context.
+    if intent == "CASE_GENERATE" and not snapshots:
+        return payload.model_copy(update={
+            "targets": [], "target_case_ids": [], "target_candidate_snapshots": [],
+        }), None
     explicit_scope = None
     if scope_text:
         # A shortened semantic target must not bypass explicit names/guards in
@@ -2691,11 +2706,22 @@ def create_test_brief(
     db: DbSession,
 ) -> WorkspaceTestBriefView:
     conversation = _ensure_conversation(db, account.id, conversation_id)
+    db.scalar(select(Conversation).where(Conversation.id == conversation.id).with_for_update())
+    active_job_id = dict(conversation.context).get("active_job_id")
+    if active_job_id:
+        active_job = db.get(GenerationJob, UUID(str(active_job_id)))
+        active_status = (
+            str(getattr(active_job.status, "value", active_job.status)) if active_job else ""
+        )
+        if active_status in {"queued", "running", "awaiting_input"}:
+            raise HTTPException(status_code=409, detail="workspace_generation_in_progress")
     latest_version = db.scalar(
         select(func.max(WorkspaceTestBrief.version)).where(
             WorkspaceTestBrief.conversation_id == conversation.id
         )
     ) or 0
+    if payload.base_version is not None and payload.base_version != latest_version:
+        raise HTTPException(status_code=409, detail="test_brief_version_changed")
     db.execute(
         update(WorkspaceTestBrief)
         .where(
@@ -2787,6 +2813,7 @@ def confirm_test_brief(
 ) -> ConversationTurnView:
     conversation = _ensure_conversation(db, account.id, conversation_id)
     _require_idle_conversation(db, conversation)
+    db.scalar(select(Conversation).where(Conversation.id == conversation.id).with_for_update())
     if not settings.is_agent_model_allowed(payload.model_id):
         raise HTTPException(status_code=422, detail="generation_model_not_configured")
     brief = db.scalar(
@@ -2805,6 +2832,29 @@ def confirm_test_brief(
     if brief.version != latest_version or brief.status not in {"draft", "confirmed"}:
         raise HTTPException(status_code=409, detail="test_brief_version_changed")
     brief_content = dict(brief.content)
+    planning = dict(brief_content.get("planning") or {})
+    if planning:
+        points = planning.get("test_points", [])
+        selected = set(payload.selected_test_point_ids)
+        allowed = {str(point["id"]) for point in points}
+        if selected - allowed:
+            raise HTTPException(status_code=422, detail="planning_selection_invalid")
+        points = [point for point in points if not selected or point["id"] in selected]
+        if not points:
+            raise HTTPException(status_code=409, detail="planning_has_no_test_points")
+        feature_ids = {ref for point in points for ref in point["feature_point_ids"]}
+        planning = {
+            **planning,
+            "test_points": points,
+            "feature_points": [
+                feature for feature in planning.get("feature_points", [])
+                if feature["id"] in feature_ids
+            ],
+            "coverage_matrix": [],
+            "brief_version": brief.version,
+        }
+    elif payload.selected_test_point_ids:
+        raise HTTPException(status_code=422, detail="planning_selection_invalid")
     resolved_test_object = str(brief_content.get("test_object") or "").strip()
     if not resolved_test_object:
         resolved_test_object = _test_object_from_memory(
@@ -2923,6 +2973,7 @@ def confirm_test_brief(
             "persist_cases": False,
             "conversation_id": str(conversation.id),
             "conversation_memory": _agent_conversation_memory(db, conversation.id),
+            "confirmed_plan": planning,
             "confirmed_test_brief": brief_content,
             "confirmed_test_brief_version": brief.version,
             "target_module_path": str(

@@ -13046,3 +13046,25 @@ details.principle-workflow { display: block; }
 .collection-changes__help { color: #64748b; font-size: 12px; }
 .collection-changes__help > summary { width: fit-content; cursor: pointer; }
 .collection-changes__help[open] > p { margin-top: 8px; }
+
+/* Planning remains independent of executable case cards. */
+.test-planning { margin: 16px; border: 1px solid var(--border, #d7dce2); border-radius: 12px; overflow: hidden; }
+.test-planning-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 12px; }
+.test-planning-toolbar button, .test-planning-toolbar select { padding: 6px 10px; border: 1px solid var(--border, #d7dce2); border-radius: 6px; }
+.test-planning-canvas { height: 500px; min-height: 340px; }
+.planning-node { display: grid; gap: 6px; color: #17212f; }
+.planning-node button { white-space: normal; overflow-wrap: anywhere; }
+.planning-node button[aria-pressed="true"] { background: #dcecff; outline: 2px solid #3975d5; border-radius: 4px; }
+.planning-node small { color: #536174; }
+.test-planning-detail { padding: 16px; border-top: 1px solid var(--border, #d7dce2); max-height: 220px; overflow: auto; }
+
+.principle-brief > .test-planning { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+.test-planning-toolbar { flex: 0 0 auto; }
+.test-planning-canvas { flex: 1 1 auto; height: auto; min-height: 240px; }
+.test-planning-detail { flex: 0 1 auto; }
+.test-planning:fullscreen { margin: 0; background: #fff; display: flex; flex-direction: column; }
+.test-planning-toolbar input { max-width: 100%; border: 1px solid #d7dce2; padding: 5px; border-radius: 4px; }
+
+.principle-brief > .test-planning { overflow: auto; }
+.planning-node button:first-child { font-size: 16px; line-height: 1.5; }
+.test-planning:fullscreen .test-planning-canvas { min-height: 360px; }

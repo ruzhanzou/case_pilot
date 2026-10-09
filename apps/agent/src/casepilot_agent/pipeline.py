@@ -21,6 +21,7 @@ from casepilot_agent.contracts import (
     TestCaseBatch,
     TestPointPlan,
 )
+from casepilot_agent.planning import planned_module
 
 StageExecutor = Callable[
     [str, str, dict[str, Any], type[StructuredResultT], str],
@@ -456,6 +457,83 @@ class GenerationPipeline:
     def __init__(self, provider: AgentProvider) -> None:
         self.provider = provider
 
+    def run_planned(self, request: GenerationRequest, execute_stage: StageExecutor):
+        plan = request.confirmed_plan
+        features = FeaturePlan.model_validate(plan).feature_points
+        points = TestPointPlan.model_validate(plan).test_points
+        if not points:
+            raise ValueError("planning_has_no_test_points")
+        requirement = RequirementAnalysis(
+            test_object=request.prompt,
+            test_object_specified=True,
+            summary=request.markdown_content or request.prompt,
+        )
+        generated = []
+        count = requested_case_count(request)
+        limit = count or len(points)
+        for index in range(limit):
+            point = points[index % len(points)]
+            feature_ids = set(point.feature_point_ids)
+            selected_features = [item for item in features if item.id in feature_ids]
+            refs = {ref.chunk_id for ref in point.source_refs}
+            if not refs:
+                for feature in selected_features:
+                    refs.update(ref.chunk_id for ref in feature.source_refs)
+            evidence = [item for item in plan.get("evidence", []) if item.get("chunk_id") in refs]
+            # Source excerpts on the plan remain available even if originals have expired.
+            batch = execute_stage(
+                "test_case.generated",
+                "只为给定测试点生成1条可执行用例，不重新规划或扩大范围。"
+                "使用batch_start_index唯一编号，避免重复previous_titles。"
+                "保留规则的数值与例外；操作与预期一一对应，提供具体可观察断言。",
+                {
+                    "prompt": request.prompt,
+                    "test_points": {"test_points": [point.model_dump(mode="json")]},
+                    "feature_points": {
+                        "feature_points": [f.model_dump(mode="json") for f in selected_features]
+                    },
+                    "context": {"evidence": evidence},
+                    "batch_count": 1,
+                    "batch_start_index": index + 1,
+                    "brief_version": plan.get("brief_version"),
+                    "previous_titles": [case.title for case in generated],
+                },
+                TestCaseBatch,
+                request.model_id,
+            )
+            if len(batch.test_cases) != 1:
+                raise ValueError("规划生成每批应返回1条用例，请重试")
+            case = batch.test_cases[0]
+            case.id = f"TC-{point.id}-{index // len(points) + 1}"
+            case.test_point_ids = [point.id]
+            case.module = planned_module(point, features)
+            if not case.source_refs:
+                case.source_refs = point.source_refs or [
+                    SourceRef(label="用户输入", excerpt=request.prompt)
+                ]
+            generated.append(case)
+        result = GenerationResult(
+            mode=self.provider.name,
+            requirement=requirement,
+            feature_points=features,
+            test_points=points,
+            test_cases=generated,
+            coverage_matrix=[],
+            quality=QualityReport(passed=True, score=100),
+        )
+        result.quality = validate_generation(result)
+        if count and count < len(points):
+            for issue in result.quality.issues:
+                if issue.code == "uncovered_test_point":
+                    issue.code = "planned_point_uncovered"
+                    issue.severity = "warning"
+                    issue.message = "数量预算内尚未生成此测试点"
+        errors = sum(item.severity == "error" for item in result.quality.issues)
+        warnings = len(result.quality.issues) - errors
+        result.quality.passed = errors == 0
+        result.quality.score = max(0, 100 - errors * 25 - warnings * 8)
+        return result
+
     def run(
         self,
         request: GenerationRequest,
@@ -464,6 +542,8 @@ class GenerationPipeline:
         answers: dict[str, str],
         execute_stage: StageExecutor,
     ) -> GenerationResult:
+        if request.confirmed_plan:
+            return self.run_planned(request, execute_stage)
         requested_count = requested_case_count(request)
         common = {
             "requested_case_count": requested_count,
@@ -711,4 +791,11 @@ class GenerationPipeline:
 
     def rewrite(self, request: RewriteRequest) -> RewriteCandidate:
         explicit = _explicit_rewrite_candidate(request)
-        return explicit if explicit is not None else self.provider.rewrite(request)
+        if explicit is not None:
+            return explicit
+        if request.context:
+            request = request.model_copy(update={"instruction": request.instruction +
+                "\n结合context中的任务资料，只修改当前用例受影响的字段。"
+                "规则不相关时保持原内容；资料冲突写入质量问题，不擅自选择版本。"
+                "保留具体数值、条件与来源，不扩大修改范围。"})
+        return self.provider.rewrite(request)

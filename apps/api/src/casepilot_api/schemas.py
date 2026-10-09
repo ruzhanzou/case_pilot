@@ -94,7 +94,7 @@ class MindMapNote(BaseModel):
     id: str = Field(min_length=1, max_length=160, pattern=r"^note-[A-Za-z0-9-]+$")
     parent_id: str = Field(min_length=1, max_length=1000)
     text: str = Field(min_length=1, max_length=4000)
-    module: str = Field(default="", max_length=160)
+    module: str = Field(default="", max_length=4000)
 
 
     @model_serializer(mode="wrap")
@@ -229,7 +229,7 @@ class TestCaseCreate(BaseModel):
     case_key: str | None = Field(default=None, max_length=40)
     title: str = Field(min_length=1, max_length=300)
     description: str = Field(default="", max_length=4000)
-    module: str = Field(default="", max_length=160)
+    module: str = Field(default="", max_length=4000)
     priority: str = Field(default="P1", pattern=r"^P[0-2]$")
     case_type: str = Field(default="功能", max_length=40)
     tags: list[str] = Field(default_factory=list, max_length=20)
@@ -250,7 +250,7 @@ class TestCaseUpdate(BaseModel):
     base_revision_id: UUID
     title: str = Field(min_length=1, max_length=300)
     description: str | None = Field(default=None, max_length=4000)
-    module: str = Field(default="", max_length=160)
+    module: str = Field(default="", max_length=4000)
     priority: str = Field(default="P1", pattern=r"^P[0-2]$")
     case_type: str = Field(default="功能", max_length=40)
     tags: list[str] = Field(default_factory=list, max_length=20)
@@ -393,7 +393,7 @@ class ConversationTarget(BaseModel):
     collection_id: UUID | None = None
     case_ids: list[UUID] = Field(default_factory=list, max_length=100)
     candidate_refs: list[str] = Field(default_factory=list, max_length=100)
-    module: str = Field(default="", max_length=160)
+    module: str = Field(default="", max_length=4000)
     condition: str = Field(default="", max_length=1000)
     source_operation_id: UUID | None = None
 
@@ -496,20 +496,61 @@ class ConversationOperationPlanView(BaseModel):
 
 
 class TestBriefContent(BaseModel):
+    planning: dict = Field(default_factory=dict)
     test_object: str = Field(default="", max_length=1000)
     test_objective: str = Field(default="", max_length=8000)
-    scope: list[str] = Field(default_factory=list, max_length=100)
-    roles: list[str] = Field(default_factory=list, max_length=100)
-    core_flows: list[str] = Field(default_factory=list, max_length=100)
-    business_rules: list[str] = Field(default_factory=list, max_length=100)
-    constraints: list[str] = Field(default_factory=list, max_length=100)
-    risks: list[str] = Field(default_factory=list, max_length=100)
-    coverage_dimensions: list[str] = Field(default_factory=list, max_length=100)
-    assumptions: list[str] = Field(default_factory=list, max_length=100)
+    scope: list[str] = Field(default_factory=list, max_length=2000)
+    roles: list[str] = Field(default_factory=list, max_length=2000)
+    core_flows: list[str] = Field(default_factory=list, max_length=2000)
+    business_rules: list[str] = Field(default_factory=list, max_length=2000)
+    constraints: list[str] = Field(default_factory=list, max_length=2000)
+    risks: list[str] = Field(default_factory=list, max_length=2000)
+    coverage_dimensions: list[str] = Field(default_factory=list, max_length=2000)
+    assumptions: list[str] = Field(default_factory=list, max_length=2000)
     open_questions: list[dict] = Field(default_factory=list, max_length=30)
 
     @model_validator(mode="after")
     def keep_only_test_object_clarification(self) -> "TestBriefContent":
+        if self.planning:
+            features = self.planning.get("feature_points", [])
+            points = self.planning.get("test_points", [])
+            if (
+                not isinstance(features, list)
+                or not isinstance(points, list)
+                or len(features) > 2000
+                or len(points) > 2000
+                or not all(isinstance(item, dict) for item in [*features, *points])
+            ):
+                raise ValueError("planning_structure_invalid")
+            if not all(isinstance(item.get("id"), str) for item in [*features, *points]):
+                raise ValueError("planning_ids_invalid")
+            feature_ids = [item.get("id") for item in features]
+            point_ids = [item.get("id") for item in points]
+            if (
+                not features
+                or not points
+                or len(set(feature_ids)) != len(feature_ids)
+                or len(set(point_ids)) != len(point_ids)
+            ):
+                raise ValueError("planning_ids_invalid")
+            for feature in features:
+                if not all(
+                    isinstance(feature.get(key), str) and feature[key].strip()
+                    for key in ("id", "name", "module")
+                ):
+                    raise ValueError("planning_feature_invalid")
+            for point in points:
+                if (
+                    not all(
+                        isinstance(point.get(key), str) and point[key].strip()
+                        for key in ("id", "title")
+                    )
+                    or not isinstance(point.get("feature_point_ids"), list)
+                    or not point.get("feature_point_ids")
+                    or not all(isinstance(ref, str) for ref in point["feature_point_ids"])
+                    or set(point["feature_point_ids"]) - set(feature_ids)
+                ):
+                    raise ValueError("planning_point_invalid")
         self.test_object = self.test_object.strip()
         self.open_questions = (
             []
@@ -568,10 +609,12 @@ class WorkspaceStateUpdate(BaseModel):
 
 
 class TestBriefCreate(BaseModel):
+    base_version: int | None = Field(default=None, ge=1)
     content: TestBriefContent
 
 
 class TestBriefConfirmRequest(BaseModel):
+    selected_test_point_ids: list[str] = Field(default_factory=list, max_length=1000)
     version: int = Field(ge=1)
     model_id: str = Field(
         default="auto",

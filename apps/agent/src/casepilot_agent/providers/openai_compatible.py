@@ -84,6 +84,7 @@ class OpenAICompatibleProvider:
             f"schema={json.dumps(RewriteCandidate.model_json_schema(), ensure_ascii=False)}\n"
             f"原用例={request.test_case.model_dump_json()}\n指令={request.instruction}"
             f"\n最近对话={json.dumps(request.conversation_memory, ensure_ascii=False)}"
+            f"\n任务资料={json.dumps(request.context, ensure_ascii=False)}"
         )
         return self._request(prompt, RewriteCandidate, self.resolve_model(request.model_id))[0]
 

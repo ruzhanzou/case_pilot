@@ -22,3 +22,9 @@
 **/*.log
 artifacts
 prototype
+
+# Local acceptance evidence and database backups
+output
+tmp
+**/test-results
+**/playwright-report

@@ -385,3 +385,18 @@ def test_quoted_new_content_is_not_a_scope_condition():
 
     assert not unsupported_mutation_condition("当前用例标题改为「涉及短信验证码的用例」")
     assert not unsupported_mutation_condition("修改登录模块的P1用例，优先级改为P0")
+
+
+def test_fresh_generation_business_state_is_not_a_mutation_guard(monkeypatch):
+    from types import SimpleNamespace
+    from casepilot_api import conversations
+    from casepilot_api.schemas import ConversationMessageCreate
+    monkeypatch.setattr(conversations, "_load_scope_snapshots", lambda db, conversation: [])
+    conversation = SimpleNamespace(collection_id=uuid4(), context={"phase": "maintenance"})
+    payload = ConversationMessageCreate(content="生成2条登录用例：密码错误时保持未登录")
+    resolved, error = conversations._resolve_action_scope(
+        None, conversation, payload, "CASE_GENERATE", "账号登录"
+    )
+    assert error is None
+    assert resolved.content == payload.content
+    assert resolved.target_case_ids == []

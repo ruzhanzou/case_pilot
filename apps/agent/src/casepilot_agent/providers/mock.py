@@ -260,6 +260,11 @@ class MockProvider:
         elif result_type is FeaturePlan:
             result = FeaturePlan(feature_points=baseline.feature_points)
         elif result_type is TestPointPlan:
+            scoped_features = payload.get("feature_points", {}).get("feature_points", [])
+            if scoped_features:
+                for point in baseline.test_points:
+                    point.feature_point_ids = [scoped_features[0]["id"]]
+                    point.scenario = "业务规则校验"
             result = TestPointPlan(
                 test_points=baseline.test_points,
                 coverage_matrix=[
@@ -271,7 +276,15 @@ class MockProvider:
                 ],
             )
         elif result_type is TestCaseBatch:
-            result = TestCaseBatch(test_cases=baseline.test_cases)
+            scoped_points = payload.get("test_points", {}).get("test_points", [])
+            if payload.get("brief_version") and scoped_points:
+                point = scoped_points[0]
+                case = baseline.test_cases[0]
+                case.title = f"{point['title']}（{payload.get('batch_start_index', 1)}）"
+                case.test_point_ids = [point["id"]]
+                result = TestCaseBatch(test_cases=[case])
+            else:
+                result = TestCaseBatch(test_cases=baseline.test_cases)
         elif result_type is EnhancementResult:
             result = EnhancementResult(
                 feature_points=baseline.feature_points,

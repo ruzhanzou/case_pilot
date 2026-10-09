@@ -334,6 +334,7 @@ export type SourceRefDto = {
 };
 
 export type AgentTestCaseDraft = {
+  test_point_ids?: string[];
   id: string;
   title: string;
   module: string;
@@ -568,7 +569,14 @@ export type ConversationHistoryPageDto = {
   next_cursor: string | null;
 };
 
+export type TestPlanningDto = {
+  feature_points: { id: string; name: string; module: string; description: string; requirement_refs: string[] }[];
+  test_points: { id: string; title: string; scenario?: string; objective: string; feature_point_ids: string[]; source_refs?: { label: string; locator: string; excerpt: string }[] }[];
+  processed_batches?: number;
+};
+
 export type TestBriefContentDto = {
+  planning?: TestPlanningDto;
   test_object: string;
   test_objective: string;
   scope: string[];
@@ -1139,10 +1147,11 @@ export async function downloadTestBrief(
 export function saveTestBrief(
   conversationId: string,
   content: TestBriefContentDto,
+  baseVersion?: number,
 ): Promise<WorkspaceTestBriefDto> {
   return apiRequest(`/api/v1/workspaces/${conversationId}/test-briefs`, {
     method: "POST",
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, base_version: baseVersion }),
   });
 }
 
@@ -1150,12 +1159,13 @@ export function confirmTestBrief(
   conversationId: string,
   version: number,
   modelId: AgentModelId,
+  selectedTestPointIds: string[] = [],
 ): Promise<ConversationTurnDto> {
   return apiRequest(
     `/api/v1/workspaces/${conversationId}/test-briefs/confirm`,
     {
       method: "POST",
-      body: JSON.stringify({ version, model_id: modelId }),
+      body: JSON.stringify({ version, model_id: modelId, selected_test_point_ids: selectedTestPointIds }),
     },
   );
 }

@@ -38,6 +38,7 @@ from casepilot_agent.pipeline import (
     extract_explicit_test_object,
     rebase_rewrite_candidate,
 )
+from casepilot_agent.planning import build_planning, evidence_batches, rewrite_evidence
 from casepilot_agent.providers import create_embedding_provider, create_provider
 from casepilot_agent.store import (
     JobStore,
@@ -305,6 +306,7 @@ def _context_payload(
     store: JobStore,
     job: dict[str, Any],
     embedding_provider: EmbeddingProvider | None,
+    *, full_documents: bool = False,
 ) -> dict[str, Any]:
     payload = job["input_payload"]
     query = " ".join(
@@ -317,6 +319,7 @@ def _context_payload(
     )
     stage_input = {
         "query": query,
+        "full_documents": full_documents,
         "source_ids": payload.get("knowledge_source_ids", []),
         "document_ids": payload.get("document_ids", []),
         "use_space_knowledge": payload.get("use_space_knowledge", True),
@@ -364,6 +367,12 @@ def _context_payload(
             if should_retrieve
             else []
         )
+        document_ids = [UUID(item) for item in payload.get("document_ids", [])]
+        if document_ids and full_documents:
+            attached = store.read_task_documents(
+                connection, space_id=job["space_id"], document_ids=document_ids
+            )
+            rows = attached + [row for row in rows if row["document_id"] not in document_ids]
         evidence = [
             {
                 "source_id": str(row["source_id"]),
@@ -371,7 +380,7 @@ def _context_payload(
                 "chunk_id": str(row["id"]),
                 "label": row["document_name"],
                 "locator": row["locator"],
-                "excerpt": row["content"][:800],
+                "excerpt": row["content"] if row.get("task_document") else row["content"][:800],
                 "rank": rank,
                 "scores": {
                     "rrf": float(row["rrf"]),
@@ -593,7 +602,7 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
             job = store.claim_job(connection, parsed_job_id, stage="context.prepared")
         if job is None:
             return {"job_id": job_id, "status": "duplicate_ignored"}
-        context = _context_payload(store, job, embedding_provider)
+        context = _context_payload(store, job, embedding_provider, full_documents=True)
         ensure_not_cancelled(store, parsed_job_id)
         payload = job["input_payload"]
         stage_input = {
@@ -605,28 +614,37 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
             "target_module_path": str(payload.get("target_module_path") or ""),
             "conversation_memory": list(payload.get("conversation_memory", [])),
         }
-        requirement, usage = provider.complete(
-            stage="requirement.analyzed",
-            instruction=(
-                "你是 CasePilot。只整理结构化测试说明，不生成测试点或测试用例。"
-                "若提供existing_cases，先分析模块已有覆盖，仅规划用户要求的新增缺口，保留目标模块路径。"
-                "existing_case_count 是精确数量；若提及已有用例数，必须使用该值。"
-                "target_module_path 是已解析的工作区模块路径；新增用例须放在该路径或其子模块。"
-                "若用户在修改已有说明，应完整合并其修改并保留未被推翻的信息。"
-                "先判断用户是否明确指定测试对象，写入 test_object 和 "
-                "test_object_specified。若缺少测试对象，只提出一个测试对象澄清项；"
-                "角色、流程、规则、约束、风险等其他内容均由你结合上下文分析，"
-                "必要时记录为假设，不得要求用户澄清。"
-                "context.evidence 是已检索到的资料证据；资料明确写出的数值、单位、"
-                "时间阈值、边界条件和错误码均属于已明确的信息，不是猜测。"
-                "在 business_rules 中逐条写出与测试对象相关的原始精确值及对应行为，"
-                "不得用‘规定时长’‘金额上限’等笼统说法替代证据中的具体值。"
-                "若用户要求不要猜测，只禁止补造资料未写明的值；仍须保留资料已写明的值。"
-            ),
-            payload=stage_input,
-            result_type=RequirementAnalysis,
-            model_id=str(payload.get("model_id", "auto")),
-        )
+        analyses = []
+        for batch in evidence_batches(context):
+            ensure_not_cancelled(store, parsed_job_id)
+            requirement, usage = provider.complete(
+                stage="requirement.analyzed",
+                instruction=(
+                    "你是 CasePilot。只整理结构化测试说明，不生成测试点或测试用例。"
+                    "若提供existing_cases，先分析模块已有覆盖，仅规划用户要求的新增缺口，保留目标模块路径。"
+                    "existing_case_count 是精确数量；若提及已有用例数，必须使用该值。"
+                    "target_module_path 是已解析的工作区模块路径；新增用例须放在该路径或其子模块。"
+                    "若用户在修改已有说明，应完整合并其修改并保留未被推翻的信息。"
+                    "先判断用户是否明确指定测试对象，写入 test_object 和 "
+                    "test_object_specified。若缺少测试对象，只提出一个测试对象澄清项；"
+                    "角色、流程、规则、约束、风险等其他内容均由你结合上下文分析，"
+                    "必要时记录为假设，不得要求用户澄清。"
+                    "context.evidence 是已检索到的资料证据；资料明确写出的数值、单位、"
+                    "时间阈值、边界条件和错误码均属于已明确的信息，不是猜测。"
+                    "在 business_rules 中逐条写出与测试对象相关的原始精确值及对应行为，"
+                    "不得用‘规定时长’‘金额上限’等笼统说法替代证据中的具体值。"
+                    "若用户要求不要猜测，只禁止补造资料未写明的值；仍须保留资料已写明的值。"
+                ),
+                payload={**stage_input, "context": batch},
+                result_type=RequirementAnalysis,
+                model_id=str(payload.get("model_id", "auto")),
+            )
+            analyses.append(requirement)
+        requirement = analyses[0].model_copy(deep=True)
+        for field in ("actors", "flows", "business_rules", "constraints", "risks", "assumptions"):
+            setattr(requirement, field, list(dict.fromkeys(
+                value for item in analyses for value in getattr(item, field)
+            )))
         provided_test_object = str(payload.get("provided_test_object", "")).strip()
         if not provided_test_object:
             provided_test_object = extract_explicit_test_object(str(payload["prompt"]))
@@ -658,6 +676,23 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
             "assumptions": list(raw.get("assumptions", [])),
             "open_questions": list(raw.get("open_questions", [])),
         }
+        if requirement.test_object_specified:
+            def complete_plan(stage, instruction, inputs, result_type):
+                ensure_not_cancelled(store, parsed_job_id)
+                result, plan_usage = provider.complete(
+                    stage=stage, instruction=instruction,
+                    payload={**inputs, "prompt": str(payload["prompt"])},
+                    result_type=result_type, model_id=str(payload.get("model_id", "auto")),
+                )
+                with store.connection() as connection:
+                    store.record_stage(
+                        connection, job_id=parsed_job_id, stage=stage,
+                        input_payload=inputs, output_payload=result.model_dump(mode="json"),
+                        status="completed", model=plan_usage.model,
+                        latency_ms=plan_usage.latency_ms, token_usage=plan_usage.token_usage,
+                    )
+                return result
+            content["planning"] = build_planning(requirement, context, complete_plan, analyses)
         with store.connection() as connection:
             locked_job = store.get_job_for_update(connection, parsed_job_id)
             if str(getattr(locked_job["status"], "value", locked_job["status"])) == "cancelled":
@@ -743,9 +778,14 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
             file_names=list(payload.get("file_names", [])),
             conversation_memory=list(payload.get("conversation_memory", [])),
             model_id=str(payload.get("model_id", "auto")),
+            confirmed_plan=dict(payload.get("confirmed_plan") or {}),
         )
         ensure_not_cancelled(store, parsed_job_id)
-        context = _context_payload(store, job, embedding_provider)
+        context = (
+            {"query": request.prompt, "evidence": request.confirmed_plan.get("evidence", []),
+             "warnings": request.confirmed_plan.get("warnings", []), "retrieval_mode": "snapshot"}
+            if request.confirmed_plan else _context_payload(store, job, embedding_provider)
+        )
         with store.connection() as connection:
             store.update_integration_generation_progress(
                 connection,
@@ -1018,6 +1058,17 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
         raise
 
 
+def _rewrite_reference_context(store, job, pipeline, context, snapshot):
+    def complete(stage, instruction, inputs, result_type):
+        ensure_not_cancelled(store, job["id"])
+        result, _usage = pipeline.provider.complete(
+            stage=stage, instruction=instruction, payload=inputs,
+            result_type=result_type, model_id=str(job["input_payload"].get("model_id", "auto")),
+        )
+        return result
+    return rewrite_evidence(context, snapshot, complete)
+
+
 @celery_app.task(name="casepilot.agent.rewrite")
 def rewrite_test_case(job_id: str) -> dict[str, Any]:
     parsed_job_id = UUID(job_id)
@@ -1034,8 +1085,15 @@ def rewrite_test_case(job_id: str) -> dict[str, Any]:
                 UUID(payload["base_revision_id"]),
             )
         pipeline = GenerationPipeline(create_provider(settings.provider))
+        reference_context = (
+            _context_payload(store, job, None, full_documents=True)
+            if payload.get("document_ids") else {}
+        )
         candidate = pipeline.rewrite(
             RewriteRequest(
+                context=_rewrite_reference_context(
+                    store, job, pipeline, reference_context, snapshot
+                ),
                 test_case=RewriteCaseDraft.model_validate(snapshot),
                 instruction=payload["instruction"],
                 conversation_memory=list(payload.get("conversation_memory", [])),
@@ -1106,6 +1164,10 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
                 return {"job_id": job_id, "status": "duplicate_ignored"}
             payload = job["input_payload"]
         pipeline = GenerationPipeline(create_provider(settings.provider))
+        reference_context = (
+            _context_payload(store, job, None, full_documents=True)
+            if payload.get("document_ids") else {}
+        )
         items: list[dict[str, Any]] = []
         instruction = str(payload["instruction"])
         previous_proposals = dict(payload.get("previous_proposals", {}))
@@ -1125,6 +1187,9 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
             working = previous["proposed_snapshot"] if previous else snapshot
             candidate = pipeline.rewrite(
                 RewriteRequest(
+                    context=_rewrite_reference_context(
+                        store, job, pipeline, reference_context, working
+                    ),
                     test_case=RewriteCaseDraft.model_validate(working),
                     instruction=instruction,
                     conversation_memory=list(payload.get("conversation_memory", [])),
@@ -1168,6 +1233,9 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
             )
             candidate = pipeline.rewrite(
                 RewriteRequest(
+                    context=_rewrite_reference_context(
+                        store, job, pipeline, reference_context, working.model_dump(mode="json")
+                    ),
                     test_case=working,
                     instruction=instruction,
                     conversation_memory=list(payload.get("conversation_memory", [])),

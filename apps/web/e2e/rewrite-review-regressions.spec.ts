@@ -142,16 +142,24 @@ test('R4 compound assignment also performs the semantic step rewrite', async ({ 
   const change = await ready(page, turn);
   const proposed = change.items.find(i => i.ref === target.id)!.proposed_snapshot;
   expect(proposed.title).toBe('弱网登录校验');
-  expect(JSON.stringify(proposed.steps)).toContain('重试');
-  expect(JSON.stringify(proposed.steps)).toMatch(/断网|网络/);
   expect(await s.read()).toEqual(s.original);
   await accept(page);
   // The real planner may split a compound instruction into dependent tasks.
   // Review every resulting proposal, then verify that the whole request closed.
   let state = await get<ConversationDto>(page, `/conversations/${turn.conversation_id}`);
   for (let round = 0; round < 8; round += 1) {
-    const pending = state.operation_history?.find(op => op.status === 'awaiting_confirmation' && op.related_change_set_id);
+    const pending = state.operation_history?.find(op => ['awaiting_confirmation', 'awaiting_target'].includes(op.status));
     if (!pending) break;
+    if (!pending.related_change_set_id) {
+      const confirming = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/resume'));
+      await page.getByRole('button', { name: '确认修改并生成建议', exact: true }).last().click();
+      const response = await confirming;
+      expect(response.ok()).toBeTruthy();
+      await ready(page, await response.json());
+      await accept(page);
+      state = await get<ConversationDto>(page, `/conversations/${turn.conversation_id}`);
+      continue;
+    }
     const next = await get<CaseChangeSetDto>(page, `/case-change-sets/${pending.related_change_set_id}`);
     expect(next.status).toBe('ready');
     const notice = page.getByTestId('active-mutation-task-notice');
@@ -161,7 +169,10 @@ test('R4 compound assignment also performs the semantic step rewrite', async ({ 
     state = await get<ConversationDto>(page, `/conversations/${turn.conversation_id}`);
   }
   expect(state.operation_history?.filter(op => ['queued', 'running', 'awaiting_confirmation', 'failed', 'awaiting_target'].includes(op.status))).toEqual([]);
-  expect(JSON.stringify((await s.read()).find(c => c.id === target.id)?.steps)).toContain('重试');
+  const finalTarget = (await s.read()).find(c => c.id === target.id)!;
+  expect(finalTarget.title).toBe('弱网登录校验');
+  expect(JSON.stringify(finalTarget.steps)).toContain('重试');
+  expect(JSON.stringify(finalTarget.steps)).toMatch(/断网|网络/);
   expect((await s.read()).find(c => c.id === s.original[1].id)).toEqual(s.original[1]);
   await evidence(page, info, { change, state, after: await s.read() });
 });
