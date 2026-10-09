@@ -1,5 +1,7 @@
 "use client";
 
+import { ExcelExportButton } from "@/components/excel-export-button";
+import { createExecutionWorkbook, createExecutionSummaryWorkbook, downloadExcel } from "@/lib/excel-export";
 import { ExecutionNotes } from "@/components/execution-notes";
 import { PlaylistPicker } from "@/components/playlist-picker";
 import {
@@ -663,18 +665,27 @@ export function ExecutionWorkspace({
               <h1>{pick("Execution runs", "执行任务")}</h1>
               <p>{pick("Track live progress, results, and participants across all runs.", "查看所有任务的实时进度、执行结果和参与成员。")}</p>
             </div>
-            <button
-              type="button"
-              className="management-button management-button--primary"
-              onClick={() => {
-                setSelectedPlaylist(null);
-                setCreateSeedCollectionId("");
-                setPlaylistRequestId((current) => current + 1);
-                setView("create");
-              }}
-            >
-              <Plus size={16} /> {pick("New Playlist run", "新建 Playlist 执行任务")}
-            </button>
+            <div className="execution-header__actions">
+              <ExcelExportButton
+                disabled={!filteredRuns.length}
+                title={pick("Export the matching task summaries", "导出当前搜索结果中的任务汇总")}
+                onExport={async () => {
+                  await downloadExcel(await createExecutionSummaryWorkbook(filteredRuns), "执行任务汇总");
+                }}
+              />
+              <button
+                type="button"
+                className="management-button management-button--primary"
+                onClick={() => {
+                  setSelectedPlaylist(null);
+                  setCreateSeedCollectionId("");
+                  setPlaylistRequestId((current) => current + 1);
+                  setView("create");
+                }}
+              >
+                <Plus size={16} /> {pick("New Playlist run", "新建 Playlist 执行任务")}
+              </button>
+            </div>
           </header>
 
           <section className="execution-playlist-callout">
@@ -964,6 +975,16 @@ export function ExecutionWorkspace({
               </p>
             </div>
             <div className="execution-header__actions">
+              <ExcelExportButton
+                disabled={loading || saving || recordDraftDirty || !run.records.length}
+                title={recordDraftDirty
+                  ? pick("Save or discard changes before exporting", "请先保存或放弃当前修改，再导出")
+                  : pick("Export all saved results in this run", "导出当前任务的全部已保存执行结果")}
+                onExport={async () => {
+                  const latest = await getExecutionRun(run.id);
+                  await downloadExcel(await createExecutionWorkbook(latest), `执行任务-${latest.description}`);
+                }}
+              />
               <div className="execution-progress">
                 <div>
                   <strong>{progress.percent}%</strong>

@@ -1,5 +1,8 @@
 "use client";
 
+import { ExcelExportButton } from "@/components/excel-export-button";
+import { createCaseWorkbook, downloadExcel } from "@/lib/excel-export";
+import { listTestCases } from "@/lib/casepilot-api";
 import { CaseMindMap } from "@/components/case-mind-map";
 import {
   CollectionStatusBadge,
@@ -262,6 +265,14 @@ export function CaseLibrary({
           <div className="case-library__header-actions">
             {selectedCollection && (
               <>
+                <ExcelExportButton
+                  disabled={loading || !cases.length || importingCollectionId === selectedCollection.id}
+                  title={pick("Export all cases in this collection, across all pages", "导出当前集合的全部用例（包含所有分页）")}
+                  onExport={async () => {
+                    const items = await listTestCases(selectedCollection.id);
+                    await downloadExcel(await createCaseWorkbook(items), selectedCollection.name);
+                  }}
+                />
                 <button
                   className="management-button management-button--ai"
                   type="button"
