@@ -44,8 +44,12 @@ class Store:
     def update_job(self, connection, job_id, **values):
         self.job.update(deepcopy(values))
 
+    def load_completed_stage(self, connection, job_id, stage, input_payload):
+        return next((s for s in self.stages if s["stage"] == stage
+                     and s["input_payload"] == input_payload), None)
+
     def record_stage(self, connection, **values):
-        self.stages.append(deepcopy(values))
+        self.stages.append(deepcopy({"latency_ms": 0, "token_usage": {}, **values}))
 
     def publish(self, job_id, event):
         self.events.append(deepcopy(event))
@@ -92,6 +96,12 @@ def test_draft_persists_before_streaming_and_only_finalizes_complete_plan(monkey
         assert store.job["status"] == "failed"
         assert store.briefs == []
         assert "planning_preview" in store.job["output_payload"]
+        checkpoint = [s for s in store.stages if s["stage"] == "requirement.batch.1"]
+        assert len(checkpoint) == 1
+        fail = False
+        tasks.draft_test_brief(str(store.job["id"]))
+        assert store.job["status"] == "completed"
+        assert len([s for s in store.stages if s["stage"] == "requirement.batch.1"]) == 1
     else:
         tasks.draft_test_brief(str(store.job["id"]))
         assert store.job["status"] == "completed"

@@ -9,11 +9,14 @@ from sqlalchemy import delete
 from casepilot_api import generation
 from casepilot_api.database import get_session_factory
 from casepilot_api.main import app
-from casepilot_api.models import Account, Conversation, GenerationJob, Space
+from casepilot_api.models import Account, Conversation, GenerationJob, Space, WorkspaceTestBrief
 
 
+@pytest.mark.parametrize("operation", ["generate", "draft_brief"])
 @pytest.mark.asyncio
-async def test_retry_restores_failed_context_and_rejects_duplicate_or_changed_brief(monkeypatch):
+async def test_retry_restores_failed_context_and_rejects_duplicate_or_changed_brief(
+    monkeypatch, operation,
+):
     enqueued = []
     monkeypatch.setattr(generation, "enqueue_task", lambda *args, **kwargs: enqueued.append(args))
     account_id = space_id = None
@@ -48,7 +51,7 @@ async def test_retry_restores_failed_context_and_rejects_duplicate_or_changed_br
                     space_id=space_id,
                     account_id=account_id,
                     collection_id=UUID(collection["id"]),
-                    operation="generate",
+                    operation=operation,
                     status="failed",
                     stage="failed",
                     input_payload={"conversation_id": str(cid), "confirmed_test_brief_version": 1},
@@ -63,7 +66,13 @@ async def test_retry_restores_failed_context_and_rejects_duplicate_or_changed_br
             assert len(enqueued) == 1
             with get_session_factory()() as db:
                 conversation = db.get(Conversation, cid)
-                assert conversation.context["phase"] == "generating"
+                assert conversation.context["phase"] == (
+                    "brief_drafting" if operation == "draft_brief" else "generating"
+                )
+                assert enqueued[0][1] == (
+                    "casepilot.agent.draft_brief" if operation == "draft_brief"
+                    else "casepilot.agent.generate"
+                )
                 assert conversation.context["active_job_id"] == str(job_id)
             response = await client.post(f"/api/v1/generation-jobs/{job_id}/retry")
             assert response.status_code == 409
@@ -77,6 +86,8 @@ async def test_retry_restores_failed_context_and_rejects_duplicate_or_changed_br
                     "active_job_id": None,
                     "confirmed_brief_version": 2,
                 }
+                if operation == "draft_brief":
+                    db.add(WorkspaceTestBrief(conversation_id=cid, version=1, content={}))
                 db.commit()
             response = await client.post(f"/api/v1/generation-jobs/{job_id}/retry")
             assert response.status_code == 409

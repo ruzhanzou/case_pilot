@@ -36,6 +36,70 @@ def evidence_batches(context: dict[str, Any], budget: int = 18000) -> list[dict[
     return batches
 
 
+def analyze_batches(batches, complete, *, load, save, on_progress, check_cancelled):
+    """Bound model calls; checkpoint each result before publishing progress."""
+    completed, active = {}, {}
+    pending = []
+    for index, batch in enumerate(batches):
+        check_cancelled()
+        cached = load(index, batch)
+        if cached is None:
+            pending.append(index)
+        else:
+            completed[index] = cached
+
+    last_progress = None
+
+    def publish():
+        nonlocal last_progress
+        progress = (len(completed), len(batches), tuple(sorted(active.values())))
+        if progress != last_progress:
+            on_progress(*progress)
+            last_progress = progress
+
+    def worker(index):
+        with asyncio.Runner() as runner:
+            asyncio.set_event_loop(runner.get_loop())
+            check_cancelled()
+            return complete(index, batches[index])
+
+    publish()
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="requirements") as pool:
+        remaining = iter(pending)
+        failure = None
+        try:
+            while True:
+                while len(active) < 3 and failure is None:
+                    check_cancelled()
+                    index = next(remaining, None)
+                    if index is None:
+                        break
+                    active[pool.submit(worker, index)] = index
+                publish()
+                if not active:
+                    if failure is not None:
+                        raise failure
+                    break
+                done, _ = wait(active, timeout=0.5, return_when=FIRST_COMPLETED)
+                check_cancelled()
+                for future in sorted(done, key=lambda item: active[item]):
+                    index = active.pop(future)
+                    try:
+                        result = future.result()
+                    except Exception as error:
+                        failure = failure or error
+                        continue
+                    check_cancelled()
+                    save(index, batches[index], result)
+                    completed[index] = result
+                    publish()
+        except BaseException:
+            for future in active:
+                future.cancel()
+            raise
+    return [completed[index] for index in range(len(batches))]
+
+
 PLANNING_CONCURRENCY = 3
 FEATURES_PER_BATCH = 3
 POINTS_PER_BATCH = 12

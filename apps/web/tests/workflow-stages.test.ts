@@ -7,3 +7,12 @@ test('batch records collapse to ordered phases with the latest status', () => {
   assert.equal(stages.length, 4);
   assert.deepEqual(summarizeWorkflowStages([]), []);
 });
+
+test('requirement checkpoints do not appear as separate workflow steps', () => {
+  assert.deepEqual(summarizeWorkflowStages([
+    { stage: 'context.prepared' },
+    { stage: 'requirement.batch.2' },
+    { stage: 'requirement.batch.1' },
+    { stage: 'requirement.analyzed' },
+  ]), [{ stage: 'context.prepared' }, { stage: 'requirement.analyzed' }]);
+});

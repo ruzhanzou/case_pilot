@@ -27,6 +27,7 @@ from casepilot_api.models import (
     KnowledgeDocument,
     KnowledgeSource,
     WorkspaceCandidate,
+    WorkspaceTestBrief,
 )
 from casepilot_api.schemas import (
     GenerationAnswersRequest,
@@ -310,7 +311,7 @@ def retry_generation(
     status = job.status.value if hasattr(job.status, "value") else str(job.status)
     if status != "failed":
         raise HTTPException(status_code=409, detail="only_failed_generation_can_retry")
-    if job.operation != "generate":
+    if job.operation not in {"generate", "draft_brief"}:
         raise HTTPException(status_code=409, detail="only_generation_job_can_retry")
     conversation_id = job.input_payload.get("conversation_id")
     if conversation_id:
@@ -327,16 +328,26 @@ def retry_generation(
             )
             active_job_id = conversation.context.get("active_job_id")
             active_operation_id = conversation.context.get("active_operation_id")
+            latest_brief_version = db.scalar(
+                select(WorkspaceTestBrief.version)
+                .where(WorkspaceTestBrief.conversation_id == conversation.id)
+                .order_by(WorkspaceTestBrief.version.desc()).limit(1)
+            ) if job.operation == "draft_brief" else None
             if (
                 (active_job_id and str(active_job_id) != str(job.id))
                 or (active_operation_id and str(active_operation_id) != str(operation_id))
                 or (operation and operation.related_job_id != job.id)
-                or conversation.context.get("confirmed_brief_version")
-                != job.input_payload.get("confirmed_test_brief_version")
+                or (job.operation == "generate" and
+                    conversation.context.get("confirmed_brief_version")
+                    != job.input_payload.get("confirmed_test_brief_version"))
+                or (job.operation == "draft_brief" and latest_brief_version
+                    != job.input_payload.get("current_test_brief_version"))
             ):
                 raise HTTPException(status_code=409, detail="retry_context_mismatch")
             conversation.context = {
-                **dict(conversation.context), "phase": "generating", "active_job_id": str(job.id),
+                **dict(conversation.context),
+                "phase": "brief_drafting" if job.operation == "draft_brief" else "generating",
+                "active_job_id": str(job.id),
                 "active_operation_id": str(operation_id) if operation_id else None,
             }
     job.status = "queued"
@@ -352,7 +363,8 @@ def retry_generation(
         .where(ConversationMessage.related_job_id == job.id)
         .values(status="running", content="", message_metadata={"retrying": True})
     )
-    enqueue_task(db, "casepilot.agent.generate", [str(job.id)], task_id=job.id)
+    enqueue_task(db, "casepilot.agent.draft_brief" if job.operation == "draft_brief"
+                 else "casepilot.agent.generate", [str(job.id)], task_id=job.id)
     db.commit()
     Redis.from_url(settings.redis_url).delete(
         f"casepilot:generation:{job.id}:events"

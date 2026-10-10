@@ -481,6 +481,8 @@ export function CaseWorkbench({
   const conversationRunning = busy || queueRunning || workspaceIsRunning(workspace);
   const runningLabel = pendingMessage !== null
     ? pick("Thinking — understanding your request and selecting cases", "正在思考 · 理解需求并筛选用例")
+    : planningProgress?.phase === "requirements"
+      ? pick(`Analyzing requirements · ${planningProgress.completed_batches ?? 0}/${planningProgress.total_batches} batches`, `分析测试需求 · 已完成 ${planningProgress.completed_batches ?? 0}/${planningProgress.total_batches} 批`)
     : planningProgress?.total_batches
       ? pick(`Planning · ${planningProgress.completed_batches ?? 0}/${planningProgress.total_batches} batches · ${planningProgress.test_point_count ?? 0} test points ready`, `规划中 · ${planningProgress.completed_batches ?? 0}/${planningProgress.total_batches} 批 · ${planningProgress.test_point_count ?? 0} 个测试点已就绪`)
     : progress?.total_count
@@ -736,9 +738,9 @@ export function CaseWorkbench({
             }
             setProgress((current) => ({
               ...stage,
-              planning_preview: (stage.planning_progress?.completed_batches ?? 0) < (current?.planning_progress?.completed_batches ?? 0)
+              planning_preview: (stage.planning_progress?.phase === current?.planning_progress?.phase && (stage.planning_progress?.completed_batches ?? 0) < (current?.planning_progress?.completed_batches ?? 0))
                 ? current?.planning_preview : stage.planning_preview ?? current?.planning_preview,
-              planning_progress: (stage.planning_progress?.completed_batches ?? 0) < (current?.planning_progress?.completed_batches ?? 0)
+              planning_progress: (stage.planning_progress?.phase === current?.planning_progress?.phase && (stage.planning_progress?.completed_batches ?? 0) < (current?.planning_progress?.completed_batches ?? 0))
                 ? current?.planning_progress : stage.planning_progress ?? current?.planning_progress,
               progress: Math.max(stage.progress, current?.progress ?? 0),
               started_at: stage.started_at ?? current?.started_at,
@@ -804,7 +806,7 @@ export function CaseWorkbench({
     try {
       const failedWorkflow = workflowByMessageId.get(messageId);
       openReviewPlan(messageId);
-      if (failedWorkflow?.operation === "generate") {
+      if (failedWorkflow && ["generate", "draft_brief"].includes(failedWorkflow.operation)) {
         await retryGeneration(failedWorkflow.job_id);
         await refreshWorkspace();
         await waitAndRefresh(failedWorkflow.job_id);
@@ -1113,7 +1115,7 @@ export function CaseWorkbench({
     setBusy(true);
     setError("");
     try {
-      if (task.status === "failed" && task.workflow?.operation === "generate") {
+      if (task.status === "failed" && task.workflow && ["generate", "draft_brief"].includes(task.workflow.operation)) {
         await retryGeneration(task.workflow.job_id);
         await refreshWorkspace();
         await waitAndRefresh(task.workflow.job_id);

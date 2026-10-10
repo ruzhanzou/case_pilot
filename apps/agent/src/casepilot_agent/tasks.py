@@ -1,7 +1,7 @@
+import json
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-import json
 from math import sqrt
 from pathlib import Path
 from threading import RLock
@@ -42,7 +42,12 @@ from casepilot_agent.pipeline import (
     rebase_rewrite_candidate,
     requested_case_count,
 )
-from casepilot_agent.planning import build_planning, evidence_batches, rewrite_evidence
+from casepilot_agent.planning import (
+    analyze_batches,
+    build_planning,
+    evidence_batches,
+    rewrite_evidence,
+)
 from casepilot_agent.providers import create_embedding_provider, create_provider
 from casepilot_agent.store import (
     JobStore,
@@ -625,32 +630,86 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
             "target_module_path": str(payload.get("target_module_path") or ""),
             "conversation_memory": list(payload.get("conversation_memory", [])),
         }
-        analyses = []
-        for batch in evidence_batches(context):
-            ensure_not_cancelled(store, parsed_job_id)
-            requirement, usage = provider.complete(
-                stage="requirement.analyzed",
-                instruction=(
-                    "你是 CasePilot。只整理结构化测试说明，不生成测试点或测试用例。"
-                    "若提供existing_cases，先分析模块已有覆盖，仅规划用户要求的新增缺口，保留目标模块路径。"
-                    "existing_case_count 是精确数量；若提及已有用例数，必须使用该值。"
-                    "target_module_path 是已解析的工作区模块路径；新增用例须放在该路径或其子模块。"
-                    "若用户在修改已有说明，应完整合并其修改并保留未被推翻的信息。"
-                    "先判断用户是否明确指定测试对象，写入 test_object 和 "
-                    "test_object_specified。若缺少测试对象，只提出一个测试对象澄清项；"
-                    "角色、流程、规则、约束、风险等其他内容均由你结合上下文分析，"
-                    "必要时记录为假设，不得要求用户澄清。"
-                    "context.evidence 是已检索到的资料证据；资料明确写出的数值、单位、"
-                    "时间阈值、边界条件和错误码均属于已明确的信息，不是猜测。"
-                    "在 business_rules 中逐条写出与测试对象相关的原始精确值及对应行为，"
-                    "不得用‘规定时长’‘金额上限’等笼统说法替代证据中的具体值。"
-                    "若用户要求不要猜测，只禁止补造资料未写明的值；仍须保留资料已写明的值。"
-                ),
-                payload={**stage_input, "context": batch},
-                result_type=RequirementAnalysis,
-                model_id=str(payload.get("model_id", "auto")),
+        instruction = (
+            "你是 CasePilot。只整理结构化测试说明，不生成测试点或测试用例。"
+            "若提供existing_cases，先分析模块已有覆盖，仅规划用户要求的新增缺口，保留目标模块路径。"
+            "existing_case_count 是精确数量；若提及已有用例数，必须使用该值。"
+            "target_module_path 是已解析的工作区模块路径；新增用例须放在该路径或其子模块。"
+            "若用户在修改已有说明，应完整合并其修改并保留未被推翻的信息。"
+            "先判断用户是否明确指定测试对象，写入 test_object 和 "
+            "test_object_specified。若缺少测试对象，只提出一个测试对象澄清项；"
+            "角色、流程、规则、约束、风险等其他内容均由你结合上下文分析，"
+            "必要时记录为假设，不得要求用户澄清。"
+            "context.evidence 是已检索到的资料证据；资料明确写出的数值、单位、"
+            "时间阈值、边界条件和错误码均属于已明确的信息，不是猜测。"
+            "在 business_rules 中逐条写出与测试对象相关的原始精确值及对应行为，"
+            "不得用‘规定时长’‘金额上限’等笼统说法替代证据中的具体值。"
+            "若用户要求不要猜测，只禁止补造资料未写明的值；仍须保留资料已写明的值。"
+        )
+        model_id = str(payload.get("model_id", "auto"))
+        batches = evidence_batches(context)
+
+        def batch_input(index, batch):
+            return {**stage_input, "context": batch, "model_id": model_id,
+                    "instruction": instruction, "analysis_version": 1, "batch_index": index}
+
+        def load_batch(index, batch):
+            with store.connection() as connection:
+                cached = store.load_completed_stage(
+                    connection, parsed_job_id, f"requirement.batch.{index + 1}",
+                    batch_input(index, batch),
+                )
+            if cached:
+                return (RequirementAnalysis.model_validate(cached["output_payload"]),
+                        UsageMetadata(model=cached["model"], latency_ms=cached["latency_ms"],
+                                      token_usage=cached["token_usage"]))
+            return None
+
+        def complete_batch(index, batch):
+            return provider.complete(
+                stage="requirement.analyzed", instruction=instruction,
+                payload={**stage_input, "context": batch}, result_type=RequirementAnalysis,
+                model_id=model_id,
             )
-            analyses.append(requirement)
+
+        def save_batch(index, batch, result):
+            analysis, batch_usage = result
+            with store.connection() as connection:
+                lock_active_job(store, connection, parsed_job_id)
+                store.record_stage(
+                    connection, job_id=parsed_job_id, stage=f"requirement.batch.{index + 1}",
+                    input_payload=batch_input(index, batch),
+                    output_payload=analysis.model_dump(mode="json"), status="completed",
+                    model=batch_usage.model, latency_ms=batch_usage.latency_ms,
+                    token_usage=batch_usage.token_usage,
+                )
+
+        def publish_analysis(done, total, active):
+            metadata = {"phase": "requirements", "completed_batches": done,
+                        "total_batches": total, "active_batches": [],
+                        "progress": 10 + int(12 * done / max(1, total))}
+            output = {"planning_progress": metadata, "started_at": started_at}
+            with store.connection() as connection:
+                lock_active_job(store, connection, parsed_job_id)
+                store.update_job(connection, parsed_job_id, status="running",
+                                 stage="requirement.analyzed", output_payload=output)
+            store.publish(parsed_job_id, {"event": "requirement.analyzed", "job_id": job_id,
+                          "progress": metadata["progress"], **output})
+
+        results = analyze_batches(
+            batches, complete_batch, load=load_batch, save=save_batch,
+            on_progress=publish_analysis,
+            check_cancelled=lambda: ensure_not_cancelled(store, parsed_job_id),
+        )
+        analyses = [result[0] for result in results]
+        usage = UsageMetadata(
+            model=results[-1][1].model,
+            latency_ms=sum(result[1].latency_ms for result in results),
+            token_usage={key: sum(result[1].token_usage.get(key, 0) for result in results)
+                         for key in {key for _, item in results for key in item.token_usage}
+                         if all(isinstance(item.token_usage.get(key, 0), (int, float))
+                                for _, item in results)},
+        )
         requirement = analyses[0].model_copy(deep=True)
         for field in ("actors", "flows", "business_rules", "constraints", "risks", "assumptions"):
             setattr(requirement, field, list(dict.fromkeys(
