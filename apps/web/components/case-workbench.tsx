@@ -4,6 +4,7 @@ import { ConversationAttachments } from "@/components/conversation-attachments";
 import { planningModuleAliases } from "@/lib/case-module-tree";
 
 import { summarizeWorkflowStages } from "@/lib/workflow-stages";
+import { CasePolishDialog } from "@/components/case-polish-dialog";
 import { CaseContentFields } from "@/components/case-content-fields";
 import { CaseTaskArtifacts } from "@/components/case-task-artifacts";
 import { ConversationTaskFlow } from "@/components/conversation-task-flow";
@@ -326,6 +327,7 @@ export function CaseWorkbench({
   const [historicalChangeSet, setHistoricalChangeSet] = useState<CaseChangeSetDto | null>(null);
   const [resultLoadError, setResultLoadError] = useState("");
   const [planMessageId, setPlanMessageId] = useState("");
+  const [polishOpen, setPolishOpen] = useState(false);
   const [editingCaseId, setEditingCaseId] = useState("");
   const [creatingInWorkspace, setCreatingInWorkspace] = useState(false);
   const [savingInWorkspace, setSavingInWorkspace] = useState(false);
@@ -535,6 +537,15 @@ export function CaseWorkbench({
     setArtifactOpen(false);
     setViewMode("plan");
     if (workspace) void updateWorkspaceState(workspace.id, { active_view: "plan" });
+  };
+  const openPendingCandidateReview = () => {
+    const pending = [activeChangeSet, historicalChangeSet].find(change =>
+      change?.status === "ready" && change.items.some(item =>
+        item.target_type === "candidate" && pendingCandidateRefs.includes(item.ref)));
+    const task = resultTasks.find(item => item.operation?.related_change_set_id === pending?.id
+      || item.versions?.some(version => version.operation?.related_change_set_id === pending?.id));
+    openReviewPlan(task?.id);
+    requestAnimationFrame(() => document.getElementById("collection-changes")?.scrollIntoView({ block: "start", behavior: "smooth" }));
   };
   const openCaseEditor = (testCase: TestCaseDto) => {
     setSelectedCaseId(testCase.id);
@@ -1042,6 +1053,42 @@ export function CaseWorkbench({
       await continueTaskQueue(await refreshWorkspace());
     } catch (caught) { setError(caught instanceof Error ? caught.message : pick("Could not start follow-up task", "后续任务启动失败")); }
     finally { setBusy(false); }
+  };
+
+  const candidateHasUnsavedChanges = Boolean(candidateDraft && JSON.stringify(candidateDraft.snapshot) !== JSON.stringify(candidates.find(item => item.id === candidateDraft.id)?.snapshot));
+
+  const polishCase = async (content: string) => {
+    if (!workspace || !selectedCase || conversationRunning || candidateSaving) return;
+    const target = caseTarget(selectedCase);
+    setBusy(true);
+    setError("");
+    try {
+      if (candidateDraft && candidateHasUnsavedChanges) {
+        if (!candidateDraft.snapshot.title.trim() || !candidateDraft.snapshot.steps.some(step => step.action.trim()) || !candidateDraft.snapshot.steps.some(step => step.expected.trim())) {
+          throw new Error(pick("Add a title, procedure and checkpoints before polishing.", "请先填写标题、操作步骤和校验点，再进行润色。"));
+        }
+        const saved = await updateWorkspaceCandidate(candidateDraft.id, {
+          baseVersion: candidateDraft.version,
+          snapshot: candidateDraft.snapshot as unknown as Record<string, unknown>,
+        });
+        setCandidateDraft(structuredClone(saved));
+        await refreshWorkspace();
+      }
+      const turn = await sendConversationMessage(workspace.id, {
+        content, modelId, scope: "current", intentOverride: "CASE_MODIFY",
+        targets: [target], knowledgeSourceIds: sourceIds, useSpaceKnowledge: true,
+      });
+      setPolishOpen(false);
+      setSelectedTargets([{ key: JSON.stringify(target), label: selectedCase.title, target }]);
+      setRewriteTargets([{ key: JSON.stringify(target), label: selectedCase.title, target }]);
+      openReviewPlan(turn.operation_plan?.current_operation_id ?? turn.operation_plan?.operations[0]?.id);
+      await refreshWorkspace();
+      if (turn.action.job_id) await waitAndRefresh(turn.action.job_id);
+      await refreshWorkspace();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : pick("Could not generate suggestions", "生成建议失败"));
+      throw caught;
+    } finally { setBusy(false); }
   };
 
   const discardTask = async (task: WorkspaceTask) => {
@@ -2457,6 +2504,9 @@ export function CaseWorkbench({
                 </button>
               )}
             </div>
+            {selectedCandidatesNeedReview && viewMode !== "plan" && <button type="button" disabled={conversationRunning} onClick={openPendingCandidateReview}>
+              <Sparkles size={16} /> {pick("Review AI changes before accepting candidates", "先审阅 AI 修改，再采纳候选")}
+            </button>}
             <div hidden={viewMode !== "plan"} style={viewMode !== "plan" ? { display: "none" } : undefined}><CaseTaskWorkspace
               tasks={resultTasks}
               selectedId={selectedTask?.id ?? ""}
@@ -2488,45 +2538,6 @@ export function CaseWorkbench({
             </div>}
             {selectedScopeChanged && <p className="task-version-notice">{pick("This result is based on earlier case versions. Review again before preparing changes.", "此结果基于历史用例版本，请重新检查后再生成变更。")}</p>}
             {selectedChangeSetId && !selectedTaskChangeSet && <p role="status">{resultLoadError || pick("Loading task result…", "正在加载任务结果…")}</p>}
-            {selectedTask && workspace && !historicalVersion && <CaseTaskArtifacts
-              generationProgress={selectedTask.operation?.related_job_id === currentJobId ? progress : null}
-              task={selectedTask} conversation={workspace} cases={cases} busy={conversationRunning} pendingCandidateRefs={pendingCandidateRefs}
-              onLocate={(id) => { setSelectedCaseId(id); setCandidateDraft(candidates.find((item) => item.id === id) ?? null); setViewMode("list"); setInspectorHidden(false); }}
-              onToggleCandidate={(candidate) => void toggleCandidate(candidate, !candidate.included)}
-              onRefine={() => {
-                const candidate = candidates.find(item => item.included) ?? candidates[0];
-                if (!candidate) return;
-                setSelectedCaseId(candidate.id);
-                setCandidateDraft(structuredClone(candidate));
-                setCandidateSaveMessage("");
-                setViewMode("list");
-                setInspectorHidden(false);
-              }}
-              onCommit={() => void commitCandidates()} onBrief={selectBriefVersion} onGenerate={() => void confirmBriefAndGenerate()}
-            />}
-            {(editingCaseId || creatingInWorkspace) && (
-              <div hidden={viewMode !== "plan"}>
-              <CaseEditorDialog
-                key={editingCaseId || "workspace-new-case"}
-                inline
-                testCase={cases.find((item) => item.id === editingCaseId) ?? null}
-                saving={savingInWorkspace}
-                onClose={() => { setEditingCaseId(""); setCreatingInWorkspace(false); }}
-                onSave={async (input) => {
-                  setSavingInWorkspace(true);
-                  try {
-                    const current = cases.find((item) => item.id === editingCaseId);
-                    if (current) await onSaveCase(current, input);
-                    else await onCreateCaseInline(input);
-                    setEditingCaseId("");
-                    setCreatingInWorkspace(false);
-                  } finally {
-                    setSavingInWorkspace(false);
-                  }
-                }}
-              />
-              </div>
-            )}
         {selectedTaskChangeSet && (
           <div id="collection-changes">
             <CaseCollectionChanges
@@ -2571,6 +2582,45 @@ export function CaseWorkbench({
             />
           </div>
         )}
+            {selectedTask && workspace && !historicalVersion && <CaseTaskArtifacts
+              generationProgress={selectedTask.operation?.related_job_id === currentJobId ? progress : null}
+              task={selectedTask} conversation={workspace} cases={cases} busy={conversationRunning} pendingCandidateRefs={pendingCandidateRefs} onReviewChanges={openPendingCandidateReview}
+              onLocate={(id) => { setSelectedCaseId(id); setCandidateDraft(candidates.find((item) => item.id === id) ?? null); setViewMode("list"); setInspectorHidden(false); }}
+              onToggleCandidate={(candidate) => void toggleCandidate(candidate, !candidate.included)}
+              onRefine={() => {
+                const candidate = candidates.find(item => item.included) ?? candidates[0];
+                if (!candidate) return;
+                setSelectedCaseId(candidate.id);
+                setCandidateDraft(structuredClone(candidate));
+                setCandidateSaveMessage("");
+                setViewMode("list");
+                setInspectorHidden(false);
+              }}
+              onCommit={() => void commitCandidates()} onBrief={selectBriefVersion} onGenerate={() => void confirmBriefAndGenerate()}
+            />}
+            {(editingCaseId || creatingInWorkspace) && (
+              <div hidden={viewMode !== "plan"}>
+              <CaseEditorDialog
+                key={editingCaseId || "workspace-new-case"}
+                inline
+                testCase={cases.find((item) => item.id === editingCaseId) ?? null}
+                saving={savingInWorkspace}
+                onClose={() => { setEditingCaseId(""); setCreatingInWorkspace(false); }}
+                onSave={async (input) => {
+                  setSavingInWorkspace(true);
+                  try {
+                    const current = cases.find((item) => item.id === editingCaseId);
+                    if (current) await onSaveCase(current, input);
+                    else await onCreateCaseInline(input);
+                    setEditingCaseId("");
+                    setCreatingInWorkspace(false);
+                  } finally {
+                    setSavingInWorkspace(false);
+                  }
+                }}
+              />
+              </div>
+            )}
             {activePlanReport && !["running", "queued"].includes(selectedTask?.status ?? "") && (
               <CaseReviewPlan
                 hidden={viewMode !== "plan"}
@@ -2592,6 +2642,7 @@ export function CaseWorkbench({
                 changeSet={activeChangeSet}
                 busy={conversationRunning}
                 onLocate={(caseId) => {
+                  setInspectorHidden(false);
                   setSelectedCaseId(caseId);
                   setMapFocusVersion((version) => version + 1);
                   setViewMode("map");
@@ -2611,6 +2662,7 @@ export function CaseWorkbench({
                 focusVersion={mapFocusVersion}
                 onSaveCase={phase === "maintenance" ? onSaveCase : undefined}
                 onSelectCase={(caseId) => {
+                  setInspectorHidden(false);
                   setSelectedCaseId(caseId);
                   if (workspace) void updateWorkspaceState(workspace.id, { selected_case_id: caseId });
                   const candidate = candidates.find((item) => item.id === caseId);
@@ -2670,6 +2722,7 @@ export function CaseWorkbench({
                         type="button"
                         aria-pressed={selectedCaseId === testCase.id}
                         onClick={() => {
+                          setInspectorHidden(false);
                           setSelectedCaseId(testCase.id);
                           setCandidateDraft(
                             candidate ? structuredClone(candidate) : null,
@@ -2781,6 +2834,7 @@ export function CaseWorkbench({
             <>
               <header>
                 <span>{pick("CASE DETAILS", "用例详情")}</span>
+                <button type="button" className="case-polish-trigger" disabled={!workspace || conversationRunning || candidateSaving} onClick={() => setPolishOpen(true)}><Sparkles size={15} /> {pick("AI polish", "AI 润色")}</button>
                 <button type="button" className="case-details-close" aria-label={pick("Close case details", "关闭用例详情")} title={pick("Close case details", "关闭用例详情")} onClick={() => setInspectorHidden(true)}><X size={16} /></button>
                 {phase === "maintenance" && (
                   <button type="button" onClick={() => openCaseEditor(selectedCase)}>
@@ -2921,6 +2975,13 @@ export function CaseWorkbench({
           )}
         </aside>
       )}
+      {polishOpen && selectedCase && <CasePolishDialog
+        key={selectedCase.id}
+        title={candidateDraft?.snapshot.title ?? selectedCase.title}
+        hasUnsavedChanges={candidateHasUnsavedChanges}
+        onClose={() => setPolishOpen(false)}
+        onGenerate={polishCase}
+      />}
     </section>
   );
 }

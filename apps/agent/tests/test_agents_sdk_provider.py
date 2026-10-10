@@ -415,3 +415,12 @@ def test_batch_instruction_is_scoped_to_one_existing_case(monkeypatch):
     assert "proposed 必须是单个完整用例对象" in captured["instructions"]
     assert "未要求修改的内容逐字保留" in captured["instructions"]
     assert captured["output"] is RewriteCandidate
+
+
+def test_ark_rewrite_uses_fast_inference_without_affecting_other_stages():
+    from casepilot_agent.providers.agents_sdk import _response_options
+    ark = "https://ark.cn-beijing.volces.com/api/coding/v3"
+    assert _response_options(ark, "rewrite.batch")["thinking"] == {"type": "disabled"}
+    assert "thinking" not in _response_options(ark, "requirement.analyzed")
+    assert "thinking" not in _response_options("https://api.openai.com/v1", "rewrite.batch")
+    assert "thinking" not in _response_options("https://ark.volces.com.example.org/v1", "rewrite.batch")

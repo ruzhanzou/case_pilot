@@ -1205,10 +1205,28 @@ def _agent_conversation_memory(
     return memory
 
 
+def _explicit_collection_mention(content: str, name: str) -> bool:
+    """Only collection references, not words in ordinary case instructions."""
+    escaped = re.escape(name.strip())
+    if not escaped:
+        return False
+    # Quoted names or collection-qualified names express a target explicitly.
+    patterns = (
+        rf'["“「《]\s*{escaped}\s*["”」》]',
+        rf"(?<!\w)collection\s+(?:named\s+)?['\"]?{escaped}(?![\w-])",
+        rf"(?<![\w-]){escaped}\s+collection(?!\w)",
+        rf"(?:用例集(?:合)?|集合)\s*[：:]?\s*['\"]?{escaped}(?![a-zA-Z0-9_-])",
+        rf"{escaped}\s*(?:用例集(?:合)?|集合)",
+    )
+    return any(re.search(pattern, content, re.IGNORECASE) for pattern in patterns)
+
+
 def _collection_candidates(
     db: Session,
     conversation: Conversation,
     content: str,
+    *,
+    explicit_only: bool = False,
 ) -> tuple[list[dict[str, str]], UUID | None]:
     collections = list(
         db.scalars(
@@ -1231,6 +1249,7 @@ def _collection_candidates(
         for item in collections
         if len("".join(item.name.casefold().split())) >= 2
         and "".join(item.name.casefold().split()) in normalized
+        and (not explicit_only or _explicit_collection_mention(content, item.name))
     ]
     return candidates, matches[0] if len(matches) == 1 else None
 
@@ -1249,6 +1268,7 @@ def _collection_gate(
         db,
         conversation,
         payload.content,
+        explicit_only=conversation.collection_id is not None,
     )
     if conversation.collection_id is None:
         assistant = _new_assistant_message(
@@ -4326,6 +4346,26 @@ def resume_conversation_operation(
     user_message = db.get(ConversationMessage, operation.message_id)
     if user_message is None:
         raise HTTPException(status_code=404, detail="conversation_message_not_found")
+    # A plain confirmation acknowledges the pending preview, not a new instruction.
+    # Preserve the gate whenever the response also changes scope or requirements.
+    if (
+        operation.intent == "CASE_MODIFY"
+        and dict(operation.payload).get("modification_confirmation")
+        and re.fullmatch(
+            r"\s*(?:确认|确认修改|确认并继续|确认修改并生成建议|可以|好的|confirm|yes|ok)[。！!.]?\s*",
+            supplement.content or "", re.IGNORECASE,
+        )
+        and supplement.intent is None
+        and not supplement.target_case_ids
+        and not supplement.target_candidate_snapshots
+        and (
+            not supplement.targets
+            or [item.model_dump(mode="json") for item in supplement.targets]
+            == dict(operation.target).get("selectors", [])
+        )
+    ):
+        supplement = supplement.model_copy(update={"content": None, "targets": [],
+                                                  "confirm_modification": True})
     if supplement.confirm_modification and (
         operation.intent != "CASE_MODIFY"
         or not dict(operation.payload).get("modification_confirmation")

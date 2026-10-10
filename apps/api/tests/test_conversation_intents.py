@@ -502,3 +502,36 @@ def test_module_deletion_is_not_lost_in_safe_fallback(content,intent):
 ])
 def test_case_count_never_becomes_test_object(content, expected):
     assert _extract_explicit_test_object(content) == expected
+
+
+@pytest.mark.parametrize("content", [
+    "Polish only the selected test case and prepare a modification proposal for review.",
+    "Preserve test data and expected results. Additional requirements: Procedure换一下说法",
+    "Rewrite testing steps for the current case",
+    "整理当前用例的测试步骤",
+])
+def test_bound_collection_does_not_match_ordinary_case_words(content):
+    other = SimpleNamespace(id=uuid4(), name="test")
+    class FakeDb:
+        def scalars(self, statement):
+            return [other]
+    _, suggested = _collection_candidates(
+        FakeDb(), SimpleNamespace(space_id=uuid4()), content, explicit_only=True,
+    )
+    assert suggested is None
+
+
+@pytest.mark.parametrize("content", [
+    '修改集合 test 的用例', '修改 test 集合的用例',
+    'Rewrite cases in collection test', 'Rewrite the test collection',
+    '切换到“test”', '修改用例集test中的登录用例',
+])
+def test_bound_collection_still_detects_explicit_other_collection(content):
+    other = SimpleNamespace(id=uuid4(), name="test")
+    class FakeDb:
+        def scalars(self, statement):
+            return [other]
+    _, suggested = _collection_candidates(
+        FakeDb(), SimpleNamespace(space_id=uuid4()), content, explicit_only=True,
+    )
+    assert suggested == other.id

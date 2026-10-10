@@ -3,6 +3,7 @@ import json
 from collections.abc import Callable
 from time import monotonic
 from typing import TypeVar
+from urllib.parse import urlparse
 
 from pydantic import BaseModel
 
@@ -17,6 +18,19 @@ from casepilot_agent.contracts import (
     UsageMetadata,
 )
 from casepilot_agent.skills import load_test_case_generation_skill
+
+
+def _response_options(base_url: str, stage: str) -> dict:
+    options = {"response_format": {"type": "json_object"}}
+    # Ark supports disabling deep thinking for bounded edits. Keep planning and
+    # other providers on their existing behavior.
+    host = urlparse(base_url).hostname or ""
+    if host.endswith(".volces.com") and host.startswith("ark.") and stage in {
+        "rewrite.batch", "test_case.rewritten",
+    }:
+        options["thinking"] = {"type": "disabled"}
+    return options
+
 
 ResultT = TypeVar("ResultT", bound=BaseModel)
 
@@ -179,7 +193,7 @@ class AgentsSdkProvider:
             # Compatible endpoints may ignore non-strict JSON Schema formatting.
             # Request valid JSON at the transport layer; SDK validation still
             # enforces the complete domain schema before any result is saved.
-            model_settings=ModelSettings(max_tokens=output_budget, extra_body={"response_format": {"type": "json_object"}}),
+            model_settings=ModelSettings(max_tokens=output_budget, extra_body=_response_options(self.base_url, stage)),
             # Several domain contracts intentionally contain defaults and optional
             # fields that are valid Pydantic schemas but not strict JSON schemas.
             # Keep SDK-side parsing/validation without rejecting those contracts.

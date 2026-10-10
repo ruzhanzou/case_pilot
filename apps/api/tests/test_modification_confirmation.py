@@ -10,7 +10,8 @@ from casepilot_api.main import app
 
 
 @pytest.mark.asyncio
-async def test_confirmation_rejects_bypass_and_refreshes_changed_assets(monkeypatch):
+@pytest.mark.parametrize("confirmation", [{"confirm_modification": True}, {"content": "确认"}])
+async def test_confirmation_rejects_bypass_and_refreshes_changed_assets(monkeypatch, confirmation):
     dispatched = []
     monkeypatch.setattr(
         conversations, "enqueue_task", lambda *args, **kwargs: dispatched.append(args)
@@ -88,7 +89,7 @@ async def test_confirmation_rejects_bypass_and_refreshes_changed_assets(monkeypa
         assert stale.json()["assistant_message"]["metadata"]["modification_confirmation"]
         assert "人工修改后的标题" in stale.json()["assistant_message"]["content"]
         assert not dispatched
-        confirmed = await client.post(resume, json={"confirm_modification": True})
+        confirmed = await client.post(resume, json=confirmation)
         assert confirmed.status_code == 202, confirmed.text
         assert confirmed.json()["action"]["job_id"]
         assert len(dispatched) == 1

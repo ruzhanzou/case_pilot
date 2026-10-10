@@ -3,7 +3,7 @@ from casepilot_agent.contracts import (
     GenerationRequest,
     RewriteRequest,
     RewriteCaseDraft,
-    RewriteBatch,
+    RewritePatchBatch,
 )
 from casepilot_agent.pipeline import GenerationPipeline
 from casepilot_agent.providers.mock import MockProvider
@@ -100,8 +100,7 @@ class BatchProvider:
             items.append(
                 dict(
                     ref=item["ref"],
-                    proposed=proposed,
-                    diff=[],
+                    changes={"steps": proposed["steps"]},
                     reason="补充验证",
                     quality={"passed": True, "score": 100},
                 )
@@ -113,8 +112,12 @@ class BatchProvider:
         if self.corrupt == "foreign":
             items[-1]["ref"] = "foreign"
         if self.corrupt == "identity":
-            items[-1]["proposed"]["id"] = "foreign"
-        return RewriteBatch.model_validate({"items": items}), None
+            items[-1]["changes"]["id"] = "foreign"
+        if self.corrupt == "invalid_priority":
+            items[-1]["changes"]["priority"] = "P99"
+        if self.corrupt == "empty_steps":
+            items[-1]["changes"]["steps"] = []
+        return RewritePatchBatch.model_validate({"items": items}), None
 
 
 def requests(count):
@@ -143,7 +146,7 @@ def test_semantic_rewrite_is_one_call_per_batch_and_diffs_are_server_computed(co
     assert all([diff.field for diff in case.diff] == ["steps"] for case in result.values())
 
 
-@pytest.mark.parametrize("corrupt", ["missing", "duplicate", "foreign", "identity"])
+@pytest.mark.parametrize("corrupt", ["missing", "duplicate", "foreign", "identity", "invalid_priority", "empty_steps"])
 def test_batch_rewrite_rejects_incomplete_or_changed_identity(corrupt):
     with pytest.raises(ValueError):
         GenerationPipeline(BatchProvider(corrupt)).rewrite_many(requests(2))
@@ -304,3 +307,18 @@ def test_malformed_audit_splits_and_only_publishes_audited_batches():
                      for stage in ["test_case.generated", "test_case.grounded"]]
     assert previews == [5, 10]
     assert len({c.id for c in result.test_cases}) == 10
+
+
+def test_patch_rewrite_preserves_untouched_fields_and_does_not_request_full_output():
+    provider = BatchProvider()
+    source = requests(1)
+    result = GenerationPipeline(provider).rewrite_many(source)
+    before = source["ref-0"].test_case.model_dump()
+    after = result["ref-0"].proposed.model_dump()
+    assert {k: v for k, v in before.items() if k != "steps"} == {
+        k: v for k, v in after.items() if k != "steps"
+    }
+    schema = provider.calls[0]["result_type"].model_json_schema()
+    fields = schema["$defs"]["RewritePatchItem"]["properties"]
+    assert "changes" in fields
+    assert "proposed" not in fields and "diff" not in fields

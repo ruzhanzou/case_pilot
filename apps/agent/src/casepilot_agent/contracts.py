@@ -278,6 +278,19 @@ class RewriteBatch(BaseModel):
     items: list[RewriteBatchItem]
 
 
+class RewritePatchItem(BaseModel):
+    ref: str
+    changes: dict[str, Any] = Field(
+        description="仅返回变化字段及新值；未修改字段省略，禁止修改id。数组字段返回完整新数组。"
+    )
+    reason: str
+    quality: QualityReport
+
+
+class RewritePatchBatch(BaseModel):
+    items: list[RewritePatchItem]
+
+
 class KnowledgeAnswer(BaseModel):
     answer: str
     citations: list[SourceRef] = Field(default_factory=list)
