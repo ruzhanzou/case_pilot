@@ -1,0 +1,2416 @@
+{
+  "schema_version": 1,
+  "started_at": "2026-10-10T15:14:51.046127+00:00",
+  "layer": "live-model-api-state-machine; queue captured; not worker/browser E2E",
+  "model": "doubao-seed-2.0-lite",
+  "provider": "openai_compatible",
+  "concurrency": 2,
+  "scenario_count": 30,
+  "dataset_scenario_count": 30,
+  "turn_count": 53,
+  "summary": {
+    "PASS": 25,
+    "FAIL": 5,
+    "ERROR": 0
+  },
+  "results": [
+    {
+      "id": "RW-01",
+      "title": "纯确认与自动回传选中范围",
+      "split": "development",
+      "conversation_id": "a2d50c03-939a-47d8-8e9d-db6859190e61",
+      "turns": [
+        {
+          "input": "确认",
+          "request": {
+            "content": "确认",
+            "targets": [
+              {
+                "kind": "case",
+                "case_ids": [
+                  "51ac71b1-4044-496d-a573-29337c19b461",
+                  "3f028a81-56e8-4694-8126-7904628ba39f",
+                  "43b87823-cb44-412f-9686-0590ac9e7f4f"
+                ],
+                "candidate_refs": []
+              }
+            ]
+          },
+          "latency_ms": 90,
+          "expected": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "正在为 3 条用例生成字段差异。",
+          "action": {
+            "type": "change_set",
+            "job_id": "36406eba-40e9-48e3-929b-b1aa9e74e8f6",
+            "change_set_id": "3eeb72ca-b50f-4d68-9754-4771e5fba306"
+          },
+          "operation_status": "running",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "dispatch",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "job_prompt": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-02",
+      "title": "口语确认",
+      "split": "development",
+      "conversation_id": "b4b6a3d6-a93d-4ed3-9d91-1c8ecfd147a7",
+      "turns": [
+        {
+          "input": "没问题，就照这个来吧",
+          "request": {
+            "content": "没问题，就照这个来吧"
+          },
+          "latency_ms": 9013,
+          "expected": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "正在为 3 条用例生成字段差异。",
+          "action": {
+            "type": "change_set",
+            "job_id": "328b2d67-7727-4414-8959-a521b55e16bd",
+            "change_set_id": "4f73a665-68d6-46f1-ac03-efc57c18ad04"
+          },
+          "operation_status": "running",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "dispatch",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "job_prompt": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-03",
+      "title": "英文确认",
+      "split": "holdout",
+      "conversation_id": "41172fa8-f3dd-46d4-8eb3-a711223c2974",
+      "turns": [
+        {
+          "input": "Looks good, go ahead.",
+          "request": {
+            "content": "Looks good, go ahead."
+          },
+          "latency_ms": 39080,
+          "expected": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "正在为 3 条用例生成字段差异。",
+          "action": {
+            "type": "change_set",
+            "job_id": "a99fa999-c75a-4c34-bc17-3e14f06e0e7a",
+            "change_set_id": "d97e7c9d-c251-4747-821b-9799393dd3e8"
+          },
+          "operation_status": "running",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "dispatch",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "job_prompt": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-04",
+      "title": "确认中追加要求",
+      "split": "development",
+      "conversation_id": "2eb8b32d-53c7-400f-98f9-749d5111d00a",
+      "turns": [
+        {
+          "input": "确认，不过前置条件也不要动",
+          "request": {
+            "content": "确认，不过前置条件也不要动"
+          },
+          "latency_ms": 9887,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "前置"
+            ],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 3 条用例。\n- TC-A-46D563AB2F0C：正确验证码登录\n- TC-B-46D563AB2F0C：错误验证码登录\n- TC-C-46D563AB2F0C：正确密码登录\n\n修改要求：\n改写登录模块用例，步骤更清晰，标题、预期结果和前置条件保持不变\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题、预期结果和前置条件保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题、预期结果和前置条件保持不变",
+          "failures": []
+        },
+        {
+          "input": "好的",
+          "request": {
+            "content": "好的"
+          },
+          "latency_ms": 43,
+          "expected": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "正在为 3 条用例生成字段差异。",
+          "action": {
+            "type": "change_set",
+            "job_id": "83f7bba1-3a4b-44d4-b6be-2c1db8df125c",
+            "change_set_id": "fe39e17b-0d50-4288-a294-cce29c8dcd50"
+          },
+          "operation_status": "running",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题、预期结果和前置条件保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "dispatch",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题、预期结果和前置条件保持不变",
+          "job_prompt": "改写登录模块用例，步骤更清晰，标题、预期结果和前置条件保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-05",
+      "title": "确认中缩小范围",
+      "split": "development",
+      "conversation_id": "17337a13-9add-4b97-add3-2276be92806d",
+      "turns": [
+        {
+          "input": "可以，但只改第一条",
+          "request": {
+            "content": "可以，但只改第一条",
+            "targets": [
+              {
+                "kind": "case",
+                "case_ids": [
+                  "0fef4765-8679-488e-814f-9ee8631476c5",
+                  "1c625ac1-6c13-4d57-8c95-5fbf5698c177",
+                  "018d2bc8-9eab-462b-91c7-f61ed3ebe77a"
+                ],
+                "candidate_refs": []
+              }
+            ]
+          },
+          "latency_ms": 32865,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 1 条用例。\n- TC-A-4BA620001994：正确验证码登录\n\n修改要求：\n改写登录模块用例，步骤更清晰，标题和预期结果保持不变\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "仅改写当前已确认范围的第一条用例",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "A"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        },
+        {
+          "input": "就这样继续",
+          "request": {
+            "content": "就这样继续"
+          },
+          "latency_ms": 7703,
+          "expected": {
+            "action": "dispatch",
+            "scope": [
+              "A"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "正在为 1 条用例生成字段差异。",
+          "action": {
+            "type": "change_set",
+            "job_id": "cc702e22-42bc-4714-851d-c466f4a228c0",
+            "change_set_id": "f62e6540-1b2f-4804-bc90-698d14c4868a"
+          },
+          "operation_status": "running",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "仅改写当前已确认范围的第一条用例",
+            "requirements_ready": true
+          },
+          "actual_action": "dispatch",
+          "actual_scope": [
+            "A"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "job_prompt": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-06",
+      "title": "否定一个字段并非取消",
+      "split": "development",
+      "conversation_id": "78033555-af09-4da2-a332-c5b239a8b130",
+      "turns": [
+        {
+          "input": "不要动标题，把步骤拆开",
+          "request": {
+            "content": "不要动标题，把步骤拆开"
+          },
+          "latency_ms": 14595,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "步骤",
+              "标题"
+            ],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 3 条用例。\n- TC-A-BC0AD65CF877：正确验证码登录\n- TC-B-BC0AD65CF877：错误验证码登录\n- TC-C-BC0AD65CF877：正确密码登录\n\n修改要求：\n改写登录模块用例，步骤更清晰，不要修改标题，把现有步骤拆开，预期结果保持不变\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，不要修改标题，把现有步骤拆开，预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，不要修改标题，把现有步骤拆开，预期结果保持不变",
+          "failures": []
+        },
+        {
+          "input": "确认",
+          "request": {
+            "content": "确认"
+          },
+          "latency_ms": 50,
+          "expected": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "正在为 3 条用例生成字段差异。",
+          "action": {
+            "type": "change_set",
+            "job_id": "099e1cbf-170b-4976-86f2-fbdc9113b03e",
+            "change_set_id": "a9a2ee3b-79a6-4d0a-9566-7b151e25ea8a"
+          },
+          "operation_status": "running",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，不要修改标题，把现有步骤拆开，预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "dispatch",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，不要修改标题，把现有步骤拆开，预期结果保持不变",
+          "job_prompt": "改写登录模块用例，步骤更清晰，不要修改标题，把现有步骤拆开，预期结果保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-07",
+      "title": "调整描述风格",
+      "split": "development",
+      "conversation_id": "7a6654cb-07e7-4ffe-8521-128399d3b192",
+      "turns": [
+        {
+          "input": "简洁一点",
+          "request": {
+            "content": "简洁一点"
+          },
+          "latency_ms": 9540,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "简洁|精简"
+            ],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 3 条用例。\n- TC-A-FA569BD070F2：正确验证码登录\n- TC-B-FA569BD070F2：错误验证码登录\n- TC-C-FA569BD070F2：正确密码登录\n\n修改要求：\n改写登录模块用例，步骤更清晰且更简洁，标题和预期结果保持不变\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰且更简洁，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰且更简洁，标题和预期结果保持不变",
+          "failures": []
+        },
+        {
+          "input": "确认",
+          "request": {
+            "content": "确认"
+          },
+          "latency_ms": 53,
+          "expected": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "正在为 3 条用例生成字段差异。",
+          "action": {
+            "type": "change_set",
+            "job_id": "b6e622cc-4934-40cf-9569-dbd319d8b1ce",
+            "change_set_id": "3222f64f-d6d9-47b6-b5e0-a6647865b82b"
+          },
+          "operation_status": "running",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰且更简洁，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "dispatch",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰且更简洁，标题和预期结果保持不变",
+          "job_prompt": "改写登录模块用例，步骤更清晰且更简洁，标题和预期结果保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-08",
+      "title": "英文修改要求",
+      "split": "holdout",
+      "conversation_id": "166695f0-3723-4913-b2e5-e351d75eaf53",
+      "turns": [
+        {
+          "input": "Keep the title and expected results unchanged; make the steps clearer.",
+          "request": {
+            "content": "Keep the title and expected results unchanged; make the steps clearer."
+          },
+          "latency_ms": 18273,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "步骤|steps",
+              "标题|title"
+            ],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 3 条用例。\n- TC-A-58C679524053：正确验证码登录\n- TC-B-58C679524053：错误验证码登录\n- TC-C-58C679524053：正确密码登录\n\n修改要求：\n对指定的三个登录模块测试用例进行改写，保持每个用例的标题和预期结果不变，仅优化改写测试步骤，使步骤更加清晰明确\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "对指定的三个登录模块测试用例进行改写，保持每个用例的标题和预期结果不变，仅优化改写测试步骤，使步骤更加清晰明确",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "对指定的三个登录模块测试用例进行改写，保持每个用例的标题和预期结果不变，仅优化改写测试步骤，使步骤更加清晰明确",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-09",
+      "title": "修改字段值不应筛选范围",
+      "split": "development",
+      "conversation_id": "ddc2f530-b6df-4949-9b64-a7fec45ab888",
+      "turns": [
+        {
+          "input": "把优先级改成P0",
+          "request": {
+            "content": "把优先级改成P0"
+          },
+          "latency_ms": 42542,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "P0"
+            ],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "暂时无法准确理解这次补充，请重试；当前用例没有改动。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "clarification": "暂时无法准确理解这次补充，请重试；当前用例没有改动。",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "clarify",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": [
+            "action: expected preview, got clarify",
+            "missing requirement: P0"
+          ]
+        }
+      ],
+      "status": "FAIL",
+      "not_run_turns": 1
+    },
+    {
+      "id": "RW-10",
+      "title": "纠正字段值而非叠加旧值",
+      "split": "development",
+      "conversation_id": "7f56ae02-6480-464b-a76b-ebeb87be1a0f",
+      "turns": [
+        {
+          "input": "优先级改为P0",
+          "request": {
+            "content": "优先级改为P0"
+          },
+          "latency_ms": 9737,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "P0"
+            ],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 3 条用例。\n- TC-A-AA37E6C52C89：正确验证码登录\n- TC-B-AA37E6C52C89：错误验证码登录\n- TC-C-AA37E6C52C89：正确密码登录\n\n修改要求：\n改写登录模块用例，步骤更清晰，标题和预期结果保持不变，将当前范围内三个登录用例的优先级都改为P0\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变，将当前范围内三个登录用例的优先级都改为P0",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变，将当前范围内三个登录用例的优先级都改为P0",
+          "failures": []
+        },
+        {
+          "input": "刚才说错了，改成P2",
+          "request": {
+            "content": "刚才说错了，改成P2"
+          },
+          "latency_ms": 10025,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "P2"
+            ],
+            "requirements_exclude": [
+              "P0"
+            ]
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 3 条用例。\n- TC-A-AA37E6C52C89：正确验证码登录\n- TC-B-AA37E6C52C89：错误验证码登录\n- TC-C-AA37E6C52C89：正确密码登录\n\n修改要求：\n改写登录模块用例，步骤更清晰，标题和预期结果保持不变，将当前范围内三个登录用例的优先级都改为P2\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变，将当前范围内三个登录用例的优先级都改为P2",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变，将当前范围内三个登录用例的优先级都改为P2",
+          "failures": []
+        },
+        {
+          "input": "可以继续",
+          "request": {
+            "content": "可以继续"
+          },
+          "latency_ms": 32540,
+          "expected": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "正在为 3 条用例生成字段差异。",
+          "action": {
+            "type": "change_set",
+            "job_id": "dd6772c1-e39f-43a5-a2cb-de175ecfe084",
+            "change_set_id": "355e07d6-a933-4941-b620-0f2847cb571a"
+          },
+          "operation_status": "running",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变，将当前范围内三个登录用例的优先级都改为P2",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "dispatch",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变，将当前范围内三个登录用例的优先级都改为P2",
+          "job_prompt": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变，将当前范围内三个登录用例的优先级都改为P2",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-11",
+      "title": "模块字段更名并非换范围",
+      "split": "development",
+      "conversation_id": "ee736f2a-8edf-48f7-be70-9cf9e5943e01",
+      "turns": [
+        {
+          "input": "模块字段改为账号登录，其他要求保留",
+          "request": {
+            "content": "模块字段改为账号登录，其他要求保留"
+          },
+          "latency_ms": 22568,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "账号登录"
+            ],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 3 条用例。\n- TC-A-A066DC03D723：正确验证码登录\n- TC-B-A066DC03D723：错误验证码登录\n- TC-C-A066DC03D723：正确密码登录\n\n修改要求：\n改写用例，步骤更清晰，标题和预期结果保持不变，模块字段改为账号登录\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写用例，步骤更清晰，标题和预期结果保持不变，模块字段改为账号登录",
+            "scope_resolved": true,
+            "scope_instruction": "改写账号登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写用例，步骤更清晰，标题和预期结果保持不变，模块字段改为账号登录",
+          "failures": []
+        },
+        {
+          "input": "确认",
+          "request": {
+            "content": "确认"
+          },
+          "latency_ms": 38,
+          "expected": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "正在为 3 条用例生成字段差异。",
+          "action": {
+            "type": "change_set",
+            "job_id": "7838c1f9-5bc9-4307-91d9-4f2593a38862",
+            "change_set_id": "34bbcb86-62c1-41e7-9b37-117774bbd5b2"
+          },
+          "operation_status": "running",
+          "draft": {
+            "version": 1,
+            "requirements": "改写用例，步骤更清晰，标题和预期结果保持不变，模块字段改为账号登录",
+            "scope_resolved": true,
+            "scope_instruction": "改写账号登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "dispatch",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写用例，步骤更清晰，标题和预期结果保持不变，模块字段改为账号登录",
+          "job_prompt": "改写用例，步骤更清晰，标题和预期结果保持不变，模块字段改为账号登录",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-12",
+      "title": "按优先级排除目标",
+      "split": "development",
+      "conversation_id": "9fa5c1d8-1cd0-4f24-b162-536d74a81a58",
+      "turns": [
+        {
+          "input": "范围排除P0的用例",
+          "request": {
+            "content": "范围排除P0的用例"
+          },
+          "latency_ms": 29972,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 2 条用例。\n- TC-B-EB56CE27B88A：错误验证码登录\n- TC-C-EB56CE27B88A：正确密码登录\n\n修改要求：\n改写登录模块用例，步骤更清晰，标题和预期结果保持不变\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，排除优先级为P0的用例",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        },
+        {
+          "input": "确认",
+          "request": {
+            "content": "确认"
+          },
+          "latency_ms": 36,
+          "expected": {
+            "action": "dispatch",
+            "scope": [
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "正在为 2 条用例生成字段差异。",
+          "action": {
+            "type": "change_set",
+            "job_id": "60d812d9-3dd3-41b1-a55c-6e3aacdd8f69",
+            "change_set_id": "73cf5711-77a7-4468-ae19-4fa25a8b9322"
+          },
+          "operation_status": "running",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，排除优先级为P0的用例",
+            "requirements_ready": true
+          },
+          "actual_action": "dispatch",
+          "actual_scope": [
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "job_prompt": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-13",
+      "title": "按编号选择并抵抗陈旧选中范围",
+      "split": "development",
+      "conversation_id": "617aa0cf-e7ca-476e-9b85-2c65618a541d",
+      "turns": [
+        {
+          "input": "只改TC-B-B80C1CFA82E1",
+          "request": {
+            "content": "只改TC-B-B80C1CFA82E1",
+            "targets": [
+              {
+                "kind": "case",
+                "case_ids": [
+                  "9e175057-995d-48dc-a1e7-87e1aa09a094",
+                  "491fb6db-e036-47d9-93c5-6413bc19eee0",
+                  "d4d9cb12-1483-45de-861f-9616a1a6c316"
+                ],
+                "candidate_refs": []
+              }
+            ]
+          },
+          "latency_ms": 20192,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "B"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 1 条用例。\n- TC-B-B80C1CFA82E1：错误验证码登录\n\n修改要求：\n改写用例TC-B-B80C1CFA82E1，步骤更清晰，标题和预期结果保持不变\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写用例TC-B-B80C1CFA82E1，步骤更清晰，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "仅改写用例TC-B-B80C1CFA82E1，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "B"
+          ],
+          "requirements": "改写用例TC-B-B80C1CFA82E1，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        },
+        {
+          "input": "确认",
+          "request": {
+            "content": "确认",
+            "targets": [
+              {
+                "kind": "case",
+                "case_ids": [
+                  "491fb6db-e036-47d9-93c5-6413bc19eee0"
+                ],
+                "candidate_refs": []
+              }
+            ]
+          },
+          "latency_ms": 53,
+          "expected": {
+            "action": "dispatch",
+            "scope": [
+              "B"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "正在为 1 条用例生成字段差异。",
+          "action": {
+            "type": "change_set",
+            "job_id": "0a5cdc80-f9d4-4f7d-893e-564dc18e4088",
+            "change_set_id": "48fc5c00-9f71-474f-8b07-541ef88a4b8a"
+          },
+          "operation_status": "running",
+          "draft": {
+            "version": 1,
+            "requirements": "改写用例TC-B-B80C1CFA82E1，步骤更清晰，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "仅改写用例TC-B-B80C1CFA82E1，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "dispatch",
+          "actual_scope": [
+            "B"
+          ],
+          "requirements": "改写用例TC-B-B80C1CFA82E1，步骤更清晰，标题和预期结果保持不变",
+          "job_prompt": "改写用例TC-B-B80C1CFA82E1，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-14",
+      "title": "相对位置按展示顺序",
+      "split": "development",
+      "conversation_id": "e62d2263-9442-4d29-b68c-86e2e18b2a97",
+      "turns": [
+        {
+          "input": "就刚才展示的前三条，只改前两条",
+          "request": {
+            "content": "就刚才展示的前三条，只改前两条"
+          },
+          "latency_ms": 18561,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 2 条用例。\n- TC-A-DAD4C4DB008F：正确验证码登录\n- TC-B-DAD4C4DB008F：错误验证码登录\n\n修改要求：\n改写登录模块用例，步骤更清晰，标题和预期结果保持不变\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写当前展示的三个用例中的前两个",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "A",
+            "B"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        },
+        {
+          "input": "简洁一点",
+          "request": {
+            "content": "简洁一点"
+          },
+          "latency_ms": 10207,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B"
+            ],
+            "requirements_include": [
+              "简洁|精简"
+            ],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 2 条用例。\n- TC-A-DAD4C4DB008F：正确验证码登录\n- TC-B-DAD4C4DB008F：错误验证码登录\n\n修改要求：\n改写登录模块用例，步骤更清晰简洁，标题和预期结果保持不变\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰简洁，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写当前展示的三个用例中的前两个",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "A",
+            "B"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰简洁，标题和预期结果保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-15",
+      "title": "换模块仍保留修改要求",
+      "split": "development",
+      "conversation_id": "f2e08363-b2b3-4af1-9ea6-5d18d3bf80ee",
+      "turns": [
+        {
+          "input": "范围改成支付模块",
+          "request": {
+            "content": "范围改成支付模块"
+          },
+          "latency_ms": 42437,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "D"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 1 条用例。\n- TC-D-98F21B0D9567：订单支付成功\n\n修改要求：\n改写支付模块用例，步骤更清晰，标题和预期结果保持不变\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写支付模块用例，步骤更清晰，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写支付模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "D"
+          ],
+          "requirements": "改写支付模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        },
+        {
+          "input": "确认",
+          "request": {
+            "content": "确认"
+          },
+          "latency_ms": 53,
+          "expected": {
+            "action": "dispatch",
+            "scope": [
+              "D"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "正在为 1 条用例生成字段差异。",
+          "action": {
+            "type": "change_set",
+            "job_id": "d22630bb-1f53-490d-a429-06b63c0e7538",
+            "change_set_id": "16ce32bf-bde5-4222-858a-4e4ba4b5877b"
+          },
+          "operation_status": "running",
+          "draft": {
+            "version": 1,
+            "requirements": "改写支付模块用例，步骤更清晰，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写支付模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "dispatch",
+          "actual_scope": [
+            "D"
+          ],
+          "requirements": "改写支付模块用例，步骤更清晰，标题和预期结果保持不变",
+          "job_prompt": "改写支付模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-16",
+      "title": "扩大当前范围",
+      "split": "development",
+      "conversation_id": "bbb9ae18-f654-41e9-8422-006ca6e0a58d",
+      "turns": [
+        {
+          "input": "把TC-D-7C0F3088DA06也加进来，其他不变",
+          "request": {
+            "content": "把TC-D-7C0F3088DA06也加进来，其他不变"
+          },
+          "latency_ms": 23753,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C",
+              "D"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "选择结果超出了引用范围，请确认需要处理的用例。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "scope_resolved": false,
+            "scope_instruction": "改写登录模块用例，包含原有的三个用例加上case_key为TC-D-7C0F3088DA06的用例，其他不变",
+            "requirements_ready": true
+          },
+          "actual_action": "clarify",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": [
+            "action: expected preview, got clarify"
+          ]
+        }
+      ],
+      "status": "FAIL",
+      "not_run_turns": 1
+    },
+    {
+      "id": "RW-17",
+      "title": "范围与修改要求同时改变",
+      "split": "development",
+      "conversation_id": "e9f31dcb-3341-480a-8530-96011dd8fe8d",
+      "turns": [
+        {
+          "input": "只改TC-C-F6AD96428825，优先级改为P1，标题仍保留",
+          "request": {
+            "content": "只改TC-C-F6AD96428825，优先级改为P1，标题仍保留"
+          },
+          "latency_ms": 42689,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "C"
+            ],
+            "requirements_include": [
+              "P1",
+              "标题"
+            ],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 1 条用例。\n- TC-C-F6AD96428825：正确密码登录\n\n修改要求：\n将TC-C-F6AD96428825的优先级改为P1，标题保留，改写该用例步骤更清晰，预期结果保持不变\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "将TC-C-F6AD96428825的优先级改为P1，标题保留，改写该用例步骤更清晰，预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "只修改用例编号为TC-C-F6AD96428825的用例",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "C"
+          ],
+          "requirements": "将TC-C-F6AD96428825的优先级改为P1，标题保留，改写该用例步骤更清晰，预期结果保持不变",
+          "failures": []
+        },
+        {
+          "input": "确认",
+          "request": {
+            "content": "确认"
+          },
+          "latency_ms": 38,
+          "expected": {
+            "action": "dispatch",
+            "scope": [
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "正在为 1 条用例生成字段差异。",
+          "action": {
+            "type": "change_set",
+            "job_id": "683f12fc-3da9-4243-a160-09ba3f7bda16",
+            "change_set_id": "81b5c296-34a1-4718-97d2-7bcf566953a6"
+          },
+          "operation_status": "running",
+          "draft": {
+            "version": 1,
+            "requirements": "将TC-C-F6AD96428825的优先级改为P1，标题保留，改写该用例步骤更清晰，预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "只修改用例编号为TC-C-F6AD96428825的用例",
+            "requirements_ready": true
+          },
+          "actual_action": "dispatch",
+          "actual_scope": [
+            "C"
+          ],
+          "requirements": "将TC-C-F6AD96428825的优先级改为P1，标题保留，改写该用例步骤更清晰，预期结果保持不变",
+          "job_prompt": "将TC-C-F6AD96428825的优先级改为P1，标题保留，改写该用例步骤更清晰，预期结果保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-18",
+      "title": "模糊否定必须澄清",
+      "split": "development",
+      "conversation_id": "04f9f784-fdd8-4d09-b857-a6e282a7a3bf",
+      "turns": [
+        {
+          "input": "不对",
+          "request": {
+            "content": "不对"
+          },
+          "latency_ms": 26754,
+          "expected": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "你说不对，请明确说明具体哪里不符合要求，告知具体的修改方向。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "clarification": "你说不对，请明确说明具体哪里不符合要求，告知具体的修改方向。",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "clarify",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        },
+        {
+          "input": "确认",
+          "request": {
+            "content": "确认"
+          },
+          "latency_ms": 29,
+          "expected": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "你说不对，请明确说明具体哪里不符合要求，告知具体的修改方向。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "clarification": "你说不对，请明确说明具体哪里不符合要求，告知具体的修改方向。",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "clarify",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        },
+        {
+          "input": "范围没问题，步骤要按操作顺序拆开，标题预期仍不变",
+          "request": {
+            "content": "范围没问题，步骤要按操作顺序拆开，标题预期仍不变"
+          },
+          "latency_ms": 16142,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "步骤"
+            ],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 3 条用例。\n- TC-A-78DD33A92F40：正确验证码登录\n- TC-B-78DD33A92F40：错误验证码登录\n- TC-C-78DD33A92F40：正确密码登录\n\n修改要求：\n步骤按操作顺序拆开，标题和预期结果仍保持不变\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "步骤按操作顺序拆开，标题和预期结果仍保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "步骤按操作顺序拆开，标题和预期结果仍保持不变",
+          "failures": []
+        },
+        {
+          "input": "确认",
+          "request": {
+            "content": "确认"
+          },
+          "latency_ms": 38,
+          "expected": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "正在为 3 条用例生成字段差异。",
+          "action": {
+            "type": "change_set",
+            "job_id": "9839f821-91fb-4cb9-a798-ed33759ee9f7",
+            "change_set_id": "7c302178-3986-4e47-9220-fd113d6aa3ba"
+          },
+          "operation_status": "running",
+          "draft": {
+            "version": 1,
+            "requirements": "步骤按操作顺序拆开，标题和预期结果仍保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "dispatch",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "步骤按操作顺序拆开，标题和预期结果仍保持不变",
+          "job_prompt": "步骤按操作顺序拆开，标题和预期结果仍保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-19",
+      "title": "不是这些并未指定新范围",
+      "split": "development",
+      "conversation_id": "760ee9d8-1e88-4e84-982f-78991fbb48af",
+      "turns": [
+        {
+          "input": "不是这些",
+          "request": {
+            "content": "不是这些"
+          },
+          "latency_ms": 26140,
+          "expected": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请问您具体指的不是哪些内容呢？可以说明一下具体要调整的范围或者新的修改要求吗？",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "clarification": "请问您具体指的不是哪些内容呢？可以说明一下具体要调整的范围或者新的修改要求吗？",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "clarify",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-20",
+      "title": "单独否定不能擅自执行或取消",
+      "split": "holdout",
+      "conversation_id": "74b74e67-53a3-48bc-8e7d-848c2577a3e6",
+      "turns": [
+        {
+          "input": "不要",
+          "request": {
+            "content": "不要"
+          },
+          "latency_ms": 9096,
+          "expected": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请问您说的“不要”具体指什么呢？是取消本次改写登录模块用例的任务，还是不需要修改其中部分用例？",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "clarification": "请问您说的“不要”具体指什么呢？是取消本次改写登录模块用例的任务，还是不需要修改其中部分用例？",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "clarify",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-21",
+      "title": "明确终止任务",
+      "split": "development",
+      "conversation_id": "eb09f23c-144e-4272-bf93-f5f735d14ceb",
+      "turns": [
+        {
+          "input": "这次先不改了，结束任务",
+          "request": {
+            "content": "这次先不改了，结束任务"
+          },
+          "latency_ms": 8336,
+          "expected": {
+            "action": "cancel",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "任务已结束，可继续对话或发起新任务。",
+          "action": {
+            "type": "cancelled"
+          },
+          "operation_status": "cancelled",
+          "draft": {},
+          "actual_action": "cancel",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-22",
+      "title": "暂停表述保守澄清或取消",
+      "split": "holdout",
+      "conversation_id": "3da3f81c-6fde-4a59-bf42-e8bea443c31e",
+      "turns": [
+        {
+          "input": "先别执行，我还要想想",
+          "request": {
+            "content": "先别执行，我还要想想"
+          },
+          "latency_ms": 19104,
+          "expected": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请您确定好修改方向和要求后再告知我",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "clarification": "请您确定好修改方向和要求后再告知我",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "clarify",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-23",
+      "title": "混入删除意图",
+      "split": "development",
+      "conversation_id": "96022a38-8a8d-4818-aa9f-9771979bbda7",
+      "turns": [
+        {
+          "input": "先删掉TC-B-E064C5021C00，再改其余的",
+          "request": {
+            "content": "先删掉TC-B-E064C5021C00，再改其余的"
+          },
+          "latency_ms": 24014,
+          "expected": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 2 条用例。\n- TC-A-E064C5021C00：正确验证码登录\n- TC-C-E064C5021C00：正确密码登录\n\n修改要求：\n改写步骤更清晰，标题和预期结果保持不变\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写步骤更清晰，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "登录模块用例，排除case_key为TC-B-E064C5021C00的用例，改写其余用例",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "A",
+            "C"
+          ],
+          "requirements": "改写步骤更清晰，标题和预期结果保持不变",
+          "failures": [
+            "action: expected clarify, got preview",
+            "scope: expected ['A', 'B', 'C'], got ['A', 'C']"
+          ]
+        }
+      ],
+      "status": "FAIL",
+      "not_run_turns": 0
+    },
+    {
+      "id": "RW-24",
+      "title": "混入生成意图",
+      "split": "development",
+      "conversation_id": "ed36f75e-6e1f-4d2e-90c0-f8bd461500e3",
+      "turns": [
+        {
+          "input": "同时再生成十条支付用例",
+          "request": {
+            "content": "同时再生成十条支付用例"
+          },
+          "latency_ms": 146904,
+          "expected": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 3 条用例。\n- TC-A-1F1B13654A5F：正确验证码登录\n- TC-B-1F1B13654A5F：错误验证码登录\n- TC-C-1F1B13654A5F：正确密码登录\n\n修改要求：\n改写登录模块用例时步骤更清晰，标题和预期结果保持不变，同时新增生成十条支付用例\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例时步骤更清晰，标题和预期结果保持不变，同时新增生成十条支付用例",
+            "scope_resolved": true,
+            "scope_instruction": "改写已有的登录模块用例，再生成十条支付模块用例",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例时步骤更清晰，标题和预期结果保持不变，同时新增生成十条支付用例",
+          "failures": [
+            "action: expected clarify, got preview"
+          ]
+        }
+      ],
+      "status": "FAIL",
+      "not_run_turns": 0
+    },
+    {
+      "id": "RW-25",
+      "title": "查询当前范围不应执行",
+      "split": "development",
+      "conversation_id": "5b783fd2-7bf3-47b4-be0a-1c84baa6775b",
+      "turns": [
+        {
+          "input": "当前范围到底是哪些用例？",
+          "request": {
+            "content": "当前范围到底是哪些用例？"
+          },
+          "latency_ms": 12904,
+          "expected": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请您明确当前需要改写的具体用例范围，目前草稿中已列出三个登录模块的测试用例，请问是否就是这三个用例，还是需要调整范围？",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "clarification": "请您明确当前需要改写的具体用例范围，目前草稿中已列出三个登录模块的测试用例，请问是否就是这三个用例，还是需要调整范围？",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "clarify",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-26",
+      "title": "长对话保留约束和纠正值",
+      "split": "development",
+      "conversation_id": "7b3e243e-0d47-4105-a7d2-1a457573f17d",
+      "turns": [
+        {
+          "input": "步骤精简一点，前置条件别变",
+          "request": {
+            "content": "步骤精简一点，前置条件别变"
+          },
+          "latency_ms": 35025,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "前置"
+            ],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 3 条用例。\n- TC-A-8A2F541F6BFC：正确验证码登录\n- TC-B-8A2F541F6BFC：错误验证码登录\n- TC-C-8A2F541F6BFC：正确密码登录\n\n修改要求：\n改写登录模块用例，步骤精简一点，前置条件保持不变，标题和预期结果保持不变\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤精简一点，前置条件保持不变，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤精简一点，前置条件保持不变，标题和预期结果保持不变",
+          "failures": []
+        },
+        {
+          "input": "优先级统一改为P0",
+          "request": {
+            "content": "优先级统一改为P0"
+          },
+          "latency_ms": 37345,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "P0",
+              "前置"
+            ],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 3 条用例。\n- TC-A-8A2F541F6BFC：正确验证码登录\n- TC-B-8A2F541F6BFC：错误验证码登录\n- TC-C-8A2F541F6BFC：正确密码登录\n\n修改要求：\n改写登录模块用例，步骤精简一点，前置条件保持不变，标题和预期结果保持不变，将当前范围内所有用例的优先级统一改为P0\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤精简一点，前置条件保持不变，标题和预期结果保持不变，将当前范围内所有用例的优先级统一改为P0",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤精简一点，前置条件保持不变，标题和预期结果保持不变，将当前范围内所有用例的优先级统一改为P0",
+          "failures": []
+        },
+        {
+          "input": "不，是P2，不要P0",
+          "request": {
+            "content": "不，是P2，不要P0"
+          },
+          "latency_ms": 16710,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "P2",
+              "前置"
+            ],
+            "requirements_exclude": [
+              "P0"
+            ]
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 3 条用例。\n- TC-A-8A2F541F6BFC：正确验证码登录\n- TC-B-8A2F541F6BFC：错误验证码登录\n- TC-C-8A2F541F6BFC：正确密码登录\n\n修改要求：\n改写登录模块用例，步骤精简一点，前置条件保持不变，标题和预期结果保持不变，将当前范围内所有用例的优先级统一改为P2\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤精简一点，前置条件保持不变，标题和预期结果保持不变，将当前范围内所有用例的优先级统一改为P2",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤精简一点，前置条件保持不变，标题和预期结果保持不变，将当前范围内所有用例的优先级统一改为P2",
+          "failures": []
+        },
+        {
+          "input": "只改TC-A-8A2F541F6BFC和TC-C-8A2F541F6BFC",
+          "request": {
+            "content": "只改TC-A-8A2F541F6BFC和TC-C-8A2F541F6BFC"
+          },
+          "latency_ms": 46236,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "C"
+            ],
+            "requirements_include": [
+              "P2",
+              "前置"
+            ],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 2 条用例。\n- TC-A-8A2F541F6BFC：正确验证码登录\n- TC-C-8A2F541F6BFC：正确密码登录\n\n修改要求：\n改写指定的两个用例，步骤精简一点，前置条件保持不变，标题和预期结果保持不变，将这两个用例的优先级统一改为P2\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写指定的两个用例，步骤精简一点，前置条件保持不变，标题和预期结果保持不变，将这两个用例的优先级统一改为P2",
+            "scope_resolved": true,
+            "scope_instruction": "修改用例TC-A-8A2F541F6BFC和TC-C-8A2F541F6BFC",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "A",
+            "C"
+          ],
+          "requirements": "改写指定的两个用例，步骤精简一点，前置条件保持不变，标题和预期结果保持不变，将这两个用例的优先级统一改为P2",
+          "failures": []
+        },
+        {
+          "input": "没问题，继续吧",
+          "request": {
+            "content": "没问题，继续吧"
+          },
+          "latency_ms": 7321,
+          "expected": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "正在为 2 条用例生成字段差异。",
+          "action": {
+            "type": "change_set",
+            "job_id": "3dc175d0-af3b-4fee-a113-8fdd39b3946f",
+            "change_set_id": "9a83581d-e01a-45aa-aaea-fe37a00267af"
+          },
+          "operation_status": "running",
+          "draft": {
+            "version": 1,
+            "requirements": "改写指定的两个用例，步骤精简一点，前置条件保持不变，标题和预期结果保持不变，将这两个用例的优先级统一改为P2",
+            "scope_resolved": true,
+            "scope_instruction": "修改用例TC-A-8A2F541F6BFC和TC-C-8A2F541F6BFC",
+            "requirements_ready": true
+          },
+          "actual_action": "dispatch",
+          "actual_scope": [
+            "A",
+            "C"
+          ],
+          "requirements": "改写指定的两个用例，步骤精简一点，前置条件保持不变，标题和预期结果保持不变，将这两个用例的优先级统一改为P2",
+          "job_prompt": "改写指定的两个用例，步骤精简一点，前置条件保持不变，标题和预期结果保持不变，将这两个用例的优先级统一改为P2",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-27",
+      "title": "显式重新选择需新预览",
+      "split": "development",
+      "conversation_id": "04cfceed-a6f1-45db-a46e-dc1c38483887",
+      "turns": [
+        {
+          "input": "确认",
+          "request": {
+            "content": "确认",
+            "target_case_ids": [
+              "38a28853-3081-42c4-b00e-44025128dbad"
+            ]
+          },
+          "latency_ms": 56,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "B"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 1 条用例。\n- TC-B-21F3C20D06FA：错误验证码登录\n\n修改要求：\n改写登录模块用例，步骤更清晰，标题和预期结果保持不变\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "B"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        },
+        {
+          "input": "确认",
+          "request": {
+            "content": "确认"
+          },
+          "latency_ms": 56,
+          "expected": {
+            "action": "dispatch",
+            "scope": [
+              "B"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "正在为 1 条用例生成字段差异。",
+          "action": {
+            "type": "change_set",
+            "job_id": "f6e6aacb-921e-4d2a-8fa1-a54bbb25cf15",
+            "change_set_id": "6b2a82d7-c833-4bee-9ec4-0540419b69cb"
+          },
+          "operation_status": "running",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "dispatch",
+          "actual_scope": [
+            "B"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "job_prompt": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-28",
+      "title": "未知编号不扩大为全部",
+      "split": "development",
+      "conversation_id": "2ee808ae-b90c-45b6-849f-0dd022e00fb7",
+      "turns": [
+        {
+          "input": "只改不存在的编号TC-MISSING-999",
+          "request": {
+            "content": "只改不存在的编号TC-MISSING-999"
+          },
+          "latency_ms": 75218,
+          "expected": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "The use case numbered TC-MISSING-999 does not exist in the current case list, please confirm the correct case number.",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写该用例，步骤更清晰，标题和预期结果保持不变",
+            "scope_resolved": false,
+            "scope_instruction": "只改写编号TC-MISSING-999的用例",
+            "requirements_ready": true
+          },
+          "actual_action": "clarify",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写该用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "RW-29",
+      "title": "缺修改方向时先补充要求",
+      "split": "development",
+      "conversation_id": "1e743d92-0cb7-4f1b-b3ed-65c78510529e",
+      "turns": [
+        {
+          "input": "步骤更清晰",
+          "request": {
+            "content": "步骤更清晰"
+          },
+          "latency_ms": 12407,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "步骤"
+            ],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "希望修改哪些内容或达到什么效果？请补充重写方向，以及需要保留的内容。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰",
+            "scope_resolved": false,
+            "scope_instruction": "改写登录模块用例",
+            "requirements_ready": true
+          },
+          "actual_action": "clarify",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰",
+          "failures": [
+            "action: expected preview, got clarify"
+          ]
+        }
+      ],
+      "status": "FAIL",
+      "not_run_turns": 1
+    },
+    {
+      "id": "RW-30",
+      "title": "已澄清后继续补充保留条件",
+      "split": "holdout",
+      "conversation_id": "39de1a99-4718-481c-8ac8-e147d68586f6",
+      "turns": [
+        {
+          "input": "不对",
+          "request": {
+            "content": "不对"
+          },
+          "latency_ms": 9031,
+          "expected": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请问您所说的“不对”具体是指哪里不符合要求呢？是范围错误还是改写要求不符合预期呢？请您明确说明。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "clarification": "请问您所说的“不对”具体是指哪里不符合要求呢？是范围错误还是改写要求不符合预期呢？请您明确说明。",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "clarify",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+          "failures": []
+        },
+        {
+          "input": "范围还是原三条，只把步骤拆开写，其他全部保留",
+          "request": {
+            "content": "范围还是原三条，只把步骤拆开写，其他全部保留"
+          },
+          "latency_ms": 20161,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "步骤"
+            ],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 3 条用例。\n- TC-A-934BA601335A：正确验证码登录\n- TC-B-934BA601335A：错误验证码登录\n- TC-C-934BA601335A：正确密码登录\n\n修改要求：\n只把步骤拆开写，其他全部保留，标题和预期结果保持不变\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "只把步骤拆开写，其他全部保留，标题和预期结果保持不变",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "只把步骤拆开写，其他全部保留，标题和预期结果保持不变",
+          "failures": []
+        },
+        {
+          "input": "预期结果一定别动",
+          "request": {
+            "content": "预期结果一定别动"
+          },
+          "latency_ms": 11458,
+          "expected": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "预期"
+            ],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "请确认本轮修改：共 3 条用例。\n- TC-A-934BA601335A：正确验证码登录\n- TC-B-934BA601335A：错误验证码登录\n- TC-C-934BA601335A：正确密码登录\n\n修改要求：\n只把步骤拆开写，其他全部保留，标题和预期结果保持不变，预期结果一定不能改动\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "action": {
+            "type": "clarification"
+          },
+          "operation_status": "awaiting_target",
+          "draft": {
+            "version": 1,
+            "requirements": "只把步骤拆开写，其他全部保留，标题和预期结果保持不变，预期结果一定不能改动",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "preview",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "只把步骤拆开写，其他全部保留，标题和预期结果保持不变，预期结果一定不能改动",
+          "failures": []
+        },
+        {
+          "input": "行，就这么办",
+          "request": {
+            "content": "行，就这么办"
+          },
+          "latency_ms": 7903,
+          "expected": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "http_status": 202,
+          "reply": "正在为 3 条用例生成字段差异。",
+          "action": {
+            "type": "change_set",
+            "job_id": "205636bb-8837-499c-ac66-c42264d3a3d8",
+            "change_set_id": "62811271-03f4-4eb3-a652-8c565066e356"
+          },
+          "operation_status": "running",
+          "draft": {
+            "version": 1,
+            "requirements": "只把步骤拆开写，其他全部保留，标题和预期结果保持不变，预期结果一定不能改动",
+            "scope_resolved": true,
+            "scope_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+            "requirements_ready": true
+          },
+          "actual_action": "dispatch",
+          "actual_scope": [
+            "A",
+            "B",
+            "C"
+          ],
+          "requirements": "只把步骤拆开写，其他全部保留，标题和预期结果保持不变，预期结果一定不能改动",
+          "job_prompt": "只把步骤拆开写，其他全部保留，标题和预期结果保持不变，预期结果一定不能改动",
+          "failures": []
+        }
+      ],
+      "status": "PASS"
+    }
+  ],
+  "latency_ms": {
+    "p50": 12407,
+    "p95": 46236,
+    "max": 146904
+  }
+}

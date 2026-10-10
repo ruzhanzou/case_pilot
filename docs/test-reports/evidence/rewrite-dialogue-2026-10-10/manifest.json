@@ -1,0 +1,63 @@
+{
+  "baseline_commit": "709aab8a",
+  "runs": [
+    {
+      "name": "first",
+      "file": "first.json",
+      "summary": {
+        "PASS": 25,
+        "FAIL": 5,
+        "ERROR": 0
+      },
+      "executed_turns": 53,
+      "latency_ms": {
+        "p50": 12407,
+        "p95": 46236,
+        "max": 146904
+      }
+    },
+    {
+      "name": "focused_retest",
+      "file": "retest.json",
+      "summary": {
+        "PASS": 10,
+        "FAIL": 2,
+        "ERROR": 0
+      },
+      "executed_turns": 24,
+      "latency_ms": {
+        "p50": 11133,
+        "p95": 36625,
+        "max": 48912
+      }
+    },
+    {
+      "name": "priority_repeat",
+      "file": "priority-repeat.json",
+      "summary": {
+        "PASS": 5,
+        "FAIL": 1,
+        "ERROR": 0
+      },
+      "executed_turns": 20,
+      "latency_ms": {
+        "p50": 11531,
+        "p95": 25883,
+        "max": 36473
+      }
+    }
+  ],
+  "manual_e2e": {
+    "RW-E2E-01": "RECOVERED_PASS",
+    "RW-E2E-02": "RECOVERED_PASS_WITH_NEW_EXPLICIT_TEST_CONSTRAINT",
+    "RW-E2E-03": "NOT_RUN",
+    "RW-E2E-04": "NOT_RUN",
+    "RW-E2E-05": "NOT_RUN"
+  },
+  "remaining_gaps": [
+    "模型偶发响应异常，未确认任务不执行但需要重试",
+    "范围查询当前安全澄清，尚未直接回答当前范围",
+    "初次建议可能新增缺来源依据的界面操作，需要人工审阅"
+  ],
+  "full_final_version_rerun": false
+}

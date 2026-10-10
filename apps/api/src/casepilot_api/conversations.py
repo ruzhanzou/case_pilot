@@ -2015,7 +2015,9 @@ def _start_action(
     if intent == "CASE_MODIFY" and re.fullmatch(
         r"\s*(?:请|帮我)?(?:重写|改写|优化|修改)(?:一下)?[^，,。；;：:\n]{0,100}(?:用例|一下)[。！!]?\s*",
         payload.content,
-    ) and not re.search(r"标题|步骤|优先级|预期|前置|补充|增加|删除|改为|改成|覆盖", payload.content):
+    ) and not re.search(r"标题|步骤|优先级|预期|前置|补充|增加|删除|改为|改成|覆盖", payload.content) and not (
+        operation and dict(operation.payload).get("rewrite_draft", {}).get("requirements_ready")
+    ):
         questions = [
             "希望修改哪些内容或达到什么效果？请补充重写方向，以及需要保留的内容。"
         ]

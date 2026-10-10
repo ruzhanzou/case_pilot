@@ -443,7 +443,7 @@ export function CaseWorkbench({
       ? "idle"
       : activeRewriteOperation?.status === "running" || activeChangeSet?.status === "generating"
         ? "running"
-        : activeChangeSet?.status === "ready"
+        : activeChangeSet?.status === "ready" && activeChangeSet.items.some((item) => item.status === "ready")
           ? "review"
           : notice === changeAppliedNotice
             ? "applied"

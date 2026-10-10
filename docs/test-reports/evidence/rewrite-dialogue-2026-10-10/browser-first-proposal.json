@@ -1,0 +1,120 @@
+{
+  "operation_id": "45132202-846c-4098-a85c-3e8ad9cfb178",
+  "change_set_id": "eece811e-b328-4234-92df-15d36aec324b",
+  "instruction": "只改CP-FAC41506这一条，步骤拆开写，标题、模块、预期结果和前置条件保持不变，优先级改为P2",
+  "items": [
+    {
+      "ref": "10d9bfcc-e739-417f-b228-8488af0cd256",
+      "reason": "按要求仅拆分步骤并将优先级改为P2；标题、模块、前置条件和预期结果保持不变。",
+      "status": "ready",
+      "quality": {
+        "score": 100,
+        "issues": [],
+        "passed": true,
+        "repair_rounds": 0
+      },
+      "field_diff": [
+        {
+          "after": "P2",
+          "field": "priority",
+          "before": "P1"
+        },
+        {
+          "after": [
+            {
+              "action": "在豆包登录页面选择微信登录方式",
+              "expected": "无法完成微信登录，保持未登录状态"
+            },
+            {
+              "action": "发起微信登录操作",
+              "expected": "无法完成微信登录，保持未登录状态"
+            }
+          ],
+          "field": "steps",
+          "before": [
+            {
+              "action": "尝试发起微信登录操作",
+              "expected": "无法完成微信登录，保持未登录状态"
+            }
+          ]
+        }
+      ],
+      "target_type": "formal",
+      "test_case_id": "10d9bfcc-e739-417f-b228-8488af0cd256",
+      "base_snapshot": {
+        "id": "CP-FAC41506",
+        "tags": [],
+        "steps": [
+          {
+            "id": "a1c5ff20-a0ea-4e5c-a8ff-af070147ce51",
+            "action": "尝试发起微信登录操作",
+            "expected": "无法完成微信登录，保持未登录状态"
+          }
+        ],
+        "title": "验证豆包不支持微信登录符合业务规则",
+        "module": "端到端健壮性验收20261010/非支持登录方式校验",
+        "status": "pending",
+        "case_key": "CP-FAC41506",
+        "priority": "P1",
+        "automated": false,
+        "case_type": "豆包登录功能",
+        "source_refs": [
+          {
+            "label": "doubao_login.txt",
+            "excerpt": "> 说明：豆包无独立账号密码登录方式。",
+            "locator": "2. 运营商一键登录：手机本机号码，授权运营商读取手机号，一键完成登录（仅手机端）。",
+            "chunk_id": "ddc782fa-aab9-41e8-8f13-2e40ea0aeea5",
+            "source_id": "494d2d43-0089-40d5-9168-88bf8c4afe78",
+            "document_id": "3ce6b728-578b-4157-897b-dd230a84ff79"
+          }
+        ],
+        "preconditions": [
+          "测试环境可正常访问，网络连通正常",
+          "已进入豆包登录页面"
+        ],
+        "test_point_ids": [],
+        "revision_number": 1
+      },
+      "base_revision_id": "c7d716c2-aef3-4df5-b811-c419cd2c1baa",
+      "proposal_version": 1,
+      "previous_snapshot": null,
+      "proposed_snapshot": {
+        "id": "CP-FAC41506",
+        "tags": [],
+        "steps": [
+          {
+            "action": "在豆包登录页面选择微信登录方式",
+            "expected": "无法完成微信登录，保持未登录状态"
+          },
+          {
+            "action": "发起微信登录操作",
+            "expected": "无法完成微信登录，保持未登录状态"
+          }
+        ],
+        "title": "验证豆包不支持微信登录符合业务规则",
+        "module": "端到端健壮性验收20261010/非支持登录方式校验",
+        "status": "pending",
+        "priority": "P2",
+        "automated": false,
+        "case_type": "豆包登录功能",
+        "source_refs": [
+          {
+            "label": "doubao_login.txt",
+            "excerpt": "> 说明：豆包无独立账号密码登录方式。",
+            "locator": "2. 运营商一键登录：手机本机号码，授权运营商读取手机号，一键完成登录（仅手机端）。",
+            "chunk_id": "ddc782fa-aab9-41e8-8f13-2e40ea0aeea5",
+            "source_id": "494d2d43-0089-40d5-9168-88bf8c4afe78",
+            "document_id": "3ce6b728-578b-4157-897b-dd230a84ff79"
+          }
+        ],
+        "preconditions": [
+          "测试环境可正常访问，网络连通正常",
+          "已进入豆包登录页面"
+        ],
+        "test_point_ids": []
+      },
+      "candidate_revision_id": "ce593030-a6e1-42f4-a90b-8dc4c766f92b",
+      "previous_change_set_id": null
+    }
+  ]
+}

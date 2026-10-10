@@ -1,0 +1,1325 @@
+{
+  "schema_version": 1,
+  "scope": "formal_case_rewrite_pre_execution_dialogue",
+  "fixture": [
+    {
+      "alias": "A",
+      "title": "正确验证码登录",
+      "module": "登录/验证码",
+      "priority": "P0",
+      "preconditions": [
+        "账号已注册"
+      ],
+      "steps": [
+        {
+          "action": "输入正确验证码并提交登录",
+          "expected": "登录成功，建立会话"
+        }
+      ]
+    },
+    {
+      "alias": "B",
+      "title": "错误验证码登录",
+      "module": "登录/验证码",
+      "priority": "P1",
+      "preconditions": [
+        "账号已注册"
+      ],
+      "steps": [
+        {
+          "action": "输入错误验证码并提交登录",
+          "expected": "不建立会话"
+        }
+      ]
+    },
+    {
+      "alias": "C",
+      "title": "正确密码登录",
+      "module": "登录/密码",
+      "priority": "P2",
+      "preconditions": [
+        "账号已注册"
+      ],
+      "steps": [
+        {
+          "action": "输入正确密码并提交登录",
+          "expected": "登录成功，建立会话"
+        }
+      ]
+    },
+    {
+      "alias": "D",
+      "title": "订单支付成功",
+      "module": "支付/付款",
+      "priority": "P1",
+      "preconditions": [
+        "存在待支付订单"
+      ],
+      "steps": [
+        {
+          "action": "确认订单并完成支付",
+          "expected": "订单状态为已支付"
+        }
+      ]
+    }
+  ],
+  "global_assertions": [
+    "正式用例版本和内容未改变",
+    "只有当前有效预览的明确确认才产生任务",
+    "变更要求或范围后重新预览",
+    "任务提示和草稿持久化一致",
+    "所有未撤销的保留约束仍有效"
+  ],
+  "scenarios": [
+    {
+      "id": "RW-01",
+      "title": "纯确认与自动回传选中范围",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "确认",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "echo": "current"
+        }
+      ]
+    },
+    {
+      "id": "RW-02",
+      "title": "口语确认",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "没问题，就照这个来吧",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-03",
+      "title": "英文确认",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "Looks good, go ahead.",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ],
+      "split": "holdout"
+    },
+    {
+      "id": "RW-04",
+      "title": "确认中追加要求",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "确认，不过前置条件也不要动",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "前置"
+            ],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "好的",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-05",
+      "title": "确认中缩小范围",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "可以，但只改第一条",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "echo": "current"
+        },
+        {
+          "input": "就这样继续",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "A"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-06",
+      "title": "否定一个字段并非取消",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "不要动标题，把步骤拆开",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "步骤",
+              "标题"
+            ],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "确认",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-07",
+      "title": "调整描述风格",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "简洁一点",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "简洁|精简"
+            ],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "确认",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-08",
+      "title": "英文修改要求",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "Keep the title and expected results unchanged; make the steps clearer.",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "步骤|steps",
+              "标题|title"
+            ],
+            "requirements_exclude": []
+          }
+        }
+      ],
+      "split": "holdout"
+    },
+    {
+      "id": "RW-09",
+      "title": "修改字段值不应筛选范围",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "把优先级改成P0",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "P0"
+            ],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "确认",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-10",
+      "title": "纠正字段值而非叠加旧值",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "优先级改为P0",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "P0"
+            ],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "刚才说错了，改成P2",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "P2"
+            ],
+            "requirements_exclude": [
+              "P0"
+            ]
+          }
+        },
+        {
+          "input": "可以继续",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-11",
+      "title": "模块字段更名并非换范围",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "模块字段改为账号登录，其他要求保留",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "账号登录"
+            ],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "确认",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-12",
+      "title": "按优先级排除目标",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "范围排除P0的用例",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "确认",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-13",
+      "title": "按编号选择并抵抗陈旧选中范围",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "只改{{B}}",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "B"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "echo": "current"
+        },
+        {
+          "input": "确认",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "B"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "echo": "current"
+        }
+      ]
+    },
+    {
+      "id": "RW-14",
+      "title": "相对位置按展示顺序",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "就刚才展示的前三条，只改前两条",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "简洁一点",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B"
+            ],
+            "requirements_include": [
+              "简洁|精简"
+            ],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-15",
+      "title": "换模块仍保留修改要求",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "范围改成支付模块",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "D"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "确认",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "D"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-16",
+      "title": "扩大当前范围",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "把{{D}}也加进来，其他不变",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C",
+              "D"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "确认",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C",
+              "D"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-17",
+      "title": "范围与修改要求同时改变",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "只改{{C}}，优先级改为P1，标题仍保留",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "C"
+            ],
+            "requirements_include": [
+              "P1",
+              "标题"
+            ],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "确认",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-18",
+      "title": "模糊否定必须澄清",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "不对",
+          "expect": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "确认",
+          "expect": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "范围没问题，步骤要按操作顺序拆开，标题预期仍不变",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "步骤"
+            ],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "确认",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-19",
+      "title": "不是这些并未指定新范围",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "不是这些",
+          "expect": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-20",
+      "title": "单独否定不能擅自执行或取消",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "不要",
+          "expect": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ],
+      "split": "holdout"
+    },
+    {
+      "id": "RW-21",
+      "title": "明确终止任务",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "这次先不改了，结束任务",
+          "expect": {
+            "action": "cancel",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-22",
+      "title": "暂停表述保守澄清或取消",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "先别执行，我还要想想",
+          "expect": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ],
+      "split": "holdout"
+    },
+    {
+      "id": "RW-23",
+      "title": "混入删除意图",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "先删掉{{B}}，再改其余的",
+          "expect": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-24",
+      "title": "混入生成意图",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "同时再生成十条支付用例",
+          "expect": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-25",
+      "title": "查询当前范围不应执行",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "当前范围到底是哪些用例？",
+          "expect": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-26",
+      "title": "长对话保留约束和纠正值",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "步骤精简一点，前置条件别变",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "前置"
+            ],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "优先级统一改为P0",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "P0",
+              "前置"
+            ],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "不，是P2，不要P0",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "P2",
+              "前置"
+            ],
+            "requirements_exclude": [
+              "P0"
+            ]
+          }
+        },
+        {
+          "input": "只改{{A}}和{{C}}",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "C"
+            ],
+            "requirements_include": [
+              "P2",
+              "前置"
+            ],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "没问题，继续吧",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-27",
+      "title": "显式重新选择需新预览",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "确认",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "B"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          },
+          "selection": "B"
+        },
+        {
+          "input": "确认",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "B"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-28",
+      "title": "未知编号不扩大为全部",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "只改不存在的编号TC-MISSING-999",
+          "expect": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-29",
+      "title": "缺修改方向时先补充要求",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例",
+      "turns": [
+        {
+          "input": "步骤更清晰",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "步骤"
+            ],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "确认",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "RW-30",
+      "title": "已澄清后继续补充保留条件",
+      "priority": "P0",
+      "initial_scope": [
+        "A",
+        "B",
+        "C"
+      ],
+      "initial_instruction": "改写登录模块用例，步骤更清晰，标题和预期结果保持不变",
+      "turns": [
+        {
+          "input": "不对",
+          "expect": {
+            "action": "clarify",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "范围还是原三条，只把步骤拆开写，其他全部保留",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "步骤"
+            ],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "预期结果一定别动",
+          "expect": {
+            "action": "preview",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [
+              "预期"
+            ],
+            "requirements_exclude": []
+          }
+        },
+        {
+          "input": "行，就这么办",
+          "expect": {
+            "action": "dispatch",
+            "scope": [
+              "A",
+              "B",
+              "C"
+            ],
+            "requirements_include": [],
+            "requirements_exclude": []
+          }
+        }
+      ],
+      "split": "holdout"
+    }
+  ],
+  "manual_e2e_scenarios": [
+    {
+      "id": "RW-E2E-01",
+      "title": "多轮要求纠正后确认并采纳",
+      "inputs": [
+        "只改{{A}}，步骤拆开写，标题、模块、优先级和预期结果保持不变",
+        "确认，不过前置条件也不要动",
+        "优先级改为P0，其他要求不变",
+        "刚才说错了，改成P2，其他要求不变",
+        "没问题，就照这个来吧"
+      ],
+      "actions": [
+        "逐轮检查预览和正式版本",
+        "审阅字段差异后采纳",
+        "刷新并核对当前版本"
+      ],
+      "assertions": [
+        "确认前没有任务",
+        "任务仅包含A和最终P2要求",
+        "采纳前正式版本不变",
+        "采纳后仅A新增版本，非目标不变",
+        "撤销的P0不进入最终版本"
+      ]
+    },
+    {
+      "id": "RW-E2E-02",
+      "title": "审阅发现无来源的UI动作后继续纠正",
+      "fixture": "不支持微信登录，需求和原步骤未提供可选择微信入口的证据",
+      "inputs": [
+        "把步骤拆开，其他字段保留",
+        "新增验收依据：登录页面不提供微信入口。只检查入口不存在，不要增加选择微信方式的步骤。保留上一轮P2和其他保留字段。",
+        "确认"
+      ],
+      "actions": [
+        "保存首轮建议",
+        "先不采纳并继续改写",
+        "审阅纠正建议后采纳或取消"
+      ],
+      "assertions": [
+        "首轮新增具体UI路径必须有来源或标待确认",
+        "继续改写沿用未采纳建议和最终字段值",
+        "正式用例仅在采纳后改变"
+      ]
+    },
+    {
+      "id": "RW-E2E-03",
+      "title": "部分采纳后继续修改剩余建议",
+      "inputs": [
+        "只改{{A}}和{{B}}，步骤更清晰",
+        "确认",
+        "剩下的标题更简洁，已采纳的不要动",
+        "确认"
+      ],
+      "actions": [
+        "仅采纳A",
+        "继续修改剩余B",
+        "核对A版本"
+      ],
+      "assertions": [
+        "第二轮仅B进入建议",
+        "已采纳A不被重复改写或覆盖"
+      ]
+    },
+    {
+      "id": "RW-E2E-04",
+      "title": "刷新后确认当前有效草稿",
+      "inputs": [
+        "只改{{A}}和{{B}}，步骤更清晰",
+        "不对",
+        "范围还是这两条，预期结果不要动",
+        "确认"
+      ],
+      "actions": [
+        "澄清后刷新",
+        "恢复明确要求后刷新",
+        "确认生成建议"
+      ],
+      "assertions": [
+        "未解决澄清时不能执行旧预览",
+        "刷新后显示同一范围与要求",
+        "只生成当前有效草稿对应的任务"
+      ]
+    },
+    {
+      "id": "RW-E2E-05",
+      "title": "丢弃建议后刷新不复活",
+      "inputs": [
+        "只改{{A}}，步骤更清晰",
+        "确认"
+      ],
+      "actions": [
+        "丢弃建议",
+        "刷新工作区与会话"
+      ],
+      "assertions": [
+        "正式版本不变",
+        "已拒绝建议不再作为待采纳项出现"
+      ]
+    }
+  ]
+}

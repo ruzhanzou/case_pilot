@@ -165,3 +165,55 @@ async def test_scope_question_is_resolved_from_catalog_before_asking_user(draft,
         assert not task
         selector.assert_called_once()
     assert not dispatched
+
+
+def test_mixed_task_intent_cannot_be_accepted_as_rewrite_update():
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        RewriteReply(action='update', scope_action='replace', scope_instruction='排除某条',
+                     additional_intents=['CASE_DELETE'])
+
+
+def test_live_reply_context_omits_full_case_body_and_revision_metadata(monkeypatch):
+    import json
+    from types import SimpleNamespace
+    from agents import Runner
+    from casepilot_api.rewrite_dialogue import interpret_rewrite_reply
+    runner = Mock(return_value=SimpleNamespace(final_output=RewriteReply(action='update', requirements='步骤更清晰')))
+    monkeypatch.setattr(Runner, 'run_sync', runner)
+    interpret_rewrite_reply('步骤更清晰', {
+        'requirements': '标题保留', 'scope_cases': [{'ref': 'case-a', 'snapshot': {
+            'case_key': 'TC-A', 'title': '登录', 'module': '登录', 'priority': 'P1',
+            'steps': [{'action': '详细操作' * 10000, 'expected': '成功'}],
+            'source_refs': [{'excerpt': '来源正文' * 10000}], 'current_revision_id': 'revision-a',
+        }}],
+    }, provider='openai_compatible', model_name='test-model', base_url='https://example.invalid/v1',
+       api_key='test-key', timeout_seconds=10, tracing_enabled=False)
+    prompt = runner.call_args.args[1]
+    assert len(prompt) < 1000
+    context = json.loads(prompt)['draft']
+    assert context['requirements'] == '标题保留'
+    assert context['scope_cases'][0]['case_key'] == 'TC-A'
+    assert 'current_revision_id' not in prompt
+    assert '详细操作' not in prompt
+
+
+@pytest.mark.asyncio
+async def test_missing_direction_is_resolved_by_followup_without_asking_again(draft, monkeypatch):
+    client, workspace, oid, cases, dispatched = draft
+    await client.post(f'/api/v1/conversation-operations/{oid}/cancel')
+    started = await client.post(f'/api/v1/conversations/{workspace}/messages', json={
+        'content': '改写登录模块用例', 'intent_override': 'CASE_MODIFY',
+        'target_case_ids': [case['id'] for case in cases],
+    })
+    assert started.status_code == 202, started.text
+    assert not started.json()['assistant_message']['metadata'].get('modification_confirmation')
+    new_oid = started.json()['operation_plan']['operations'][0]['id']
+    monkeypatch.setattr(conversations, 'interpret_rewrite_reply', lambda *a, **k: RewriteReply(
+        action='update', requirements='步骤更清晰', requirements_ready=True,
+    ))
+    resumed = await client.post(f'/api/v1/conversation-operations/{new_oid}/resume', json={'content': '步骤更清晰'})
+    assert resumed.status_code == 202, resumed.text
+    assert resumed.json()['assistant_message']['metadata'].get('modification_confirmation'), resumed.text
+    assert set(resumed.json()['assistant_message']['target_case_ids']) == {case['id'] for case in cases}
+    assert not dispatched
