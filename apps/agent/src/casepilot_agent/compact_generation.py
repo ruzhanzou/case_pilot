@@ -188,6 +188,7 @@ def run_compact(request, provider, execute_stage, on_batch, count):
                         BatchAudit, request.model_id,
                     )
                     require_slots(audit.reviews, slots)
+                    replacements = {}
                     for review in audit.reviews:
                         if review.verdict == "supported":
                             if review.replacement is not None:
@@ -196,7 +197,10 @@ def run_compact(request, provider, execute_stage, on_batch, count):
                             if (review.replacement is None or review.replacement.slot != review.slot
                                     or not review.reason.strip()):
                                 raise StageContractError("invalid_audit_replacement")
-                            content[review.slot] = review.replacement
+                            replacements[review.slot] = review.replacement
+                    # Commit only after every review passes the contract. A failed
+                    # attempt must not contaminate the next audit input.
+                    content.update(replacements)
                     break
                 except (ModelBehaviorError, ValidationError, StageContractError, APIConnectionError,
                         APITimeoutError, RateLimitError, InternalServerError) as error:

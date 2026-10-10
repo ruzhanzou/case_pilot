@@ -400,3 +400,42 @@ def test_scope_ranges_are_bounded_and_preserve_excluded_gaps(monkeypatch, refs, 
             select()
     else:
         assert select().ids == [ids[index] for index in expected]
+
+
+def test_polish_explicit_selection_skips_model(scope):
+    db, conversation, cases, selector = scope
+    payload = ConversationMessageCreate(
+        content="润色标题", target_scope="selected",
+        targets=[{"kind": "case", "case_ids": [cases[0]["id"]]}],
+        target_case_ids=[cases[0]["id"]],
+    )
+    result, error = conversations._resolve_action_scope(db, conversation, payload, "CASE_MODIFY")
+    assert error is None
+    assert result.target_case_ids == payload.target_case_ids
+    selector.assert_not_called()
+
+
+@pytest.mark.parametrize("targets", [[], [{"kind": "module", "module": "登录"}]])
+def test_polish_never_expands_missing_selection(scope, targets):
+    db, conversation, _, selector = scope
+    _, error = conversations._resolve_action_scope(
+        db, conversation,
+        ConversationMessageCreate(content="润色", target_scope="selected", targets=targets),
+        "CASE_MODIFY",
+    )
+    assert error
+    selector.assert_not_called()
+
+
+def test_polish_does_not_silently_drop_missing_candidate(scope):
+    db, conversation, cases, selector = scope
+    _, error = conversations._resolve_action_scope(
+        db, conversation,
+        ConversationMessageCreate(
+            content="润色", target_scope="selected",
+            targets=[{"kind": "case", "case_ids": [cases[0]["id"]], "candidate_refs": ["missing"]}],
+            target_case_ids=[cases[0]["id"]],
+        ), "CASE_MODIFY",
+    )
+    assert error
+    selector.assert_not_called()

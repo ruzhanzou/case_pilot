@@ -1075,7 +1075,7 @@ export function CaseWorkbench({
         await refreshWorkspace();
       }
       const turn = await sendConversationMessage(workspace.id, {
-        content, modelId, scope: "current", intentOverride: "CASE_MODIFY",
+        content, modelId, scope: "current", intentOverride: "CASE_MODIFY", targetScope: "selected",
         targets: [target], knowledgeSourceIds: sourceIds, useSpaceKnowledge: true,
       });
       setPolishOpen(false);

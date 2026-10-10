@@ -572,6 +572,7 @@ def test_exact_assignment_does_not_swallow_semantic_changes(extra):
     request = RewriteRequest(
         test_case=original, instruction=f"把当前用例标题改为「弱网登录校验」，{extra}"
     )
+    provider.rewrite.return_value = MockProvider().rewrite(request)
     GenerationPipeline(provider).rewrite(request)
     provider.rewrite.assert_called_once_with(request)
 
@@ -599,3 +600,32 @@ def test_rewrite_preserves_legal_existing_case_shape(count):
     assert RewriteCandidate.model_validate(result.model_dump()).proposed.title == "现有用例标题调整"
     with pytest.raises(ValidationError):
         TestCaseDraft.model_validate(base)
+
+
+def test_single_semantic_rewrite_recomputes_diff_from_actual_candidate():
+    from unittest.mock import Mock
+
+    original = MockProvider().generate(GenerationRequest(prompt="登录")).test_cases[0]
+    request = RewriteRequest(test_case=original, instruction="补充验证")
+    candidate = MockProvider().rewrite(request)
+    candidate.diff = []
+    provider = Mock()
+    provider.rewrite.return_value = candidate
+    result = GenerationPipeline(provider).rewrite(request)
+    assert result.diff
+    assert all(diff.before == original.model_dump(mode="json")[diff.field] for diff in result.diff)
+    assert result.proposed == candidate.proposed
+
+
+@pytest.mark.parametrize("field,value", [("id", "foreign-case"), ("automated", True), ("status", "foreign")])
+def test_single_semantic_rewrite_rejects_changed_system_fields(field, value):
+    from unittest.mock import Mock
+
+    original = MockProvider().generate(GenerationRequest(prompt="登录")).test_cases[0]
+    request = RewriteRequest(test_case=original, instruction="补充验证")
+    candidate = MockProvider().rewrite(request)
+    candidate.proposed = candidate.proposed.model_copy(update={field: value})
+    provider = Mock()
+    provider.rewrite.return_value = candidate
+    with pytest.raises(ValueError, match="改写不能改变系统字段"):
+        GenerationPipeline(provider).rewrite(request)

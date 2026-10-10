@@ -324,3 +324,27 @@ def test_compact_payload_shares_features_and_preserves_evidence():
     assert inputs[0]["features"]
     assert all("features" not in point for point in inputs[0]["points"])
     assert "confirmed_brief" in inputs[0] and "evidence" in inputs[0]
+
+
+def test_failed_audit_does_not_leak_partial_replacements_into_retry():
+    inputs = []
+
+    def audit(stage, instruction, payload, result_type, model_id):
+        result = execute(stage, instruction, payload, result_type, model_id)
+        if result_type is BatchAudit:
+            inputs.append(payload["test_cases"])
+            if len(inputs) == 1:
+                replacement = CaseContent.model_validate(payload["test_cases"][0])
+                replacement.title = "不应保留的未通过审核修改"
+                result.reviews[0].verdict = "revise"
+                result.reviews[0].replacement = replacement
+                result.reviews[0].reason = "修订"
+                result.reviews[1].verdict = "revise"
+                # Invalid later review rejects the entire audit attempt.
+                result.reviews[1].replacement = None
+        return result
+
+    result = run(request(2), audit)
+    assert len(inputs) == 2
+    assert inputs[0] == inputs[1]
+    assert result.test_cases[0].title == inputs[0][0]["title"]

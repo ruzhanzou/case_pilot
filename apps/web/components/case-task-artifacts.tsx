@@ -32,6 +32,14 @@ export function CaseTaskArtifacts({ task, conversation, busy, cases, onLocate, o
   const generation = task.message.intent === "CASE_GENERATE" ? task : task.versions?.findLast(round => round.operation?.intent === "CASE_GENERATE");
   if (!generation) return null;
   const candidates = candidatesForTask(task, conversation);
+  const candidateJobIds = new Set(candidates.map(item => item.generation_job_id));
+  const qualityNotes = [...new Set(conversation.messages
+    .filter(message => message.related_job_id && candidateJobIds.has(message.related_job_id))
+    .flatMap(message => {
+      const issues = message.metadata.generation_quality_issues;
+      return Array.isArray(issues) ? issues.flatMap(issue =>
+        issue && typeof issue.message === "string" ? [issue.message] : []) : [];
+    }))];
   const brief = conversation.test_briefs.filter((item) => item.source_operation_id === generation.operation?.id).at(-1);
   const currentBrief = conversation.test_briefs.at(-1);
   const canConfirmBrief = brief && brief.id === currentBrief?.id && conversation.context.phase === "brief_review" && !brief.content.open_questions.some((item) => item.blocking);
@@ -59,6 +67,10 @@ export function CaseTaskArtifacts({ task, conversation, busy, cases, onLocate, o
           </button>
         </div>}
       </header>
+      {qualityNotes.length > 0 && <aside role="status" aria-label={pick("Generation notes", "生成说明")}>
+        <strong>{pick("Generation notes", "生成说明")}</strong>
+        <ul>{qualityNotes.map(note => <li key={note}>{note}</li>)}</ul>
+      </aside>}
       {candidates.some(item => item.status === "generating") && <p role="status" data-testid="generation-batch-preview">{pick("Batch preview — results appear as they finish. Adoption is available after generation and validation complete.", "分批预览：已生成内容会逐批更新，整轮生成和校验完成后可采纳。")}</p>}
       {needsReview && <div><p role="status">{pick("Review the AI changes for selected candidates before adding them to the official collection.", "所选候选存在待审阅的 AI 修改，请先采纳或丢弃建议，再纳入正式集合。")}</p>{onReviewChanges && <button type="button" disabled={busy} onClick={onReviewChanges}>{pick("Review AI changes", "审阅 AI 修改")}</button>}</div>}
       {candidates.map((candidate, index) => <details key={candidate.id}><summary>{candidate.status === "candidate" && <input type="checkbox" aria-label={pick(`Include ${candidate.ref}`, `纳入 ${candidate.ref}`)} checked={candidate.included} disabled={busy} onClick={(event) => event.stopPropagation()} onChange={() => onToggleCandidate(candidate)} />}<strong>{index + 1}. {candidate.ref} · {String(candidate.snapshot.title ?? "")}</strong><small>V{candidate.version} · {candidate.status === "generating" ? pick("Preview · not yet adoptable", "生成预览 · 暂不可采纳") : candidate.status === "incorporated" ? pick("Added", "已纳入") : candidate.status === "excluded" ? pick("Not included", "未纳入") : candidate.status === "archived" ? pick("Historical candidate", "历史候选") : pick("Awaiting review", "待审阅")}</small></summary><p>{String(candidate.snapshot.module ?? "")} · {pick("Priority", "优先级")}：<span className={`priority-badge priority-badge--${String(candidate.snapshot.priority).toLowerCase()}`}>{String(candidate.snapshot.priority ?? "—")}</span> · {String(candidate.snapshot.case_type ?? "")}</p><p><strong>{pick("Preconditions", "前置条件")}</strong>：{((candidate.snapshot.preconditions ?? []) as string[]).join("；") || "—"}</p><strong>{pick("Procedure", "操作步骤")}</strong><Streamdown>{candidate.snapshot.steps.filter(step => step.action.trim()).map((step, index) => `${index + 1}. ${step.action}`).join("\n\n")}</Streamdown><strong>{pick("Case checkpoints", "用例校验点")}</strong><Streamdown>{candidate.snapshot.steps.filter(step => step.expected.trim()).map((step, index) => `${index + 1}. ${step.expected}`).join("\n\n")}</Streamdown>{candidate.status === "candidate" && <button type="button" onClick={() => onLocate(candidate.id)}>{pick("Edit candidate", "编辑候选")}</button>}</details>)}

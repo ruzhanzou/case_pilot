@@ -14,6 +14,7 @@ from casepilot_agent.contracts import (
     GenerationRequest,
     GenerationResult,
     OpenQuestion,
+    Priority,
     QualityIssue,
     QualityReport,
     RequirementAnalysis,
@@ -122,7 +123,7 @@ def _explicit_rewrite_candidate(
     if values["case_type"]:
         proposed.case_type = values["case_type"]
     if values["priority"]:
-        proposed.priority = values["priority"]  # type: ignore[assignment]
+        proposed.priority = Priority(values["priority"])
     if values["expected"]:
         proposed.steps[-1].expected = values["expected"][:4000]
 
@@ -864,7 +865,11 @@ class GenerationPipeline:
                 "\n结合context中的任务资料，只修改当前用例受影响的字段。"
                 "规则不相关时保持原内容；资料冲突写入质量问题，不擅自选择版本。"
                 "保留具体数值、条件与来源，不扩大修改范围。"})
-        return self.provider.rewrite(request)
+        candidate = self.provider.rewrite(request)
+        for field in ("id", "automated", "status"):
+            if getattr(candidate.proposed, field) != getattr(request.test_case, field):
+                raise ValueError(f"改写不能改变系统字段：{field}")
+        return rebase_rewrite_candidate(request.test_case, candidate)
 
     def rewrite_many(self, requests: dict[str, RewriteRequest], before_batch=None, on_batch=None) -> dict[str, RewriteCandidate]:
         results = {}
@@ -875,10 +880,12 @@ class GenerationPipeline:
                 results[ref] = explicit
             else:
                 pending.append((ref, request))
-        for offset in range(0, len(pending), 20):
+        if results and on_batch:
             if before_batch:
                 before_batch()
-            group = pending[offset:offset + 20]
+            on_batch(dict(results), len(requests))
+
+        def rewrite_group(group):
             expected = dict(group)
             if self.provider.name == "mock":
                 batch_results = {ref: self.rewrite(request) for ref, request in group}
@@ -913,11 +920,34 @@ class GenerationPipeline:
                     batch_results[item.ref] = RewriteCandidate(
                         proposed=proposed, diff=[], reason=item.reason, quality=item.quality,
                     )
+            validated = {}
             for ref, candidate in batch_results.items():
                 original = expected[ref].test_case
                 if candidate.proposed.id != original.id:
                     raise ValueError("批量改写不能改变用例标识")
-                results[ref] = rebase_rewrite_candidate(original, candidate)
+                validated[ref] = rebase_rewrite_candidate(original, candidate)
+            return validated
+
+        # Providers already retry transport errors. Only shrink malformed output;
+        # never retry cancellation, permissions, or target-identity violations.
+        batches = [(pending[offset:offset + 20], 0)
+                   for offset in range(0, len(pending), 20)]
+        while batches:
+            group, attempt = batches.pop(0)
+            if before_batch:
+                before_batch()
+            try:
+                validated = rewrite_group(group)
+            except (ModelBehaviorError, ValidationError):
+                if len(group) > 1:
+                    middle = len(group) // 2
+                    batches[0:0] = [(group[:middle], 0), (group[middle:], 0)]
+                elif attempt == 0:
+                    batches.insert(0, (group, 1))
+                else:
+                    raise
+                continue
+            results.update(validated)
             if on_batch:
                 on_batch(dict(results), len(requests))
         return results

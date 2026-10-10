@@ -1012,6 +1012,15 @@ def _conversation_view(db: Session, conversation: Conversation) -> ConversationV
         )
     pending_attachments = []
     message_views = _messages_with_attachments(db, conversation, messages, pending_attachments)
+    # Project persisted quality notes without another request or mutating messages.
+    quality_by_job = {
+        job.id: dict(job.output_payload or {}).get("quality", {}).get("issues", [])
+        for job in jobs if job.operation == "generate"
+    }
+    for view in message_views:
+        issues = quality_by_job.get(view.related_job_id)
+        if issues:
+            view.metadata = {**view.metadata, "generation_quality_issues": issues}
     return ConversationView(
         id=conversation.id,
         space_id=conversation.space_id,
@@ -1639,6 +1648,19 @@ def _resolve_action_scope(
 ) -> tuple[ConversationMessageCreate, str | None]:
     if conversation.collection_id is None:
         return payload, None
+    # The polish dialog binds its instruction to an explicit selection. Resolve
+    # IDs from storage, but do not ask a model to reinterpret that selection.
+    # The normal modification preview/confirmation gate still applies.
+    if payload.target_scope == "selected" and intent == "CASE_MODIFY":
+        if not payload.targets or any(target.kind != "case" for target in payload.targets):
+            return payload, "请选择要润色的具体用例。"
+        expanded = _expand_conversation_targets(db, conversation, payload)
+        requested_refs = {ref for target in payload.targets for ref in target.candidate_refs}
+        resolved_refs = {item.ref for item in expanded.target_candidate_snapshots}
+        if (not expanded.target_case_ids and not expanded.target_candidate_snapshots
+                or not requested_refs.issubset(resolved_refs)):
+            return payload, "选中的用例已不可用，请重新选择。"
+        return expanded, None
     if settings.agent_provider != "mock" and intent in ASSET_INTENTS:
         return _resolve_model_scope(db, conversation, payload, intent)
     # The deterministic implementation remains only for offline mock fixtures.
@@ -4444,6 +4466,7 @@ def resume_conversation_operation(
             + ("\n补充说明：" + supplement.content if supplement.content else "")
             + predecessor_context[:5000],
             "intent_override": operation.intent,
+            "target_scope": "inferred",
             "targets": [item.model_dump(mode="json") for item in resume_targets],
             "target_case_ids": [str(item) for item in supplement.target_case_ids]
             or (dict(operation.target).get("case_ids", []) if not resume_targets else []),

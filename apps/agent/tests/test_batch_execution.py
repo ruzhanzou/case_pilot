@@ -322,3 +322,79 @@ def test_patch_rewrite_preserves_untouched_fields_and_does_not_request_full_outp
     fields = schema["$defs"]["RewritePatchItem"]["properties"]
     assert "changes" in fields
     assert "proposed" not in fields and "diff" not in fields
+
+
+def test_malformed_rewrite_splits_only_failed_batch_and_publishes_progress():
+    from agents.exceptions import ModelBehaviorError
+
+    class TruncatedProvider(BatchProvider):
+        def complete(self, **kwargs):
+            if len(kwargs["payload"]["items"]) > 2:
+                self.calls.append(kwargs)
+                raise ModelBehaviorError("truncated output")
+            return super().complete(**kwargs)
+
+    provider = TruncatedProvider()
+    previews = []
+    result = GenerationPipeline(provider).rewrite_many(
+        requests(5), on_batch=lambda items, total: previews.append((list(items), total))
+    )
+    assert [len(call["payload"]["items"]) for call in provider.calls] == [5, 2, 3, 1, 2]
+    assert [len(items) for items, _ in previews] == [2, 3, 5]
+    assert set(result) == set(requests(5))
+    assert all(total == 5 for _, total in previews)
+
+
+def test_persistent_malformed_single_rewrite_has_bounded_retry():
+    from agents.exceptions import ModelBehaviorError
+
+    class BrokenProvider(BatchProvider):
+        def complete(self, **kwargs):
+            self.calls.append(kwargs)
+            raise ModelBehaviorError("malformed output")
+
+    provider = BrokenProvider()
+    previews = []
+    with pytest.raises(ModelBehaviorError):
+        GenerationPipeline(provider).rewrite_many(
+            requests(1), on_batch=lambda *args: previews.append(args)
+        )
+    assert len(provider.calls) == 2
+    assert previews == []
+
+
+def test_cancel_during_rewrite_recovery_stops_before_next_call():
+    from agents.exceptions import ModelBehaviorError
+
+    provider = BatchProvider()
+    def broken(**kwargs):
+        provider.calls.append(kwargs)
+        raise ModelBehaviorError("truncated")
+    provider.complete = broken
+    checks = []
+    def check():
+        checks.append(True)
+        if len(checks) == 2:
+            raise RuntimeError("cancelled")
+    with pytest.raises(RuntimeError, match="cancelled"):
+        GenerationPipeline(provider).rewrite_many(requests(5), before_batch=check)
+    assert len(provider.calls) == 1
+
+
+def test_explicit_rewrites_publish_before_semantic_model_call():
+    source = requests(2)
+    source["ref-0"] = source["ref-0"].model_copy(update={"instruction": "优先级改为P0"})
+    previews = []
+
+    class PreviewProvider(BatchProvider):
+        def complete(self, **kwargs):
+            assert previews == [(1, 2)]
+            return super().complete(**kwargs)
+
+    provider = PreviewProvider()
+    result = GenerationPipeline(provider).rewrite_many(
+        source, on_batch=lambda items, total: previews.append((len(items), total))
+    )
+    assert previews == [(1, 2), (2, 2)]
+    assert result["ref-0"].proposed.priority == "P0"
+    assert len(provider.calls) == 1

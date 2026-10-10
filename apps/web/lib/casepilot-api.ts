@@ -915,9 +915,13 @@ export function watchGeneration(
     // Large collection reviews run in sequential model batches. Keep the
     // conversation attached while the server still reports a running job.
     }, 7_200_000);
+    let polling = false;
     const poll = window.setInterval(() => {
+      if (settled || polling) return;
+      polling = true;
       void getGeneration(jobId)
         .then((job) => {
+          if (settled) return;
           if (job.status === "running") {
             onStage({
               planning_preview: job.planning_preview,
@@ -950,7 +954,8 @@ export function watchGeneration(
         })
         .catch(() => {
           // SSE remains the primary channel; transient polling failures are ignored.
-        });
+        })
+        .finally(() => { polling = false; });
     }, 3_000);
     const close = () => {
       window.clearTimeout(timeout);
@@ -1272,6 +1277,7 @@ export function sendConversationMessage(
     documentIds?: string[];
     useSpaceKnowledge?: boolean;
     intentOverride?: ConversationIntent;
+    targetScope?: "inferred" | "selected";
     targets?: ConversationTarget[];
     sourceOperationId?: string;
   },
@@ -1289,6 +1295,7 @@ export function sendConversationMessage(
       document_ids: input.documentIds ?? [],
       use_space_knowledge: input.useSpaceKnowledge ?? true,
       intent_override: input.intentOverride,
+      target_scope: input.targetScope ?? "inferred",
       targets: input.targets ?? [],
     }),
   });
@@ -1415,22 +1422,30 @@ export async function waitForConversationJob(
       close();
       void typewriter.finish().then(callback);
     };
+    let fetchingConversation = false;
     const resolveFromConversation = async () => {
-      const conversation = await getConversation(conversationId);
-      const message = conversation.messages.find(
-        (item) => item.role === "assistant" && item.related_job_id === jobId,
-      );
-      if (
-        message &&
-        [
-          "completed",
-          "failed",
-          "cancelled",
-          "awaiting_clarification",
-          "awaiting_confirmation",
-        ].includes(message.status)
-      ) {
-        finish(() => resolve(message));
+      if (settled || fetchingConversation) return;
+      fetchingConversation = true;
+      try {
+        const conversation = await getConversation(conversationId);
+        if (settled) return;
+        const message = conversation.messages.find(
+          (item) => item.role === "assistant" && item.related_job_id === jobId,
+        );
+        if (
+          message &&
+          [
+            "completed",
+            "failed",
+            "cancelled",
+            "awaiting_clarification",
+            "awaiting_confirmation",
+          ].includes(message.status)
+        ) {
+          finish(() => resolve(message));
+        }
+      } finally {
+        fetchingConversation = false;
       }
     };
     source.addEventListener("qa.delta", (rawEvent) => {

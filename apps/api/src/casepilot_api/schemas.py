@@ -426,6 +426,7 @@ class ConversationTarget(BaseModel):
 
 
 class ConversationMessageCreate(BaseModel):
+    target_scope: str = Field(default="inferred", pattern=r"^(inferred|selected)$")
     content: str = Field(min_length=1, max_length=8000)
     model_id: str = Field(
         default="auto",

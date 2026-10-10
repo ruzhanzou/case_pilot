@@ -10,8 +10,9 @@ from casepilot_api.main import app
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("target_scope", ["inferred", "selected"])
 @pytest.mark.parametrize("confirmation", [{"confirm_modification": True}, {"content": "确认"}])
-async def test_confirmation_rejects_bypass_and_refreshes_changed_assets(monkeypatch, confirmation):
+async def test_confirmation_rejects_bypass_and_refreshes_changed_assets(monkeypatch, confirmation, target_scope):
     dispatched = []
     monkeypatch.setattr(
         conversations, "enqueue_task", lambda *args, **kwargs: dispatched.append(args)
@@ -45,6 +46,8 @@ async def test_confirmation_rejects_bypass_and_refreshes_changed_assets(monkeypa
                 "content": "把当前用例优先级改为P0",
                 "intent_override": "CASE_MODIFY",
                 "target_case_ids": [case["id"]],
+                "target_scope": target_scope,
+                "targets": [{"kind": "case", "case_ids": [case["id"]]}],
             },
         )
         assert turn.status_code == 202, turn.text
