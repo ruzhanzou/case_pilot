@@ -4326,6 +4326,44 @@ def cancel_conversation_operation(
     return _operation_view(operation)
 
 
+_MODIFICATION_ACKNOWLEDGEMENT = re.compile(
+    r"\s*(?:确认|确认修改|确认并继续|确认修改并生成建议|可以|好的|confirm|yes|ok)[。！!.]?\s*",
+    re.IGNORECASE,
+)
+
+
+def _same_confirmation_targets(operation, supplement):
+    """UI selectors can differ from routing selectors while naming the same assets."""
+    if not (supplement.targets or supplement.target_case_ids
+            or supplement.target_candidate_snapshots):
+        return True
+    if any(target.kind != "case" for target in supplement.targets):
+        return (not supplement.target_case_ids and not supplement.target_candidate_snapshots
+                and [item.model_dump(mode="json") for item in supplement.targets]
+                == dict(operation.target).get("selectors", []))
+    expected = dict(operation.payload).get("modification_confirmation", {}).get("cases", [])
+    expected_cases = {str(item["ref"]) for item in expected if item["target_type"] == "formal"}
+    expected_candidates = {str(item["ref"]) for item in expected if item["target_type"] == "candidate"}
+    case_ids = {str(item) for item in supplement.target_case_ids}
+    candidate_refs = {item.ref for item in supplement.target_candidate_snapshots}
+    for target in supplement.targets:
+        # A collection override is a changed scope, even if IDs happen to match.
+        if target.collection_id is not None:
+            return False
+        case_ids.update(str(item) for item in target.case_ids)
+        candidate_refs.update(target.candidate_refs)
+    return case_ids == expected_cases and candidate_refs == expected_candidates
+
+
+def _without_confirmation_supplements(instruction):
+    # Recover old pending requests polluted by this bug, retaining real additions.
+    return "\n".join(
+        line for line in instruction.split("\n")
+        if not (line.startswith("补充说明：")
+                and _MODIFICATION_ACKNOWLEDGEMENT.fullmatch(line[5:]))
+    )
+
+
 @router.post(
     "/conversation-operations/{operation_id}/resume",
     response_model=ConversationTurnView,
@@ -4373,21 +4411,25 @@ def resume_conversation_operation(
     if (
         operation.intent == "CASE_MODIFY"
         and dict(operation.payload).get("modification_confirmation")
-        and re.fullmatch(
-            r"\s*(?:确认|确认修改|确认并继续|确认修改并生成建议|可以|好的|confirm|yes|ok)[。！!.]?\s*",
-            supplement.content or "", re.IGNORECASE,
-        )
+        and _MODIFICATION_ACKNOWLEDGEMENT.fullmatch(supplement.content or "")
         and supplement.intent is None
-        and not supplement.target_case_ids
-        and not supplement.target_candidate_snapshots
-        and (
-            not supplement.targets
-            or [item.model_dump(mode="json") for item in supplement.targets]
-            == dict(operation.target).get("selectors", [])
-        )
     ):
-        supplement = supplement.model_copy(update={"content": None, "targets": [],
-                                                  "confirm_modification": True})
+        if _same_confirmation_targets(operation, supplement):
+            supplement = supplement.model_copy(update={
+                "content": None, "targets": [], "target_case_ids": [],
+                "target_candidate_snapshots": [], "confirm_modification": True,
+            })
+        else:
+            # A changed selection needs a new preview, never a new "确认" instruction.
+            supplement = supplement.model_copy(update={"content": None})
+    if supplement.confirm_modification and dict(operation.payload).get("modification_confirmation"):
+        pending = dict(operation.payload["modification_confirmation"])
+        pending["instruction"] = _without_confirmation_supplements(pending["instruction"])
+        operation.payload = {
+            **dict(operation.payload), "modification_confirmation": pending,
+            "instruction": _without_confirmation_supplements(
+                str(operation.payload.get("instruction") or user_message.content)),
+        }
     if supplement.confirm_modification and (
         operation.intent != "CASE_MODIFY"
         or not dict(operation.payload).get("modification_confirmation")
