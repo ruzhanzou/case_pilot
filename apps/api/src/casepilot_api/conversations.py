@@ -61,6 +61,7 @@ from casepilot_api.models import (
     WorkspaceCandidate,
     WorkspaceTestBrief,
 )
+from casepilot_api.rewrite_dialogue import RewriteReply, interpret_rewrite_reply
 from casepilot_api.schemas import (
     CaseChangeSetApplyView,
     CaseChangeSetView,
@@ -1552,9 +1553,11 @@ def _resolve_model_scope(db, conversation, payload, intent):
     allowed = {str(case["id"]) for case in catalog}
     ref_ids = {str(case.get("case_key", "")): str(case["id"]) for case in catalog}
     selected = _expand_conversation_targets(db, conversation, payload)
-    selected_ids = {str(ref) for ref in selected.target_case_ids}
-    selected_ids.update(ref_ids[item.ref] for item in selected.target_candidate_snapshots
-                        if item.ref in ref_ids)
+    selected_order = list(dict.fromkeys(
+        [str(ref) for ref in selected.target_case_ids]
+        + [ref_ids[item.ref] for item in selected.target_candidate_snapshots if item.ref in ref_ids]
+    ))
+    selected_ids = set(selected_order)
     latest = db.scalar(select(ConversationOperation).where(
         ConversationOperation.conversation_id == conversation.id,
         ConversationOperation.intent == "CASE_QUERY",
@@ -1579,7 +1582,7 @@ def _resolve_model_scope(db, conversation, payload, intent):
                     "items": [{"ref": item["ref"], "snapshot": item.get("proposed_snapshot", {})}
                               for item in pending]}
     context = {"phase": dict(conversation.context).get("phase", "maintenance"),
-               "selected_ids": sorted(selected_ids & allowed),
+               "selected_ids": [ref for ref in selected_order if ref in allowed],
                "current_case_id": str(dict(conversation.context).get("selected_case_id") or ""),
                "latest_query": latest_query, "proposal": proposal}
     # Proposal refs are stored as asset IDs; both IDs and visible case keys are
@@ -2033,8 +2036,7 @@ def _start_action(
         target_questions and (
             # Scope selection has the full catalog; routing only knows intent.
             # Let the selector resolve scope questions instead of blocking it.
-            (settings.agent_provider != "mock" and intent in ASSET_INTENTS
-             and "TARGET_EVIDENCE_NOT_IN_REQUEST" in plan.get("reason_codes", []))
+            (settings.agent_provider != "mock" and intent in ASSET_INTENTS)
             or confirmed_targets or (
                 payload.source_operation_id and payload.targets
                 and plan.get("target_kind") == "none"
@@ -4337,6 +4339,145 @@ def cancel_conversation_operation(
     return _operation_view(operation)
 
 
+def _rewrite_reply_turn(db, conversation, operation, user_message, assistant, action, task_name=None):
+    if action.get("type") != "cancelled":
+        _operation_runtime_status(operation, assistant, action)
+    conversation.context = {**dict(conversation.context), "active_operation_id": str(operation.id)}
+    conversation.updated_at = datetime.now(UTC)
+    if task_name and assistant.related_job_id:
+        enqueue_task(db, task_name, [str(assistant.related_job_id)], task_id=assistant.related_job_id)
+    db.commit()
+    db.refresh(assistant)
+    operations = list(db.scalars(select(ConversationOperation).where(
+        ConversationOperation.message_id == operation.message_id,
+    ).order_by(ConversationOperation.sequence)))
+    return ConversationTurnView(
+        conversation_id=conversation.id, user_message=_message_view(user_message),
+        assistant_message=_message_view(assistant), intent=operation.intent,
+        intent_confidence=operation.confidence, action=action,
+        operation_plan=_operation_plan_view(operations),
+    )
+
+
+def _resume_rewrite_draft(db, account, conversation, operation, user_message, supplement):
+    pending = dict(operation.payload).get("modification_confirmation")
+    if supplement.confirm_modification and (not pending or supplement.content or supplement.intent
+            or supplement.targets or supplement.target_case_ids or supplement.target_candidate_snapshots):
+        raise HTTPException(status_code=422, detail="modification_confirmation_invalid")
+    original = _without_confirmation_supplements(
+        str(operation.payload.get("instruction") or user_message.content))
+    state = copy.deepcopy(dict(operation.payload).get("rewrite_draft") or {
+        "version": 1,
+        "scope_instruction": str(dict(operation.payload).get("plan", {}).get("target_text") or original),
+        "requirements": original,
+        "requirements_ready": bool(pending or dict(operation.payload).get("plan", {}).get("changes")),
+        "scope_resolved": bool(dict(operation.target).get("resolved")),
+    })
+    if pending:
+        state.update(requirements=_without_confirmation_supplements(pending["instruction"]),
+                     requirements_ready=True, scope_resolved=True)
+    # Auto-echoed UI selections are context; actual changed membership is a draft update.
+    selection_changed = not _same_confirmation_targets(operation, supplement)
+    if not state["scope_resolved"] and (supplement.target_case_ids or supplement.target_candidate_snapshots):
+        selection_changed = True
+    text = supplement.content or ""
+    if supplement.confirm_modification or _MODIFICATION_ACKNOWLEDGEMENT.fullmatch(text):
+        reply = RewriteReply(action="confirm")
+    elif not text:
+        reply = RewriteReply(action="update", requirements_ready=state["requirements_ready"])
+    else:
+        try:
+            reply = interpret_rewrite_reply(text, {
+                **state, "has_confirmation": bool(pending),
+                "scope_cases": (pending or {}).get("cases", []) or dict(operation.target),
+            }, provider=settings.agent_provider, model_name=settings.agent_model,
+                base_url=settings.agent_base_url, api_key=settings.agent_api_key,
+                timeout_seconds=settings.agent_timeout_seconds,
+                tracing_enabled=settings.agent_tracing_enabled)
+        except Exception:
+            reply = RewriteReply(action="clarify", clarification="暂时无法准确理解这次补充，请重试；当前用例没有改动。")
+    if text:
+        db.add(ConversationMessage(conversation_id=conversation.id, role="user", content=text,
+            intent=operation.intent, intent_confidence=1.0, status="completed",
+            target_case_ids=[], citations=[],
+            message_metadata={"operation_id": str(operation.id), "rewrite_reply": reply.action}))
+    if reply.action == "cancel" and reply.confidence >= 0.85:
+        cancel_conversation_operation(operation.id, account, db)
+        assistant = db.scalar(select(ConversationMessage).where(
+            ConversationMessage.conversation_id == conversation.id,
+            ConversationMessage.role == "assistant",
+        ).order_by(ConversationMessage.created_at.desc()).limit(1))
+        return _rewrite_reply_turn(db, conversation, operation, user_message, assistant, {"type": "cancelled"})
+    clarification = reply.clarification if reply.action == "clarify" else ""
+    if reply.confidence < 0.85:
+        clarification = clarification or "这次回复是调整范围、修改要求，还是确认当前方案？请补充说明。"
+    if reply.action == "confirm" and (not pending or state.get("clarification")):
+        clarification = state.get("clarification") or "当前方案还未确定，请先补充用例范围和修改要求。"
+    if clarification or reply.action == "clarify":
+        state["clarification"] = clarification or "请说明需要调整的范围或修改要求。"
+        operation.payload = {**dict(operation.payload), "rewrite_draft": state,
+                             "modification_confirmation": None}
+        assistant = _new_assistant_message(conversation.id, content=state["clarification"],
+            intent=operation.intent, confidence=operation.confidence,
+            status="awaiting_clarification", target_case_ids=[])
+        db.add(assistant)
+        db.flush()
+        return _rewrite_reply_turn(db, conversation, operation, user_message, assistant, {"type": "clarification"})
+    scope_changed = reply.scope_action == "replace" or selection_changed
+    if reply.scope_action == "replace":
+        state["scope_instruction"] = reply.scope_instruction
+    if reply.requirements:
+        state["requirements"] = reply.requirements
+    state["requirements_ready"] = reply.requirements_ready
+    state.pop("clarification", None)
+    if scope_changed:
+        state["scope_resolved"] = False
+    confirm = reply.action == "confirm" and not scope_changed
+    if not confirm:
+        pending = None
+    elif pending:
+        pending = {**pending, "instruction": _without_confirmation_supplements(pending["instruction"])}
+    operation.payload = {**dict(operation.payload), "rewrite_draft": state,
+        "instruction": state["requirements"], "modification_confirmation": pending,
+        "plan": {**dict(operation.payload).get("plan", {}), "clarification_questions": []}}
+    if not state["requirements_ready"]:
+        assistant = _new_assistant_message(conversation.id,
+            content="希望这些用例达到什么修改效果？例如步骤更清晰，或只调整标题。",
+            intent=operation.intent, confidence=operation.confidence,
+            status="awaiting_clarification", target_case_ids=[])
+        db.add(assistant)
+        db.flush()
+        return _rewrite_reply_turn(db, conversation, operation, user_message, assistant, {"type": "clarification"})
+    prior_targets = [{"kind": "case", "case_ids": dict(operation.target).get("case_ids", [])[i:i+100],
+                      "candidate_refs": dict(operation.target).get("candidate_refs", [])[i:i+100]}
+                     for i in range(0, max(len(dict(operation.target).get("case_ids", [])),
+                                          len(dict(operation.target).get("candidate_refs", []))), 100)]
+    data = {**dict(user_message.message_metadata).get("request", {}),
+        "content": state["requirements"] if state["scope_resolved"] else state["scope_instruction"],
+        "intent_override": "CASE_MODIFY", "target_scope": "inferred",
+        "targets": prior_targets, "target_case_ids": [], "target_candidate_snapshots": []}
+    if selection_changed and reply.scope_action != "replace":
+        data.update(targets=[item.model_dump(mode="json") for item in supplement.targets],
+                    target_case_ids=[str(item) for item in supplement.target_case_ids],
+                    target_candidate_snapshots=[item.model_dump(mode="json") for item in supplement.target_candidate_snapshots])
+    for key in ("knowledge_source_ids", "document_ids"):
+        data[key] = list(dict.fromkeys([
+            *data.get(key, []), *dict(conversation.context).get(key, []),
+        ]))
+    if operation.payload.get("source_operation_id"):
+        data["source_operation_id"] = operation.payload["source_operation_id"]
+    fixed_scope = state["scope_resolved"] or (selection_changed and reply.scope_action != "replace")
+    payload = ConversationMessageCreate.model_validate(data)
+    operation.status = "running"
+    assistant, action, task_name = _start_action(db, account, conversation, user_message, payload,
+        "CASE_MODIFY", operation.confidence, operation.id,
+        confirmed_targets=fixed_scope, confirm_modification=confirm)
+    # Scope failures must never leave an executable stale preview.
+    state = {**state, "scope_resolved": bool(dict(operation.payload).get("modification_confirmation") or task_name)}
+    operation.payload = {**dict(operation.payload), "rewrite_draft": state}
+    return _rewrite_reply_turn(db, conversation, operation, user_message, assistant, action, task_name)
+
+
 _MODIFICATION_ACKNOWLEDGEMENT = re.compile(
     r"\s*(?:确认|确认修改|确认并继续|确认修改并生成建议|可以|好的|confirm|yes|ok)[。！!.]?\s*",
     re.IGNORECASE,
@@ -4352,7 +4493,11 @@ def _same_confirmation_targets(operation, supplement):
         return (not supplement.target_case_ids and not supplement.target_candidate_snapshots
                 and [item.model_dump(mode="json") for item in supplement.targets]
                 == dict(operation.target).get("selectors", []))
-    expected = dict(operation.payload).get("modification_confirmation", {}).get("cases", [])
+    confirmation = dict(operation.payload).get("modification_confirmation")
+    expected = confirmation.get("cases", []) if confirmation else [
+        *[{"ref": ref, "target_type": "formal"} for ref in dict(operation.target).get("case_ids", [])],
+        *[{"ref": ref, "target_type": "candidate"} for ref in dict(operation.target).get("candidate_refs", [])],
+    ]
     expected_cases = {str(item["ref"]) for item in expected if item["target_type"] == "formal"}
     expected_candidates = {str(item["ref"]) for item in expected if item["target_type"] == "candidate"}
     case_ids = {str(item) for item in supplement.target_case_ids}
@@ -4417,30 +4562,12 @@ def resume_conversation_operation(
     user_message = db.get(ConversationMessage, operation.message_id)
     if user_message is None:
         raise HTTPException(status_code=404, detail="conversation_message_not_found")
-    # A plain confirmation acknowledges the pending preview, not a new instruction.
-    # Preserve the gate whenever the response also changes scope or requirements.
-    if (
-        operation.intent == "CASE_MODIFY"
-        and dict(operation.payload).get("modification_confirmation")
-        and _MODIFICATION_ACKNOWLEDGEMENT.fullmatch(supplement.content or "")
-        and supplement.intent is None
+    if operation.intent == "CASE_MODIFY" and supplement.intent is None and (
+        supplement.content or supplement.confirm_modification
+        or dict(operation.payload).get("rewrite_draft")
+        or supplement.targets or supplement.target_case_ids or supplement.target_candidate_snapshots
     ):
-        if _same_confirmation_targets(operation, supplement):
-            supplement = supplement.model_copy(update={
-                "content": None, "targets": [], "target_case_ids": [],
-                "target_candidate_snapshots": [], "confirm_modification": True,
-            })
-        else:
-            # A changed selection needs a new preview, never a new "确认" instruction.
-            supplement = supplement.model_copy(update={"content": None})
-    if supplement.confirm_modification and dict(operation.payload).get("modification_confirmation"):
-        pending = dict(operation.payload["modification_confirmation"])
-        pending["instruction"] = _without_confirmation_supplements(pending["instruction"])
-        operation.payload = {
-            **dict(operation.payload), "modification_confirmation": pending,
-            "instruction": _without_confirmation_supplements(
-                str(operation.payload.get("instruction") or user_message.content)),
-        }
+        return _resume_rewrite_draft(db, account, conversation, operation, user_message, supplement)
     if supplement.confirm_modification and (
         operation.intent != "CASE_MODIFY"
         or not dict(operation.payload).get("modification_confirmation")

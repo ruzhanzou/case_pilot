@@ -80,6 +80,17 @@ def test_invalid_model_scope_is_never_applied(scope, update):
     assert error
 
 
+def test_relative_scope_receives_selection_in_display_order(scope):
+    db, conversation, cases, selector = scope
+    ordered_ids = sorted([case["id"] for case in cases], reverse=True)
+    conversations._resolve_action_scope(
+        db, conversation,
+        ConversationMessageCreate(content="只改前一条", target_case_ids=ordered_ids),
+        "CASE_MODIFY",
+    )
+    assert selector.call_args.args[2]["selected_ids"] == ordered_ids
+
+
 def test_model_failure_never_falls_back_to_all_cases(scope):
     db, conversation, _, selector = scope
     selector.side_effect = TimeoutError()
@@ -183,6 +194,12 @@ async def test_resume_text_reselects_instead_of_freezing_stale_ui_targets(monkey
         )
         monkeypatch.setattr(conversations.settings, "agent_provider", "openai_compatible")
         monkeypatch.setattr(conversations, "select_case_scope", selector)
+        from casepilot_api.rewrite_dialogue import RewriteReply
+        monkeypatch.setattr(conversations, "interpret_rewrite_reply", lambda *a, **k: RewriteReply(
+            action="update", scope_action="replace" if changes_scope else "preserve",
+            scope_instruction=f"仅用例 {cases[1]['case_key']}" if changes_scope else "",
+            requirements="优先级改为P2；步骤更清晰",
+        ))
         resume = f"/api/v1/conversation-operations/{operation}/resume"
         corrected = await client.post(
             resume,
@@ -193,13 +210,14 @@ async def test_resume_text_reselects_instead_of_freezing_stale_ui_targets(monkey
         )
         assert corrected.status_code == 202, corrected.text
         assert set(corrected.json()["assistant_message"]["target_case_ids"]) == set(expected_ids)
-        assert selector.call_args.args[0].startswith("把登录模块用例优先级改为P2\n补充说明：")
-        assert selector.call_count == 1
+        if changes_scope:
+            assert selector.call_args.args[0] == f"仅用例 {cases[1]['case_key']}"
+        assert selector.call_count == int(changes_scope)
         assert not dispatched
         confirmed = await client.post(resume, json={"confirm_modification": True})
         assert confirmed.status_code == 202, confirmed.text
         assert confirmed.json()["action"]["job_id"]
-        assert selector.call_count == 1
+        assert selector.call_count == int(changes_scope)
         assert len(dispatched) == 1
 
 
