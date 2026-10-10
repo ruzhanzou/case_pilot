@@ -1,5 +1,6 @@
 "use client";
 
+import { CaseContentFields } from "@/components/case-content-fields";
 import type { TestCaseDto, TestCaseInput } from "@/lib/casepilot-api";
 import { useI18n } from "@/lib/i18n";
 import { LoaderCircle, Plus, Trash2, X } from "lucide-react";
@@ -53,7 +54,6 @@ export function CaseEditorDialog({
   const [tags, setTags] = useState(testCase?.tags.join("，") ?? "");
   const [source, setSource] = useState(testCase?.source ?? "人工创建");
   const nextPreconditionId = useRef(0);
-  const nextStepId = useRef(0);
   const [preconditions, setPreconditions] = useState<EditablePrecondition[]>(() =>
     testCase?.preconditions.length
       ? testCase.preconditions.map((value, index) => ({
@@ -137,16 +137,16 @@ export function CaseEditorDialog({
         action: step.action.trim(),
         expected: step.expected.trim(),
       }))
-      .filter((step) => step.action && step.expected);
+      .filter((step) => step.action || step.expected);
     if (!title.trim()) {
       setError(pick("Enter a test case name", "请填写用例名称"));
       return;
     }
-    if (!normalizedSteps.length) {
+    if (!normalizedSteps.some(step => step.action) || !normalizedSteps.some(step => step.expected)) {
       setError(
         pick(
-          "Add at least one step with an action and expected result",
-          "至少需要一个包含操作和预期结果的执行步骤",
+          "Add at least one action and one case checkpoint",
+          "至少填写一项操作和一项用例校验点",
         ),
       );
       return;
@@ -331,76 +331,7 @@ export function CaseEditorDialog({
           </fieldset>
 
           <fieldset className="case-editor__section">
-            <div className="case-editor__section-title">
-              <legend>{pick("Steps and expected results", "执行步骤与预期结果")}</legend>
-              <button
-                type="button"
-                onClick={() =>
-                  setSteps((items) => [
-                    ...items,
-                    emptyStep(`new-${nextStepId.current++}`),
-                  ])
-                }
-              >
-                <Plus size={15} /> {pick("Add step", "添加步骤")}
-              </button>
-            </div>
-            <div className="case-editor__steps">
-              {steps.map((step, index) => (
-                <div className="case-editor__step" key={step.clientId}>
-                  <span className="case-editor__step-index">{index + 1}</span>
-                  <label>
-                    {pick("Action", "执行操作")}
-                    <textarea
-                      value={step.action}
-                      onChange={(event) =>
-                        setSteps((items) =>
-                          items.map((current, itemIndex) =>
-                            itemIndex === index
-                              ? { ...current, action: event.target.value }
-                              : current,
-                          ),
-                        )
-                      }
-                      placeholder={pick("The exact action for QA to perform", "QA 需要完成的具体操作")}
-                      rows={2}
-                    />
-                  </label>
-                  <label>
-                    {pick("Expected result / Checkpoint", "预期结果／校验点")}
-                    <textarea
-                      value={step.expected}
-                      onChange={(event) =>
-                        setSteps((items) =>
-                          items.map((current, itemIndex) =>
-                            itemIndex === index
-                              ? { ...current, expected: event.target.value }
-                              : current,
-                          ),
-                        )
-                      }
-                      placeholder={pick("A clear, observable result", "可以观察和判断的明确结果")}
-                      rows={2}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    aria-label={pick(`Delete step ${index + 1}`, `删除第 ${index + 1} 个执行步骤`)}
-                    onClick={() =>
-                      setSteps((items) =>
-                        items.length === 1
-                          ? [emptyStep(items[0].clientId)]
-                          : items.filter(
-                              (current) => current.clientId !== step.clientId,
-                            ),
-                      )
-                    }
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              ))}
-            </div>
+            <CaseContentFields steps={steps} onChange={rows => setSteps(rows.map((row, index) => ({ ...row, clientId: `content-${index}` })))} />
           </fieldset>
 
           {error && <div className="management-inline-error">{error}</div>}

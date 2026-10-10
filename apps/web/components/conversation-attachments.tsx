@@ -3,11 +3,11 @@
 import { FileUp, CheckCircle2, CircleAlert, LoaderCircle } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 
-export function ConversationAttachments({ metadata }: { metadata: Record<string, unknown> }) {
+export function ConversationAttachments({ metadata, pending = false }: { metadata: Record<string, unknown>; pending?: boolean }) {
   const { pick } = useI18n();
   const files = Array.isArray(metadata.attachments) ? metadata.attachments : [];
   if (!files.length) return null;
-  return <div className="principle-attachments" aria-label={pick("Conversation attachments", "对话附件")}>
+  return <div className="principle-attachments" aria-label={pending ? pick("Pending attachments", "待发送附件") : pick("Conversation attachments", "对话附件")}>
     {files.map((file: { id: string; name: string; size: number; status: string }) => (
       <div key={file.id} className="principle-attachment" data-status={file.status}>
         <FileUp size={20} aria-hidden="true" />

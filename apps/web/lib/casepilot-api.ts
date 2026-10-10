@@ -384,6 +384,14 @@ export type GenerationQuestion = {
 };
 
 export type GenerationJobDetail = GenerationCompleted & {
+  planning_preview?: TestBriefContentDto | null;
+  planning_progress?: PlanningProgress | null;
+
+  retry_attempt?: number;
+  batch_start_index?: number;
+  batch_count?: number;
+  active_batches?: { start: number; count: number; stage: string; retry_attempt: number }[];
+  started_at?: string;
   generated_count?: number;
   total_count?: number;
   id: string;
@@ -439,7 +447,26 @@ export type KnowledgeUploadDto = {
   document_ids: string[];
 };
 
+export type PlanningProgress = {
+  progress: number;
+  completed_batches?: number;
+  total_batches?: number;
+  completed_features?: number;
+  total_features?: number;
+  test_point_count?: number;
+  target_count?: number | null;
+  active_batches?: { batch: number; features: string[] }[];
+};
+
 export type GenerationStage = {
+  planning_preview?: TestBriefContentDto | null;
+  planning_progress?: PlanningProgress | null;
+
+  retry_attempt?: number;
+  batch_start_index?: number;
+  batch_count?: number;
+  active_batches?: { start: number; count: number; stage: string; retry_attempt: number }[];
+  started_at?: string;
   generated_count?: number;
   total_count?: number;
   name: string;
@@ -893,8 +920,15 @@ export function watchGeneration(
         .then((job) => {
           if (job.status === "running") {
             onStage({
+              planning_preview: job.planning_preview,
+              planning_progress: job.planning_progress,
               name: job.stage,
               progress: job.progress,
+              retry_attempt: job.retry_attempt,
+              batch_start_index: job.batch_start_index,
+              batch_count: job.batch_count,
+              active_batches: job.active_batches,
+              started_at: job.started_at,
               generated_count: job.generated_count,
               total_count: job.total_count,
               count: job.stages?.filter((stage) => stage.stage === job.stage && stage.status === "completed").length ?? 0,
@@ -934,9 +968,16 @@ export function watchGeneration(
         (event as MessageEvent<string>).data,
       ) as Omit<GenerationStage, "name">;
       onStage({
+        planning_preview: payload.planning_preview,
+        planning_progress: payload.planning_progress,
         name: event.type,
         progress: payload.progress ?? 0,
         count: payload.count,
+        retry_attempt: payload.retry_attempt,
+        batch_start_index: payload.batch_start_index,
+        batch_count: payload.batch_count,
+        active_batches: payload.active_batches,
+        started_at: payload.started_at,
         generated_count: payload.generated_count,
         total_count: payload.total_count,
       });
@@ -965,6 +1006,9 @@ export function watchGeneration(
       } catch {
         // Terminal polling remains authoritative if a transient event is malformed.
       }
+    });
+    source.addEventListener("brief.completed", () => {
+      finish(() => { void getGeneration(jobId).then(resolve, reject); });
     });
     source.addEventListener("qa.completed", () => {
       finish(() => {

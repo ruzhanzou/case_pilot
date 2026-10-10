@@ -1,6 +1,10 @@
 "use client";
 
 import { ConversationAttachments } from "@/components/conversation-attachments";
+import { planningModuleAliases } from "@/lib/case-module-tree";
+
+import { summarizeWorkflowStages } from "@/lib/workflow-stages";
+import { CaseContentFields } from "@/components/case-content-fields";
 import { CaseTaskArtifacts } from "@/components/case-task-artifacts";
 import { ConversationTaskFlow } from "@/components/conversation-task-flow";
 import { CaseTaskWorkspace } from "@/components/case-task-workspace";
@@ -354,6 +358,8 @@ export function CaseWorkbench({
   const reviewSelections = useRef<Record<string, Record<string, string[]>>>({});
   const [candidateDraft, setCandidateDraft] =
     useState<WorkspaceCandidateDto | null>(null);
+  const [candidateSaving, setCandidateSaving] = useState(false);
+  const [candidateSaveMessage, setCandidateSaveMessage] = useState("");
   const [uploading, setUploading] = useState(false);
   const [attachments, setAttachments] = useState<{ id: string; name: string; size: number; percent: number; status: "uploading" | "processing" | "ready" | "failed" }[]>([]);
   const [sourceIds, setSourceIds] = useState<string[]>([]);
@@ -376,6 +382,8 @@ export function CaseWorkbench({
   const activeWorkspaceJobId = String(
     workspace?.context.active_job_id ?? "",
   );
+  const planningPreview = phase === "brief_drafting" ? progress?.planning_preview : null;
+  const planningProgress = progress?.planning_progress;
   const latestBrief = workspace?.test_briefs.at(-1) ?? null;
   const activeBrief =
     workspace?.test_briefs.find((item) => item.status === "draft") ??
@@ -468,20 +476,23 @@ export function CaseWorkbench({
   const conversationRunning = busy || queueRunning || workspaceIsRunning(workspace);
   const runningLabel = pendingMessage !== null
     ? pick("Thinking — understanding your request and selecting cases", "正在思考 · 理解需求并筛选用例")
-    : progress?.generated_count
-      ? pick(`Processed ${progress.generated_count}/${progress.total_count ?? "?"} cases`, `已处理 ${progress.generated_count}/${progress.total_count ?? "?"} 条`)
+    : planningProgress?.total_batches
+      ? pick(`Planning · ${planningProgress.completed_batches ?? 0}/${planningProgress.total_batches} batches · ${planningProgress.test_point_count ?? 0} test points ready`, `规划中 · ${planningProgress.completed_batches ?? 0}/${planningProgress.total_batches} 批 · ${planningProgress.test_point_count ?? 0} 个测试点已就绪`)
+    : progress?.total_count
+      ? `${localizedWorkflowStageLabels[progress.name] ?? pick("Processing your request", "正在处理请求")} · ${pick(`${progress.generated_count ?? 0}/${progress.total_count ?? "?"} cases ready`, `${progress.generated_count ?? 0}/${progress.total_count ?? "?"} 条已就绪`)}`
       : progress
       ? localizedWorkflowStageLabels[progress.name] ?? pick("Processing your request", "正在处理请求")
       : pick("Preparing the next step", "正在准备下一步");
 
   useEffect(() => {
     if (!conversationRunning) return;
-    const startedAt = Date.now();
+    const parsedStart = Date.parse(progress?.started_at ?? "");
+    const startedAt = Number.isFinite(parsedStart) ? parsedStart : Date.now();
     const timer = window.setInterval(() => {
       setRunningSeconds(Math.floor((Date.now() - startedAt) / 1000));
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [conversationRunning]);
+  }, [conversationRunning, progress?.started_at]);
   const taskVersions = selectedTask?.versions ?? (selectedTask ? [selectedTask] : []);
   const chosenVersion = reviewVersion.taskId === selectedTask?.id && reviewVersion.latestId === selectedTask?.operation?.id
     ? taskVersions.find(version => version.operation?.id === reviewVersion.operationId) : undefined;
@@ -683,6 +694,11 @@ export function CaseWorkbench({
     async (jobId: string, conversationId = workspace?.id ?? "") => {
       if (!conversationId || watchedJobRef.current === jobId) return;
       watchedJobRef.current = jobId;
+      viewTouchedRef.current = true;
+      setViewMode("plan");
+      setArtifactOpen(false);
+      setPlanMessageId(workspace?.workflow_runs.find(run => run.job_id === jobId)?.message_id
+        ?? workspace?.messages.find(message => message.role === "assistant" && message.related_job_id === jobId)?.id ?? "");
       setBusy(true);
       setCurrentJobId(jobId);
       setProgress({ name: "queued", progress: 0 });
@@ -706,7 +722,17 @@ export function CaseWorkbench({
             }
             setProgress((current) => ({
               ...stage,
-              generated_count: stage.generated_count ?? current?.generated_count,
+              planning_preview: (stage.planning_progress?.completed_batches ?? 0) < (current?.planning_progress?.completed_batches ?? 0)
+                ? current?.planning_preview : stage.planning_preview ?? current?.planning_preview,
+              planning_progress: (stage.planning_progress?.completed_batches ?? 0) < (current?.planning_progress?.completed_batches ?? 0)
+                ? current?.planning_progress : stage.planning_progress ?? current?.planning_progress,
+              progress: Math.max(stage.progress, current?.progress ?? 0),
+              started_at: stage.started_at ?? current?.started_at,
+              retry_attempt: stage.retry_attempt ?? current?.retry_attempt,
+              batch_start_index: stage.batch_start_index ?? current?.batch_start_index,
+              batch_count: stage.batch_count ?? current?.batch_count,
+              active_batches: stage.active_batches ?? current?.active_batches,
+              generated_count: stage.generated_count === undefined ? current?.generated_count : Math.max(stage.generated_count, current?.generated_count ?? 0),
               total_count: stage.total_count ?? current?.total_count,
             }));
             setLiveStages((current) => {
@@ -754,7 +780,7 @@ export function CaseWorkbench({
         setLiveStages([]);
       }
     },
-    [pick, refreshWorkspace, workspace?.id],
+    [pick, refreshWorkspace, workspace],
   );
 
   const retryFailedMessage = async (messageId: string) => {
@@ -1332,16 +1358,22 @@ export function CaseWorkbench({
   };
 
   const saveCandidate = async () => {
-    if (!candidateDraft) return;
+    if (!candidateDraft || candidateSaving) return;
+    setCandidateSaving(true);
+    setCandidateSaveMessage("");
     try {
-      await updateWorkspaceCandidate(candidateDraft.id, {
+      const saved = await updateWorkspaceCandidate(candidateDraft.id, {
         baseVersion: candidateDraft.version,
         snapshot: candidateDraft.snapshot as unknown as Record<string, unknown>,
       });
       await refreshWorkspace();
-      setNotice(pick("Candidate changes saved automatically", "候选修改已自动保存"));
+      setSelectedCaseId(saved.id);
+      setCandidateDraft(structuredClone(saved));
+      setCandidateSaveMessage(pick("Changes saved", "修改已保存"));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : pick("Failed to save candidate", "候选保存失败"));
+    } finally {
+      setCandidateSaving(false);
     }
   };
 
@@ -1477,11 +1509,11 @@ export function CaseWorkbench({
     const startX = event.clientX;
     const startWidth = panel === "chat" ? chatWidth : inspectorWidth;
     let latestWidth = startWidth;
-    let previewOffset = 0;
     let frameId: number | null = null;
     const renderPreview = () => {
       frameId = null;
-      separator.style.transform = `translateX(${previewOffset}px)`;
+      if (panel === "chat") setChatWidth(latestWidth);
+      else setInspectorWidth(latestWidth);
     };
     const move = (pointerEvent: PointerEvent) => {
       const delta =
@@ -1490,7 +1522,6 @@ export function CaseWorkbench({
           : startX - pointerEvent.clientX;
       const next = clampPanelWidth(panel, startWidth + delta);
       latestWidth = next;
-      previewOffset = pointerEvent.clientX - startX;
       if (frameId === null) {
         frameId = window.requestAnimationFrame(renderPreview);
       }
@@ -1629,7 +1660,7 @@ export function CaseWorkbench({
               !(workflow && terminalWorkflowStatuses.has(workflow.status)) &&
               (workflow?.job_id === currentJobId || message.related_job_id === currentJobId);
             const persistedStages = workflow?.stages ?? [];
-            const renderedStages =
+            const renderedStages = summarizeWorkflowStages(
               isLiveWorkflow && liveStages.length
                 ? liveStages
                     .filter((stage) => stage.name !== progress?.name)
@@ -1638,7 +1669,7 @@ export function CaseWorkbench({
                       progress: stage.progress,
                       status: "completed",
                     }))
-                : persistedStages;
+                : persistedStages).filter(stage => !isLiveWorkflow || stage.stage !== progress?.name);
             const report = message.metadata.analysis_report as CaseReviewReport | undefined;
             const conversationTask = tasks.find((task) => task.messageIds.includes(message.id));
             const querySnapshots = message.intent === "CASE_QUERY" && conversationTask?.message.id === message.id ? conversationTask.operation?.result.query_cases as TestCaseDto[] | undefined : undefined;
@@ -1725,11 +1756,8 @@ export function CaseWorkbench({
                     )}
                   </div>
                 )}
-                {isMutationSummary && (
-                  <div className="principle-analysis-summary">
-                    <div><strong>{pick("Summary", "结论摘要")}</strong><p>{mutationSummary}</p></div>
-                    <button type="button" onClick={() => openReviewPlan(message.id)}>{pick("View in workspace", "在工作区查看")}</button>
-                  </div>
+                {isMutationSummary && !isLiveWorkflow && message.status !== "running" && (
+                  <p className="principle-mutation-result">{mutationSummary}</p>
                 )}
                 {querySnapshots && <div className="principle-analysis-summary"><div><strong>{pick(`Found ${querySnapshots.length} cases`, `找到 ${querySnapshots.length} 条用例`)}</strong><p>{[...new Set(querySnapshots.map((item) => item.module))].join(" · ") || pick("No matching cases", "暂无匹配用例")}</p></div><button type="button" onClick={() => openReviewPlan(message.id)}>{pick("View table", "查看结果表格")}</button></div>}
                 <ConversationAttachments metadata={message.metadata} />
@@ -1833,7 +1861,7 @@ export function CaseWorkbench({
                   (workflow || isLiveWorkflow) &&
                   (
                   <details
-                    open={isLiveWorkflow || workflow?.status === "failed"}
+                    open={workflow?.status === "failed"}
                     className="principle-workflow is-compact"
                     data-status={workflow?.status ?? "running"}
                   >
@@ -1847,7 +1875,7 @@ export function CaseWorkbench({
                         <span>
                           {localizedWorkflowStageLabels[stage.stage] ?? pick("Processing task", "处理任务")}
                         </span>
-                        <small>{stage.progress}%</small>
+
                       </div>
                     ))}
                     {isLiveWorkflow && progress && (
@@ -1926,7 +1954,7 @@ export function CaseWorkbench({
           </div>
         </div>
 
-        {activeMutationTask && activeMutationTask.status !== "awaiting_target" && <div className="principle-change-set-link" role="status" data-testid="active-mutation-task-notice">
+        {activeMutationTask && activeMutationTask.status !== "awaiting_target" && viewMode !== "plan" && !planningPreview && <div className="principle-change-set-link" role="status" data-testid="active-mutation-task-notice">
           <span>{pick("This task is still open. Further edits stay here until you accept or abandon it. Queries are separate tasks.", "当前任务尚未结束，后续修改将继续此任务；查询会单独建立任务。请在工作区完成采纳或放弃，之后才可开始新的生成或修改任务。")}</span>
           <button type="button" onClick={() => openReviewPlan(activeMutationTask.id)}>{pick("Go to workstation review", "前往工作区审阅")}</button>
         </div>}
@@ -2036,10 +2064,13 @@ export function CaseWorkbench({
               ))}
             </div>
           )}
+          <ConversationAttachments pending metadata={{ attachments: (
+            Array.isArray(workspace?.context.pending_attachments) ? workspace.context.pending_attachments : []
+          ).filter((file: { name: string }) => !attachments.some(local => local.name === file.name)) }} />
           {resumeTaskId && <div className="case-conversation-running"><span>{pick("Replying to task clarification", "正在补充当前任务信息")}</span><button type="button" disabled={conversationRunning} onClick={() => setResumeTaskId("")}>{pick("Cancel reply", "取消补充")}</button></div>}
           {conversationRunning && <div className="case-conversation-running" role="status">
             <LoaderCircle size={16} className="auth-spinner" />
-            <span>{runningLabel}{progress && pendingMessage === null ? ` · ${progress.progress}%` : ""} · {pick(`Elapsed ${runningSeconds}s`, `已等待 ${runningSeconds} 秒`)}</span>
+            <span>{runningLabel}{progress?.active_batches?.length ? pick(` · Processing ${progress.active_batches.length} batches`, ` · 同时处理 ${progress.active_batches.length} 批`) : progress?.batch_start_index && progress?.batch_count ? pick(` · Current batch: cases ${progress.batch_start_index}–${progress.batch_start_index + progress.batch_count - 1}`, ` · 当前批次：第 ${progress.batch_start_index}–${progress.batch_start_index + progress.batch_count - 1} 条`) : ""}{progress && pendingMessage === null ? ` · ${progress.progress}%` : ""} · {pick(`Elapsed ${runningSeconds}s`, `已等待 ${runningSeconds} 秒`)}</span>
           </div>}
           {refineSourceId && <p role="status">{pick("Refining the selected result; earlier edits will be preserved.", "正在继续调整所选结果；未要求改变的已有修改将保留。")} <button type="button" onClick={() => setRefineSourceId("")}>{pick("Cancel", "取消续改")}</button></p>}
           <textarea
@@ -2197,38 +2228,51 @@ export function CaseWorkbench({
           </div>
         </header>
 
-        {(error || notice) && (
-          <div
-            className={`principle-banner ${error ? "is-error" : "is-success"}`}
-          >
-            {error ? <CircleAlert size={17} /> : <CheckCircle2 size={17} />}
-            <span>{error || notice}</span>
-            <button
-              type="button"
-              aria-label={pick("Dismiss notification", "关闭提示")}
-              onClick={() => {
-                setError("");
-                setNotice("");
-              }}
-            >
+        {error && (
+          <div className="principle-banner is-error" role="alert">
+            <CircleAlert size={17} />
+            <span>{error}</span>
+            <button type="button" aria-label={pick("Dismiss notification", "关闭提示")} onClick={() => setError("")}>
               <X size={16} />
             </button>
           </div>
         )}
 
-
-
-        <div className="case-workstation-actions" aria-label={pick("Case workstation actions", "用例工作区操作")}>
-          <span>{pick("Case actions", "用例操作")}</span>
-          {([
-            [pick("Query cases", "查询用例"), pick("Query cases in the current collection", "查询当前集合的用例")],
-            [pick("Generate cases", "生成用例"), pick("Generate cases for the current collection: ", "为当前集合生成用例：")],
-            [pick("Modify cases", "修改用例"), pick("Modify cases: ", "修改用例：")],
-          ]).map(([label, instruction]) => <button type="button" key={label} disabled={conversationRunning || !workspace || Boolean(prompt.trim())} onClick={() => { editPrompt(instruction); promptRef.current?.focus(); }}>{label}</button>)}
-          <small>{pick("Describe your request in the conversation; review results here.", "在对话区描述需求，在这里查看与处理结果。")}</small>
-        </div>
-
-        {artifactOpen && selectedBrief ? (
+        {planningPreview ? (
+          <section className="principle-brief planning-live-preview" aria-label={pick("Live test planning", "实时测试规划")}>
+            <header className="principle-brief-toolbar">
+              <div className="principle-brief-identity">
+                <LoaderCircle className="auth-spinner" size={19} />
+                <div>
+                  <strong>{planningPreview.test_object || pick("Test planning", "测试规划")}</strong>
+                  <span role="status">{planningProgress?.total_batches
+                    ? pick(`${planningProgress.completed_batches ?? 0}/${planningProgress.total_batches} batches complete · ${planningProgress.test_point_count ?? 0} test points ready`,
+                      `已完成 ${planningProgress.completed_batches ?? 0}/${planningProgress.total_batches} 批 · ${planningProgress.test_point_count ?? 0} 个测试点已就绪`)
+                    : pick("Requirements ready · Organizing features", "需求说明已就绪 · 正在拆解功能点")}</span>
+                </div>
+              </div>
+              <div className="planning-live-progress">
+                <progress aria-label={pick("Planning progress", "规划进度")} value={planningProgress?.progress ?? 22} max={100} />
+                <span>{planningProgress?.progress ?? 22}%</span>
+              </div>
+            </header>
+            <div className="principle-brief-guidance">
+              {pick("Completed batches appear below. You can confirm the plan when all batches finish.", "每完成一批就显示在下方，全部完成后即可确认规划并生成用例。")}
+              {!!planningProgress?.active_batches?.length && <p>{pick("Generating: ", "正在生成：")}{planningProgress.active_batches.map(batch => batch.features.join("、")).join("；")}</p>}
+            </div>
+            <p className="planning-live-objective">{planningPreview.test_objective}</p>
+            <div className="planning-live-features">
+              {planningPreview.planning?.feature_points.map(feature => {
+                const points = planningPreview.planning!.test_points.filter(point => point.feature_point_ids.includes(feature.id));
+                return <details key={feature.id} open>
+                  <summary>{feature.name} · {points.length ? pick(`${points.length} test points ready`, `${points.length} 个测试点已就绪`) : pick("Pending", "等待生成")}</summary>
+                  <p>{feature.description}</p>
+                  <ul>{points.map(point => <li key={point.id}><strong>{point.title}</strong><p>{point.objective}</p></li>)}</ul>
+                </details>;
+              })}
+            </div>
+          </section>
+        ) : artifactOpen && selectedBrief ? (
           <section className="principle-brief">
             <header className="principle-brief-toolbar">
               <div className="principle-brief-identity">
@@ -2302,7 +2346,7 @@ export function CaseWorkbench({
                     {busy
                       ? pick("Starting generation…", "正在启动生成…")
                       : activeBrief.status === "confirmed"
-                        ? pick("Retry generation", "重新生成用例")
+                        ? pick("Generate again", "重新生成用例")
                         : pick("Confirm plan and generate", "确认规划并生成用例")}
                   </button>
                 )}
@@ -2398,18 +2442,18 @@ export function CaseWorkbench({
               </div>
               <span>
                 {phase === "candidate_review" ? pick(`${candidates.length} candidates awaiting review · ${cases.length} official cases`, `${candidates.length} 条候选待审阅 · ${cases.length} 条正式用例`) : pick(
-                  `${visibleCases.length} test cases · ${new Set([...visibleCases.map((item) => item.module), ...(selectedCollection.mind_map_notes ?? []).filter((note) => note.kind === "module").map((note) => note.module)]).size} modules`,
-                  `${visibleCases.length} 条用例 · ${new Set([...visibleCases.map((item) => item.module), ...(selectedCollection.mind_map_notes ?? []).filter((note) => note.kind === "module").map((note) => note.module)]).size} 个模块`,
+                  `${visibleCases.length} test cases · ${new Set([...visibleCases.map((item) => planningModuleAliases(selectedBrief?.content.planning)[item.module] ?? item.module), ...(selectedCollection.mind_map_notes ?? []).filter((note) => note.kind === "module").map((note) => note.module)]).size} modules`,
+                  `${visibleCases.length} 条用例 · ${new Set([...visibleCases.map((item) => planningModuleAliases(selectedBrief?.content.planning)[item.module] ?? item.module), ...(selectedCollection.mind_map_notes ?? []).filter((note) => note.kind === "module").map((note) => note.module)]).size} 个模块`,
                 )}
               </span>
-              {phase === "candidate_review" && (
+              {phase === "candidate_review" && viewMode !== "plan" && (
                 <button
                   type="button"
                   className="is-primary"
                   onClick={() => void commitCandidates()}
                   disabled={!candidates.some((item) => item.included) || selectedCandidatesNeedReview || busy}
                 >
-                  <Save size={16} /> {pick("Add to official collection", "纳入正式集合")}
+                  <Save size={16} /> {pick("Accept selected", "采纳所选")}
                 </button>
               )}
             </div>
@@ -2445,10 +2489,19 @@ export function CaseWorkbench({
             {selectedScopeChanged && <p className="task-version-notice">{pick("This result is based on earlier case versions. Review again before preparing changes.", "此结果基于历史用例版本，请重新检查后再生成变更。")}</p>}
             {selectedChangeSetId && !selectedTaskChangeSet && <p role="status">{resultLoadError || pick("Loading task result…", "正在加载任务结果…")}</p>}
             {selectedTask && workspace && !historicalVersion && <CaseTaskArtifacts
+              generationProgress={selectedTask.operation?.related_job_id === currentJobId ? progress : null}
               task={selectedTask} conversation={workspace} cases={cases} busy={conversationRunning} pendingCandidateRefs={pendingCandidateRefs}
               onLocate={(id) => { setSelectedCaseId(id); setCandidateDraft(candidates.find((item) => item.id === id) ?? null); setViewMode("list"); setInspectorHidden(false); }}
               onToggleCandidate={(candidate) => void toggleCandidate(candidate, !candidate.included)}
-              onRefine={selectedTask.operation ? () => { setRefineSourceId(selectedTask.operation!.id); promptRef.current?.focus(); } : undefined}
+              onRefine={() => {
+                const candidate = candidates.find(item => item.included) ?? candidates[0];
+                if (!candidate) return;
+                setSelectedCaseId(candidate.id);
+                setCandidateDraft(structuredClone(candidate));
+                setCandidateSaveMessage("");
+                setViewMode("list");
+                setInspectorHidden(false);
+              }}
               onCommit={() => void commitCandidates()} onBrief={selectBriefVersion} onGenerate={() => void confirmBriefAndGenerate()}
             />}
             {(editingCaseId || creatingInWorkspace) && (
@@ -2553,6 +2606,7 @@ export function CaseWorkbench({
                 key={`${selectedCollection.id}:${phase === "candidate_review" ? "candidates" : "official"}`}
                 collection={selectedCollection}
                 cases={visibleCases}
+                moduleAliases={planningModuleAliases(selectedBrief?.content.planning)}
                 selectedCaseId={selectedCaseId}
                 focusVersion={mapFocusVersion}
                 onSaveCase={phase === "maintenance" ? onSaveCase : undefined}
@@ -2635,7 +2689,7 @@ export function CaseWorkbench({
                         </span>
                         <small>{testCase.module || pick("Uncategorized", "未分类")}</small>
                         <i
-                          className={`priority-${testCase.priority.toLowerCase()}`}
+                          className={`priority-badge priority-badge--${testCase.priority.toLowerCase()}`}
                         >
                           {testCase.priority}
                         </i>
@@ -2727,6 +2781,7 @@ export function CaseWorkbench({
             <>
               <header>
                 <span>{pick("CASE DETAILS", "用例详情")}</span>
+                <button type="button" className="case-details-close" aria-label={pick("Close case details", "关闭用例详情")} title={pick("Close case details", "关闭用例详情")} onClick={() => setInspectorHidden(true)}><X size={16} /></button>
                 {phase === "maintenance" && (
                   <button type="button" onClick={() => openCaseEditor(selectedCase)}>
                     <Pencil size={15} /> {pick("Edit", "编辑")}
@@ -2734,7 +2789,7 @@ export function CaseWorkbench({
                 )}
               </header>
               {candidateDraft ? (
-                <div className="principle-candidate-editor">
+                <fieldset className="principle-candidate-editor" disabled={candidateSaving}>
                   <label>
                     {pick("Title", "标题")}
                     <input
@@ -2799,20 +2854,34 @@ export function CaseWorkbench({
                       <option value="P2">P2</option>
                     </select>
                   </label>
-                  <button type="button" onClick={() => void saveCandidate()}>
-                    <Save size={16} /> {pick("Save candidate changes", "保存候选修改")}
+                  <label>
+                    {pick("Preconditions (one per line)", "前置条件（每行一条）")}
+                    <textarea rows={4} value={candidateDraft.snapshot.preconditions.join("\n")} onChange={event => {
+                      const value = event.target.value;
+                      setCandidateDraft(current => current ? { ...current, snapshot: { ...current.snapshot, preconditions: value.split("\n") } } : current);
+                      setCandidateSaveMessage("");
+                    }} />
+                  </label>
+                  <CaseContentFields key={`${candidateDraft.id}-${candidateDraft.version}`} steps={candidateDraft.snapshot.steps} onChange={steps => {
+                    setCandidateDraft(current => current ? { ...current, snapshot: { ...current.snapshot, steps } } : current);
+                    setCandidateSaveMessage("");
+                  }} />
+                  <button type="button" disabled={candidateSaving || busy || !candidateDraft.snapshot.title.trim() || !candidateDraft.snapshot.steps.length || (!candidateDraft.snapshot.steps.some(step => step.action.trim()) || !candidateDraft.snapshot.steps.some(step => step.expected.trim()))} onClick={() => void saveCandidate()}>
+                    <Save size={16} /> {candidateSaving ? pick("Saving…", "正在保存…") : pick("Save candidate changes", "保存候选修改")}
                   </button>
-                </div>
+                  {candidateSaveMessage && <p role="status">{candidateSaveMessage}</p>}
+                </fieldset>
               ) : (
                 <>
                   <h2>{selectedCase.title}</h2>
                   <div className="principle-tags">
                     <span>{selectedCase.module || pick("Uncategorized", "未分类")}</span>
                     <span>{selectedCase.case_type}</span>
-                    <span>{selectedCase.priority}</span>
+                    <span className={`priority-badge priority-badge--${selectedCase.priority.toLowerCase()}`}>{selectedCase.priority}</span>
                   </div>
                 </>
               )}
+              {!candidateDraft && <>
               <section>
                 <strong>{pick("Preconditions", "前置条件")}</strong>
                 <ul>
@@ -2824,7 +2893,7 @@ export function CaseWorkbench({
               <section>
                 <strong>{pick("Test steps", "测试步骤")}</strong>
                 <ol>
-                  {selectedCase.steps.map((step) => (
+                  {selectedCase.steps.filter(step => step.action.trim()).map((step) => (
                     <li key={step.id}>
                       <p>{step.action}</p>
                     </li>
@@ -2832,15 +2901,16 @@ export function CaseWorkbench({
                 </ol>
               </section>
               <section>
-                <strong>{pick("Expected results", "预期结果")}</strong>
+                <strong>{pick("Case checkpoints", "用例校验点")}</strong>
                 <ol>
-                  {selectedCase.steps.map((step) => (
+                  {selectedCase.steps.filter(step => step.expected.trim()).map((step) => (
                     <li key={step.id}>
                       <p>{step.expected}</p>
                     </li>
                   ))}
                 </ol>
               </section>
+              </>}
             </>
           ) : (
             <div className="principle-inspector-empty">

@@ -1,8 +1,10 @@
 from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
+from typing import Any
 
 from pydantic import (
+    field_validator,
     AwareDatetime,
     BaseModel,
     ConfigDict,
@@ -164,8 +166,8 @@ class CaseCollectionView(BaseModel):
 
 class CaseStepInput(BaseModel):
     id: str | None = Field(default=None, max_length=80)
-    action: str = Field(min_length=1, max_length=4000)
-    expected: str = Field(min_length=1, max_length=4000)
+    action: str = Field(default="", max_length=4000)
+    expected: str = Field(default="", max_length=4000)
 
 
 class SourceRefInput(BaseModel):
@@ -242,6 +244,14 @@ class TestCaseCreate(BaseModel):
     automation_type: str = Field(default="manual", pattern=r"^(manual|automated)$")
 
 
+    @field_validator("steps")
+    @classmethod
+    def require_case_content(cls, rows):
+        if not any(row.action.strip() for row in rows) or not any(row.expected.strip() for row in rows):
+            raise ValueError("case_requires_procedure_and_checkpoints")
+        return rows
+
+
 class TestCaseBatchCreate(BaseModel):
     cases: list[TestCaseCreate] = Field(min_length=1, max_length=1000)
 
@@ -261,6 +271,14 @@ class TestCaseUpdate(BaseModel):
     execution_level: str | None = Field(default=None, pattern=r"^L(0|2|4)$")
     test_domains: list[str] | None = Field(default=None, max_length=20)
     automation_type: str | None = Field(default=None, pattern=r"^(manual|automated)$")
+
+
+    @field_validator("steps")
+    @classmethod
+    def require_case_content(cls, rows):
+        if not any(row.action.strip() for row in rows) or not any(row.expected.strip() for row in rows):
+            raise ValueError("case_requires_procedure_and_checkpoints")
+        return rows
 
 
 class TestCaseCreatorView(BaseModel):
@@ -347,6 +365,13 @@ class GenerationStartRequest(BaseModel):
 
 
 class GenerationJobView(BaseModel):
+    planning_preview: dict | None = None
+    planning_progress: dict | None = None
+    retry_attempt: int | None = None
+    batch_start_index: int | None = None
+    batch_count: int | None = None
+    active_batches: list[dict[str, Any]] = Field(default_factory=list)
+    started_at: str | None = None
     generated_count: int | None = None
     total_count: int | None = None
     id: UUID

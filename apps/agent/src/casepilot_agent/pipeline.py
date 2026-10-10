@@ -2,8 +2,11 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from agents.exceptions import ModelBehaviorError
+from pydantic import ValidationError
+
 from casepilot_agent.contracts import (
-    GENERATION_GROUNDING_INSTRUCTION,
+    CASE_DESIGN_INSTRUCTION, GENERATION_GROUNDING_INSTRUCTION,
     AgentProvider,
     EnhancementResult,
     FeaturePlan,
@@ -300,6 +303,7 @@ def validate_generation(result: GenerationResult) -> QualityReport:
             )
         )
     seen_titles: set[str] = set()
+    seen_content: set[tuple] = set()
     for case in result.test_cases:
         normalized = case.title.strip().lower()
         if normalized in seen_titles:
@@ -312,6 +316,14 @@ def validate_generation(result: GenerationResult) -> QualityReport:
                 )
             )
         seen_titles.add(normalized)
+        fingerprint = (
+            tuple(sorted(item.strip().lower() for item in case.preconditions if item.strip())),
+            tuple(step.action.strip().lower() for step in case.steps if step.action.strip()),
+            tuple(sorted(step.expected.strip().lower() for step in case.steps if step.expected.strip())),
+        )
+        if fingerprint in seen_content:
+            issues.append(QualityIssue(code="duplicate_case_content", message="不同标题或模块下存在相同前置、操作和校验", object_id=case.id, severity="error"))
+        seen_content.add(fingerprint)
         if not case.preconditions or not any(item.strip() for item in case.preconditions):
             issues.append(
                 QualityIssue(
@@ -330,16 +342,9 @@ def validate_generation(result: GenerationResult) -> QualityReport:
                     severity="error",
                 )
             )
+        if not any(step.action.strip() for step in case.steps) or not any(step.expected.strip() for step in case.steps):
+            issues.append(QualityIssue(code="invalid_step", message="用例必须包含操作步骤和用例校验点", object_id=case.id, severity="error"))
         for step in case.steps:
-            if not step.action.strip() or not step.expected.strip():
-                issues.append(
-                    QualityIssue(
-                        code="invalid_step",
-                        message="步骤必须同时包含操作和可观察预期",
-                        object_id=case.id,
-                        severity="error",
-                    )
-                )
             if step.expected.strip() in {
                 "正常",
                 "结果正常",
@@ -460,6 +465,9 @@ class GenerationPipeline:
         self.provider = provider
 
     def run_planned(self, request: GenerationRequest, execute_stage: StageExecutor, on_batch=None):
+        if request.output_contract == "case_batch_v2":
+            from casepilot_agent.compact_generation import run_compact
+            return run_compact(request, self.provider, execute_stage, on_batch, requested_case_count(request))
         plan = request.confirmed_plan
         features = FeaturePlan.model_validate(plan).feature_points
         points = TestPointPlan.model_validate(plan).test_points
@@ -472,90 +480,110 @@ class GenerationPipeline:
         )
         generated = []
         count = requested_case_count(request)
-        limit = count or len(points)
+        limit = min(count, len(points)) if count else len(points)
         # Preserve test-point ownership while amortizing model latency.
-        for offset in range(0, limit, 20):
-            group = [points[index % len(points)] for index in range(offset, min(offset + 20, limit))]
+        pending = [(offset, min(20, limit - offset)) for offset in range(0, limit, 20)]
+        while pending:
+            offset, size = pending.pop(0)
+            group = [points[index % len(points)] for index in range(offset, offset + size)]
             feature_ids = {ref for point in group for ref in point.feature_point_ids}
             selected_features = [item for item in features if item.id in feature_ids]
             refs = {ref.chunk_id for point in group for ref in point.source_refs}
             refs.update(ref.chunk_id for feature in selected_features for ref in feature.source_refs)
             evidence = [item for item in plan.get("evidence", []) if item.get("chunk_id") in refs]
-            batch = execute_stage(
-                "test_case.generated",
-                GENERATION_GROUNDING_INSTRUCTION +
-                "为本批每个测试点各生成1条可执行用例，一次返回本批全部用例，不重新规划或扩大范围。"
-                "必须逐条填写test_point_ids，且仅包含对应测试点ID；重复测试点按出现次数生成不同场景。"
-                "严格返回batch_count条。标题保留用户指定编号。使用batch_start_index唯一编号，"
-                "避免重复previous_titles。保留数值与例外，操作与预期一一对应。",
-                {
-                    "prompt": request.prompt,
-                    "original_requirement": request.markdown_content or request.prompt,
-                    "test_points": {"test_points": [point.model_dump(mode="json") for point in group]},
-                    "feature_points": {"feature_points": [f.model_dump(mode="json") for f in selected_features]},
-                    "context": {"evidence": evidence},
-                    "batch_count": len(group),
-                    "batch_start_index": offset + 1,
-                    "brief_version": plan.get("brief_version"),
-                    "previous_titles": [case.title for case in generated],
-                },
-                TestCaseBatch, request.model_id,
-            )
-            remaining = list(batch.test_cases)
-            if len(remaining) != len(group):
-                raise ValueError("规划生成批次数量不符，请重试")
-            if self.provider.name != "mock":
-                # Audit before publishing even the first preview. Planning is
-                # derived material, so bring the original user evidence back
-                # into this stage instead of treating an invented plan detail
-                # as authoritative merely because it survived generation.
-                grounded = execute_stage(
-                    "test_case.grounded",
-                    GENERATION_GROUNDING_INSTRUCTION +
-                    "当前是独立的来源核对阶段，不是继续扩写。逐条删除候选中无原始来源支持的"
-                    "附加预期；保持已支持的动作和断言、用例数量、id及test_point_ids不变。"
-                    "引用最新用户要求解决版本冲突，不能把模型生成的规划或历史助手回复当作原始事实。",
+            try:
+                batch = execute_stage(
+                    "test_case.generated",
+                    GENERATION_GROUNDING_INSTRUCTION + CASE_DESIGN_INSTRUCTION +
+                    "为本批每个测试点各生成1条可执行用例，一次返回本批全部用例，不重新规划或扩大范围。"
+                    "必须逐条填写test_point_ids，且仅包含对应测试点ID；不循环测试点凑数量。"
+                    "严格返回batch_count条。标题保留用户指定编号。使用batch_start_index唯一编号，"
+                    "避免重复previous_titles。保留数值与例外，操作与用例级校验分别列出，无需逐步配对。"
+                    "source_refs仅保留直接相关来源并去重，保留chunk_id与label；excerpt仅摘录"
+                    "直接支持本用例的短句，每条不超过80字，禁止复述整段或整份文档。",
                     {
                         "prompt": request.prompt,
-                        "user_requirements": [
-                            item for item in request.conversation_memory
-                            if item.get("role") == "user"
-                        ],
-                        "evidence": evidence,
-                        "test_cases": [case.model_dump(mode="json") for case in remaining],
+                        "original_requirement": request.markdown_content or request.prompt,
+                        "test_points": {"test_points": [point.model_dump(mode="json") for point in group]},
+                        "feature_points": {"feature_points": [f.model_dump(mode="json") for f in selected_features]},
+                        "context": {"evidence": evidence},
                         "batch_count": len(group),
+                        "batch_start_index": offset + 1,
+                        "brief_version": plan.get("brief_version"),
+                        "previous_titles": [case.title for case in generated],
                     },
                     TestCaseBatch, request.model_id,
                 )
-                identities = sorted((case.id, tuple(case.test_point_ids)) for case in remaining)
-                grounded_ids = sorted(
-                    (case.id, tuple(case.test_point_ids)) for case in grounded.test_cases
-                )
-                if identities != grounded_ids:
-                    raise ValueError("来源核对改变了规划用例身份或数量，请重试")
-                remaining = list(grounded.test_cases)
-            for local_index, point in enumerate(group):
-                matches = [case for case in remaining if case.test_point_ids == [point.id]]
-                if not matches:
-                    raise ValueError("规划生成遗漏或错误引用测试点，请重试")
-                case = matches[0]
-                remaining.remove(case)
-                case.id = f"TC-{point.id}-{(offset + local_index) // len(points) + 1}"
-                case.module = planned_module(point, features)
-                if not case.source_refs:
-                    case.source_refs = point.source_refs or [SourceRef(label="用户输入", excerpt=request.prompt)]
-                generated.append(case)
-            if remaining:
-                raise ValueError("规划生成包含范围之外的测试点，请重试")
+                remaining = list(batch.test_cases)
+                if len(remaining) != len(group):
+                    raise ValueError("规划生成批次数量不符，请重试")
+                if self.provider.name != "mock":
+                    # Audit before publishing even the first preview. Planning is
+                    # derived material, so bring the original user evidence back
+                    # into this stage instead of treating an invented plan detail
+                    # as authoritative merely because it survived generation.
+                    grounded = execute_stage(
+                        "test_case.grounded",
+                        GENERATION_GROUNDING_INSTRUCTION + CASE_DESIGN_INSTRUCTION +
+                        "当前是独立的来源核对阶段，不是继续扩写。逐条删除候选中无原始来源支持的"
+                        "附加预期；保持已支持的动作和断言、用例数量、id及test_point_ids不变。"
+                        "引用最新用户要求解决版本冲突，不能把模型生成的规划或历史助手回复当作原始事实。"
+                        "source_refs仅保留直接相关来源并去重，保留chunk_id与label；excerpt仅摘录"
+                        "直接支持本用例的短句，每条不超过80字，禁止复述整段或整份文档。",
+                        {
+                            "prompt": request.prompt,
+                            "user_requirements": [
+                                item for item in request.conversation_memory
+                                if item.get("role") == "user"
+                            ],
+                            "evidence": evidence,
+                            "test_cases": [case.model_dump(mode="json") for case in remaining],
+                            "batch_count": len(group),
+                        },
+                        TestCaseBatch, request.model_id,
+                    )
+                    identities = sorted((case.id, tuple(case.test_point_ids)) for case in remaining)
+                    grounded_ids = sorted(
+                        (case.id, tuple(case.test_point_ids)) for case in grounded.test_cases
+                    )
+                    if identities != grounded_ids:
+                        raise ValueError("来源核对改变了规划用例身份或数量，请重试")
+                    remaining = list(grounded.test_cases)
+                validated_batch = []
+                for local_index, point in enumerate(group):
+                    matches = [case for case in remaining if case.test_point_ids == [point.id]]
+                    if not matches:
+                        raise ValueError("规划生成遗漏或错误引用测试点，请重试")
+                    case = matches[0]
+                    remaining.remove(case)
+                    case.id = f"TC-{point.id}-{(offset + local_index) // len(points) + 1}"
+                    case.module = planned_module(point, features)
+                    if not case.source_refs:
+                        case.source_refs = point.source_refs or [SourceRef(label="用户输入", excerpt=request.prompt)]
+                    validated_batch.append(case)
+                if remaining:
+                    raise ValueError("规划生成包含范围之外的测试点，请重试")
+            except (ModelBehaviorError, ValidationError):
+                # Retry malformed structured output with bounded smaller requests.
+                # Keep completed batches and their checkpoint inputs unchanged.
+                if size <= 5:
+                    raise
+                pending[0:0] = [
+                    (start, min(5, offset + size - start))
+                    for start in range(offset, offset + size, 5)
+                ]
+                continue
+            generated.extend(validated_batch)
             if on_batch:
                 on_batch(list(generated), limit)
+        from casepilot_agent.compact_generation import coverage_rows
         result = GenerationResult(
             mode=self.provider.name,
             requirement=requirement,
             feature_points=features,
             test_points=points,
             test_cases=generated,
-            coverage_matrix=[],
+            coverage_matrix=coverage_rows(features, points, generated),
             quality=QualityReport(passed=True, score=100),
         )
         result.quality = validate_generation(result)

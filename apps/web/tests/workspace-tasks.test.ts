@@ -153,3 +153,13 @@ test("batch previews bind to the generating message when a saved brief has no op
   state.candidate_history = [preview, { ...preview, id: "unrelated", generation_job_id: "previous-job" }];
   assert.deepEqual(candidatesForTask(workspaceTasks(state)[0], state).map(item => item.id), ["preview"]);
 });
+
+
+test("parallel previews follow planned positions instead of completion order", async () => {
+  const { candidatesForTask } = await import("../lib/workspace-tasks");
+  const state = conversation([message("generation", { intent: "CASE_GENERATE", status: "running", related_job_id: "current-job" })]);
+  const base = { generation_job_id: "current-job", ref: "TC", version: 1, snapshot: { id: "TC", title: "Login", module: "Login", case_type: "Functional", priority: "P1" as const, tags: [], status: "pending", preconditions: [], steps: [], source_refs: [] }, included: false, status: "generating", updated_at: "" };
+  state.candidate_history = [{ ...base, id: "fast-second", position: 5 }, { ...base, id: "slow-first", position: 0 }];
+  assert.deepEqual(candidatesForTask(workspaceTasks(state)[0], state).map(item => item.id), ["slow-first", "fast-second"]);
+  assert.equal(state.candidate_history[0].id, "fast-second");
+});

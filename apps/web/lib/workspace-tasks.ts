@@ -140,7 +140,8 @@ export function candidatesForTask(task: WorkspaceTask | undefined, conversation:
   if (!generation) return [];
   const candidates = conversation.candidate_history ?? conversation.candidates;
   const ids = new Set(generation.operation?.result.candidate_ids as string[] ?? []);
-  return candidates.filter(candidate => ids.has(candidate.id) || (candidate.generation_job_id && candidate.generation_job_id === (generation.operation?.related_job_id ?? generation.message.related_job_id)));
+  return candidates.filter(candidate => ids.has(candidate.id) || (candidate.generation_job_id && candidate.generation_job_id === (generation.operation?.related_job_id ?? generation.message.related_job_id)))
+    .sort((left, right) => left.position - right.position || left.version - right.version);
 }
 
 export function nextWorkspaceOperation(conversation: ConversationDto | null) {

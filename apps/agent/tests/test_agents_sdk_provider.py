@@ -7,12 +7,14 @@ from casepilot_agent.contracts import KnowledgeAnswer
 from casepilot_agent.providers.agents_sdk import AgentsSdkProvider
 
 
+@pytest.mark.parametrize("compact", [False, True])
 @pytest.mark.parametrize("stage,timeouts", [
     ("knowledge.answered", 0), ("test_case.generated", 1), ("test_case.generated", 2),
     ("knowledge.answered", 1),
+    ("test_point.generated", 0), ("feature.generated", 0),
 ])
 def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
-    monkeypatch: pytest.MonkeyPatch, stage: str, timeouts: int,
+    monkeypatch: pytest.MonkeyPatch, stage: str, timeouts: int, compact: bool,
 ) -> None:
     captured: dict = {}
     agents = ModuleType("agents")
@@ -78,10 +80,12 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
     )
     kwargs = dict(stage=stage, instruction="回答问题", payload={"question": "什么是边界值？", **({"batch_count": 20} if stage == "test_case.generated" else {})},
                   result_type=KnowledgeAnswer, model_id="auto")
-    if timeouts == 2 or (stage == "knowledge.answered" and timeouts):
+    if compact:
+        kwargs["payload"]["output_contract"] = "case_batch_v2"
+    if (compact and timeouts) or timeouts == 2 or (stage == "knowledge.answered" and timeouts):
         with pytest.raises(TimeoutError):
             provider.complete(**kwargs)
-        assert captured["calls"] == (2 if stage == "test_case.generated" else 1)
+        assert captured["calls"] == (2 if stage == "test_case.generated" and not compact else 1)
         return
     result, usage = provider.complete(**kwargs)
     assert captured["calls"] == timeouts + 1
@@ -93,7 +97,8 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
     output_schema = captured["agent"]["output_type"]
     assert output_schema.output_type is KnowledgeAnswer
     assert captured["agent"]["model_settings"].extra_body == {"response_format": {"type": "json_object"}}
-    assert captured["agent"]["model_settings"].max_tokens == (32048 if stage == "test_case.generated" else None)
+    expected_budget = 32048 if stage == "test_case.generated" else 16384 if stage in {"test_point.generated", "feature.generated"} else None
+    assert captured["agent"]["model_settings"].max_tokens == expected_budget
     assert output_schema.strict_json_schema is False
     assert captured["tracing_disabled"] is True
     assert usage.token_usage["total_tokens"] == 18

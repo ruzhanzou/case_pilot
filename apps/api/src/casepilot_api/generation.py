@@ -112,9 +112,9 @@ STAGE_PROGRESS = {
 def public_error_code(error_code: str | None) -> str | None:
     if not error_code:
         return None
-    if error_code in {"TimeoutError", "ConnectionError"}:
+    if error_code in {"TimeoutError", "APITimeoutError", "ConnectionError", "APIConnectionError"}:
         return "provider_temporarily_unavailable"
-    if error_code in {"ProviderResponseError", "ValidationError"}:
+    if error_code in {"ProviderResponseError", "ValidationError", "ModelBehaviorError", "StageContractError"}:
         return "provider_response_invalid"
     if error_code == "GenerationQualityError":
         return "generation_quality_blocked"
@@ -133,13 +133,24 @@ def job_view(db: Session, job: GenerationJob) -> GenerationJobView:
         )
     ).all()
     return GenerationJobView(
+        planning_preview=output.get("planning_preview"),
+        planning_progress=output.get("planning_progress"),
+        retry_attempt=output.get("retry_attempt"),
+        batch_start_index=output.get("batch_start_index"),
+        batch_count=output.get("batch_count"),
+        active_batches=output.get("active_batches", []),
+        started_at=output.get("started_at"),
         generated_count=output.get("generated_count"),
         total_count=output.get("total_count"),
         id=job.id,
         status=job.status.value if hasattr(job.status, "value") else str(job.status),
         stage=job.stage,
         space_id=job.space_id,
-        progress=(min(90, 40 + int(50 * output["generated_count"] / output["total_count"]))
+        progress=(int(output["planning_progress"].get("progress", 0))
+                  if job.status in {"running", "failed", "cancelled"} and output.get("planning_progress")
+                  else min(95, int(95 * output.get("generated_count", 0) / output["total_count"]))
+                  if job.status in {"running", "failed", "cancelled"} and job.input_payload.get("output_contract") == "case_batch_v2" and output.get("total_count")
+                  else min(90, 40 + int(50 * output["generated_count"] / output["total_count"]))
                   if job.status == "running" and output.get("generated_count") and output.get("total_count")
                   else STAGE_PROGRESS.get(job.stage, 0)),
         error_code=public_error_code(job.error_code),

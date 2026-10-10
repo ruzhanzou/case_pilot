@@ -859,8 +859,8 @@ def _candidate_view(candidate: WorkspaceCandidate) -> WorkspaceCandidateView:
     )
 
 
-def _messages_with_attachments(db, conversation, messages):
-    """Project persisted document links into the timeline, including older uploads."""
+def _messages_with_attachments(db, conversation, messages, pending=None):
+    """Attach uploads to the next sent user message; retain unsent files in the composer."""
     views = [_message_view(message) for message in messages]
     document_ids = dict(conversation.context).get("document_ids", [])
     if not document_ids:
@@ -874,16 +874,24 @@ def _messages_with_attachments(db, conversation, messages):
             KnowledgeSource.deleted_at.is_(None),
         )
     )
+    user_views = sorted((view for view in views if view.role == "user"),
+                        key=lambda view: (view.created_at, str(view.id)))
     for document in documents:
-        views.append(ConversationMessageView(
-            id=document.id, role="user", content="", intent=None, intent_confidence=None,
-            status="completed", target_case_ids=[], related_job_id=None, citations=[],
-            metadata={"attachments": [{
-                "id": str(document.id), "name": document.original_name,
-                "size": document.size_bytes, "status": document.status,
-            }]}, created_at=document.created_at,
-        ))
-    return sorted(views, key=lambda item: (item.created_at, str(item.id)))
+        attachment = {
+            "id": str(document.id), "name": document.original_name,
+            "size": document.size_bytes, "status": document.status,
+        }
+        owner = next((view for view in user_views if view.created_at >= document.created_at), None)
+        if owner is None:
+            if pending is not None:
+                pending.append(attachment)
+            continue
+        # Return a projection; reading a conversation must not mutate persisted metadata.
+        attached = [item for item in owner.metadata.get("attachments", [])
+                    if item.get("id") != str(document.id)]
+        owner.metadata = {**owner.metadata, "attachments": [*attached, attachment]}
+    return views
+
 
 
 def _conversation_view(db: Session, conversation: Conversation) -> ConversationView:
@@ -1002,14 +1010,16 @@ def _conversation_view(db: Session, conversation: Conversation) -> ConversationV
                 updated_at=stages[-1].created_at if stages else job.created_at,
             )
         )
+    pending_attachments = []
+    message_views = _messages_with_attachments(db, conversation, messages, pending_attachments)
     return ConversationView(
         id=conversation.id,
         space_id=conversation.space_id,
         collection_id=conversation.collection_id,
         title=conversation.title,
         status=conversation.status,
-        context=dict(conversation.context),
-        messages=_messages_with_attachments(db, conversation, messages),
+        context={**dict(conversation.context), "pending_attachments": pending_attachments},
+        messages=message_views,
         test_briefs=[
             _brief_view(
                 brief,
@@ -3195,6 +3205,7 @@ def confirm_test_brief(
             "conversation_id": str(conversation.id),
             "conversation_memory": _agent_conversation_memory(db, conversation.id),
             "confirmed_plan": planning,
+            "output_contract": "case_batch_v2",
             "confirmed_test_brief": brief_content,
             "confirmed_test_brief_version": brief.version,
             "target_module_path": str(

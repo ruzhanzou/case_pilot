@@ -14,6 +14,18 @@ GENERATION_GROUNDING_INSTRUCTION = (
     "输出前逐条核对步骤预期，删除无来源的附加断言；必要但未知的事实仅放入假设或开放问题，不能写成通过条件。"
 )
 
+CASE_DESIGN_INSTRUCTION = (
+    "module仅为稳定业务分类，不含场景、操作、预期或用例标题；功能名使用简短业务名。"
+    "测试主题允许关联多个独立场景，禁止模块、场景、标题连续同义重复。"
+    "仅当前置状态、关键输入、业务分支或预期存在实质差异时拆分用例。"
+    "连续操作属于同一procedure，多个校验属于同一用例checkpoints，不按步骤或校验数量拆分。"
+    "终端规则相同时参数化表达；存在独立流程或风险时才分端拆分。"
+    "按业务规则、前置状态、动作、预期判断重复，同一目标只归属一个主要功能。"
+    "完整流程已覆盖的校验，只有存在额外风险时才单独成例。"
+    "参考全局场景索引，避免跨批同义重复；数量是覆盖目标，禁止凑数。"
+    "多端账号一致不等于一端登录后其他端自动登录；冲突或缺失规则列为待确认，不能猜测预期。"
+)
+
 SINGLE_CASE_REWRITE_INSTRUCTION = (
     "本次调用只改写 input.test_case（原用例）这一条用例，保留其 id。"
     "批量选择已由服务端完成，服务端会逐条调用；用户原始指令中的两条、多条、全部、"
@@ -95,14 +107,14 @@ class TestPoint(BaseModel):
 
 class TestStep(BaseModel):
     action: str = Field(
-        min_length=1,
+        min_length=0,
         max_length=4000,
         description="test_procedure 中的一项，仅描述可执行操作，不混入预期结果。",
     )
     expected: str = Field(
-        min_length=1,
+        min_length=0,
         max_length=4000,
-        description="test_validation 中与操作同序对应的一项可观察断言。",
+        description="整条用例的一项可观察校验点，不要求与本行操作对应；无对应项时留空。",
     )
 
 
@@ -131,7 +143,7 @@ class RewriteCaseDraft(BaseModel):
         max_length=100,
         description=(
             "兼容存储结构：依次将 steps[].action 作为 test_procedure，"
-            "steps[].expected 作为同序 test_validation。"
+            "steps[].expected 作为独立的用例级 test_validation，忽略空项，不要求逐步对应。"
         ),
     )
     test_point_ids: list[str]
@@ -210,6 +222,7 @@ class UsageMetadata(BaseModel):
 
 
 class GenerationRequest(BaseModel):
+    output_contract: str = "legacy"
     confirmed_plan: dict[str, Any] = Field(default_factory=dict)
     prompt: str = Field(min_length=1, max_length=8000)
     markdown_content: str = Field(default="", max_length=100_000)

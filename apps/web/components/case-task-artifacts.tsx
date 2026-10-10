@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { Streamdown } from "streamdown";
-import type { ConversationDto, TestCaseDto, WorkspaceCandidateDto } from "@/lib/casepilot-api";
+import type { GenerationStage, ConversationDto, TestCaseDto, WorkspaceCandidateDto } from "@/lib/casepilot-api";
 import { candidatesForTask, type WorkspaceTask } from "@/lib/workspace-tasks";
 import { useI18n } from "@/lib/i18n";
 
 type Props = {
+  generationProgress?: GenerationStage | null;
   task: WorkspaceTask;
   conversation: ConversationDto;
   busy: boolean;
@@ -20,7 +21,7 @@ type Props = {
   pendingCandidateRefs?: string[];
 };
 
-export function CaseTaskArtifacts({ task, conversation, busy, cases, onLocate, onToggleCandidate, onCommit, onBrief, onGenerate, onRefine, pendingCandidateRefs = [] }: Props) {
+export function CaseTaskArtifacts({ task, conversation, busy, cases, onLocate, onToggleCandidate, onCommit, onBrief, onGenerate, onRefine, generationProgress, pendingCandidateRefs = [] }: Props) {
   const { pick } = useI18n();
   if (task.message.intent === "CASE_QUERY") {
     const snapshots = task.operation?.result.query_cases;
@@ -38,10 +39,28 @@ export function CaseTaskArtifacts({ task, conversation, busy, cases, onLocate, o
   const canCommit = canEdit && !needsReview && candidates.some((item) => item.status === "candidate" && item.included);
   return <div className="task-generation-results">
     {brief && <section className="task-brief-result"><header><strong>{pick("Test scope", "测试范围")} · V{brief.version}</strong><button type="button" onClick={() => onBrief(brief.version)}>{pick("View full brief", "查看完整说明")}</button></header><p>{brief.content.test_object}</p><p>{brief.content.scope.join(" · ")}</p>{brief.content.open_questions.length > 0 && <ul>{brief.content.open_questions.map((item, index) => <li key={item.id ?? index}>{item.question}</li>)}</ul>}{canConfirmBrief && <button type="button" disabled={busy} onClick={onGenerate}>{pick("Confirm scope and generate", "确认范围并生成用例")}</button>}</section>}
-    {candidates.length > 0 && <section className="task-result-cases" aria-label={pick("Candidate results", "候选结果")}><header><h4>{pick(`${candidates.length} candidate cases`, `${candidates.length} 条候选用例`)}</h4>{canEdit && onRefine && <button type="button" disabled={busy} onClick={onRefine}>{pick("Refine candidates", "继续调整候选")}</button>}{canEdit && <button type="button" disabled={busy || !canCommit} onClick={onCommit}>{pick("Add selected candidates", "纳入已选候选")}</button>}</header>
+    {generationProgress?.total_count && <section className="generation-progress-card" aria-label={pick("Generation progress", "生成进度")}>
+      <strong>{pick(`${generationProgress.generated_count ?? 0} / ${generationProgress.total_count} cases verified`, `已核对 ${generationProgress.generated_count ?? 0} / ${generationProgress.total_count} 条`)}</strong>
+      <progress max={generationProgress.total_count} value={generationProgress.generated_count ?? 0} aria-label={pick("Verified cases", "已核对用例数量")} />
+      {generationProgress.active_batches?.length ? generationProgress.active_batches.map((batch) => <p key={batch.start}>{pick(`Cases ${batch.start}–${batch.start + batch.count - 1}`, `第 ${batch.start}–${batch.start + batch.count - 1} 条`)} · {batch.stage === "test_case.grounded" ? pick("Checking requirements", "核对需求中") : pick("Generating", "生成中")}{batch.retry_attempt > 0 ? pick(" · Retrying", " · 重试中") : ""}</p>) : (
+<p>{generationProgress.name === "test_case.grounded" ? pick("Checking this batch against the original requirements", "正在根据原始需求核对本批用例") : pick("Generating the next batch", "正在生成下一批用例")}{generationProgress.batch_start_index && generationProgress.batch_count ? pick(` · Cases ${generationProgress.batch_start_index}–${generationProgress.batch_start_index + generationProgress.batch_count - 1}`, ` · 第 ${generationProgress.batch_start_index}–${generationProgress.batch_start_index + generationProgress.batch_count - 1} 条`) : ""}</p>
+      )}
+      {!!generationProgress.retry_attempt && <p role="status">{pick("Retrying this batch; verified cases are preserved.", "当前批次正在重试，已核对结果已保留。")}</p>}
+      <small>{pick("Verified batches appear below. Final review unlocks after all batches pass validation.", "已核对的批次会立即展示在下方；全部生成并通过校验后可统一审核采纳。")}</small>
+    </section>}
+    {candidates.length > 0 && <section className="task-result-cases" aria-label={pick("Candidate results", "候选结果")}>
+      <header>
+        <h4>{pick(`${candidates.filter(item => item.status !== "archived").length} candidate cases`, `${candidates.filter(item => item.status !== "archived").length} 条候选用例`)}</h4>
+        {canEdit && <div className="task-candidate-actions">
+          {onRefine && <button type="button" disabled={busy} onClick={onRefine}>{pick("Edit cases", "修改用例")}</button>}
+          <button type="button" className="is-primary" disabled={busy || !canCommit} onClick={onCommit}>
+            {pick(`Accept selected (${candidates.filter(item => item.status === "candidate" && item.included).length})`, `采纳已选（${candidates.filter(item => item.status === "candidate" && item.included).length}）`)}
+          </button>
+        </div>}
+      </header>
       {candidates.some(item => item.status === "generating") && <p role="status" data-testid="generation-batch-preview">{pick("Batch preview — results appear as they finish. Adoption is available after generation and validation complete.", "分批预览：已生成内容会逐批更新，整轮生成和校验完成后可采纳。")}</p>}
       {needsReview && <p role="status">{pick("Review the AI changes for selected candidates before adding them to the official collection.", "所选候选存在待审阅的 AI 修改，请先采纳或丢弃建议，再纳入正式集合。")}</p>}
-      {candidates.map((candidate) => <details key={candidate.id}><summary>{candidate.status === "candidate" && <input type="checkbox" aria-label={pick(`Include ${candidate.ref}`, `纳入 ${candidate.ref}`)} checked={candidate.included} disabled={busy} onClick={(event) => event.stopPropagation()} onChange={() => onToggleCandidate(candidate)} />}<strong>{candidate.ref} · {String(candidate.snapshot.title ?? "")}</strong><small>V{candidate.version} · {candidate.status === "generating" ? pick("Preview · not yet adoptable", "生成预览 · 暂不可采纳") : candidate.status === "incorporated" ? pick("Added", "已纳入") : candidate.status === "excluded" ? pick("Not included", "未纳入") : candidate.status === "archived" ? pick("Historical candidate", "历史候选") : pick("Awaiting review", "待审阅")}</small></summary><p>{String(candidate.snapshot.module ?? "")} · {pick("Priority", "优先级")}：{String(candidate.snapshot.priority ?? "—")} · {String(candidate.snapshot.case_type ?? "")}</p><p><strong>{pick("Preconditions", "前置条件")}</strong>：{((candidate.snapshot.preconditions ?? []) as string[]).join("；") || "—"}</p><Streamdown>{((candidate.snapshot.steps ?? []) as { action: string; expected: string }[]).map((step, index) => `${index + 1}. ${step.action}\n\n   ${pick("Expected", "预期")}：${step.expected}`).join("\n\n")}</Streamdown>{candidate.status === "candidate" && <button type="button" onClick={() => onLocate(candidate.id)}>{pick("Edit candidate", "编辑候选")}</button>}</details>)}
+      {candidates.map((candidate, index) => <details key={candidate.id}><summary>{candidate.status === "candidate" && <input type="checkbox" aria-label={pick(`Include ${candidate.ref}`, `纳入 ${candidate.ref}`)} checked={candidate.included} disabled={busy} onClick={(event) => event.stopPropagation()} onChange={() => onToggleCandidate(candidate)} />}<strong>{index + 1}. {candidate.ref} · {String(candidate.snapshot.title ?? "")}</strong><small>V{candidate.version} · {candidate.status === "generating" ? pick("Preview · not yet adoptable", "生成预览 · 暂不可采纳") : candidate.status === "incorporated" ? pick("Added", "已纳入") : candidate.status === "excluded" ? pick("Not included", "未纳入") : candidate.status === "archived" ? pick("Historical candidate", "历史候选") : pick("Awaiting review", "待审阅")}</small></summary><p>{String(candidate.snapshot.module ?? "")} · {pick("Priority", "优先级")}：<span className={`priority-badge priority-badge--${String(candidate.snapshot.priority).toLowerCase()}`}>{String(candidate.snapshot.priority ?? "—")}</span> · {String(candidate.snapshot.case_type ?? "")}</p><p><strong>{pick("Preconditions", "前置条件")}</strong>：{((candidate.snapshot.preconditions ?? []) as string[]).join("；") || "—"}</p><strong>{pick("Procedure", "操作步骤")}</strong><Streamdown>{candidate.snapshot.steps.filter(step => step.action.trim()).map((step, index) => `${index + 1}. ${step.action}`).join("\n\n")}</Streamdown><strong>{pick("Case checkpoints", "用例校验点")}</strong><Streamdown>{candidate.snapshot.steps.filter(step => step.expected.trim()).map((step, index) => `${index + 1}. ${step.expected}`).join("\n\n")}</Streamdown>{candidate.status === "candidate" && <button type="button" onClick={() => onLocate(candidate.id)}>{pick("Edit candidate", "编辑候选")}</button>}</details>)}
     </section>}
   </div>;
 }

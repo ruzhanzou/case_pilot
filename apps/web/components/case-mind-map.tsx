@@ -539,6 +539,7 @@ type CaseMindMapProps = {
   collection: CaseCollectionDto;
   cases: TestCaseDto[];
   selectedCaseId: string;
+  moduleAliases?: Record<string, string>;
   focusVersion?: number;
   searchQuery?: string;
   onSearchQueryChange?: (query: string) => void;
@@ -556,6 +557,7 @@ export function CaseMindMap({
   collection,
   cases,
   selectedCaseId,
+  moduleAliases,
   focusVersion = 0,
   searchQuery,
   onSearchQueryChange,
@@ -675,7 +677,7 @@ export function CaseMindMap({
     return () => window.cancelAnimationFrame(frame);
   }, [draft]);
   const [hiddenCaseDetails, setHiddenCaseDetails] = useState<Set<string>>(
-    () => new Set(),
+    () => new Set(cases.map(item => item.id)),
   );
   const draggedPositions = useRef(new Map<string, { x: number; y: number }>());
   const centerCollapsedGraph = useRef<"collapse" | "global" | null>(null);
@@ -694,13 +696,14 @@ export function CaseMindMap({
   const groupedCases = useMemo(() => {
     const grouped = new Map<string, TestCaseDto[]>();
     for (const testCase of cases) {
-      const name = modulePath(testCase.module) || "未分类";
+      const original = modulePath(testCase.module);
+      const name = moduleAliases?.[original] ?? (original || "未分类");
       const group = grouped.get(name);
       if (group) group.push(testCase);
       else grouped.set(name, [testCase]);
     }
     return grouped;
-  }, [cases]);
+  }, [cases, moduleAliases]);
   const hiddenLeafModules = useMemo(() => new Set(
     [...groupedCases].filter(([, items]) => items.every((item) => hiddenCaseDetails.has(item.id)))
       .map(([name]) => name),

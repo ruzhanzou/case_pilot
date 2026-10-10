@@ -240,6 +240,9 @@ export function NewConversation({
               ))}
             </div>
           )}
+          <ConversationAttachments pending metadata={{ attachments: (
+            Array.isArray(conversation?.context.pending_attachments) ? conversation.context.pending_attachments : []
+          ).filter((file: { name: string }) => !attachments.some(local => local.name === file.name)) }} />
       <textarea
         value={prompt}
         onChange={(event) => setPrompt(event.target.value)}

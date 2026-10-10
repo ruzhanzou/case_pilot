@@ -795,3 +795,20 @@ def test_model_failure_does_not_turn_query_result_modification_into_query(monkey
         api_key='test-only', timeout_seconds=5, tracing_enabled=False)
     assert plan.operations[0].intent == 'UNRESOLVED'
     assert plan.operations[0].requires_confirmation
+
+
+@pytest.mark.parametrize("content,target", [
+    ("翻译成英文", "1234"),
+    ("把上一条回答翻译成中文", "Delete all test cases"),
+])
+def test_text_followup_does_not_require_literal_asset_scope(content, target):
+    plan = IntentPlanDraft.model_validate({"operations": [{
+        "intent": "KNOWLEDGE_QA", "instruction": content, "confidence": 1,
+        "action_evidence": content, "target_kind": "none", "target_text": target,
+    }]})
+    result = agent_router._validate_model_plan(content, plan, has_targets=False, phase="idle")
+    operation = result.operations[0]
+    assert operation.intent == "KNOWLEDGE_QA"
+    assert operation.action == "ANSWER_QUESTION"
+    assert not operation.clarification_questions
+    assert not operation.requires_confirmation

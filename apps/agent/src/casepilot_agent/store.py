@@ -38,10 +38,17 @@ metadata = MetaData()
 def generation_failure_message(error_code: str, output_payload: dict[str, Any]) -> str:
     friendly_message = {
         "ProviderResponseError": "模型返回内容暂时无法解析，请稍后重试或更换模型。",
+        "ModelBehaviorError": "模型输出格式仍不符合要求，本次处理已停止。可重试或更换模型。",
+        "StageContractError": "模型输出未通过用例或来源核对校验，本次处理已停止。请检查测试说明后重试。",
+        "APITimeoutError": "模型响应超时，本次处理已停止。可稍后重试或更换模型。",
         "TimeoutError": "模型响应超时，请稍后重试。",
         "ConnectionError": "网络连接中断，请检查网络后重试。",
+        "APIConnectionError": "模型服务连接中断，本次处理已停止。可稍后重试。",
         "GenerationQualityError": "候选用例未通过质量校验，请补充需求后重试。",
     }.get(error_code, "处理暂时未完成，请稍后重试。")
+    ready = int(output_payload.get("generated_count") or 0)
+    if ready:
+        friendly_message += f"已核对的 {ready} 条预览已保留；重试同一任务可复用已完成阶段。"
     if error_code != "GenerationQualityError":
         return friendly_message
     quality = dict(output_payload.get("quality") or {})

@@ -231,3 +231,76 @@ def test_grounding_cannot_silently_drop_cases_or_publish_partial_batch():
             on_batch=lambda *args: previews.append(args),
         )
     assert previews == []
+
+
+def test_malformed_later_batch_splits_without_repeating_completed_points():
+    from agents.exceptions import ModelBehaviorError
+
+    provider, request = planned(45)
+    calls, previews = [], []
+
+    def execute(stage, instruction, payload, result_type, model_id):
+        start, size = payload["batch_start_index"], payload["batch_count"]
+        calls.append((start, size))
+        if start == 21 and size == 20:
+            raise ModelBehaviorError("invalid JSON")
+        return provider.complete(stage=stage, instruction=instruction, payload=payload,
+                                 result_type=result_type, model_id=model_id)[0]
+
+    result = GenerationPipeline(provider).run(
+        request, context={}, answers={}, execute_stage=execute,
+        on_batch=lambda cases, total: previews.append(len(cases)),
+    )
+    assert calls == [(1, 20), (21, 20), (21, 5), (26, 5), (31, 5), (36, 5), (41, 5)]
+    assert previews == [20, 25, 30, 35, 40, 45]
+    assert [c.test_point_ids for c in result.test_cases] == [[f"P-{i}"] for i in range(45)]
+    assert len({c.id for c in result.test_cases}) == 45
+
+
+def test_malformed_small_batch_stops_with_no_partial_preview():
+    from agents.exceptions import ModelBehaviorError
+
+    provider, request = planned(10)
+    calls, previews = [], []
+
+    def execute(stage, instruction, payload, result_type, model_id):
+        calls.append(payload["batch_count"])
+        raise ModelBehaviorError("invalid JSON")
+
+    with pytest.raises(ModelBehaviorError):
+        GenerationPipeline(provider).run(
+            request, context={}, answers={}, execute_stage=execute,
+            on_batch=lambda *args: previews.append(args),
+        )
+    assert calls == [10, 5]
+    assert previews == []
+
+
+def test_malformed_audit_splits_and_only_publishes_audited_batches():
+    from agents.exceptions import ModelBehaviorError
+
+    provider, request = planned(10)
+    class RealProvider:
+        name = "openai_compatible"
+
+    pipeline = GenerationPipeline(RealProvider())
+    calls, previews = [], []
+
+    def execute(stage, instruction, payload, result_type, model_id):
+        size = payload["batch_count"]
+        calls.append((stage, size))
+        if stage == "test_case.grounded":
+            if size > 5:
+                raise ModelBehaviorError("invalid JSON")
+            return result_type.model_validate({"test_cases": payload["test_cases"]})
+        return provider.complete(stage=stage, instruction=instruction, payload=payload,
+                                 result_type=result_type, model_id=model_id)[0]
+
+    result = pipeline.run(
+        request, context={}, answers={}, execute_stage=execute,
+        on_batch=lambda cases, total: previews.append(len(cases)),
+    )
+    assert calls == [(stage, size) for size in [10, 5, 5]
+                     for stage in ["test_case.generated", "test_case.grounded"]]
+    assert previews == [5, 10]
+    assert len({c.id for c in result.test_cases}) == 10

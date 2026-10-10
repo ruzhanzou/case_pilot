@@ -64,8 +64,8 @@ def test_planning_does_not_request_cases_and_generation_reuses_selected_point():
     assert result.quality.passed
     assert len(calls) == len(result.test_cases) == 1
     assert result.test_cases[0].test_point_ids == [point["id"]]
-    assert result.test_cases[0].module.endswith(point["title"])
-    assert len(result.test_cases[0].module.split("/")) >= 3
+    assert not result.test_cases[0].module.endswith(point["title"])
+    assert point["scenario"] not in result.test_cases[0].module
 
 
 def test_full_document_context_keeps_more_than_twelve_blocks_without_truncation():
@@ -142,3 +142,30 @@ def test_requested_count_reports_uncovered_planning_points_without_discarding_re
     assert result.quality.passed
     assert len(result.test_cases) == 1
     assert any(issue.code == "planned_point_uncovered" for issue in result.quality.issues)
+
+
+def test_planning_batches_features_without_losing_ids_or_coverage():
+    from casepilot_agent.contracts import FeaturePlan, TestPointPlan
+    seen = []
+
+    def complete(stage, instruction, payload, result_type):
+        if stage == 'feature.generated':
+            return FeaturePlan.model_validate({'feature_points': [
+                {'id': f'F{i}', 'module': '登录', 'name': f'方式{i}',
+                 'description': f'规则{i}', 'requirement_refs': []} for i in range(5)
+            ]})
+        features = payload['feature_points']['feature_points']
+        assert len(features) <= 3
+        seen.extend(f['name'] for f in features)
+        return TestPointPlan.model_validate({'test_points': [
+            {'id': 'provider-reuses-id', 'title': f['name'], 'scenario': f['name'],
+             'objective': '验证登录', 'category': '功能', 'priority': 'P1',
+             'priority_reason': '业务规则', 'feature_point_ids': [f['id']]}
+            for f in features
+        ]})
+
+    plan = build_planning(RequirementAnalysis(summary='登录'), {'evidence': []}, complete)
+    assert sorted(seen) == [f'方式{i}' for i in range(5)]
+    assert len({p['id'] for p in plan['test_points']}) == 5
+    feature_ids = {f['id'] for f in plan['feature_points']}
+    assert {ref for p in plan['test_points'] for ref in p['feature_point_ids']} == feature_ids

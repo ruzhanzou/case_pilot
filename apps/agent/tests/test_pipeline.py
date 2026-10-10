@@ -434,6 +434,7 @@ def test_large_generation_batches_preserve_exact_quantity_and_unique_cases():
                 case = base.test_cases[(index - 1) % len(base.test_cases)].model_copy(deep=True)
                 case.id = f"CASE-{index}"
                 case.title = f"独立场景{index}"
+                case.preconditions = [f"独立输入数据{index}"]
                 cases.append(case)
             return CaseBatchResult(test_cases=cases)
         return executor(provider)(stage, instruction, payload, result_type, model_id)

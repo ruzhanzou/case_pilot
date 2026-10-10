@@ -1,9 +1,20 @@
 """Persistable planning, independent of executable test case generation."""
 
-from typing import Any
+import asyncio
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from typing import Any, Literal
 from uuid import NAMESPACE_URL, uuid5
 
-from casepilot_agent.contracts import FeaturePlan, RequirementAnalysis, SourceRef, TestPointPlan
+from pydantic import create_model
+
+from casepilot_agent.contracts import (
+    CASE_DESIGN_INSTRUCTION,
+    FeaturePlan,
+    RequirementAnalysis,
+    SourceRef,
+    TestPoint,
+    TestPointPlan,
+)
 
 
 def evidence_batches(context: dict[str, Any], budget: int = 18000) -> list[dict[str, Any]]:
@@ -25,46 +36,171 @@ def evidence_batches(context: dict[str, Any], budget: int = 18000) -> list[dict[
     return batches
 
 
+PLANNING_CONCURRENCY = 3
+FEATURES_PER_BATCH = 3
+POINTS_PER_BATCH = 12
+
+
 def build_planning(
-    requirement: RequirementAnalysis, context: dict[str, Any], complete, analyses=None
+    requirement: RequirementAnalysis,
+    context: dict[str, Any],
+    complete,
+    analyses=None,
+    *,
+    target_count=None,
+    on_progress=None,
+    check_cancelled=lambda: None,
 ):
-    features, points = [], []
+    """Plan disjoint feature groups concurrently; publish validated, stable snapshots."""
+    features, points, groups = [], [], []
     batches = evidence_batches(context)
     for index, batch in enumerate(batches):
+        check_cancelled()
         local = analyses[index] if analyses else requirement
         common = {"requirement": local.model_dump(mode="json"), "context": batch}
         feature_plan = complete(
             "feature.generated",
-            "按本批资料规划全部相关功能，保留具体规则和来源。不生成用例。"
+            CASE_DESIGN_INSTRUCTION + "按本批资料规划全部相关功能，保留具体规则和来源。不生成用例。"
             "module 为业务模块路径，name 为功能名；不得为凑数量合并不同功能。",
             common,
             FeaturePlan,
         )
-        mapping = {}
         for ordinal, feature in enumerate(feature_plan.feature_points):
-            stable_id = f"FP-{index + 1}-{ordinal + 1}"
-            mapping[feature.id] = stable_id
-            feature.id = stable_id
+            feature.id = f"FP-{index + 1}-{ordinal + 1}"
             if not feature.source_refs:
-                feature.source_refs = [SourceRef.model_validate(item) for item in batch["evidence"]]
-        plan = complete(
-            "test_point.generated",
-            "为给定功能逐项规划测试点，不生成用例正文。scenario 为具体业务场景，"
-            "title 为需要验证的规则或条件；保留边界数值、例外和来源。"
-            "feature_point_ids 只能引用给定功能 ID。数量按需求决定，不固定为正常异常边界三项。",
-            {**common, "feature_points": feature_plan.model_dump(mode="json")},
-            TestPointPlan,
-        )
-        allowed = {feature.id for feature in feature_plan.feature_points}
-        for ordinal, point in enumerate(plan.test_points):
-            point.id = f"TP-{index + 1}-{ordinal + 1}"
-            if not point.source_refs:
-                point.source_refs = [SourceRef.model_validate(item) for item in batch["evidence"]]
-            point.feature_point_ids = [mapping.get(ref, ref) for ref in point.feature_point_ids]
-            if not point.feature_point_ids or set(point.feature_point_ids) - allowed:
-                raise ValueError("planning_feature_reference_invalid")
+                feature.source_refs = [
+                    SourceRef.model_validate(item) for item in batch.get("evidence", [])
+                ]
         features.extend(feature_plan.feature_points)
-        points.extend(plan.test_points)
+        for start in range(0, len(feature_plan.feature_points), FEATURES_PER_BATCH):
+            groups.append((common, feature_plan.feature_points[start : start + FEATURES_PER_BATCH]))
+
+    if not features:
+        raise ValueError("planning_has_no_features")
+
+    # The quantity is a planning budget, while every feature retains coverage.
+    # Do not silently drop business features when the requested count is smaller.
+    budget = max(target_count or len(features) * 3, len(features))
+    quotas = [budget // len(features) + (i < budget % len(features)) for i in range(len(features))]
+    feature_budget = dict(zip((f.id for f in features), quotas, strict=True))
+    completed = {}
+    active = {}
+
+    def publish():
+        ordered = [p for index in sorted(completed) for p in completed[index]]
+        snapshot = merge_planning(features, ordered, context, len(batches))
+        metadata = {
+            "completed_batches": len(completed),
+            "total_batches": len(groups),
+            "completed_features": sum(len(groups[i][1]) for i in completed),
+            "total_features": len(features),
+            "test_point_count": len(snapshot["test_points"]),
+            "target_count": target_count,
+            "active_batches": [
+                {"batch": i + 1, "features": [f.name for f in groups[i][1]]}
+                for i in sorted(active.values())
+            ],
+        }
+        if on_progress:
+            on_progress(snapshot, metadata)
+
+    def worker(index):
+        # Runner.run_sync needs an event loop owned by this worker thread.
+        with asyncio.Runner() as runner:
+            asyncio.set_event_loop(runner.get_loop())
+            check_cancelled()
+            common, feature_slice = groups[index]
+            count = min(POINTS_PER_BATCH, sum(feature_budget[f.id] for f in feature_slice))
+            allowed_ref = Literal[tuple(f.id for f in feature_slice)]
+            point_type = create_model(
+                "BatchTestPoint", __base__=TestPoint, feature_point_ids=(list[allowed_ref], ...)
+            )
+            plan_type = create_model(
+                "BatchTestPointPlan", __base__=TestPointPlan, test_points=(list[point_type], ...)
+            )
+            plan = complete(
+                "test_point.generated",
+                CASE_DESIGN_INSTRUCTION + "只为本批给定功能规划测试点，不生成用例正文。"
+                "每个功能至少覆盖一次，优先关键规则；跨功能场景归属本批功能时才生成，避免重复。"
+                "title保留边界数值和例外。feature_point_ids是所属功能ID，不是测试点序号，"
+                "必须逐字复用本批feature_points的id，多个测试点可以复用同一个功能ID，严禁递增或发明功能ID。"
+                "本批数量预算为batch_count，最多生成该数量；不得在本批重复追求全局总数。"
+                "coverage_matrix留空；source_refs留空，系统按功能关联原始来源。使用简洁字段，不重复原文。",
+                {
+                    **common,
+                    "feature_points": {
+                        "feature_points": [
+                            f.model_dump(mode="json", exclude={"source_refs"})
+                            for f in feature_slice
+                        ]
+                    },
+                    "planning_feature_count": len(features),
+                    "target_count": target_count,
+                    "batch_count": count,
+                    "batch_index": index + 1,
+                },
+                plan_type,
+            )
+            if not plan.test_points or len(plan.test_points) > count:
+                raise ValueError("planning_point_batch_size_invalid")
+            slice_ids = {f.id for f in feature_slice}
+            covered = set()
+            for ordinal, point in enumerate(plan.test_points):
+                if not point.feature_point_ids or set(point.feature_point_ids) - slice_ids:
+                    raise ValueError("planning_feature_reference_invalid")
+                covered.update(point.feature_point_ids)
+                point.id = f"TP-{index + 1}-{ordinal + 1}"
+                # Hydrate citations from the actual referenced features.
+                point.source_refs = list(
+                    dict.fromkeys(
+                        ref.model_dump_json()
+                        for f in feature_slice
+                        if f.id in point.feature_point_ids
+                        for ref in f.source_refs
+                    )
+                )
+                point.source_refs = [
+                    SourceRef.model_validate_json(ref) for ref in point.source_refs
+                ]
+            if covered != slice_ids:
+                raise ValueError("planning_feature_uncovered")
+            check_cancelled()
+            return plan.test_points
+
+    publish()
+    with ThreadPoolExecutor(
+        max_workers=PLANNING_CONCURRENCY, thread_name_prefix="planning"
+    ) as pool:
+        pending = iter(range(len(groups)))
+        try:
+            while True:
+                while len(active) < PLANNING_CONCURRENCY:
+                    check_cancelled()
+                    index = next(pending, None)
+                    if index is None:
+                        break
+                    active[pool.submit(worker, index)] = index
+                publish()
+                if not active:
+                    break
+                done, _ = wait(active, return_when=FIRST_COMPLETED)
+                for future in sorted(done, key=lambda item: active[item]):
+                    index = active.pop(future)
+                    completed[index] = future.result()
+                    check_cancelled()
+                    publish()
+        except BaseException:
+            for future in active:
+                future.cancel()
+            raise
+    points = [p for index in sorted(completed) for p in completed[index]]
+    return merge_planning(features, points, context, len(batches))
+
+
+def merge_planning(features, points, context, processed_batches):
+    # Snapshot normalization must not mutate worker inputs or previous snapshots.
+    features = [f.model_copy(deep=True) for f in features]
+    points = [p.model_copy(deep=True) for p in points]
     # Adjacent evidence batches may describe the same business branch.
     # Merge exact semantic keys, retaining every source and rule description.
     merged_features, feature_map = {}, {}
@@ -106,7 +242,7 @@ def build_planning(
         "test_points": [item.model_dump(mode="json") for item in merged_points.values()],
         "coverage_matrix": [],
         "evidence": context.get("evidence", []),
-        "processed_batches": len(batches),
+        "processed_batches": processed_batches,
         "warnings": context.get("warnings", []),
     }
 
@@ -114,7 +250,7 @@ def build_planning(
 def planned_module(point, features) -> str:
     feature = next(item for item in features if item.id in point.feature_point_ids)
     parts = [part.strip() for part in feature.module.split("/") if part.strip()]
-    for part in (feature.name, point.scenario, point.title):
+    for part in (feature.name,):
         part = part.strip().replace("/", "／")
         if part and (not parts or parts[-1] != part):
             parts.append(part)

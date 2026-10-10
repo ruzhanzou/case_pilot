@@ -23,3 +23,10 @@ def test_quality_failure_without_report_keeps_general_guidance() -> None:
     assert "补充需求后重试" in generation_failure_message(
         "GenerationQualityError", {}
     )
+
+
+def test_format_failure_reports_preserved_previews():
+    message = generation_failure_message("StageContractError", {"generated_count": 5, "total_count": 10})
+    assert "本次处理已停止" in message
+    assert "5 条预览已保留" in message
+    assert "复用已完成阶段" in message

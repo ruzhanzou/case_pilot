@@ -149,6 +149,15 @@ class MockProvider:
         model_id: str,
     ) -> tuple[StructuredResultT, UsageMetadata]:
         del instruction
+        if payload.get("output_contract") == "case_batch_v2" and stage == "test_case.generated":
+            result = result_type.model_validate({"test_cases": [
+                {"slot": item["slot"], "title": item["point"]["title"],
+                 "preconditions": ["已准备测试账号和所需环境"],
+                 "steps": [{"action": "执行" + item["point"]["title"],
+                            "expected": item["point"]["objective"]}]}
+                for item in payload["points"]
+            ]})
+            return result, UsageMetadata(model="mock", latency_ms=0)
         prompt = str(payload.get("prompt", "核心业务需求"))
         if "取消竞争" in prompt:
             sleep(0.12)
@@ -259,7 +268,7 @@ class MockProvider:
             result: Any = requirement
         elif result_type is FeaturePlan:
             result = FeaturePlan(feature_points=baseline.feature_points)
-        elif result_type is TestPointPlan:
+        elif issubclass(result_type, TestPointPlan):
             scoped_features = payload.get("feature_points", {}).get("feature_points", [])
             if scoped_features:
                 for point in baseline.test_points:

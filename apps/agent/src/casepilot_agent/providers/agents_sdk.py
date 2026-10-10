@@ -101,11 +101,14 @@ class AgentsSdkProvider:
             and stage.startswith(_STRUCTURED_GENERATION_STAGE_PREFIXES)
         ):
             resolved_model = self.model
+        compact = payload.get("output_contract") == "case_batch_v2"
         stage_timeout = (
             self.generation_timeout
             if stage.startswith(("test_case.", "enhancement.", "rewrite.batch"))
             else self.timeout
         )
+        if compact:
+            stage_timeout = min(stage_timeout, 90)
         # A non-default model gets a short first chance on structured generation
         # stages so a slow endpoint cannot consume the entire job budget before
         # the proven default model is tried. The default keeps the full timeout.
@@ -147,6 +150,10 @@ class AgentsSdkProvider:
         )
         batch_count = len(payload.get("items", [])) if stage == "rewrite.batch" else int(payload.get("batch_count") or 0)
         output_budget = min(32768, max(8192, batch_count * 1500 + 2048)) if batch_count else None
+        if stage.startswith(("requirement.", "feature.", "test_point.")):
+            # Planning includes structured references for dozens of points.
+            # The endpoint's implicit output limit can truncate valid JSON.
+            output_budget = 16384
         agent = Agent(
             name="CasePilot Orchestrator",
             instructions=(
@@ -184,18 +191,18 @@ class AgentsSdkProvider:
             ensure_ascii=False,
         )
         try:
-            for attempt in range(2):
+            for attempt in range(1 if compact else 2):
                 try:
                     result = Runner.run_sync(agent, prompt, max_turns=3)
                     break
                 except APITimeoutError:
                     # Generation has no external writes before validation. Retry
                     # a transient default-model timeout once, within this stage.
-                    if (attempt == 1 or resolved_model != self.model
+                    if (compact or attempt == 1 or resolved_model != self.model
                             or not stage.startswith(_STRUCTURED_GENERATION_STAGE_PREFIXES)):
                         raise
                 except ModelBehaviorError:
-                    if attempt == 1 or (
+                    if compact or attempt == 1 or (
                         allow_model_fallback and resolved_model != self.model
                     ):
                         raise

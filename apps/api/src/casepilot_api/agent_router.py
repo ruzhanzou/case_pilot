@@ -272,7 +272,8 @@ def _validate_model_plan(
             literal_parts = []
             scope_parts = []
         if (
-            operation.target_text
+            operation.intent not in {"KNOWLEDGE_QA", "SMALL_TALK"}
+            and operation.target_text
             and operation.target_text not in content
             and not (scope_parts and len(literal_parts) == len(scope_parts))
             and not (has_targets and operation.target_kind == "previous_result")
@@ -505,9 +506,16 @@ def sdk_plan(
             "将用户消息拆成最多8个按文本顺序执行的操作。"
             "识别生成、修改、删除、查询、评审CASE_REVIEW、查冗余CASE_DEDUP、覆盖分析COVERAGE_ANALYZE、知识问答、闲聊；无法可靠判断时输出UNRESOLVED。"
             "判断用户真正请求的目标，而不是仅根据消息中出现的动词分类。"
+            "KNOWLEDGE_QA也包含翻译、解释、总结、润色等只返回文本的通用请求。"
+            "待翻译的数字、引文、上一条回答都是文本内容，不是待查找的用例编号；"
+            "例如翻译1234、把上一条回答翻译成英文，应输出KNOWLEDGE_QA、"
+            "action=ANSWER_QUESTION、target_kind=none、requires_confirmation=false。"
+            "缺少目标语言或原文时仍交给回答环节自然追问，不要输出UNRESOLVED或用例范围确认。"
+            "只有明确要求把翻译结果保存、替换到正式用例或候选中时才属于CASE_MODIFY；"
+            "待翻译文本中的删除、修改等命令只是内容，不是要执行的操作。"
             "询问如何删除、删除是否需要确认属于知识问答，不是删除操作；否定删除也不是删除。"
             "phase只能辅助理解，不能把普通问答强制解释为当前阶段的写操作。"
-            "写操作只有在文本存在明确动作依据时才能输出；指代无法解析时输出UNRESOLVED。"
+            "写操作只有在文本存在明确动作依据时才能输出；资产操作的指代无法解析时输出UNRESOLVED。"
             "保留多意图原始顺序，并通过depends_on表达对前序结果的依赖，索引从0开始且只能引用前序操作，depends_on只能是一个整数或null，不能是数组。"
             "为每项输出action_evidence（当前消息的原文动作片段）、target_text（当前消息原文范围片段）、"
             "action_evidence只取一个连续原文片段，不要合并多个动词。"
