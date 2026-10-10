@@ -170,13 +170,16 @@ class CaseStepInput(BaseModel):
     expected: str = Field(default="", max_length=4000)
 
 
+SOURCE_REF_EXCERPT_MAX_LENGTH = 4000
+
+
 class SourceRefInput(BaseModel):
     source_id: UUID | None = None
     document_id: UUID | None = None
     chunk_id: UUID | None = None
     label: str = Field(min_length=1, max_length=300)
     locator: str = Field(default="", max_length=500)
-    excerpt: str = Field(default="", max_length=4000)
+    excerpt: str = Field(default="", max_length=SOURCE_REF_EXCERPT_MAX_LENGTH)
 
 
 class AutomationCaseBinding(BaseModel):

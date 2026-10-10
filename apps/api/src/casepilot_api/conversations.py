@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse
+from pydantic import ValidationError
 from redis import Redis
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
@@ -63,6 +64,7 @@ from casepilot_api.models import (
 )
 from casepilot_api.rewrite_dialogue import RewriteReply, interpret_rewrite_reply
 from casepilot_api.schemas import (
+    SOURCE_REF_EXCERPT_MAX_LENGTH,
     CaseChangeSetApplyView,
     CaseChangeSetView,
     ChangeSetApplyRequest,
@@ -3324,6 +3326,19 @@ def confirm_test_brief(
     )
 
 
+def _candidate_source_refs(snapshot: dict) -> Any:
+    """Bound excerpt previews without changing the stored candidate evidence."""
+    refs = snapshot.get("source_refs", [])
+    if not isinstance(refs, list):
+        return refs  # Let the case schema reject malformed references.
+    return [
+        {**ref, "excerpt": ref["excerpt"][:SOURCE_REF_EXCERPT_MAX_LENGTH]}
+        if isinstance(ref, dict) and isinstance(ref.get("excerpt"), str)
+        else ref
+        for ref in refs
+    ]
+
+
 @router.patch(
     "/workspace-candidates/{candidate_id}",
     response_model=WorkspaceCandidateView,
@@ -3359,7 +3374,7 @@ def update_workspace_candidate(
                     "preconditions": snapshot.get("preconditions", []),
                     "steps": snapshot.get("steps", []),
                     "source": snapshot.get("source", "CasePilot 工作区候选"),
-                    "source_refs": snapshot.get("source_refs", []),
+                    "source_refs": _candidate_source_refs(snapshot),
                 }
             )
         except ValueError as error:
@@ -3434,13 +3449,12 @@ def commit_workspace_candidates(
     )
     position = (position if position is not None else -1) + 1
     collection = ensure_collection(db, account, conversation.collection_id)
-    created: list[TestCase] = []
-    for index, candidate in enumerate(candidates):
+    # Validate the entire selection before creating records or changing statuses.
+    validated_candidates: list[TestCaseCreate] = []
+    for candidate in candidates:
         snapshot = dict(candidate.snapshot)
-        test_case = create_test_case_record(
-            db,
-            collection=collection,
-            payload=TestCaseCreate.model_validate(
+        try:
+            validated = TestCaseCreate.model_validate(
                 {
                     "case_key": f"CP-{uuid4().hex[:8].upper()}",
                     "title": snapshot.get("title") or candidate.ref,
@@ -3451,9 +3465,20 @@ def commit_workspace_candidates(
                     "preconditions": snapshot.get("preconditions", []),
                     "steps": snapshot.get("steps", []),
                     "source": "CasePilot 工作区候选",
-                    "source_refs": snapshot.get("source_refs", []),
+                    "source_refs": _candidate_source_refs(snapshot),
                 }
-            ),
+            )
+        except ValidationError as error:
+            raise HTTPException(
+                status_code=422, detail="invalid_workspace_candidate",
+            ) from error
+        validated_candidates.append(validated)
+    created: list[TestCase] = []
+    for index, (candidate, validated) in enumerate(zip(candidates, validated_candidates, strict=True)):
+        test_case = create_test_case_record(
+            db,
+            collection=collection,
+            payload=validated,
             account=account,
             case_key=f"CP-{uuid4().hex[:8].upper()}",
             position=position + index,
