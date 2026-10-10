@@ -1533,6 +1533,10 @@ def _inventory_summary(case_context: list[dict]) -> str:
 
 
 def _resolve_model_scope(db, conversation, payload, intent):
+    from agents import ModelBehaviorError
+    from openai import APIConnectionError, InternalServerError, RateLimitError
+    from pydantic import ValidationError
+
     formal = [{**case, "kind": "formal"} for case in _load_scope_snapshots(db, conversation)]
     candidates = list(db.scalars(select(WorkspaceCandidate).where(
         WorkspaceCandidate.conversation_id == conversation.id,
@@ -1586,10 +1590,16 @@ def _resolve_model_scope(db, conversation, payload, intent):
         # missing. Allow one grounded correction, then apply every safety check
         # below unchanged. Never silently remove unknown references or widen IDs.
         for attempt in range(2):
-            decision = select_case_scope(payload.content, catalog, context, intent=intent,
-                model_name=settings.agent_model, base_url=settings.agent_base_url,
-                api_key=settings.agent_api_key, timeout_seconds=settings.agent_timeout_seconds,
-                tracing_enabled=settings.agent_tracing_enabled)
+            try:
+                decision = select_case_scope(payload.content, catalog, context, intent=intent,
+                    model_name=settings.agent_model, base_url=settings.agent_base_url,
+                    api_key=settings.agent_api_key, timeout_seconds=settings.agent_timeout_seconds,
+                    tracing_enabled=settings.agent_tracing_enabled)
+            except (TimeoutError, APIConnectionError, InternalServerError, RateLimitError,
+                    ModelBehaviorError, ValidationError):
+                if attempt:
+                    raise
+                continue
             unknown_keys = [
                 key for key in decision.referenced_case_keys if key.casefold() not in known_keys
             ]
@@ -2042,10 +2052,11 @@ def _start_action(
     if confirmed_targets:
         payload, scope_error = _expand_conversation_targets(db, conversation, payload), None
     else:
+        # Semantic selection needs the original scope as well as the latest change.
         payload, scope_error = _resolve_action_scope(
             db, conversation,
             payload.model_copy(update={"content": payload.content.rsplit("\n补充说明：", 1)[-1]})
-            if "\n补充说明：" in payload.content else payload,
+            if settings.agent_provider == "mock" and "\n补充说明：" in payload.content else payload,
             intent, scope_text or None
         )
         if operation:

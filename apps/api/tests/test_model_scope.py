@@ -126,7 +126,8 @@ def test_candidates_are_selected_by_model_and_mapped_to_snapshots(scope):
 
 
 @pytest.mark.asyncio
-async def test_resume_text_reselects_instead_of_freezing_stale_ui_targets(monkeypatch):
+@pytest.mark.parametrize("changes_scope", [True, False])
+async def test_resume_text_reselects_instead_of_freezing_stale_ui_targets(monkeypatch, changes_scope):
     from httpx import ASGITransport, AsyncClient
 
     from casepilot_api.main import app
@@ -169,14 +170,15 @@ async def test_resume_text_reselects_instead_of_freezing_stale_ui_targets(monkey
         )
         assert response.status_code == 202, response.text
         operation = response.json()["operation_plan"]["operations"][0]["id"]
+        expected_ids = [cases[1]["id"]] if changes_scope else [case["id"] for case in cases]
         selector = Mock(
             return_value=CaseScopeDecision(
-                ids=[cases[1]["id"]],
+                ids=expected_ids,
                 ambiguous=False,
                 clarification="",
                 reference="none",
                 referenced_case_keys=[],
-                requested_count=1,
+                requested_count=len(expected_ids),
             )
         )
         monkeypatch.setattr(conversations.settings, "agent_provider", "openai_compatible")
@@ -185,12 +187,13 @@ async def test_resume_text_reselects_instead_of_freezing_stale_ui_targets(monkey
         corrected = await client.post(
             resume,
             json={
-                "content": f"范围缩小为仅用例 {cases[1]['case_key']}，优先级改为P2",
+                "content": f"范围缩小为仅用例 {cases[1]['case_key']}，优先级改为P2" if changes_scope else "步骤更清晰",
                 "targets": [{"kind": "case", "case_ids": [case["id"] for case in cases]}],
             },
         )
         assert corrected.status_code == 202, corrected.text
-        assert corrected.json()["assistant_message"]["target_case_ids"] == [cases[1]["id"]]
+        assert set(corrected.json()["assistant_message"]["target_case_ids"]) == set(expected_ids)
+        assert selector.call_args.args[0].startswith("把登录模块用例优先级改为P2\n补充说明：")
         assert selector.call_count == 1
         assert not dispatched
         confirmed = await client.post(resume, json={"confirm_modification": True})
@@ -198,6 +201,18 @@ async def test_resume_text_reselects_instead_of_freezing_stale_ui_targets(monkey
         assert confirmed.json()["action"]["job_id"]
         assert selector.call_count == 1
         assert len(dispatched) == 1
+
+
+def test_scope_transient_failure_retries_without_changing_catalog(scope):
+    db, conversation, cases, selector = scope
+    valid = selector.return_value
+    selector.side_effect = [TimeoutError(), valid]
+    payload = ConversationMessageCreate(content="改写登录模块用例，步骤更清晰")
+    result, error = conversations._resolve_action_scope(db, conversation, payload, "CASE_MODIFY")
+    assert error is None
+    assert list(map(str, result.target_case_ids)) == [cases[1]["id"]]
+    assert selector.call_count == 2
+    assert selector.call_args_list[0] == selector.call_args_list[1]
 
 
 def test_router_scope_question_cannot_bypass_catalog_selector(monkeypatch):

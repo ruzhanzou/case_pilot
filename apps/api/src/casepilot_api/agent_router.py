@@ -755,6 +755,8 @@ def select_case_scope(instruction: str, cases: list[dict], context: dict, *, int
             '如context.validation_feedback存在，重新核对完整原始请求和目录，修正上次结构错误；'
             '不得为了通过校验而忽略用户真实指定但不存在的编号，此时必须要求澄清。'
             '明确指定新的目标时不要套用旧的查询或选择。无可靠上下文就要求澄清。'
+            'instruction含补充说明时，只有补充明确更换目标或增加范围条件才覆盖原范围；'
+            '补充仅描述修改方向（例如步骤更清晰）时，保留原指令指定的模块或用例范围。'
             'clarification使用用户本轮请求的语言给出简短、可行动的说明，不输出思维链。'
             + 'JSON Schema: ' + json.dumps(CaseScopeDecision.model_json_schema(), ensure_ascii=False)
         ),
