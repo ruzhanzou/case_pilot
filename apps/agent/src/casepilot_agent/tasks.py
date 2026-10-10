@@ -1601,8 +1601,12 @@ def answer_knowledge_question(job_id: str) -> dict[str, Any]:
 def index_knowledge_source(source_id: str) -> dict[str, Any]:
     parsed_source_id = UUID(source_id)
     store = JobStore(settings.database_url, settings.redis_url)
+    with store.connection() as connection:
+        source = store.get_source(connection, parsed_source_id)
+    # Explicit attachments are read in full; remote embeddings are unnecessary.
+    full_text_only = source["persistence"] == "temporary"
     try:
-        embedding_provider = create_embedding_provider()
+        embedding_provider = None if full_text_only else create_embedding_provider()
     except Exception:
         if not settings.embedding_fallback_enabled:
             raise
@@ -1621,7 +1625,7 @@ def index_knowledge_source(source_id: str) -> dict[str, Any]:
             if claimed_source_id is None:
                 return {"source_id": source_id, "status": "duplicate_ignored"}
             documents = store.get_source_documents(connection, parsed_source_id)
-        source_degraded = embedding_provider is None
+        source_degraded = embedding_provider is None and not full_text_only
         for document in documents:
             with store.connection() as connection:
                 store.update_document(
@@ -1638,7 +1642,7 @@ def index_knowledge_source(source_id: str) -> dict[str, Any]:
                 title=document["original_name"],
                 blocks=blocks,
             )
-            document_degraded = embedding_provider is None
+            document_degraded = embedding_provider is None and not full_text_only
             if embedding_provider is not None:
                 try:
                     attach_embeddings(chunks, embedding_provider)
@@ -1667,7 +1671,7 @@ def index_knowledge_source(source_id: str) -> dict[str, Any]:
             "source_id": source_id,
             "status": "ready",
             "document_count": len(documents),
-            "retrieval_mode": "lexical" if source_degraded else "hybrid",
+            "retrieval_mode": "lexical" if source_degraded or full_text_only else "hybrid",
         }
     except Exception as error:
         with store.connection() as connection:

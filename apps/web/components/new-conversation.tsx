@@ -1,5 +1,7 @@
 "use client";
 
+import { ConversationAttachments } from "@/components/conversation-attachments";
+
 import {
   confirmConversationOperationCollection,
   listGenerationModels,
@@ -19,6 +21,9 @@ import {
   Library,
   LoaderCircle,
   Plus,
+  FileUp,
+  CheckCircle2,
+  CircleAlert,
   Sparkles,
 } from "lucide-react";
 import {
@@ -39,7 +44,7 @@ type NewConversationProps = {
     content: string;
     modelId: AgentModelId;
   }) => Promise<void>;
-  onUploadFiles: (files: File[]) => Promise<void>;
+  onUploadFiles: (files: File[], onProgress?: (percent: number) => void) => Promise<void>;
   onOpenLibrary: () => void;
   onOpenHistory: () => void;
   onConfirmCollection: (
@@ -110,10 +115,15 @@ export function NewConversation({
   const messageEndRef = useRef<HTMLDivElement>(null);
   const streamScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [attachmentNames, setAttachmentNames] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<{ id: string; name: string; size: number; percent: number; status: "uploading" | "processing" | "ready" | "failed" }[]>([]);
+  const uploading = attachments.some(file => file.status === "uploading" || file.status === "processing");
   const [collectionChoice, setCollectionChoice] = useState("");
   const [newCollectionName, setNewCollectionName] = useState("");
   const [confirmingCollection, setConfirmingCollection] = useState(false);
+  const [openingWorkbench, setOpeningWorkbench] = useState(false);
+  const [collectionError, setCollectionError] = useState("");
+  const collectionSubmitRef = useRef(false);
+  const confirmedCollectionRef = useRef<{ operationId: string; turn: ConversationTurnDto } | null>(null);
   const hasConversation = Boolean(conversation?.messages.length);
   const latestConversationMessage = conversation?.messages.at(-1);
   const hasRunningAssistant =
@@ -188,29 +198,48 @@ export function NewConversation({
     });
   };
 
-  const submitCollectionChoice = () => {
-    if (
-      confirmingCollection ||
-      (!effectiveCollectionChoice && !newCollectionName.trim())
-    ) {
-      return;
-    }
+  const submitCollectionChoice = async () => {
+    if (collectionSubmitRef.current || saving || !collectionOperation ||
+      (!effectiveCollectionChoice && !newCollectionName.trim())) return;
+    collectionSubmitRef.current = true;
     setConfirmingCollection(true);
-    void confirmConversationOperationCollection(collectionOperation!.id, {
-      collectionId: effectiveCollectionChoice || undefined,
-      createCollectionName: newCollectionName.trim() || undefined,
-    })
-      .then(onConfirmCollection)
-      .finally(() => setConfirmingCollection(false));
+    setCollectionError("");
+    try {
+      const cached = confirmedCollectionRef.current;
+      const turn = cached?.operationId === collectionOperation.id ? cached.turn :
+        await confirmConversationOperationCollection(collectionOperation.id, {
+          collectionId: effectiveCollectionChoice || undefined,
+          createCollectionName: newCollectionName.trim() || undefined,
+        });
+      confirmedCollectionRef.current = { operationId: collectionOperation.id, turn };
+      setOpeningWorkbench(true);
+      await onConfirmCollection(turn);
+    } catch (error) {
+      setCollectionError(error instanceof Error ? error.message : pick("Unable to open the workspace. Please retry.", "打开工作台失败，请重试。"));
+    } finally {
+      collectionSubmitRef.current = false;
+      setConfirmingCollection(false);
+      setOpeningWorkbench(false);
+    }
   };
 
   const composer = (
     <form className="new-conversation__composer" onSubmit={submit}>
-      {attachmentNames.length > 0 && (
-        <div className="new-conversation__attachments">
-          {attachmentNames.map((name) => <span key={name}>{name}</span>)}
-        </div>
-      )}
+          {attachments.length > 0 && (
+            <div className="principle-attachments">
+              {attachments.map((file) => (
+                <div key={file.id} className="principle-attachment" data-status={file.status}>
+                  <FileUp size={20} aria-hidden="true" />
+                  <div className="principle-attachment__body">
+                    <strong title={file.name}>{file.name}</strong>
+                    <small role="status">{Math.max(1, Math.round(file.size / 1024))} KB · {file.status === "ready" ? pick("Ready", "已就绪") : file.status === "failed" ? pick("Failed · select file to retry", "失败 · 请重新选择文件") : file.status === "processing" ? pick("Uploaded · processing document", "已上传 · 正在解析资料") : pick(`Uploading ${file.percent}%`, `上传中 ${file.percent}%`)}</small>
+                    {file.status === "uploading" && <progress aria-label={pick(`Upload progress for ${file.name}`, `${file.name} 上传进度`)} value={file.percent} max={100} />}
+                  </div>
+                  {file.status === "ready" ? <CheckCircle2 size={16} aria-label={pick("Ready", "已就绪")} /> : file.status === "failed" ? <CircleAlert size={16} /> : <LoaderCircle size={16} className="auth-spinner" aria-hidden="true" />}
+                </div>
+              ))}
+            </div>
+          )}
       <textarea
         value={prompt}
         onChange={(event) => setPrompt(event.target.value)}
@@ -236,17 +265,19 @@ export function NewConversation({
             const files = Array.from(event.target.files ?? []);
             event.target.value = "";
             if (!files.length) return;
-            void onUploadFiles(files).then(() => {
-              setAttachmentNames((current) => [
-                ...current,
-                ...files.map((file) => file.name),
-              ]);
-            });
+            const entries = files.map(file => ({ id: crypto.randomUUID(), name: file.name, size: file.size, percent: 0, status: "uploading" as const }));
+            const ids = new Set(entries.map(file => file.id));
+            setAttachments(current => [...current, ...entries]);
+            const update = (values: Partial<(typeof attachments)[number]>) => setAttachments(current => current.map(file => ids.has(file.id) ? { ...file, ...values } : file));
+            void onUploadFiles(files, percent => update({ percent, status: percent === 100 ? "processing" : "uploading" }))
+              .then(() => setAttachments(current => current.filter(file => !ids.has(file.id))))
+              .catch(() => update({ status: "failed" }));
           }}
         />
         <button
           type="button"
           className="new-conversation__add"
+          disabled={saving}
           onClick={() => fileRef.current?.click()}
           aria-label={t("conversation.addKnowledge")}
           title={t("conversation.uploadHint")}
@@ -259,7 +290,7 @@ export function NewConversation({
           ) : (
             <Sparkles size={15} />
           )}
-          {saving ? t("conversation.processing") : t("conversation.autoIntent")}
+          {uploading ? pick("Preparing attachment…", "正在准备附件…") : saving ? t("conversation.processing") : t("conversation.autoIntent")}
         </span>
         <label className="new-conversation__model">
           <span className="sr-only">{t("conversation.model")}</span>
@@ -359,7 +390,7 @@ export function NewConversation({
               className="conversation-collection-picker"
               onSubmit={(event) => {
                 event.preventDefault();
-                submitCollectionChoice();
+                void submitCollectionChoice();
               }}
             >
               <strong>{t("conversation.confirmCollection")}</strong>
@@ -397,13 +428,15 @@ export function NewConversation({
                   saving || confirmingCollection ||
                   (!effectiveCollectionChoice && !newCollectionName.trim())
                 }
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  submitCollectionChoice();
-                }}
+                aria-busy={confirmingCollection}
               >
-                {t("conversation.enterWorkbench")}
+                {confirmingCollection && <LoaderCircle className="auth-spinner" size={17} aria-hidden="true" />}
+                {confirmingCollection
+                  ? openingWorkbench ? pick("Opening workspace…", "正在打开工作台…") : pick("Confirming collection…", "正在确认集合…")
+                  : t("conversation.enterWorkbench")}
               </button>
+              {confirmingCollection && <p role="status">{pick("Please wait while we prepare your workspace.", "正在准备工作台，请稍候。")}</p>}
+              {collectionError && <p role="alert">{collectionError}</p>}
               </form>
             )}
           </div>
@@ -422,6 +455,7 @@ export function NewConversation({
                   {message.role === "assistant" && (
                     <strong>CasePilot</strong>
                   )}
+                  <ConversationAttachments metadata={message.metadata} />
                   {message.status === "running" && !message.content ? (
                     <span className="new-conversation__thinking">
                       <LoaderCircle className="auth-spinner" size={15} />
@@ -510,7 +544,7 @@ export function NewConversation({
                 </div>
               </article>
             ))}
-            {saving && !hasRunningAssistant && (
+            {saving && !uploading && !hasRunningAssistant && (
               <article className="new-conversation__message new-conversation__message--assistant">
                 <span className="new-conversation__avatar">
                   <Bot size={17} />

@@ -54,6 +54,8 @@ from casepilot_api.models import (
     ConversationOperation,
     GenerationJob,
     GenerationJobStage,
+    KnowledgeDocument,
+    KnowledgeSource,
     TestCase,
     TestCaseRevision,
     WorkspaceCandidate,
@@ -857,6 +859,33 @@ def _candidate_view(candidate: WorkspaceCandidate) -> WorkspaceCandidateView:
     )
 
 
+def _messages_with_attachments(db, conversation, messages):
+    """Project persisted document links into the timeline, including older uploads."""
+    views = [_message_view(message) for message in messages]
+    document_ids = dict(conversation.context).get("document_ids", [])
+    if not document_ids:
+        return views
+    documents = db.scalars(
+        select(KnowledgeDocument)
+        .join(KnowledgeSource, KnowledgeSource.id == KnowledgeDocument.source_id)
+        .where(
+            KnowledgeDocument.id.in_([UUID(str(item)) for item in document_ids]),
+            KnowledgeDocument.space_id == conversation.space_id,
+            KnowledgeSource.deleted_at.is_(None),
+        )
+    )
+    for document in documents:
+        views.append(ConversationMessageView(
+            id=document.id, role="user", content="", intent=None, intent_confidence=None,
+            status="completed", target_case_ids=[], related_job_id=None, citations=[],
+            metadata={"attachments": [{
+                "id": str(document.id), "name": document.original_name,
+                "size": document.size_bytes, "status": document.status,
+            }]}, created_at=document.created_at,
+        ))
+    return sorted(views, key=lambda item: (item.created_at, str(item.id)))
+
+
 def _conversation_view(db: Session, conversation: Conversation) -> ConversationView:
     messages = list(
         db.scalars(
@@ -980,7 +1009,7 @@ def _conversation_view(db: Session, conversation: Conversation) -> ConversationV
         title=conversation.title,
         status=conversation.status,
         context=dict(conversation.context),
-        messages=[_message_view(message) for message in messages],
+        messages=_messages_with_attachments(db, conversation, messages),
         test_briefs=[
             _brief_view(
                 brief,
@@ -1472,6 +1501,11 @@ def _resolve_model_scope(db, conversation, payload, intent):
     )))
     catalog = formal + [{**dict(c.snapshot), "id": str(c.id), "case_key": c.ref,
                         "kind": "candidate"} for c in candidates]
+    # There are no existing assets to select in a new collection.
+    if intent == "CASE_GENERATE" and not catalog:
+        return payload.model_copy(update={
+            "targets": [], "target_case_ids": [], "target_candidate_snapshots": [],
+        }), None
     allowed = {str(case["id"]) for case in catalog}
     ref_ids = {str(case.get("case_key", "")): str(case["id"]) for case in catalog}
     selected = _expand_conversation_targets(db, conversation, payload)
@@ -4347,7 +4381,12 @@ def resume_conversation_operation(
                 resume_targets = [
                     ConversationTarget(kind="previous_result", source_operation_id=previous.id)
                 ]
-    request_data = dict(user_message.message_metadata).get("request", {})
+    request_data = dict(dict(user_message.message_metadata).get("request", {}))
+    # Files may have been uploaded while the collection chooser was open.
+    for key in ("knowledge_source_ids", "document_ids"):
+        request_data[key] = list(dict.fromkeys([
+            *request_data.get(key, []), *dict(conversation.context).get(key, []),
+        ]))
     request_data.update(
         {
             "content": str(operation.payload.get("instruction") or user_message.content)

@@ -1074,13 +1074,11 @@ export function bindConversationCollection(
 export async function uploadConversationAttachments(
   conversationId: string,
   files: File[],
+  onProgress?: (percent: number) => void,
 ): Promise<KnowledgeUploadDto> {
   const form = new FormData();
   files.forEach((file) => form.append("files", file));
-  return apiRequest(`/api/v1/conversations/${conversationId}/attachments`, {
-    method: "POST",
-    body: form,
-  });
+  return uploadForm(`/api/v1/conversations/${conversationId}/attachments`, form, onProgress);
 }
 
 export function getLatestConversation(
@@ -1459,6 +1457,7 @@ export function uploadKnowledgeFiles(
   name: string,
   files: File[],
   persistence: "space" | "temporary",
+  onProgress?: (percent: number) => void,
 ): Promise<{ source: KnowledgeSourceDto; document_ids: string[] }> {
   const form = new FormData();
   form.set("name", name);
@@ -1467,7 +1466,37 @@ export function uploadKnowledgeFiles(
     persistence === "space"
       ? `/api/v1/spaces/${spaceId}/knowledge-sources`
       : `/api/v1/spaces/${spaceId}/knowledge-documents`;
-  return apiRequest(path, { method: "POST", body: form });
+  return uploadForm(path, form, onProgress);
+}
+
+function uploadForm<T>(path: string, form: FormData, onProgress?: (percent: number) => void): Promise<T> {
+  if (!onProgress) return apiRequest(path, { method: "POST", body: form });
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", `${apiBaseUrl}${path}`);
+    request.withCredentials = true;
+    request.timeout = 120_000;
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(Math.round(event.loaded / event.total * 100));
+    };
+    request.onerror = () => reject(new Error("附件上传失败，请检查网络后重试"));
+    request.ontimeout = () => reject(new Error("附件上传超时，请重试"));
+    request.onabort = () => reject(new Error("附件上传已取消"));
+    request.onload = () => {
+      try {
+        const result = JSON.parse(request.responseText);
+        if (request.status < 200 || request.status >= 300) {
+          reject(new Error(publicErrorMessage(result.detail ?? `api_request_failed_${request.status}`)));
+        } else {
+          onProgress(100);
+          resolve(result);
+        }
+      } catch {
+        reject(new Error("附件上传响应异常，请重试"));
+      }
+    };
+    request.send(form);
+  });
 }
 
 export function reindexKnowledgeSource(
@@ -1491,8 +1520,8 @@ export async function waitForKnowledgeSource(
 ): Promise<KnowledgeSourceDto> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    const sources = await listKnowledgeSources(spaceId);
-    const source = sources.find((item) => item.id === sourceId);
+    const source = await apiRequest<KnowledgeSourceDto>(`/api/v1/knowledge-sources/${sourceId}`);
+    if (source.space_id !== spaceId) throw new Error("知识来源不属于当前空间");
     if (!source) throw new Error("知识来源不存在或已删除");
     if (source.status === "ready") return source;
     if (source.status === "failed") {

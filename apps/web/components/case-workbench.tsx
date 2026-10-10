@@ -1,5 +1,6 @@
 "use client";
 
+import { ConversationAttachments } from "@/components/conversation-attachments";
 import { CaseTaskArtifacts } from "@/components/case-task-artifacts";
 import { ConversationTaskFlow } from "@/components/conversation-task-flow";
 import { CaseTaskWorkspace } from "@/components/case-task-workspace";
@@ -34,7 +35,8 @@ import {
   type TaskReviewDecisions,
   updateWorkspaceCandidate,
   updateWorkspaceState,
-  uploadKnowledgeFiles,
+  uploadConversationAttachments,
+  waitForKnowledgeSource,
   watchGeneration,
   type AgentModelId,
   type CaseChangeSetDto,
@@ -353,7 +355,7 @@ export function CaseWorkbench({
   const [candidateDraft, setCandidateDraft] =
     useState<WorkspaceCandidateDto | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [attachmentLabels, setAttachmentLabels] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<{ id: string; name: string; size: number; percent: number; status: "uploading" | "processing" | "ready" | "failed" }[]>([]);
   const [sourceIds, setSourceIds] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const promptSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -453,7 +455,8 @@ export function CaseWorkbench({
   const messages =
     workspace?.messages.filter(
       (message) =>
-        message.content.trim() || workflowByMessageId.has(message.id),
+        message.content.trim() || workflowByMessageId.has(message.id) ||
+        (Array.isArray(message.metadata.attachments) && message.metadata.attachments.length > 0),
     ) ?? [];
   const tasks = useMemo(() => workspaceTasks(workspace), [workspace]);
   const activeMutationTask = tasks.find(task => task.id === String(workspace?.context.active_mutation_task_id ?? ""));
@@ -913,23 +916,28 @@ export function CaseWorkbench({
   const handleFiles = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
-    if (!files.length || !spaceId) return;
+    if (!files.length || !spaceId || !workspace) return;
     setUploading(true);
     setError("");
+    const entries = files.map((file) => ({ id: crypto.randomUUID(), name: file.name, size: file.size, percent: 0, status: "uploading" as const }));
+    const ids = new Set(entries.map((entry) => entry.id));
+    setAttachments((current) => [...current, ...entries]);
+    const update = (values: Partial<(typeof attachments)[number]>) => setAttachments((current) => current.map((item) => ids.has(item.id) ? { ...item, ...values } : item));
     try {
-      const result = await uploadKnowledgeFiles(
-        spaceId,
-        pick(`Workspace attachment ${new Date().toLocaleString("en-US")}`, `工作区附件 ${new Date().toLocaleString("zh-CN")}`),
+      const result = await uploadConversationAttachments(
+        workspace.id,
         files,
-        "temporary",
+        (percent) => update({ percent, status: percent === 100 ? "processing" : "uploading" }),
       );
+      update({ percent: 100, status: "processing" });
+      setWorkspace(await getConversation(workspace.id));
+      await waitForKnowledgeSource(spaceId, result.source.id);
       setSourceIds((current) => [...new Set([...current, result.source.id])]);
-      setAttachmentLabels((current) => [
-        ...current,
-        ...files.map((file) => file.name),
-      ]);
+      setWorkspace(await getConversation(workspace.id));
+      setAttachments(current => current.filter(file => !ids.has(file.id)));
       setNotice(pick("Attachment saved to the current workspace", "附件已自动保存到当前工作区"));
     } catch (caught) {
+      update({ status: "failed" });
       setError(caught instanceof Error ? caught.message : pick("Failed to save attachment", "附件保存失败"));
     } finally {
       setUploading(false);
@@ -1724,6 +1732,7 @@ export function CaseWorkbench({
                   </div>
                 )}
                 {querySnapshots && <div className="principle-analysis-summary"><div><strong>{pick(`Found ${querySnapshots.length} cases`, `找到 ${querySnapshots.length} 条用例`)}</strong><p>{[...new Set(querySnapshots.map((item) => item.module))].join(" · ") || pick("No matching cases", "暂无匹配用例")}</p></div><button type="button" onClick={() => openReviewPlan(message.id)}>{pick("View table", "查看结果表格")}</button></div>}
+                <ConversationAttachments metadata={message.metadata} />
                 {message.content && showAnalysisDetails && !isMutationSummary && !querySnapshots && (
                   <Streamdown
                     animated={{
@@ -2012,10 +2021,18 @@ export function CaseWorkbench({
               )}
             </div>
           )}
-          {attachmentLabels.length > 0 && (
+          {attachments.length > 0 && (
             <div className="principle-attachments">
-              {attachmentLabels.map((name) => (
-                <span key={name}>{name}</span>
+              {attachments.map((file) => (
+                <div key={file.id} className="principle-attachment" data-status={file.status}>
+                  <FileUp size={20} aria-hidden="true" />
+                  <div className="principle-attachment__body">
+                    <strong title={file.name}>{file.name}</strong>
+                    <small role="status">{Math.max(1, Math.round(file.size / 1024))} KB · {file.status === "ready" ? pick("Ready", "已就绪") : file.status === "failed" ? pick("Failed · select file to retry", "失败 · 请重新选择文件") : file.status === "processing" ? pick("Uploaded · processing document", "已上传 · 正在解析资料") : pick(`Uploading ${file.percent}%`, `上传中 ${file.percent}%`)}</small>
+                    {file.status === "uploading" && <progress aria-label={pick(`Upload progress for ${file.name}`, `${file.name} 上传进度`)} value={file.percent} max={100} />}
+                  </div>
+                  {file.status === "ready" ? <CheckCircle2 size={16} aria-label={pick("Ready", "已就绪")} /> : file.status === "failed" ? <CircleAlert size={16} /> : <LoaderCircle size={16} className="auth-spinner" aria-hidden="true" />}
+                </div>
               ))}
             </div>
           )}

@@ -337,13 +337,25 @@
   margin-bottom: 8px;
 }
 
-.principle-attachments span {
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: #eff6ff;
-  color: #1d4ed8;
-  font-size: 12px;
+.principle-attachment {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 300px;
+  max-width: 100%;
+  padding: 12px 14px;
+  border: 1px solid #dce6e3;
+  border-radius: 12px;
+  background: #f7faf9;
+  color: #3e7267;
 }
+.principle-attachment__body { flex: 1; min-width: 0; }
+.principle-attachment strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #263631; font-size: 13px; font-weight: 600; }
+.principle-attachment small { display: block; margin-top: 4px; font-size: 11px; color: #60766d; }
+.principle-attachment progress { display: block; width: 100%; height: 4px; margin-top: 8px; accent-color: #3e7267; }
+.principle-attachment[data-status="failed"] { border-color: #efcaca; background: #fff8f8; color: #ad3434; }
+.principle-attachment[data-status="failed"] small { color: #ad3434; }
+.new-conversation__composer > .principle-attachments { margin: 16px 20px 0; }
 
 .principle-canvas {
   display: flex;

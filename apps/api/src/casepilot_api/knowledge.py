@@ -241,6 +241,11 @@ def _get_source(db: Session, account_id: UUID, source_id: UUID) -> KnowledgeSour
     return source
 
 
+@router.get("/knowledge-sources/{source_id}", response_model=KnowledgeSourceView)
+def get_knowledge_source(source_id: UUID, account: CurrentAccount, db: DbSession):
+    return _source_view(db, _get_source(db, account.id, source_id))
+
+
 @router.post(
     "/knowledge-sources/{source_id}/reindex",
     response_model=KnowledgeSourceView,

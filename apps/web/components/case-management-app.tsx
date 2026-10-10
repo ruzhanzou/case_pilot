@@ -31,6 +31,7 @@ import {
   updateCollection,
   updateTestCase,
   uploadConversationAttachments,
+  waitForKnowledgeSource,
   waitForConversationJob,
   type Account,
   type AgentModelId,
@@ -366,7 +367,7 @@ export function CaseManagementApp({
     }
   };
 
-  const uploadNewConversationFiles = async (files: File[]) => {
+  const uploadNewConversationFiles = async (files: File[], onProgress?: (percent: number) => void) => {
     if (!space) return;
     setSaving(true);
     setError("");
@@ -378,7 +379,10 @@ export function CaseManagementApp({
           title: pick("New conversation", "新对话"),
         });
       }
-      await uploadConversationAttachments(conversation.id, files);
+      setLandingConversation(conversation);
+      const uploaded = await uploadConversationAttachments(conversation.id, files, onProgress);
+      setLandingConversation(await getConversation(conversation.id));
+      await waitForKnowledgeSource(space.id, uploaded.source.id);
       const refreshed = await getConversation(conversation.id);
       setLandingConversation(refreshed);
       setHistoryRevision((current) => current + 1);
@@ -395,11 +399,13 @@ export function CaseManagementApp({
     setError("");
     try {
       const bound = await getConversation(turn.conversation_id);
-      setLandingConversation(bound);
       setHistoryRevision((current) => current + 1);
       if (!bound.collection_id) throw new Error(pick("Collection confirmation did not take effect", "集合确认未生效"));
-      await refreshCollections(bound.collection_id);
-      await selectCollection(bound.collection_id);
+      const [collection] = await Promise.all([getCollection(bound.collection_id), selectCollection(bound.collection_id)]);
+      setCollections(current => current.some(item => item.id === collection.id)
+        ? current.map(item => item.id === collection.id ? collection : item)
+        : [...current, collection]);
+      setLandingConversation(bound);
       setWorkbenchMode("workspace");
       setPage("workbench");
       if (turn.action.job_id) {
