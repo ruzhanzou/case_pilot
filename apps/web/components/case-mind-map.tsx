@@ -1,5 +1,8 @@
 "use client";
 
+// UI identifiers must also work on HTTP origins without crypto.randomUUID.
+import { nanoid } from "nanoid/non-secure";
+
 import type {
   CaseCollectionDto,
   ConversationTarget,
@@ -1139,7 +1142,7 @@ export function CaseMindMap({
       }
       if (!notesReady || node.data.kind === "detail" || node.data.kind === "draft") return;
       node.data.onCreateText = async (text) => {
-        const id = `note-${crypto.randomUUID()}`;
+        const id = `note-${nanoid()}`;
         focusNote.current = id;
         await saveNotes((current) => [...current, {
           id, parent_id: node.id, text, module: node.data.module ?? "",

@@ -1,5 +1,8 @@
 "use client";
 
+// UI identifiers must also work on HTTP origins without crypto.randomUUID.
+import { nanoid } from "nanoid/non-secure";
+
 import { ConversationAttachments } from "@/components/conversation-attachments";
 
 import {
@@ -268,7 +271,7 @@ export function NewConversation({
             const files = Array.from(event.target.files ?? []);
             event.target.value = "";
             if (!files.length) return;
-            const entries = files.map(file => ({ id: crypto.randomUUID(), name: file.name, size: file.size, percent: 0, status: "uploading" as const }));
+            const entries = files.map(file => ({ id: nanoid(), name: file.name, size: file.size, percent: 0, status: "uploading" as const }));
             const ids = new Set(entries.map(file => file.id));
             setAttachments(current => [...current, ...entries]);
             const update = (values: Partial<(typeof attachments)[number]>) => setAttachments(current => current.map(file => ids.has(file.id) ? { ...file, ...values } : file));
