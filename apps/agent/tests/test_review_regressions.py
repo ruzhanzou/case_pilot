@@ -310,7 +310,7 @@ def test_audit_only_normalizes_sentence_stop(quote, source, valid):
             validate_stage_result(audit, payload)
 
 
-def test_malformed_audit_splits_without_regenerating_content():
+def test_human_review_generation_never_calls_model_audit():
     from agents.exceptions import ModelBehaviorError
     from test_compact_generation import request, run, execute
     calls = []
@@ -322,8 +322,7 @@ def test_malformed_audit_splits_without_regenerating_content():
     result = run(request(2), flaky)
     assert len(result.test_cases) == 2
     assert [c[1] for c in calls if c[0] == 'test_case.generated'] == [2]
-    assert [c[1] for c in calls if c[0] == 'test_case.grounded'] == [2, 2, 1, 1]
-    assert calls[2][2] == 'invalid_json_or_schema'
+    assert [c[1] for c in calls if c[0] == 'test_case.grounded'] == []
 
 
 @pytest.mark.parametrize('source_index', [0, 99])

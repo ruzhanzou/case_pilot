@@ -4,7 +4,7 @@ import pytest
 from agents.exceptions import ModelBehaviorError
 from pydantic import ValidationError
 
-from casepilot_agent.compact_generation import BatchAudit, CaseContent, ContentBatch, StageContractError, AuditStageError
+from casepilot_agent.compact_generation import BatchAudit, CaseContent, ContentBatch, ReviewContentBatch
 from casepilot_agent.contracts import GenerationRequest
 from casepilot_agent.pipeline import GenerationPipeline
 from casepilot_agent.providers.mock import MockProvider
@@ -37,13 +37,14 @@ def run(req, executor=execute, on_batch=None):
     return GenerationPipeline(SimpleNamespace(name="real")).run(req, context={}, answers={}, execute_stage=executor, on_batch=on_batch)
 
 
-def test_compact_batches_audit_each_slot_and_derive_complete_coverage():
+def test_compact_batches_use_local_checks_and_derive_complete_coverage():
     calls, previews = [], []
     def tracked(*args):
         calls.append((args[0], args[2]["batch_count"]))
         return execute(*args)
     result = run(request(), tracked, lambda cases, total: previews.append((len(cases), total)))
-    assert calls == [(stage, size) for size in [5, 5, 2] for stage in ["test_case.generated", "test_case.grounded"]]
+    assert calls == [("test_case.generated", size) for size in [5, 5, 2]]
+    assert result.quality.grounding_status == "unverified"
     assert previews == [(5, 12), (10, 12), (12, 12)]
     assert len({c.id for c in result.test_cases}) == 12
     assert result.quality.passed
@@ -57,51 +58,51 @@ def test_model_cannot_emit_system_fields_or_unbounded_citations():
                     steps=[{"action": "登录", "expected": "建立会话"}], source_refs=[{"excerpt": "x" * 10000}])
 
 
-def test_invalid_large_batch_splits_and_reuses_stage_checkpoints_on_retry():
-    cache, calls, previews = {}, [], []
-    def cached(stage, instruction, payload, result_type, model_id):
-        key = (stage, payload["batch_start_index"], payload["batch_count"])
-        if key in cache:
-            return result_type.model_validate(cache[key])
-        calls.append(key)
-        if payload["batch_count"] > 2:
+def test_invalid_json_retries_once_after_fresh_batches_without_recursive_split():
+    calls, previews = [], []
+    def malformed(stage, instruction, payload, result_type, model_id):
+        calls.append((payload["batch_start_index"], payload["batch_count"], payload["retry_attempt"]))
+        if payload["batch_start_index"] == 1:
             raise ModelBehaviorError("invalid JSON")
-        result = execute(stage, instruction, payload, result_type, model_id)
-        cache[key] = result.model_dump(mode="json")
-        return result
-    first = run(request(5), cached, lambda cases, total: previews.append(len(cases)))
-    assert previews == [2, 4, 5]
-    calls.clear()
-    second = run(request(5), cached)
-    assert calls == [("test_case.generated", 1, 5)]
-    assert first.model_dump() == second.model_dump()
-
-
-def test_missing_audit_or_wrong_replacement_never_publishes():
-    previews = []
-    def broken(stage, instruction, payload, result_type, model_id):
-        if result_type is BatchAudit:
-            return BatchAudit(reviews=[{"slot": 999, "verdict": "supported", "replacement": None, "reason": ""}])
         return execute(stage, instruction, payload, result_type, model_id)
-    with pytest.raises(AuditStageError):
-        run(request(2), broken, lambda *args: previews.append(args))
-    assert previews == []
+    result = run(request(10), malformed, lambda cases, total: previews.append(len(cases)))
+    assert calls == [(1, 5, 0), (6, 5, 0), (1, 5, 1)]
+    assert previews == [5]
+    assert result.quality.passed
+    missing = [i for i in result.quality.issues if i.code == "uncovered_test_point"]
+    assert len(missing) == 5 and all("待完善" in i.message for i in missing)
 
 
-def test_audit_changes_only_requested_slot():
-    def corrected(stage, instruction, payload, result_type, model_id):
+def test_missing_and_malformed_slots_repair_only_failed_entries():
+    calls, previews = [], []
+    def broken(stage, instruction, payload, result_type, model_id):
+        calls.append([p["slot"] for p in payload["points"]])
         result = execute(stage, instruction, payload, result_type, model_id)
-        if result_type is BatchAudit:
-            original = payload["test_cases"][0]
-            replacement = CaseContent.model_validate(original)
-            replacement.steps[0].expected = "建立有效登录会话"
-            result.reviews[0].verdict = "revise"
-            result.reviews[0].replacement = replacement
-            result.reviews[0].reason = "删除无依据的页面跳转"
+        if payload["retry_attempt"] == 0:
+            result.test_cases[1] = {"slot": 2, "title": "缺少操作"}
+            result.test_cases.pop(2)
         return result
-    result = run(request(2), corrected)
-    assert result.test_cases[0].steps[0].expected == "建立有效登录会话"
-    assert result.test_cases[1].steps[0].expected != "建立有效登录会话"
+    result = run(request(5), broken, lambda cases, total: previews.append([c.id for c in cases]))
+    assert calls == [[1, 2, 3, 4, 5], [2, 3]]
+    assert previews[0] == ["TC-P-0-1", "TC-P-3-1", "TC-P-4-1"]
+    assert len(result.test_cases) == 5 and result.quality.passed
+
+
+def test_local_repair_retains_valid_siblings_and_marks_unresolved():
+    calls = []
+    def broken(stage, instruction, payload, result_type, model_id):
+        calls.append([p["slot"] for p in payload["points"]])
+        result = execute(stage, instruction, payload, result_type, model_id)
+        for case in result.test_cases:
+            if case.slot == 2:
+                case.steps[0].expected = "正常"
+        return result
+    result = run(request(3), broken)
+    assert calls == [[1, 2, 3], [2]]
+    assert result.quality.repair_rounds == 1
+    assert [c.id for c in result.test_cases] == ["TC-P-0-1", "TC-P-2-1"]
+    assert result.quality.passed
+    assert any(i.object_id == "P-1" and "待完善" in i.message for i in result.quality.issues)
 
 
 def test_worker_releases_transaction_during_model_and_honors_cancel_before_save(monkeypatch):
@@ -169,8 +170,9 @@ def test_persistent_connection_loss_is_bounded_and_publishes_nothing():
     def unavailable(stage, instruction, payload, result_type, model_id):
         calls.append(payload["batch_count"])
         raise APIConnectionError(request=httpx.Request("POST", "https://example.invalid"))
-    with pytest.raises(APIConnectionError):
-        run(request(5), unavailable, lambda *args: previews.append(args))
+    result = run(request(5), unavailable, lambda *args: previews.append(args))
+    assert not result.quality.passed
+    assert any(i.code == "no_test_cases" for i in result.quality.issues)
     assert calls == [5, 5]
     assert previews == []
 
@@ -241,7 +243,7 @@ def test_case_checkpoints_are_not_required_for_every_action():
     from casepilot_agent.contracts import TestStep
     def independent(stage, instruction, payload, result_type, model_id):
         result = execute(stage, instruction, payload, result_type, model_id)
-        if result_type is ContentBatch:
+        if issubclass(result_type, ContentBatch):
             for case in result.test_cases:
                 case.steps = [TestStep(action='Open login', expected='Session is established'), TestStep(action='Submit credentials', expected='')]
         return result
@@ -302,17 +304,18 @@ def test_same_title_distinct_scenarios_are_repaired_not_dropped():
     assert not any(i.code.startswith('duplicate_case') for i in validate_generation(base).issues)
 
 
-def test_audit_retry_reuses_generation_and_never_republishes():
-    calls, previews = [], []
-    def unstable(stage, instruction, payload, result_type, model):
+def test_duplicates_are_flagged_without_model_audit_or_automatic_merge():
+    calls = []
+    def duplicate(stage, instruction, payload, result_type, model_id):
         calls.append(stage)
-        if stage == "test_case.grounded" and payload["audit_attempt"] == 0:
-            raise ModelBehaviorError("malformed audit")
-        return execute(stage, instruction, payload, result_type, model)
-    result = run(request(5), unstable, lambda cases, total: previews.append(len(cases)))
+        result = execute(stage, instruction, payload, result_type, model_id)
+        result.test_cases[1] = result.test_cases[0].model_copy(update={"slot": 2})
+        return result
+    result = run(request(2), duplicate)
+    assert calls == ["test_case.generated"]
+    assert len(result.test_cases) == 2
     assert result.quality.passed
-    assert calls == ["test_case.generated", "test_case.grounded", "test_case.grounded"]
-    assert previews == [5]
+    assert any(i.code == "duplicate_case" and i.severity == "warning" for i in result.quality.issues)
 
 
 def test_compact_payload_shares_features_and_preserves_evidence():
@@ -326,25 +329,15 @@ def test_compact_payload_shares_features_and_preserves_evidence():
     assert "confirmed_brief" in inputs[0] and "evidence" in inputs[0]
 
 
-def test_failed_audit_does_not_leak_partial_replacements_into_retry():
-    inputs = []
+def test_checkpoint_keeps_parseable_response_for_per_slot_validation():
+    from casepilot_agent.compact_generation import validate_stage_result
+    batch = ReviewContentBatch(test_cases=[{"slot": 1, "title": "缺少必填字段"}])
+    assert validate_stage_result(batch, {"validation_mode": "human_review_basic"}) is batch
 
-    def audit(stage, instruction, payload, result_type, model_id):
-        result = execute(stage, instruction, payload, result_type, model_id)
-        if result_type is BatchAudit:
-            inputs.append(payload["test_cases"])
-            if len(inputs) == 1:
-                replacement = CaseContent.model_validate(payload["test_cases"][0])
-                replacement.title = "不应保留的未通过审核修改"
-                result.reviews[0].verdict = "revise"
-                result.reviews[0].replacement = replacement
-                result.reviews[0].reason = "修订"
-                result.reviews[1].verdict = "revise"
-                # Invalid later review rejects the entire audit attempt.
-                result.reviews[1].replacement = None
-        return result
 
-    result = run(request(2), audit)
-    assert len(inputs) == 2
-    assert inputs[0] == inputs[1]
-    assert result.test_cases[0].title == inputs[0][0]["title"]
+def test_invalid_plan_reference_is_not_downgraded_to_review_warning():
+    from casepilot_agent.compact_generation import StageContractError
+    req = request(2)
+    req.confirmed_plan["test_points"][0]["feature_point_ids"] = ["missing"]
+    with pytest.raises(StageContractError, match="invalid_feature_reference"):
+        run(req)

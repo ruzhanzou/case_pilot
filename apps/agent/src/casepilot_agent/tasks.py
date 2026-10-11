@@ -554,13 +554,17 @@ def _apply_persisted_asset_quality(
                     )
                 )
         try:
-            if embedding_provider is None:
+            if any(issue.code == "manual_review_required" for issue in result.quality.issues):
+                # Human-reviewed generation only needs local exact-duplicate checks.
+                vectors = None
+            elif embedding_provider is None:
                 raise RuntimeError("embedding_provider_unavailable")
-            vectors = embedding_provider.embed([*existing_titles, *generated_titles])
+            else:
+                vectors = embedding_provider.embed([*existing_titles, *generated_titles])
             split = len(existing_titles)
             for case, vector in zip(
-                result.test_cases,
-                vectors[split:],
+                result.test_cases if vectors is not None else [],
+                vectors[split:] if vectors is not None else [],
                 strict=True,
             ):
                 if case.id in exact_duplicate_ids:
@@ -1178,7 +1182,8 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
             completed = {
                 **output,
                 "generated_count": len(output["test_cases"]),
-                "total_count": len(output["test_cases"]),
+                "total_count": (len(result.test_points) if payload.get("output_contract") == "case_batch_v2"
+                                else len(output["test_cases"])),
                 "started_at": partial_output["started_at"],
                 "case_ids": case_ids,
                 "workspace_candidate_ids": workspace_candidate_ids,
@@ -1196,7 +1201,9 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
                 job,
                 content=(
                     f"已生成 {len(output['test_cases'])} 条候选用例，"
-                    f"自动检查评分 {output['quality']['score']}。请逐条确认业务预期后再写入用例集。"
+                    + ("已完成基础校验，请人工审阅业务预期及待完善项后再采纳。"
+                       if payload.get("output_contract") == "case_batch_v2"
+                       else f"自动检查评分 {output['quality']['score']}。请逐条确认业务预期后再写入用例集。")
                 ),
                 metadata_values={
                     "job_id": job_id,

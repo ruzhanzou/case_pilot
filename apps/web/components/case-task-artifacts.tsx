@@ -49,13 +49,13 @@ export function CaseTaskArtifacts({ task, conversation, busy, cases, onLocate, o
   return <div className="task-generation-results">
     {brief && <section className="task-brief-result"><header><strong>{pick("Test scope", "测试范围")} · V{brief.version}</strong><button type="button" onClick={() => onBrief(brief.version)}>{pick("View full brief", "查看完整说明")}</button></header><p>{brief.content.test_object}</p><p>{brief.content.scope.join(" · ")}</p>{brief.content.open_questions.length > 0 && <ul>{brief.content.open_questions.map((item, index) => <li key={item.id ?? index}>{item.question}</li>)}</ul>}{canConfirmBrief && <button type="button" disabled={busy} onClick={onGenerate}>{pick("Confirm scope and generate", "确认范围并生成用例")}</button>}</section>}
     {generationProgress?.total_count && <section className="generation-progress-card" aria-label={pick("Generation progress", "生成进度")}>
-      <strong>{pick(`${generationProgress.generated_count ?? 0} / ${generationProgress.total_count} cases verified`, `已核对 ${generationProgress.generated_count ?? 0} / ${generationProgress.total_count} 条`)}</strong>
-      <progress max={generationProgress.total_count} value={generationProgress.generated_count ?? 0} aria-label={pick("Verified cases", "已核对用例数量")} />
+      <strong>{pick(`${generationProgress.generated_count ?? 0} / ${generationProgress.total_count} cases ready for review`, `待审阅 ${generationProgress.generated_count ?? 0} / ${generationProgress.total_count} 条`)}</strong>
+      <progress max={generationProgress.total_count} value={generationProgress.generated_count ?? 0} aria-label={pick("Cases ready for review", "待审阅用例数量")} />
       {generationProgress.active_batches?.length ? generationProgress.active_batches.map((batch) => <p key={batch.start}>{pick(`Cases ${batch.start}–${batch.start + batch.count - 1}`, `第 ${batch.start}–${batch.start + batch.count - 1} 条`)} · {batch.stage === "test_case.grounded" ? pick("Checking requirements", "核对需求中") : pick("Generating", "生成中")}{batch.retry_attempt > 0 ? pick(" · Retrying", " · 重试中") : ""}</p>) : (
 <p>{generationProgress.name === "test_case.grounded" ? pick("Checking this batch against the original requirements", "正在根据原始需求核对本批用例") : pick("Generating the next batch", "正在生成下一批用例")}{generationProgress.batch_start_index && generationProgress.batch_count ? pick(` · Cases ${generationProgress.batch_start_index}–${generationProgress.batch_start_index + generationProgress.batch_count - 1}`, ` · 第 ${generationProgress.batch_start_index}–${generationProgress.batch_start_index + generationProgress.batch_count - 1} 条`) : ""}</p>
       )}
-      {!!generationProgress.retry_attempt && <p role="status">{pick("Retrying this batch; verified cases are preserved.", "当前批次正在重试，已核对结果已保留。")}</p>}
-      <small>{pick("Verified batches appear below. Final review unlocks after all batches pass validation.", "已核对的批次会立即展示在下方；全部生成并通过校验后可统一审核采纳。")}</small>
+      {!!generationProgress.retry_attempt && <p role="status">{pick("Repairing incomplete cases; completed cases are preserved.", "正在修复未完成用例，已完成结果已保留。")}</p>}
+      <small>{pick("Completed cases appear below after basic checks. Review them before accepting; unresolved items will be listed.", "通过基础校验的用例会展示在下方；生成结束后请人工审核再采纳，未完成项会单独列出。")}</small>
     </section>}
     {candidates.length > 0 && <section className="task-result-cases" aria-label={pick("Candidate results", "候选结果")}>
       <header>

@@ -1,13 +1,12 @@
 """Versioned, bounded model contracts for confirmed-plan generation.
 
 The model writes case content, never database identities or duplicated citations.
-An independent audit acknowledges every slot and returns only necessary replacements.
+Local checks preserve complete candidates for human review without model audits.
 """
 import asyncio
 import re
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from time import sleep
 from typing import Literal
 
 from agents.exceptions import ModelBehaviorError
@@ -45,6 +44,11 @@ class CaseContent(BaseModel):
 class ContentBatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     test_cases: list[CaseContent] = Field(min_length=1, max_length=BATCH_SIZE)
+
+
+class ReviewContentBatch(ContentBatch):
+    # Preserve parseable siblings when one entry fails its content schema.
+    test_cases: list[CaseContent | dict] = Field(default_factory=list, max_length=BATCH_SIZE)
 
 
 class AssertionSupport(BaseModel):
@@ -171,6 +175,14 @@ def validate_case_content(case):
 
 def validate_stage_result(result, payload):
     """Validate business identities before storing or reusing a checkpoint."""
+    if isinstance(result, ContentBatch) and payload.get("validation_mode") == "human_review_basic":
+        # Keep parseable responses so the batch runner can retain valid siblings
+        # and repair only missing/invalid slots. This mode is part of the cache key.
+        slots = {p["slot"] for p in payload.get("points", [])}
+        response_slots = [c.get("slot") if isinstance(c, dict) else c.slot for c in result.test_cases]
+        if slots and not any(isinstance(slot, int) and slot in slots for slot in response_slots):
+            raise StageContractError("stage_slot_mismatch")
+        return result
     if isinstance(result, ContentBatch):
         require_slots(result.test_cases, [p["slot"] for p in payload["points"]])
         for case in result.test_cases:
@@ -221,149 +233,107 @@ def run_compact(request, provider, execute_stage, on_batch, count):
     points = TestPointPlan.model_validate(plan).test_points
     if not points:
         raise StageContractError("planning_has_no_test_points")
-    total = len(points)  # The confirmed selection supersedes an earlier quantity hint.
+    feature_ids = {f.id for f in features}
+    if len(feature_ids) != len(features) or len({p.id for p in points}) != len(points):
+        raise StageContractError("duplicate_planning_identity")
+    if any(not p.feature_point_ids or not set(p.feature_point_ids) <= feature_ids for p in points):
+        raise StageContractError("invalid_feature_reference")
+    total = len(points)
     generated_by_slot = {}
-    pending = [(offset, min(BATCH_SIZE, total - offset), 0) for offset in range(0, total, BATCH_SIZE)]
-    def process_batch(offset, size, retry_attempt):
-        slots = list(range(offset + 1, offset + size + 1))
-        group = [points[(slot - 1) % len(points)] for slot in slots]
-        feature_ids = {ref for point in group for ref in point.feature_point_ids}
-        selected = [f for f in features if f.id in feature_ids]
+    unresolved = {}
+    repair_rounds = 0
+    pending = [(list(range(offset + 1, min(offset + BATCH_SIZE, total) + 1)), 0, {})
+               for offset in range(0, total, BATCH_SIZE)]
+    retryable = (ModelBehaviorError, ValidationError, StageContractError,
+                 APIConnectionError, APITimeoutError, RateLimitError, InternalServerError)
+
+    def process_batch(slots, retry_attempt, feedback):
+        group = [points[slot - 1] for slot in slots]
+        selected_ids = {ref for point in group for ref in point.feature_point_ids}
+        selected = [f for f in features if f.id in selected_ids]
         refs = [ref for item in [*group, *selected] for ref in item.source_refs]
         source_ids = {ref.chunk_id for ref in refs if ref.chunk_id}
         evidence = [item for item in plan.get("evidence", []) if item.get("chunk_id") in source_ids]
-        # If legacy plans have no chunk links, retain evidence rather than silently
-        # auditing against an empty source set. Each document appears only once.
         if not evidence:
             evidence = list(plan.get("evidence", []))
-        common = {
-            "output_contract": CONTRACT, "batch_start_index": offset + 1,
-            "retry_attempt": retry_attempt,
-            "batch_count": size, "total_count": total, "completed_count": offset,
+        payload = {
+            "output_contract": CONTRACT, "validation_mode": "human_review_basic",
+            "batch_start_index": slots[0], "batch_slots": slots,
+            "retry_attempt": retry_attempt, "validation_feedback": feedback,
+            "batch_count": len(slots), "total_count": total, "completed_count": slots[0] - 1,
             "prompt": request.prompt, "confirmed_brief": request.markdown_content,
             "user_requirements": [m for m in request.conversation_memory if m.get("role") == "user"],
             "evidence": evidence,
-            "grounding_sources": [str(e.get("excerpt", "")) for e in evidence] + [request.prompt]
-                + [str(m.get("content", "")) for m in request.conversation_memory if m.get("role") == "user"],
             "global_scenario_index": [{"id": p.id, "title": p.title, "scenario": p.scenario} for p in points],
             "features": [f.model_dump(exclude={"source_refs"}) for f in selected],
+            "points": [{"slot": slot, "point": point.model_dump(exclude={"source_refs"})}
+                       for slot, point in zip(slots, group, strict=True)],
         }
-        batch = execute_stage(
-            "test_case.generated",
-            GENERATION_GROUNDING_INSTRUCTION + CASE_DESIGN_INSTRUCTION +
-            "仅为本批每个slot生成一条用例，slot必须原样保留且恰好覆盖全部slot。"
-            "只输出title、preconditions、steps及slot；不输出来源、编号、模块、优先级等系统字段。"
-            "每条用例一个明确目标，分别列出1至4项操作和整条用例的可观察校验点，不要求逐步配对；兼容steps行中action或expected可留空，但用例必须同时包含操作和校验点，不得用正常、符合预期代替断言。",
-            {**{k: v for k, v in common.items() if k != "grounding_sources"}, "points": [
-                {"slot": slot, "point": point.model_dump(exclude={"source_refs"})}
-                for slot, point in zip(slots, group, strict=True)
-            ]}, ContentBatch, request.model_id,
-        )
-        validate_stage_result(batch, {"points": [{"slot": slot} for slot in slots]})
-        content = {case.slot: case for case in batch.test_cases}
-        if provider.name != "mock":
-            def audit_slots_fn(audit_slots, feedback=""):
-                for audit_attempt in range(2):
-                    try:
-                        audit = execute_stage(
-                            "test_case.grounded",
-                            GENERATION_GROUNDING_INSTRUCTION + CASE_DESIGN_INSTRUCTION +
-                            "独立核对本批全部slot。每个slot必须返回一个reviews条目。"
-                            "有来源支持则verdict=supported、replacement=null；不要重复原用例。"
-                            "存在无依据的断言则verdict=revise，在reason中说明原因并提供该slot的完整修正内容。"
-                            "replacement.slot必须一致，保留已支持的操作和预期。不得遗漏slot或改变测试目标。"
-                            "assertions必须覆盖最终用例每一个非空expected步骤（step从1开始），逐项引用grounding_sources"
-                            "中的source_index（从0开始）和逐字原文quote，并解释该原文如何支持整条预期中的每个断言。"
-                            "禁止用推导的测试点或常识作证；一个预期有多个断言时必须全部有据，否则删去无依据部分。"
-                            "逐个检查expected中由逗号、分号、以及、并且连接的子断言；只要有一项没有明确原文依据，就必须revise。"
-                            "例如原文仅规定创建成功，不能支持待支付状态、列表可见或响应字段；"
-                            "原文仅规定拒绝请求，不能支持提示文案、库存不变、没有流水等附加断言；"
-                            "原文仅规定重复请求只处理一次，不能支持重复请求的具体响应或订单状态不变。"
-                            "这些附加行为即使符合常见实现，也必须从replacement预期中删除。保留有依据的业务结果，不扩大审查目标。",
-                            {"output_contract": CONTRACT, "batch_start_index": audit_slots[0],
-                             "batch_count": len(audit_slots), "audit_attempt": audit_attempt,
-                             "completed_count": offset, "total_count": total,
-                             "grounding_sources": common["grounding_sources"],
-                             "validation_feedback": feedback, "test_cases": [content[slot].model_dump(mode="json") for slot in audit_slots]},
-                            BatchAudit, request.model_id,
-                        )
-                        validate_stage_result(audit, {"test_cases": [content[slot].model_dump(mode="json") for slot in audit_slots],
-                                                      "grounding_sources": common["grounding_sources"]})
-                        replacements = {}
-                        for review in audit.reviews:
-                            if review.verdict == "supported":
-                                if review.replacement is not None:
-                                    raise StageContractError("supported_audit_has_replacement")
-                            else:
-                                if (review.replacement is None or review.replacement.slot != review.slot
-                                        or not review.reason.strip()):
-                                    raise StageContractError("invalid_audit_replacement")
-                                replacements[review.slot] = review.replacement
-                        # Commit only after every review passes the contract. A failed
-                        # attempt must not contaminate the next audit input.
-                        content.update(replacements)
-                        return
-                    except (ModelBehaviorError, ValidationError, StageContractError, APIConnectionError,
-                            APITimeoutError, RateLimitError, InternalServerError) as error:
-                        feedback = (str(error) if isinstance(error, StageContractError)
-                                    else "invalid_json_or_schema")
-                        if audit_attempt:
-                            if not isinstance(error, (ModelBehaviorError, ValidationError, StageContractError)):
-                                raise AuditStageError("batch_audit_failed") from error
-                            if len(audit_slots) == 1:
-                                raise AuditStageError("batch_audit_failed") from error
-                            # Retry only the audit on smaller groups; keep valid
-                            # generation and previously audited groups intact.
-                            half = len(audit_slots) // 2
-                            audit_slots_fn(audit_slots[:half], feedback)
-                            audit_slots_fn(audit_slots[half:], feedback)
-                            return
-                        if isinstance(error, (APIConnectionError, RateLimitError, InternalServerError)):
-                            sleep(1)
-            audit_slots_fn(slots)
-        validated = []
+        try:
+            batch = execute_stage(
+                "test_case.generated",
+                GENERATION_GROUNDING_INSTRUCTION + CASE_DESIGN_INSTRUCTION +
+                "仅为本批每个slot生成一条用例，slot必须原样保留且恰好覆盖全部slot。"
+                "只输出title、preconditions、steps及slot；不输出来源、编号、模块、优先级等系统字段。"
+                "每条用例一个明确目标，分别列出1至4项操作和整条用例的可观察校验点，不要求逐步配对；"
+                "steps行中action或expected可留空，但用例必须同时包含操作和校验点，"
+                "不得用正常、符合预期代替断言。若有validation_feedback，只修复本次指定slot的问题。",
+                payload, ReviewContentBatch, request.model_id,
+            )
+        except retryable as error:
+            reason = str(error) if isinstance(error, StageContractError) else "generation_response_invalid"
+            return {}, dict.fromkeys(slots, reason)
+        parsed = []
+        invalid_slots = set()
+        for raw in batch.test_cases:
+            try:
+                parsed.append(CaseContent.model_validate(raw))
+            except ValidationError:
+                slot = raw.get("slot") if isinstance(raw, dict) else None
+                if isinstance(slot, int) and slot in slots:
+                    invalid_slots.add(slot)
+        frequencies = Counter(case.slot for case in parsed)
+        content = {case.slot: case for case in parsed
+                   if frequencies[case.slot] == 1 and case.slot not in invalid_slots}
+        valid, invalid = {}, {}
+        canonical = {str(e.get("chunk_id")): e for e in evidence if e.get("chunk_id")}
         for slot, point in zip(slots, group, strict=True):
-            case = content[slot]
-            source_refs = point.source_refs or [r for f in selected if f.id in point.feature_point_ids for r in f.source_refs]
-            # Hydrate canonical references on the server; never ask the model
-            # to echo source documents or generate UUIDs.
-            canonical = {str(e.get("chunk_id")): e for e in evidence}
+            case = content.get(slot)
+            if case is None:
+                invalid[slot] = "missing_or_duplicate_slot"
+                continue
+            try:
+                validate_case_content(case)
+                if any(step.expected.strip() in {"正常", "结果正常", "符合预期", "结果符合预期"}
+                       for step in case.steps):
+                    raise StageContractError("vague_test_validation")
+            except StageContractError as error:
+                invalid[slot] = str(error)
+                continue
+            source_refs = point.source_refs or [r for f in selected
+                                               if f.id in point.feature_point_ids for r in f.source_refs]
             hydrated = []
             for ref in source_refs:
-                source = canonical.get(str(ref.chunk_id))
-                hydrated.append(SourceRef.model_validate(source) if source else ref)
-            validated.append(TestCaseDraft(
-                **case.model_dump(exclude={"slot"}),
-                id=f"TC-{point.id}-{(slot - 1) // len(points) + 1}",
+                if ref.chunk_id and str(ref.chunk_id) in canonical:
+                    hydrated.append(SourceRef.model_validate(canonical[str(ref.chunk_id)]))
+                elif not any((ref.chunk_id, ref.document_id, ref.source_id)):
+                    hydrated.append(ref)
+                else:
+                    # A dangling source identity is a plan error, never an excuse
+                    # to fabricate provenance or silently use an unrelated source.
+                    raise StageContractError("invalid_source_reference")
+            valid[slot] = TestCaseDraft(
+                **case.model_dump(exclude={"slot"}), id=f"TC-{point.id}-1",
                 module=planned_module(point, features), case_type=point.category,
                 priority=point.priority, test_point_ids=[point.id],
                 source_refs=hydrated or [SourceRef(label="用户输入", excerpt=request.prompt)],
-            ))
-        # Validate before publishing; no partial batch escapes a failed gate.
-        candidate = GenerationResult(
-            mode=provider.name, requirement=RequirementAnalysis(summary=request.prompt),
-            feature_points=selected, test_points=group, test_cases=validated,
-            coverage_matrix=coverage_rows(selected, group, validated),
-            quality=QualityReport(passed=True, score=100),
-        )
-        errors = [i for i in validate_generation(candidate).issues if i.severity == "error"
-                  and i.code not in {"duplicate_case", "duplicate_case_content"}]
-        if errors:
-            raise StageContractError("case_quality_invalid:" + ",".join(i.code for i in errors))
-        return validated
+            )
+        return valid, invalid
 
     def worker(batch):
-        # SDK synchronous runs require a per-thread loop. Close clients/tasks and
-        # the loop before returning a pooled thread to another batch.
         with asyncio.Runner() as runner:
             asyncio.set_event_loop(runner.get_loop())
             return process_batch(*batch)
-
-    def split(batch):
-        offset, size, attempt = batch
-        half = max(1, size // 2)
-        return [(start, min(half, offset + size - start), attempt + 1)
-                for start in range(offset, offset + size, half)]
 
     with ThreadPoolExecutor(max_workers=BATCH_CONCURRENCY, thread_name_prefix="case-batch") as pool:
         active = {}
@@ -374,31 +344,25 @@ def run_compact(request, provider, execute_stage, on_batch, count):
                     active[pool.submit(worker, batch)] = batch
                 done, _ = wait(active, return_when=FIRST_COMPLETED)
                 for future in sorted(done, key=lambda f: active[f][0]):
-                    batch = active.pop(future)
-                    offset, size, attempt = batch
-                    try:
-                        validated = future.result()
-                    except (ModelBehaviorError, ValidationError, StageContractError):
-                        if size == 1:
-                            if attempt == 0:
-                                pending.insert(0, (offset, size, 1))
-                                continue
-                            raise
-                        pending[0:0] = split(batch)
-                        continue
-                    except (APIConnectionError, RateLimitError, InternalServerError):
-                        if attempt == 0:
-                            sleep(1)
-                            pending.insert(0, (offset, size, 1))
-                        else:
-                            raise
-                        continue
-                    generated_by_slot.update(zip(range(offset, offset + size), validated, strict=True))
-                    if on_batch:
+                    slots, attempt, _ = active.pop(future)
+                    repair_rounds = max(repair_rounds, attempt)
+                    valid, invalid = future.result()
+                    generated_by_slot.update(valid)
+                    if valid and on_batch:
                         on_batch([generated_by_slot[i] for i in sorted(generated_by_slot)], total)
+                    if invalid and attempt == 0:
+                        # Fresh batches go first. Each failed slot gets just one
+                        # repair, without regenerating successful siblings.
+                        repair_groups = []
+                        for slot in sorted(invalid):
+                            if not repair_groups or repair_groups[-1][-1] + 1 != slot:
+                                repair_groups.append([])
+                            repair_groups[-1].append(slot)
+                        pending.extend((group, 1, {s: invalid[s] for s in group})
+                                       for group in repair_groups)
+                    else:
+                        unresolved.update(invalid)
         except BaseException:
-            # Stop dispatching on fatal errors/cancellation. Join in-flight work
-            # before the job is marked failed, so no late writes follow failure.
             for future in active:
                 future.cancel()
             raise
@@ -411,21 +375,26 @@ def run_compact(request, provider, execute_stage, on_batch, count):
         coverage_matrix=coverage_rows(features, points, generated),
         quality=QualityReport(passed=True, score=100),
     )
-    merged = reconcile_duplicates(result, request, execute_stage)
-    result.coverage_matrix = coverage_rows(features, points, result.test_cases)
     result.quality = validate_generation(result)
-    if merged:
-        result.quality.issues.append(QualityIssue(code="duplicate_cases_merged", severity="warning",
-            message=f"跨批审核合并{merged}条重复场景，保留测试点关联与来源。"))
+    for issue in result.quality.issues:
+        if issue.code in {"duplicate_case", "duplicate_case_content"}:
+            issue.severity = "warning"
+            issue.message += "；请人工审阅确认是否保留"
+        elif issue.code == "uncovered_test_point" and any(points[s - 1].id == issue.object_id for s in unresolved):
+            issue.severity = "warning"
+            point = next(p for p in points if p.id == issue.object_id)
+            issue.message = f"待完善：{point.title}（{point.id}）。一次修复后仍未通过基础校验，尚无可采纳用例。"
+    result.quality.issues.append(QualityIssue(
+        code="manual_review_required", severity="warning",
+        message="已完成本地基础校验，未进行模型复审；请人工确认业务预期、覆盖范围和重复场景后再采纳。"))
     if count and count > total:
         result.quality.issues.append(QualityIssue(
             code="independent_scenarios_below_target", severity="warning",
             message=f"请求{count}条，已确认独立场景仅{total}条；未循环测试点凑数。"))
     errors = sum(i.severity == "error" for i in result.quality.issues)
     result.quality.passed = errors == 0
-    result.quality.score = max(0, 100 - errors * 25 - (len(result.quality.issues) - errors) * 8)
     result.quality.structural_passed = errors == 0
-    result.quality.grounding_status = "model_reviewed" if provider.name != "mock" and not merged else "unverified"
-    # A model review is evidence-linked, but is not a semantic correctness proof.
-    result.quality.score = min(result.quality.score, 95 if result.quality.grounding_status == "model_reviewed" else 90)
+    result.quality.grounding_status = "unverified"
+    result.quality.repair_rounds = repair_rounds
+    result.quality.score = max(0, min(90, 100 - errors * 25 - (len(result.quality.issues) - errors) * 8))
     return result
