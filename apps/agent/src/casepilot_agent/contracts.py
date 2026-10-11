@@ -1,8 +1,8 @@
 from collections.abc import Callable
 from enum import StrEnum
-from typing import Any, Protocol, TypeVar
+from typing import Any, Literal, Protocol, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 EMBEDDING_DIMENSIONS = 2048
 
@@ -171,6 +171,8 @@ class QualityIssue(BaseModel):
 
 
 class QualityReport(BaseModel):
+    structural_passed: bool | None = None
+    grounding_status: Literal["unverified", "model_reviewed"] = "unverified"
     passed: bool
     score: int = Field(ge=0, le=100)
     issues: list[QualityIssue] = Field(default_factory=list)
@@ -278,10 +280,30 @@ class RewriteBatch(BaseModel):
     items: list[RewriteBatchItem]
 
 
+class ExpectedUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    step_index: int = Field(ge=0)
+    expected: str
+
+
+class RewriteFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str | None = None
+    module: str | None = None
+    priority: Priority | None = None
+    case_type: str | None = None
+    tags: list[str] | None = None
+    preconditions: list[str] | None = None
+    steps: list[TestStep] | None = None
+    expected_updates: list[ExpectedUpdate] | None = None
+    source_ref_indexes: list[int] | None = None
+
+
 class RewritePatchItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     ref: str
-    changes: dict[str, Any] = Field(
-        description="仅返回变化字段及新值；未修改字段省略，禁止修改id。数组字段返回完整新数组。"
+    changes: RewriteFields = Field(
+        description="仅填写实际变化的字段，未修改字段省略或为null；数组字段返回完整新数组。"
     )
     reason: str
     quality: QualityReport

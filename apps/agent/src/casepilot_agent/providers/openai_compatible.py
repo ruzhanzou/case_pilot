@@ -17,6 +17,8 @@ from casepilot_agent.contracts import (
     UsageMetadata,
 )
 
+from casepilot_agent.providers.structured_output import recover_json_closers
+
 ResultT = TypeVar("ResultT", bound=BaseModel)
 TRANSIENT_STATUS_CODES = {408, 429, 500, 502, 503, 504, 520, 522, 524}
 MARKDOWN_JSON_FENCE = re.compile(
@@ -30,7 +32,7 @@ def _normalize_structured_content(content: str) -> str:
         raise TypeError("structured_model_content_must_be_text")
     normalized = content.lstrip("\ufeff").strip()
     fenced = MARKDOWN_JSON_FENCE.fullmatch(normalized)
-    return fenced.group(1).strip() if fenced else normalized
+    return recover_json_closers(fenced.group(1).strip() if fenced else normalized)
 
 
 class ProviderResponseError(RuntimeError):

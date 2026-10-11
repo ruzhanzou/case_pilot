@@ -820,6 +820,7 @@ class JobStore:
                     knowledge_documents.c.space_id == space_id,
                     knowledge_documents.c.id.in_(document_ids),
                     knowledge_sources.c.deleted_at.is_(None),
+                    or_(knowledge_documents.c.expires_at.is_(None), knowledge_documents.c.expires_at > func.now()),
                 )
             ).mappings()
         )
@@ -866,6 +867,8 @@ class JobStore:
             knowledge_chunks.c.chunk_type == "child",
             knowledge_sources.c.status == "ready",
             knowledge_sources.c.deleted_at.is_(None),
+            knowledge_documents.c.status == "ready",
+            or_(knowledge_documents.c.expires_at.is_(None), knowledge_documents.c.expires_at > func.now()),
         ]
         if source_ids and document_ids:
             filters.append(
@@ -876,9 +879,15 @@ class JobStore:
             )
         elif source_ids:
             filters.append(knowledge_chunks.c.source_id.in_(source_ids))
-        elif not use_space_knowledge and document_ids:
-            filters.append(knowledge_chunks.c.document_id.in_(document_ids))
-        elif not use_space_knowledge:
+        elif document_ids:
+            selected_documents = knowledge_chunks.c.document_id.in_(document_ids)
+            filters.append(or_(selected_documents, knowledge_sources.c.persistence == "space")
+                           if use_space_knowledge else selected_documents)
+        elif use_space_knowledge:
+            # Conversation uploads are temporary; removing them must not cause
+            # their return through a broad space-knowledge search.
+            filters.append(knowledge_sources.c.persistence == "space")
+        else:
             return []
         distance = (
             knowledge_chunks.c.embedding.cosine_distance(query_embedding)

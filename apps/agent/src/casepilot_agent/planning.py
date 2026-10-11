@@ -232,6 +232,7 @@ def build_planning(
             if (name and len(documents) == 1 and None not in documents
                     and documents <= known_documents):
                 identity = (next(iter(documents)), name)
+                feature.name = name
                 feature.module = rule_modules.setdefault(identity, feature.module)
     # Completion order must not change IDs, budgets, or downstream batch membership.
     for common, feature_plan in feature_results:
@@ -392,8 +393,10 @@ def source_rule_name(feature, batch):
     candidates = [reference, *sorted(quoted - {reference})]
     names = set()
     for candidate in candidates:
+        # A sample or chunk may end in a truncated rule, even before a newline.
+        # Only complete, explicitly terminated definitions establish identity.
         pattern = re.compile(r"(?<![A-Za-z0-9_.-])" + re.escape(candidate)
-                             + r"\s*[:：]\s*([^\n。；;]+)")
+                             + r"\s*[:：]\s*([^\n。；;]+)(?=[。；;])")
         definitions = {
             match.strip().rstrip("。.")
             for item in batch.get("evidence", [])
@@ -524,32 +527,111 @@ def planned_module(point, features) -> str:
 def rewrite_evidence(context, snapshot, complete):
     """Read every document batch, extracting only rules affecting the selected case."""
     if not context.get("evidence"):
-        return {}
+        return context
     batches = evidence_batches(context)
     if len(batches) == 1:
         return batches[0]
     rules = []
     sources = []
-    for batch in batches:
+    # Existing expected outcomes are under review, not source material. Supplying
+    # them to extraction lets a model copy the very assertions we must check.
+    def scope_only(value):
+        if isinstance(value, dict):
+            return {key: scope_only(item) for key, item in value.items()
+                    if key not in {"expected", "source_refs"}}
+        if isinstance(value, list):
+            return [scope_only(item) for item in value]
+        return value
+    scope = scope_only(snapshot)
+
+    def extract(index, batch):
         analysis = complete(
-            "requirement.analyzed",
-            "完整检查本批资料对指定用例的影响，仅提取相关规则到business_rules。"
-            "保留数值、单位、例外和冲突；不相关则返回空列表。不修改用例、不扩大目标范围。",
-            {"test_case": snapshot, "context": batch},
+            "rewrite.evidence",
+            "完整检查本批资料对选中用例集合的影响，仅提取相关规则到business_rules。"
+            "保留数值、单位、例外和冲突；不相关则返回空列表。不修改用例、不扩大目标范围。"
+            "business_rules逐条摘录context.evidence中的原文完整规则，不改写、不概括，保留规则编号和上下文条件。"
+            "test_case只是检索范围，绝不是事实依据；禁止从用例标题、操作或前置条件推导业务规则。"
+            "不输出测试步骤或预期，不补全资料未规定的状态、会话、文案或副作用。",
+            {"test_case": scope, "context": batch},
             RequirementAnalysis,
         )
-        if analysis.business_rules:
-            rules.extend(analysis.business_rules)
-            sources.extend(
-                {
-                    key: item.get(key)
-                    for key in ("source_id", "document_id", "chunk_id", "label", "locator")
-                }
-                for item in batch["evidence"]
-            )
+        return analysis
+
+    analyses = analyze_batches(
+        batches,
+        extract,
+        load=lambda *_: None,
+        save=lambda *_: None,
+        on_progress=lambda *_: None,
+        check_cancelled=lambda: None,
+    )
+    for batch, analysis in zip(batches, analyses, strict=True):
+        if not analysis.business_rules:
+            continue
+        matched = []
+        for rule in analysis.business_rules:
+            quote = rule.strip().rstrip("。.;；")
+            found = None
+            for source in batch["evidence"]:
+                text = str(source.get("excerpt", ""))
+                start = text.replace("：", ":").find(quote.replace("：", ":")) if quote else -1
+                if start >= 0:
+                    found = source, start, start + len(quote)
+                    break
+            if found is None:
+                # A paraphrased rule with an explicit ID is a retrieval hint,
+                # never evidence. Resolve the ID to its actual original sentence.
+                ids = re.findall(r"(?<![A-Za-z0-9_.-])([A-Za-z][A-Za-z0-9_.-]{0,79})\s*[:：]", rule)
+                if len(set(ids)) == 1:
+                    pattern = re.compile(r"(?<![A-Za-z0-9_.-])" + re.escape(ids[0])
+                                         + r"\s*[:：][^\n。；;]+[。；;]")
+                    anchors = {}
+                    for source in batch["evidence"]:
+                        for match in pattern.finditer(str(source.get("excerpt", ""))):
+                            anchors.setdefault(match.group(0), (source, match.start(), match.end()))
+                    if anchors:
+                        found, *others = anchors.values()
+                        # Conflicting definitions of the same ID must all survive.
+                        for source, start, end in others:
+                            text = source["excerpt"]
+                            rules.append(text[start:end])
+                            matched.append({**source, "excerpt": text[max(0, start - 240):end + 240]})
+            if found is None:
+                # Preserve the entire batch on an unresolved rule; do not promote
+                # a model paraphrase into the business_rules evidence list.
+                matched = list(batch["evidence"])
+                break
+            source, start, end = found
+            text = source["excerpt"]
+            rules.append(text[start:end])
+            matched.append({**source, "excerpt": text[max(0, start - 240):end + 240]})
+        sources.extend(item for item in matched if item not in sources)
+    # Merge overlapping windows from the same original chunk. Repeated rules
+    # otherwise repeat their surrounding text and metadata in every model call.
+    windows = {}
+    for source in sources:
+        metadata = {k: v for k, v in source.items() if k != "excerpt"}
+        original = next((item for item in context["evidence"]
+                         if {k: v for k, v in item.items() if k != "excerpt"} == metadata
+                         and source["excerpt"] in item["excerpt"]), source)
+        key = json.dumps(original, sort_keys=True)
+        start = original["excerpt"].index(source["excerpt"])
+        windows.setdefault(key, (original, []))[1].append((start, start + len(source["excerpt"])))
+    sources = []
+    for original, spans in windows.values():
+        merged = []
+        for start, end in sorted(spans):
+            if merged and start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
+            else:
+                merged.append((start, end))
+        sources.extend({**original, "excerpt": original["excerpt"][start:end]} for start, end in merged)
+    source_metadata = {json.dumps({k: v for k, v in item.items() if k != "excerpt"}, sort_keys=True):
+                       {k: v for k, v in item.items() if k != "excerpt"} for item in sources}
     return {
         "business_rules": list(dict.fromkeys(rules)),
-        "sources": sources,
+        "sources": list(source_metadata.values()),
+        "evidence": sources,
         "processed_batches": len(batches),
         "warnings": context.get("warnings", []),
     }

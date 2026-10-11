@@ -3756,6 +3756,108 @@ def _expand_conversation_targets(
     )
 
 
+def _resolve_turn_attachments(db, conversation, payload, *, resuming=False):
+    """Only ready historical files are inherited; explicit unavailable files fail early."""
+    stored_context = dict(conversation.context)
+    if resuming:
+        # Removal also applies to a paused task's saved request, without editing history.
+        payload = payload.model_copy(update={
+            "document_ids": [v for v in payload.document_ids if str(v) not in stored_context.get("excluded_document_ids", [])],
+            "knowledge_source_ids": [v for v in payload.knowledge_source_ids if str(v) not in stored_context.get("excluded_source_ids", [])],
+        })
+    context = stored_context if payload.inherit_attachments else {}
+    explicit_docs, explicit_sources = set(payload.document_ids), set(payload.knowledge_source_ids)
+    doc_ids = explicit_docs | {UUID(str(v)) for v in context.get("document_ids", [])}
+    source_ids = explicit_sources | {UUID(str(v)) for v in context.get("knowledge_source_ids", [])}
+    documents = (
+        list(
+            db.scalars(
+                select(KnowledgeDocument)
+                .join(KnowledgeSource)
+                .where(
+                    KnowledgeDocument.space_id == conversation.space_id,
+                    KnowledgeDocument.id.in_(doc_ids),
+                    KnowledgeSource.deleted_at.is_(None),
+                    KnowledgeDocument.status == "ready",
+                    or_(
+                        KnowledgeDocument.expires_at.is_(None),
+                        KnowledgeDocument.expires_at > datetime.now(UTC),
+                    ),
+                )
+            )
+        )
+        if doc_ids
+        else []
+    )
+    ready_docs = {doc.id for doc in documents}
+    sources = (
+        list(
+            db.scalars(
+                select(KnowledgeSource).where(
+                    KnowledgeSource.space_id == conversation.space_id,
+                    KnowledgeSource.id.in_(source_ids),
+                    KnowledgeSource.deleted_at.is_(None),
+                    KnowledgeSource.status == "ready",
+                )
+            )
+        )
+        if source_ids
+        else []
+    )
+    ready_sources = {source.id for source in sources}
+    if explicit_docs - ready_docs or explicit_sources - ready_sources:
+        raise HTTPException(status_code=422, detail="attachment_not_ready_or_expired")
+    # Sources associated only with stale historical documents must not sneak back
+    # into retrieval after their document was filtered out.
+    inherited_doc_sources = (
+        set(
+            db.scalars(
+                select(KnowledgeDocument.source_id).where(
+                    KnowledgeDocument.id.in_(doc_ids - explicit_docs),
+                    KnowledgeDocument.space_id == conversation.space_id,
+                )
+            )
+        )
+        if doc_ids - explicit_docs
+        else set()
+    )
+    ready_sources -= inherited_doc_sources - {doc.source_id for doc in documents} - explicit_sources
+    return payload.model_copy(
+        update={
+            "document_ids": sorted(ready_docs, key=str),
+            "knowledge_source_ids": sorted(ready_sources, key=str),
+        }
+    )
+
+
+@router.delete(
+    "/conversations/{conversation_id}/attachments/{document_id}", response_model=ConversationView
+)
+def detach_conversation_attachment(
+    conversation_id: UUID, document_id: UUID, account: CurrentAccount, db: DbSession
+):
+    conversation = _ensure_conversation(db, account.id, conversation_id)
+    _require_idle_conversation(db, conversation)
+    context = dict(conversation.context)
+    if str(document_id) not in {str(v) for v in context.get("document_ids", [])}:
+        return _conversation_view(db, conversation)
+    remaining = [v for v in context.get("document_ids", []) if str(v) != str(document_id)]
+    removed = db.get(KnowledgeDocument, document_id)
+    sources = list(context.get("knowledge_source_ids", []))
+    excluded_sources = list(context.get("excluded_source_ids", []))
+    if removed and removed.space_id == conversation.space_id:
+        # Keep other files selected by document ID; retaining the whole upload
+        # source would retrieve the removed file again through its sibling.
+        sources = [v for v in sources if str(v) != str(removed.source_id)]
+        excluded_sources.append(str(removed.source_id))
+    conversation.context = {**context, "document_ids": remaining, "knowledge_source_ids": sources,
+                            "excluded_document_ids": list(dict.fromkeys([*context.get("excluded_document_ids", []), str(document_id)])),
+                            "excluded_source_ids": list(dict.fromkeys(excluded_sources))}
+    conversation.updated_at = datetime.now(UTC)
+    db.commit()
+    return _conversation_view(db, conversation)
+
+
 @router.post(
     "/conversations/{conversation_id}/messages",
     response_model=ConversationTurnView,
@@ -3775,27 +3877,7 @@ def send_message(
             raise HTTPException(status_code=422, detail="previous_result_not_found")
         if source_operation.status not in {"completed", "awaiting_confirmation"}:
             raise HTTPException(status_code=409, detail="source_task_not_ready")
-    context = dict(conversation.context)
-    payload = payload.model_copy(
-        update={
-            "knowledge_source_ids": list(
-                dict.fromkeys(
-                    [
-                        *payload.knowledge_source_ids,
-                        *(UUID(str(item)) for item in context.get("knowledge_source_ids", [])),
-                    ]
-                )
-            ),
-            "document_ids": list(
-                dict.fromkeys(
-                    [
-                        *payload.document_ids,
-                        *(UUID(str(item)) for item in context.get("document_ids", [])),
-                    ]
-                )
-            ),
-        }
-    )
+    payload = _resolve_turn_attachments(db, conversation, payload)
     if not settings.is_agent_model_allowed(payload.model_id):
         raise HTTPException(status_code=422, detail="generation_model_not_configured")
     conversation.context = {
@@ -4479,22 +4561,18 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
                       "candidate_refs": dict(operation.target).get("candidate_refs", [])[i:i+100]}
                      for i in range(0, max(len(dict(operation.target).get("case_ids", [])),
                                           len(dict(operation.target).get("candidate_refs", []))), 100)]
+    fixed_scope = state["scope_resolved"] or (selection_changed and reply.scope_action != "replace")
     data = {**dict(user_message.message_metadata).get("request", {}),
-        "content": state["requirements"] if state["scope_resolved"] else state["scope_instruction"],
+        "content": state["requirements"] if fixed_scope else state["scope_instruction"],
         "intent_override": "CASE_MODIFY", "target_scope": "inferred",
         "targets": prior_targets, "target_case_ids": [], "target_candidate_snapshots": []}
     if selection_changed and reply.scope_action != "replace":
         data.update(targets=[item.model_dump(mode="json") for item in supplement.targets],
                     target_case_ids=[str(item) for item in supplement.target_case_ids],
                     target_candidate_snapshots=[item.model_dump(mode="json") for item in supplement.target_candidate_snapshots])
-    for key in ("knowledge_source_ids", "document_ids"):
-        data[key] = list(dict.fromkeys([
-            *data.get(key, []), *dict(conversation.context).get(key, []),
-        ]))
     if operation.payload.get("source_operation_id"):
         data["source_operation_id"] = operation.payload["source_operation_id"]
-    fixed_scope = state["scope_resolved"] or (selection_changed and reply.scope_action != "replace")
-    payload = ConversationMessageCreate.model_validate(data)
+    payload = _resolve_turn_attachments(db, conversation, ConversationMessageCreate.model_validate(data), resuming=True)
     operation.status = "running"
     assistant, action, task_name = _start_action(db, account, conversation, user_message, payload,
         "CASE_MODIFY", operation.confidence, operation.id,
@@ -4662,11 +4740,6 @@ def resume_conversation_operation(
                     ConversationTarget(kind="previous_result", source_operation_id=previous.id)
                 ]
     request_data = dict(dict(user_message.message_metadata).get("request", {}))
-    # Files may have been uploaded while the collection chooser was open.
-    for key in ("knowledge_source_ids", "document_ids"):
-        request_data[key] = list(dict.fromkeys([
-            *request_data.get(key, []), *dict(conversation.context).get(key, []),
-        ]))
     request_data.update(
         {
             "content": str(operation.payload.get("instruction") or user_message.content)
@@ -4732,7 +4805,7 @@ def resume_conversation_operation(
                     "请补充当前任务的目标和修改要求；新的任务请另行发送。"
                 ],
             }}
-    message_input = ConversationMessageCreate.model_validate(request_data)
+    message_input = _resolve_turn_attachments(db, conversation, ConversationMessageCreate.model_validate(request_data), resuming=True)
     message_input = _expand_conversation_targets(db, conversation, message_input)
     if supplement.intent is not None:
         operation.intent = supplement.intent

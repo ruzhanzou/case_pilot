@@ -319,9 +319,35 @@ def test_patch_rewrite_preserves_untouched_fields_and_does_not_request_full_outp
         k: v for k, v in after.items() if k != "steps"
     }
     schema = provider.calls[0]["result_type"].model_json_schema()
-    fields = schema["$defs"]["RewritePatchItem"]["properties"]
+    item_name = schema["properties"]["items"]["items"]["$ref"].rsplit("/", 1)[-1]
+    fields = schema["$defs"][item_name]["properties"]
+    changes_name = fields["changes"]["$ref"].rsplit("/", 1)[-1]
+    change_fields = schema["$defs"][changes_name]["properties"]
+    assert "source_refs" not in change_fields
+    assert "source_ref_indexes" in change_fields
     assert "changes" in fields
     assert "proposed" not in fields and "diff" not in fields
+
+
+def test_expected_delta_preserves_actions_and_rejects_whole_steps():
+    class ExpectedProvider(BatchProvider):
+        def complete(self, **kwargs):
+            result_type = kwargs['result_type']
+            item = {'ref': 'ref-0', 'changes': {'expected_updates': [
+                {'step_index': 0, 'expected': '原文规定的结果'}]},
+                'reason': '删除无依据断言', 'quality': {'passed': True, 'score': 90}}
+            from pydantic import ValidationError
+            with pytest.raises(ValidationError):
+                result_type.model_validate({'items': [{**item, 'changes': {
+                    'steps': [{'action': '修改操作', 'expected': '结果'}]}}]})
+            return result_type.model_validate({'items': [item]}), None
+    source = requests(1)
+    source['ref-0'].instruction = '核对预期，保留已有全部操作步骤'
+    original = source['ref-0'].test_case
+    result = GenerationPipeline(ExpectedProvider()).rewrite_many(source)['ref-0'].proposed
+    assert [s.action for s in result.steps] == [s.action for s in original.steps]
+    assert result.steps[0].expected == '原文规定的结果'
+    assert result.steps[1:] == original.steps[1:]
 
 
 def test_malformed_rewrite_splits_only_failed_batch_and_publishes_progress():

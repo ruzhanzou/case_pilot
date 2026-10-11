@@ -28,7 +28,7 @@ def request(count=12):
 
 def execute(stage, instruction, payload, result_type, model_id):
     if result_type is BatchAudit:
-        return BatchAudit(reviews=[{"slot": c["slot"], "verdict": "supported", "replacement": None, "reason": ""} for c in payload["test_cases"]])
+        return BatchAudit(reviews=[{"slot": c["slot"], "verdict": "supported", "replacement": None, "reason": "", "assertions": [{"step": i + 1, "source_index": 0, "quote": payload["grounding_sources"][0], "explanation": "测试审核桩"} for i, step in enumerate(c["steps"]) if step["expected"].strip()]} for c in payload["test_cases"]])
     return MockProvider().complete(stage=stage, instruction=instruction, payload=payload,
                                    result_type=result_type, model_id=model_id)[0]
 

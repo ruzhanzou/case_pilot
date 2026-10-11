@@ -47,6 +47,7 @@ type NewConversationProps = {
     content: string;
     modelId: AgentModelId;
   }) => Promise<void>;
+  onRemoveAttachment: (id: string) => Promise<void>;
   onUploadFiles: (files: File[], onProgress?: (percent: number) => void) => Promise<void>;
   onOpenLibrary: () => void;
   onOpenHistory: () => void;
@@ -101,6 +102,7 @@ export function NewConversation({
   collections,
   onSend,
   onUploadFiles,
+  onRemoveAttachment,
   onOpenLibrary,
   onOpenHistory,
   onConfirmCollection,
@@ -243,9 +245,9 @@ export function NewConversation({
               ))}
             </div>
           )}
-          <ConversationAttachments pending metadata={{ attachments: (
+          <ConversationAttachments pending disabled={saving} onRemove={id => { void onRemoveAttachment(id); }} metadata={{ attachments: (
             Array.isArray(conversation?.context.pending_attachments) ? conversation.context.pending_attachments : []
-          ).filter((file: { name: string }) => !attachments.some(local => local.name === file.name)) }} />
+          ).filter((file: { name: string }) => !attachments.some(local => local.name === file.name && local.status !== "failed")) }} />
       <textarea
         value={prompt}
         onChange={(event) => setPrompt(event.target.value)}

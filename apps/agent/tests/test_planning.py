@@ -107,21 +107,24 @@ def test_rewrite_reads_every_batch_before_extracting_affected_rules():
     seen = []
 
     def complete(stage, instruction, payload, result_type):
+        assert stage == "rewrite.evidence"
         assert payload["test_case"]["id"] == "selected-case"
+        assert payload["test_case"]["steps"] == [{"action": "提交"}]
         for item in payload["context"]["evidence"]:
             seen.append(item["chunk_id"])
         return RequirementAnalysis(summary="相关规则", business_rules=[f"规则{seen[-1]}"])
 
     result = rewrite_evidence(
         {"evidence": [{"chunk_id": str(i), "excerpt": "约束" * 6000} for i in range(15)]},
-        {"id": "selected-case"}, complete,
+        {"id": "selected-case", "steps": [{"action": "提交", "expected": "未经验证的状态"}]}, complete,
     )
     assert set(seen) == {str(i) for i in range(15)}
     assert result["processed_batches"] == 15
-    assert "规则14" in result["business_rules"]
+    assert result["business_rules"] == []  # Unverified paraphrases are not evidence.
+    assert len(result["evidence"]) == 15
 
 
-def test_requested_count_reports_uncovered_planning_points_without_discarding_results():
+def test_confirmed_points_supersede_earlier_requested_count():
     provider = MockProvider()
     request = GenerationRequest(prompt="为登录生成1条测试用例")
     baseline = provider.generate(request)
@@ -139,9 +142,9 @@ def test_requested_count_reports_uncovered_planning_points_without_discarding_re
         request.model_copy(update={"confirmed_plan": planning}), context={}, answers={},
         execute_stage=execute,
     )
-    assert result.quality.passed
-    assert len(result.test_cases) == 1
-    assert any(issue.code == "planned_point_uncovered" for issue in result.quality.issues)
+    assert len(result.test_cases) == len(baseline.test_points)
+    assert {p.id for p in baseline.test_points} == {p for c in result.test_cases for p in c.test_point_ids}
+    assert not any(issue.code in {"uncovered_test_point", "planned_point_uncovered"} for issue in result.quality.issues)
 
 
 def test_planning_batches_features_without_losing_ids_or_coverage():

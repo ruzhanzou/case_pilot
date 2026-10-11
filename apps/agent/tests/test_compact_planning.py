@@ -165,3 +165,38 @@ def test_fused_analysis_is_checkpointed_and_reused_on_retry(monkeypatch):
     assert 'feature.generated' not in calls
     assert store.job['status'] == 'completed'
     assert len(store.briefs[0]['planning']['feature_points']) == 2
+
+
+def test_global_rule_definition_canonicalizes_name_missing_from_local_slice():
+    quote = 'REFUND-2: 退款金额不得超过实付金额。'
+    evidence = [
+        {'document_id': 'doc', 'chunk_id': 'a', 'label': '退款',
+         'excerpt': quote + 'x' * 18000},
+        {'document_id': 'doc', 'chunk_id': 'b', 'label': '退款', 'excerpt': '续页样例'},
+    ]
+    from casepilot_agent.planning import evidence_batches
+    plans = []
+    for i, batch in enumerate(evidence_batches({'evidence': evidence})):
+        feature = features(1).feature_points[0]
+        feature.name = ('REFUND-2 退款金额不得超过实付金额' if i == 0
+                        else 'REFUND-2: 退款金额不得超过实付金额')
+        feature.module = '退款'
+        feature.requirement_refs = ['REFUND-2']
+        feature.source_refs = [SourceRef(**{**batch['evidence'][0], 'excerpt': quote})]
+        plans.append(FeaturePlan(feature_points=[feature]))
+    result = build_planning(RequirementAnalysis(summary='退款'), {'evidence': evidence},
+                            lambda stage, instruction, payload, result_type: points(payload),
+                            feature_plans=plans, target_count=1)
+    assert len(result['feature_points']) == len(result['test_points']) == 1
+
+
+def test_truncated_sample_is_not_a_conflicting_rule_definition():
+    from casepilot_agent.planning import source_rule_name
+    feature = features(1).feature_points[0]
+    feature.requirement_refs = ['REFUND-2']
+    context = {'evidence': [{'excerpt':
+        'REFUND-2: 退款金额不得超过实付金额。\n'
+        '样例适用规则REFUND-2：退款金额不得超过实付金\n本章末尾规则复核：\n'}]}
+    assert source_rule_name(feature, context) == 'REFUND-2 退款金额不得超过实付金额'
+    context['evidence'].append({'excerpt': 'REFUND-2: 退款金额不得超过100元。'})
+    assert source_rule_name(feature, context) is None

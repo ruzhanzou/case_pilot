@@ -1,9 +1,12 @@
 import asyncio
 import json
+import re
 from collections.abc import Callable
 from time import monotonic
 from typing import TypeVar
 from urllib.parse import urlparse
+
+import httpx
 
 from pydantic import BaseModel
 
@@ -18,6 +21,7 @@ from casepilot_agent.contracts import (
     UsageMetadata,
 )
 from casepilot_agent.skills import load_test_case_generation_skill
+from casepilot_agent.providers.structured_output import recovering_output_schema
 
 
 def _response_options(base_url: str, stage: str) -> dict:
@@ -26,7 +30,7 @@ def _response_options(base_url: str, stage: str) -> dict:
     # Keep scenario design, audits and other providers on their existing behavior.
     host = urlparse(base_url).hostname or ""
     if host.endswith(".volces.com") and host.startswith("ark.") and stage in {
-        "rewrite.batch", "test_case.rewritten", "requirement.extracted",
+        "rewrite.batch", "rewrite.evidence", "test_case.rewritten", "requirement.extracted",
     }:
         options["thinking"] = {"type": "disabled"}
     return options
@@ -72,6 +76,7 @@ class AgentsSdkProvider:
         self.available_models = frozenset(available_models)
         self.tracing_enabled = tracing_enabled
         self._degraded_models: set[str] = set()
+        self._prefer_pro_rewrite = False
 
     @property
     def name(self) -> str:
@@ -109,13 +114,28 @@ class AgentsSdkProvider:
 
         set_tracing_disabled(not self.tracing_enabled)
         resolved_model = self.resolve_model(model_id)
+        evidence_review = any(
+            item.get("context", {}).get("evidence")
+            or item.get("context", {}).get("evidence_ref_indexes")
+            for item in payload.get("shared", [])
+        ) and any(re.search(r"核对|原文|依据|预期|校验|expected|evidence|assertion|verify",
+                            str(item.get("instruction", "")), re.I)
+                  for item in payload.get("shared", []))
+        if model_id == "auto" and (
+            stage == "test_case.grounded"
+            or (stage == "rewrite.batch" and (self._prefer_pro_rewrite or evidence_review))
+        ):
+            # Evidence verification needs the configured quality model. Do not
+            # silently downgrade a semantic review to the failed fast reviewer.
+            resolved_model = self.pro_model
+            allow_model_fallback = False
         if (
             allow_model_fallback
             and resolved_model in self._degraded_models
             and stage.startswith(_STRUCTURED_GENERATION_STAGE_PREFIXES)
         ):
             resolved_model = self.model
-        compact = payload.get("output_contract") == "case_batch_v2"
+        compact = payload.get("output_contract") == "case_batch_v2" or stage == "rewrite.batch"
         stage_timeout = (
             self.generation_timeout
             if stage.startswith(("test_case.", "enhancement.", "rewrite.batch"))
@@ -197,48 +217,65 @@ class AgentsSdkProvider:
             # Several domain contracts intentionally contain defaults and optional
             # fields that are valid Pydantic schemas but not strict JSON schemas.
             # Keep SDK-side parsing/validation without rejecting those contracts.
-            output_type=AgentOutputSchema(result_type, strict_json_schema=False),
+            output_type=recovering_output_schema(AgentOutputSchema, result_type),
         )
         started_at = monotonic()
         prompt = json.dumps(
             {"stage": stage, "task": instruction, "input": payload},
             ensure_ascii=False,
         )
-        try:
-            for attempt in range(1 if compact else 2):
-                try:
-                    result = Runner.run_sync(agent, prompt, max_turns=3)
-                    break
-                except APITimeoutError:
-                    # Generation has no external writes before validation. Retry
-                    # a transient default-model timeout once, within this stage.
-                    if (compact or attempt == 1 or resolved_model != self.model
-                            or not stage.startswith(_STRUCTURED_GENERATION_STAGE_PREFIXES)):
-                        raise
-                except ModelBehaviorError:
-                    if compact or attempt == 1 or (
-                        allow_model_fallback and resolved_model != self.model
-                    ):
-                        raise
-                    prompt += (
-                        "\n上一次输出未通过 JSON Schema 校验。请逐字段核对字段名、"
-                        "必填项与数据类型，并只返回修正后的完整 JSON 对象。"
+        async def run_once():
+            try:
+                return await asyncio.wait_for(Runner.run(agent, prompt, max_turns=3), timeout)
+            except TimeoutError as error:
+                raise APITimeoutError(request=httpx.Request("POST", self.base_url)) from error
+
+        # A transport read timeout resets when bytes arrive. Bound the entire
+        # invocation, including slow streaming responses, and close its client.
+        with asyncio.Runner() as loop_runner:
+            try:
+                for attempt in range(1 if compact else 2):
+                    try:
+                        result = loop_runner.run(run_once())
+                        break
+                    except APITimeoutError:
+                        # Generation has no external writes before validation. Retry
+                        # a transient default-model timeout once, within this stage.
+                        if (compact or attempt == 1 or resolved_model != self.model
+                                or not stage.startswith(_STRUCTURED_GENERATION_STAGE_PREFIXES)):
+                            raise
+                    except ModelBehaviorError:
+                        if compact or attempt == 1 or (
+                            allow_model_fallback and resolved_model != self.model
+                        ):
+                            raise
+                        prompt += (
+                            "\n上一次输出未通过 JSON Schema 校验。请逐字段核对字段名、"
+                            "必填项与数据类型，并只返回修正后的完整 JSON 对象。"
+                        )
+            except (APITimeoutError, ModelBehaviorError):
+                quality_fallback = (allow_model_fallback and stage == "rewrite.batch"
+                                    and model_id == "auto" and resolved_model == self.model
+                                    and self.pro_model != self.model)
+                if quality_fallback or (allow_model_fallback and resolved_model != self.model):
+                    if quality_fallback:
+                        self._prefer_pro_rewrite = True
+                    else:
+                        self._degraded_models.add(resolved_model)
+                    fallback_result, fallback_usage = self._run(
+                        stage=stage,
+                        instruction=instruction,
+                        payload=payload,
+                        result_type=result_type,
+                        model_id="test-design-pro" if quality_fallback else self.model,
+                        allow_model_fallback=False,
                     )
-        except (APITimeoutError, ModelBehaviorError):
-            if allow_model_fallback and resolved_model != self.model:
-                self._degraded_models.add(resolved_model)
-                fallback_result, fallback_usage = self._run(
-                    stage=stage,
-                    instruction=instruction,
-                    payload=payload,
-                    result_type=result_type,
-                    model_id=self.model,
-                    allow_model_fallback=False,
-                )
-                # Include the failed first model in the stage's wall-clock latency.
-                fallback_usage.latency_ms = int((monotonic() - started_at) * 1000)
-                return fallback_result, fallback_usage
-            raise
+                    # Include the failed first model in the stage's wall-clock latency.
+                    fallback_usage.latency_ms = int((monotonic() - started_at) * 1000)
+                    return fallback_result, fallback_usage
+                raise
+            finally:
+                loop_runner.run(client.close())
         usage = result.context_wrapper.usage
         token_usage = {
             "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),

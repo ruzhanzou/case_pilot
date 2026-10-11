@@ -329,7 +329,7 @@ def _context_payload(
     query = " ".join(
         item
         for item in (
-            str(payload.get("prompt", "")),
+            str(payload.get("prompt") or payload.get("instruction", "")),
             str(payload.get("markdown_content", ""))[:3000],
         )
         if item
@@ -595,12 +595,13 @@ def _apply_persisted_asset_quality(
             )
     errors = [issue for issue in result.quality.issues if issue.severity == "error"]
     result.quality.passed = not errors
-    result.quality.score = max(
+    result.quality.structural_passed = not errors
+    result.quality.score = min(result.quality.score, max(
         0,
         100
         - len(errors) * 25
         - len([issue for issue in result.quality.issues if issue.severity != "error"]) * 8,
-    )
+    ))
 
 
 @celery_app.task(name="casepilot.agent.draft_brief")
@@ -1014,15 +1015,20 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
                     stage,
                     cache_input,
                 )
+            from casepilot_agent.compact_generation import validate_stage_result
             if completed:
-                result = result_type.model_validate(completed["output_payload"])
+                try:
+                    result = validate_stage_result(result_type.model_validate(completed["output_payload"]), stage_input)
+                except ValueError:
+                    completed = None
                 usage = None
-            else:
+            if not completed:
                 try:
                     result, usage = provider.complete(
                         stage=stage, instruction=instruction, payload=stage_input,
                         result_type=result_type, model_id=model_id,
                     )
+                    validate_stage_result(result, stage_input)
                 except BaseException:
                     with progress_lock:
                         if compact:
@@ -1190,7 +1196,7 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
                 job,
                 content=(
                     f"已生成 {len(output['test_cases'])} 条候选用例，"
-                    f"质量评分 {output['quality']['score']}。请逐条确认后再写入用例集。"
+                    f"自动检查评分 {output['quality']['score']}。请逐条确认业务预期后再写入用例集。"
                 ),
                 metadata_values={
                     "job_id": job_id,
@@ -1301,12 +1307,111 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
 def _rewrite_reference_context(store, job, pipeline, context, snapshot):
     def complete(stage, instruction, inputs, result_type):
         ensure_not_cancelled(store, job["id"])
-        result, _usage = pipeline.provider.complete(
-            stage=stage, instruction=instruction, payload=inputs,
-            result_type=result_type, model_id=str(job["input_payload"].get("model_id", "auto")),
+        model_id = str(job["input_payload"].get("model_id", "auto"))
+        cache_input = {
+            **inputs,
+            "_execution_contract": sha256(
+                json.dumps(
+                    {
+                        "instruction": instruction,
+                        "schema": result_type.model_json_schema(),
+                        "model": model_id,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ).encode()
+            ).hexdigest(),
+        }
+        with store.connection() as connection:
+            completed = store.load_completed_stage(connection, job["id"], stage, cache_input)
+        if completed:
+            try:
+                return result_type.model_validate(completed["output_payload"])
+            except ValueError:
+                pass
+        result, usage = pipeline.provider.complete(
+            stage=stage,
+            instruction=instruction,
+            payload=inputs,
+            result_type=result_type,
+            model_id=model_id,
         )
+        with store.connection() as connection:
+            lock_active_job(store, connection, job["id"])
+            store.record_stage(
+                connection,
+                job_id=job["id"],
+                stage=stage,
+                input_payload=cache_input,
+                output_payload=result.model_dump(mode="json"),
+                status="completed",
+                model=usage.model,
+                latency_ms=usage.latency_ms,
+                token_usage=usage.token_usage,
+            )
         return result
+
     return rewrite_evidence(context, snapshot, complete)
+
+
+def _record_rewrite_usage(store, job, inputs, result, usage):
+    with store.connection() as connection:
+        lock_active_job(store, connection, job["id"])
+        store.record_stage(
+            connection,
+            job_id=job["id"],
+            stage="rewrite.batch",
+            input_payload=inputs,
+            output_payload=result.model_dump(mode="json"),
+            status="completed",
+            model=usage.model,
+            latency_ms=usage.latency_ms,
+            token_usage=usage.token_usage,
+        )
+
+
+def _prepare_rewrite_requests(store, job, pipeline, requests):
+    from casepilot_agent.pipeline import _explicit_rewrite_candidate
+
+    pending = {
+        ref: request
+        for ref, request in requests.items()
+        if _explicit_rewrite_candidate(request) is None
+    }
+    payload = job["input_payload"]
+    if not pending or not (
+        payload.get("document_ids")
+        or payload.get("knowledge_source_ids")
+        or payload.get("use_space_knowledge", True)
+    ):
+        return requests
+    context = _context_payload(store, job, None, full_documents=True)
+    # Read each source batch once for the selected set, not once per case.
+    groups, current, size = [], [], 0
+    for ref, request in pending.items():
+        # Source excerpts are supplied once in each evidence batch. Repeating
+        # them in every selected case multiplies both input tokens and groups.
+        snapshot = {"ref": ref, "test_case": request.test_case.model_dump(
+            mode="json", exclude={"source_refs"})}
+        item_size = len(json.dumps(snapshot, ensure_ascii=False))
+        if item_size > 60000:
+            raise ValueError("单条用例过大，无法完整核对资料，请缩小用例内容")
+        if current and size + item_size > 60000:
+            groups.append(current)
+            current, size = [], 0
+        current.append(snapshot)
+        size += item_size
+    if current:
+        groups.append(current)
+    prepared = dict(requests)
+    for snapshots in groups:
+        reference = _rewrite_reference_context(
+            store, job, pipeline, context, {"selected_cases": snapshots}
+        )
+        for snapshot in snapshots:
+            ref = snapshot["ref"]
+            prepared[ref] = requests[ref].model_copy(update={"context": reference})
+    return prepared
 
 
 @celery_app.task(name="casepilot.agent.rewrite")
@@ -1325,21 +1430,15 @@ def rewrite_test_case(job_id: str) -> dict[str, Any]:
                 UUID(payload["base_revision_id"]),
             )
         pipeline = GenerationPipeline(create_provider(settings.provider))
-        reference_context = (
-            _context_payload(store, job, None, full_documents=True)
-            if payload.get("document_ids") else {}
+        request = RewriteRequest(
+            test_case=RewriteCaseDraft.model_validate(snapshot),
+            instruction=payload["instruction"],
+            conversation_memory=list(payload.get("conversation_memory", [])),
+            model_id=payload.get("model_id", "auto"),
         )
-        candidate = pipeline.rewrite(
-            RewriteRequest(
-                context=_rewrite_reference_context(
-                    store, job, pipeline, reference_context, snapshot
-                ),
-                test_case=RewriteCaseDraft.model_validate(snapshot),
-                instruction=payload["instruction"],
-                conversation_memory=list(payload.get("conversation_memory", [])),
-                model_id=payload.get("model_id", "auto"),
-            )
-        )
+        prepared = _prepare_rewrite_requests(store, job, pipeline, {"single": request})
+        candidate = pipeline.rewrite_many(prepared, before_batch=lambda: ensure_not_cancelled(store, parsed_job_id),
+            on_usage=lambda inputs, result, usage: _record_rewrite_usage(store, job, inputs, result, usage))["single"]
         output = candidate.model_dump(mode="json")
         with store.connection() as connection:
             lock_active_job(store, connection, parsed_job_id)
@@ -1404,10 +1503,6 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
                 return {"job_id": job_id, "status": "duplicate_ignored"}
             payload = job["input_payload"]
         pipeline = GenerationPipeline(create_provider(settings.provider))
-        reference_context = (
-            _context_payload(store, job, None, full_documents=True)
-            if payload.get("document_ids") else {}
-        )
         items: list[dict[str, Any]] = []
         instruction = str(payload["instruction"])
         previous_proposals = dict(payload.get("previous_proposals", {}))
@@ -1422,7 +1517,6 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
             working = previous["proposed_snapshot"] if previous and previous.get("status") not in {"applied", "rejected"} else base
             preview_bases[ref] = (base, "formal", {"test_case_id": ref, "base_revision_id": target["base_revision_id"]})
             requests[ref] = RewriteRequest(
-                context=_rewrite_reference_context(store, job, pipeline, reference_context, working),
                 test_case=RewriteCaseDraft.model_validate(working), instruction=instruction,
                 conversation_memory=list(payload.get("conversation_memory", [])),
                 model_id=str(payload.get("model_id", "auto")),
@@ -1433,11 +1527,12 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
             working = previous["proposed_snapshot"] if previous and previous.get("status") not in {"applied", "rejected"} else target["snapshot"]
             preview_bases[ref] = (target["snapshot"], "candidate", {"base_version": int(target.get("version", 1))})
             requests[ref] = RewriteRequest(
-                context=_rewrite_reference_context(store, job, pipeline, reference_context, working),
                 test_case=_candidate_snapshot_to_draft(ref, working), instruction=instruction,
                 conversation_memory=list(payload.get("conversation_memory", [])),
                 model_id=str(payload.get("model_id", "auto")),
             )
+        requests = _prepare_rewrite_requests(store, job, pipeline, requests)
+
         def publish_rewrite_batch(completed, total):
             preview_items = []
             for ref, candidate in completed.items():
@@ -1469,6 +1564,7 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
         rewritten = pipeline.rewrite_many(
             requests, before_batch=lambda: ensure_not_cancelled(store, parsed_job_id),
             on_batch=publish_rewrite_batch,
+            on_usage=lambda inputs, result, usage: _record_rewrite_usage(store, job, inputs, result, usage),
         )
         for target in payload.get("formal_targets", []):
             ensure_not_cancelled(store, parsed_job_id)

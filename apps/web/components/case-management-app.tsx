@@ -31,6 +31,7 @@ import {
   updateCollection,
   updateTestCase,
   uploadConversationAttachments,
+  detachConversationAttachment,
   waitForKnowledgeSource,
   waitForConversationJob,
   type Account,
@@ -1140,6 +1141,16 @@ export function CaseManagementApp({
             conversation={landingConversation}
             collections={collections}
             onSend={sendNewConversationMessage}
+            onRemoveAttachment={async (id) => {
+              if (!landingConversation || saving) return;
+              setSaving(true);
+              try {
+                setLandingConversation(await detachConversationAttachment(landingConversation.id, id));
+                setError("");
+              } catch (caught) {
+                setError(caught instanceof Error ? caught.message : pick("Failed to remove attachment", "附件移除失败"));
+              } finally { setSaving(false); }
+            }}
             onUploadFiles={uploadNewConversationFiles}
             onOpenLibrary={() => setPage("library")}
             onOpenHistory={() => setHistoryOpen(true)}

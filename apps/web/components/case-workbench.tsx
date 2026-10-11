@@ -44,6 +44,7 @@ import {
   updateWorkspaceCandidate,
   updateWorkspaceState,
   uploadConversationAttachments,
+  detachConversationAttachment,
   waitForKnowledgeSource,
   watchGeneration,
   type AgentModelId,
@@ -956,6 +957,19 @@ export function CaseWorkbench({
       if (promptSaveTimer.current) clearTimeout(promptSaveTimer.current);
     };
   }, [prompt, workspace]);
+
+  const removeAttachment = async (documentId: string) => {
+    if (!workspace || conversationRunning || uploading) return;
+    setUploading(true);
+    try {
+      const saved = await detachConversationAttachment(workspace.id, documentId);
+      setWorkspace(saved);
+      setSourceIds((current) => current.filter(id => (saved.context.knowledge_source_ids as string[] | undefined)?.includes(id)));
+      setError("");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : pick("Failed to remove attachment", "附件移除失败"));
+    } finally { setUploading(false); }
+  };
 
   const handleFiles = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
@@ -2118,9 +2132,9 @@ export function CaseWorkbench({
               ))}
             </div>
           )}
-          <ConversationAttachments pending metadata={{ attachments: (
+          <ConversationAttachments pending onRemove={id => { void removeAttachment(id); }} disabled={conversationRunning || uploading} metadata={{ attachments: (
             Array.isArray(workspace?.context.pending_attachments) ? workspace.context.pending_attachments : []
-          ).filter((file: { name: string }) => !attachments.some(local => local.name === file.name)) }} />
+          ).filter((file: { name: string }) => !attachments.some(local => local.name === file.name && local.status !== "failed")) }} />
           {resumeTaskId && <div className="case-conversation-running"><span>{pick("Replying to task clarification", "正在补充当前任务信息")}</span><button type="button" disabled={conversationRunning} onClick={() => setResumeTaskId("")}>{pick("Cancel reply", "取消补充")}</button></div>}
           {conversationRunning && <div className="case-conversation-running" role="status">
             <LoaderCircle size={16} className="auth-spinner" />

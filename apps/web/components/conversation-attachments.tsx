@@ -1,9 +1,9 @@
 "use client";
 
-import { FileUp, CheckCircle2, CircleAlert, LoaderCircle } from "lucide-react";
+import { FileUp, CheckCircle2, CircleAlert, LoaderCircle, X } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 
-export function ConversationAttachments({ metadata, pending = false }: { metadata: Record<string, unknown>; pending?: boolean }) {
+export function ConversationAttachments({ metadata, pending = false, onRemove, disabled = false }: { metadata: Record<string, unknown>; pending?: boolean; onRemove?: (id: string) => void; disabled?: boolean }) {
   const { pick } = useI18n();
   const files = Array.isArray(metadata.attachments) ? metadata.attachments : [];
   if (!files.length) return null;
@@ -21,6 +21,7 @@ export function ConversationAttachments({ metadata, pending = false }: { metadat
         {file.status === "ready" ? <CheckCircle2 size={17} aria-hidden="true" />
           : file.status === "failed" ? <CircleAlert size={17} aria-hidden="true" />
             : <LoaderCircle size={17} className="auth-spinner" aria-hidden="true" />}
+        {onRemove && <button type="button" disabled={disabled} onClick={() => onRemove(file.id)} aria-label={pick(`Remove ${file.name}`, `移除 ${file.name}`)}><X size={16} aria-hidden="true" /></button>}
       </div>
     ))}
   </div>;

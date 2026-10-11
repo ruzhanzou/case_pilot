@@ -364,6 +364,8 @@ export type GenerationCompleted = {
   test_points: { id: string; title: string }[];
   test_cases: AgentTestCaseDraft[];
   quality: {
+    structural_passed?: boolean | null;
+    grounding_status?: "unverified" | "model_reviewed";
     passed: boolean;
     score: number;
     issues: { message: string }[];
@@ -778,6 +780,7 @@ export type ExecutionRunSummaryDto = Omit<
 };
 
 const publicErrors: Record<string, string> = {
+  attachment_not_ready_or_expired: "所选附件尚未解析完成、解析失败或已失效，请等待解析完成或移除后重新上传。",
   provider_temporarily_unavailable: "模型服务暂时不可用，请稍后重试。",
   provider_response_invalid: "模型返回内容暂时无法解析，请重试或更换模型。",
   generation_quality_blocked: "生成内容未通过质量检查，请补充需求后重试。",
@@ -1121,6 +1124,10 @@ export function bindConversationCollection(
   });
 }
 
+export function detachConversationAttachment(conversationId: string, documentId: string): Promise<ConversationDto> {
+  return apiRequest(`/api/v1/conversations/${conversationId}/attachments/${documentId}`, { method: "DELETE" });
+}
+
 export async function uploadConversationAttachments(
   conversationId: string,
   files: File[],
@@ -1277,6 +1284,7 @@ export function sendConversationMessage(
     knowledgeSourceIds?: string[];
     documentIds?: string[];
     useSpaceKnowledge?: boolean;
+    inheritAttachments?: boolean;
     intentOverride?: ConversationIntent;
     targetScope?: "inferred" | "selected";
     targets?: ConversationTarget[];
@@ -1295,6 +1303,7 @@ export function sendConversationMessage(
       knowledge_source_ids: input.knowledgeSourceIds ?? [],
       document_ids: input.documentIds ?? [],
       use_space_knowledge: input.useSpaceKnowledge ?? true,
+      inherit_attachments: input.inheritAttachments ?? true,
       intent_override: input.intentOverride,
       target_scope: input.targetScope ?? "inferred",
       targets: input.targets ?? [],

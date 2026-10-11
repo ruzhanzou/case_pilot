@@ -3,6 +3,11 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+class FakeAPITimeoutError(TimeoutError):
+    def __init__(self, *args, request=None):
+        super().__init__(*args)
+
+
 from casepilot_agent.contracts import KnowledgeAnswer
 from casepilot_agent.providers.agents_sdk import AgentsSdkProvider
 
@@ -21,6 +26,9 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
     openai = ModuleType("openai")
 
     class FakeClient:
+        async def close(self):
+            pass
+
         def __init__(self, **kwargs) -> None:
             captured["client"] = kwargs
 
@@ -38,6 +46,10 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
             self.strict_json_schema = strict_json_schema
 
     class FakeRunner:
+        @staticmethod
+        async def run(agent, prompt, max_turns):
+            return FakeRunner.run_sync(agent, prompt, max_turns)
+
         @staticmethod
         def run_sync(agent, prompt, max_turns):
             captured["prompt"] = prompt
@@ -66,7 +78,7 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
         tracing_disabled=disabled
     )
     openai.AsyncOpenAI = FakeClient
-    openai.APITimeoutError = TimeoutError
+    openai.APITimeoutError = FakeAPITimeoutError
     monkeypatch.setitem(sys.modules, "agents", agents)
     monkeypatch.setitem(sys.modules, "openai", openai)
 
@@ -130,6 +142,9 @@ def test_agents_sdk_provider_uses_fast_fallback_for_structured_generation(
         pass
 
     class FakeClient:
+        async def close(self):
+            pass
+
         def __init__(self, **kwargs) -> None:
             captured["client"] = kwargs
             captured["client_timeouts"].append(kwargs["timeout"])
@@ -147,6 +162,10 @@ def test_agents_sdk_provider_uses_fast_fallback_for_structured_generation(
             pass
 
     class FakeRunner:
+        @staticmethod
+        async def run(agent, prompt, max_turns):
+            return FakeRunner.run_sync(agent, prompt, max_turns)
+
         @staticmethod
         def run_sync(agent, prompt, max_turns):
             nonlocal calls
@@ -169,7 +188,7 @@ def test_agents_sdk_provider_uses_fast_fallback_for_structured_generation(
     agents.Runner = FakeRunner
     agents.set_tracing_disabled = lambda disabled: None
     openai.AsyncOpenAI = FakeClient
-    openai.APITimeoutError = TimeoutError
+    openai.APITimeoutError = FakeAPITimeoutError
     monkeypatch.setitem(sys.modules, "agents", agents)
     monkeypatch.setitem(sys.modules, "openai", openai)
 
@@ -208,6 +227,9 @@ def test_agents_sdk_provider_streams_text_deltas(
     openai = ModuleType("openai")
 
     class FakeClient:
+        async def close(self):
+            pass
+
         def __init__(self, **kwargs) -> None:
             captured["client"] = kwargs
 
@@ -301,6 +323,9 @@ def test_agents_sdk_provider_skips_degraded_model_for_later_generation_stages(
     openai = ModuleType("openai")
 
     class FakeClient:
+        async def close(self):
+            pass
+
         def __init__(self, **kwargs) -> None:
             captured["timeouts"].append(kwargs["timeout"])
 
@@ -318,6 +343,10 @@ def test_agents_sdk_provider_skips_degraded_model_for_later_generation_stages(
             pass
 
     class FakeRunner:
+        @staticmethod
+        async def run(agent, prompt, max_turns):
+            return FakeRunner.run_sync(agent, prompt, max_turns)
+
         @staticmethod
         def run_sync(agent, prompt, max_turns):
             if agent.model.name == "local":
@@ -337,7 +366,7 @@ def test_agents_sdk_provider_skips_degraded_model_for_later_generation_stages(
     agents.Runner = FakeRunner
     agents.set_tracing_disabled = lambda disabled: None
     openai.AsyncOpenAI = FakeClient
-    openai.APITimeoutError = TimeoutError
+    openai.APITimeoutError = FakeAPITimeoutError
     monkeypatch.setitem(sys.modules, "agents", agents)
     monkeypatch.setitem(sys.modules, "openai", openai)
 
@@ -384,7 +413,7 @@ def test_batch_instruction_is_scoped_to_one_existing_case(monkeypatch):
     )
     captured = {}
 
-    def run(agent, prompt, **kwargs):
+    async def run(agent, prompt, **kwargs):
         captured.update(
             instructions=agent.instructions,
             prompt=json.loads(prompt),
@@ -397,7 +426,7 @@ def test_batch_instruction_is_scoped_to_one_existing_case(monkeypatch):
     def no_generation_skill():
         raise AssertionError("Existing-case rewrite must not load new-case generation rules")
 
-    monkeypatch.setattr(Runner, "run_sync", run)
+    monkeypatch.setattr(Runner, "run", run)
     monkeypatch.setattr(agents_sdk, "load_test_case_generation_skill", no_generation_skill)
     provider = AgentsSdkProvider(
         base_url="https://example.test/v1",
@@ -428,3 +457,65 @@ def test_ark_rewrite_uses_fast_inference_without_affecting_other_stages():
     assert "thinking" not in _response_options(ark, "requirement.analyzed")
     assert "thinking" not in _response_options("https://api.openai.com/v1", "rewrite.batch")
     assert "thinking" not in _response_options("https://ark.volces.com.example.org/v1", "rewrite.batch")
+
+
+def test_structured_call_has_wall_clock_deadline(monkeypatch):
+    import asyncio
+    import time
+    from agents import Runner
+    from openai import APITimeoutError
+    cancelled = []
+    async def slow(*args, **kwargs):
+        try:
+            await asyncio.sleep(10)
+        finally:
+            cancelled.append(True)
+    monkeypatch.setattr(Runner, 'run', slow)
+    provider = AgentsSdkProvider(base_url='https://example.test/v1',api_key='test-only',
+        model='same',pro_model='same',local_model='same',timeout=0.01,generation_timeout=0.01)
+    started = time.monotonic()
+    with pytest.raises(APITimeoutError):
+        provider.complete(stage='rewrite.batch', instruction='修改',payload={'items':[]},
+                          result_type=KnowledgeAnswer,model_id='auto')
+    assert cancelled == [True]
+    assert time.monotonic()-started < 1
+
+
+def test_auto_rewrite_falls_back_once_and_reuses_backup_model(monkeypatch):
+    from agents import Runner
+    from agents.exceptions import ModelBehaviorError
+    models=[]
+    async def run(agent,*args,**kwargs):
+        models.append(agent.model.model)
+        if agent.model.model=='fast':raise ModelBehaviorError('invalid output')
+        return SimpleNamespace(final_output=KnowledgeAnswer(answer='有效结果'),
+                               context_wrapper=SimpleNamespace(usage=SimpleNamespace()))
+    monkeypatch.setattr(Runner,'run',run)
+    provider=AgentsSdkProvider(base_url='https://example.test/v1',api_key='test-only',
+        model='fast',pro_model='backup',local_model='fast',timeout=5)
+    for _ in range(2):
+        result,usage=provider.complete(stage='rewrite.batch',instruction='修改',payload={'items':[]},
+                                      result_type=KnowledgeAnswer,model_id='auto')
+        assert usage.model=='backup'
+    assert models==['fast','backup','backup']
+
+
+@pytest.mark.parametrize('stage,model_id,expected', [
+    ('test_case.grounded', 'auto', 'quality'),
+    ('rewrite.batch', 'auto', 'quality'),
+    ('rewrite.batch', 'test-design-fast', 'fast'),
+])
+def test_evidence_review_uses_quality_model_only_in_auto_mode(monkeypatch, stage, model_id, expected):
+    from agents import Runner
+    models = []
+    async def run(agent, *args, **kwargs):
+        models.append(agent.model.model)
+        return SimpleNamespace(final_output=KnowledgeAnswer(answer='结果'),
+                               context_wrapper=SimpleNamespace(usage=SimpleNamespace()))
+    monkeypatch.setattr(Runner, 'run', run)
+    provider = AgentsSdkProvider(base_url='https://example.test/v1', api_key='test-only',
+        model='fast', pro_model='quality', local_model='fast', timeout=5)
+    provider.complete(stage=stage, instruction='核对预期',
+        payload={'shared': [{'instruction': '核对预期', 'context': {'evidence_ref_indexes': [0]}}]},
+        result_type=KnowledgeAnswer, model_id=model_id)
+    assert models == [expected]
