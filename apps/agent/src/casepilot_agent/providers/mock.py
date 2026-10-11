@@ -191,7 +191,7 @@ class MockProvider:
             result = CaseAnalysisReport(
                 summary="模拟评审完成", findings=[], limitations=["模拟模式不执行语义评审"]
             )
-        elif result_type is RequirementAnalysis:
+        elif issubclass(result_type, RequirementAnalysis):
             requirement = baseline.requirement
             current_test_brief = payload.get("current_test_brief")
             if isinstance(current_test_brief, dict):
@@ -265,7 +265,10 @@ class MockProvider:
             if answered_object:
                 requirement.test_object = answered_object
                 requirement.test_object_specified = True
-            result: Any = requirement
+            result: Any = result_type.model_validate({
+                **requirement.model_dump(),
+                "feature_points": [feature.model_dump() for feature in baseline.feature_points],
+            })
         elif result_type is FeaturePlan:
             result = FeaturePlan(feature_points=baseline.feature_points)
         elif issubclass(result_type, TestPointPlan):

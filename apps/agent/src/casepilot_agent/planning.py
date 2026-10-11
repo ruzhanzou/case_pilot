@@ -14,6 +14,7 @@ from pydantic import Field, create_model, model_validator
 from casepilot_agent.contracts import (
     CASE_DESIGN_INSTRUCTION,
     FeaturePlan,
+    FeaturePoint,
     RequirementAnalysis,
     SourceRef,
     TestPoint,
@@ -121,6 +122,59 @@ POINTS_PER_BATCH = 12
 MAX_CONSOLIDATED_EVIDENCE_CHARS = 180000
 
 
+class PlanningAnalysis(RequirementAnalysis):
+    """Extract requirements and their features in one pass over large documents."""
+
+    feature_points: list[FeaturePoint] = Field(default_factory=list)
+
+
+def compact_planning_context(common, features):
+    """Use verified quotations plus extracted rules, falling back on missing citations.
+
+    Original evidence stays in the persisted plan. Never trust a model's source
+    identifiers or substitute an unverified quotation for the source text.
+    """
+    evidence = common["context"].get("evidence", [])
+    selected = []
+    for feature in features:
+        matched = []
+        for ref in feature.source_refs:
+            # Providers occasionally normalize terminal punctuation. Match the
+            # remaining text literally; the returned excerpt is always original.
+            quote = ref.excerpt.strip().rstrip("。.；;")
+            if len(quote) < 4:
+                return common
+            ref_matched = False
+            for source in evidence:
+                if (not (ref.document_id or ref.chunk_id or ref.source_id)
+                        and ref.label != source.get("label")):
+                    continue
+                if any(getattr(ref, key) and getattr(ref, key) != source.get(key)
+                       for key in ("source_id", "document_id", "chunk_id")):
+                    continue
+                text = str(source.get("excerpt", ""))
+                # ASCII/full-width colons occupy one character, so offsets still
+                # refer to the original text and no rule content is rewritten.
+                start = text.replace("：", ":").find(quote.replace("：", ":"))
+                if start < 0:
+                    continue
+                # Keep nearby exceptions/qualifications, not just the cited sentence.
+                excerpt = text[max(0, start - 240):start + len(quote) + 240]
+                matched.append({**source, "excerpt": excerpt})
+                ref_matched = True
+            if not ref_matched:
+                return common
+        if not matched:
+            return common
+        selected.extend(matched)
+    unique = {json.dumps(item, sort_keys=True): item for item in selected}
+    if not unique or sum(len(item["excerpt"]) for item in unique.values()) >= sum(
+        len(str(item.get("excerpt", ""))) for item in evidence
+    ):
+        return common
+    return {**common, "context": {**common["context"], "evidence": list(unique.values())}}
+
+
 def build_planning(
     requirement: RequirementAnalysis,
     context: dict[str, Any],
@@ -130,6 +184,7 @@ def build_planning(
     target_count=None,
     on_progress=None,
     on_feature_progress=None,
+    feature_plans=None,
     check_cancelled=lambda: None,
 ):
     """Plan disjoint feature groups concurrently; publish validated, stable snapshots."""
@@ -138,8 +193,10 @@ def build_planning(
     def plan_features(index, batch):
         check_cancelled()
         local = analyses[index] if analyses else requirement
-        common = {"requirement": local.model_dump(mode="json"), "context": batch}
-        feature_plan = complete(
+        common = {"requirement": local.model_dump(mode="json", exclude={"feature_points"}),
+                  "context": batch}
+        feature_plan = (feature_plans[index].model_copy(deep=True)
+                        if feature_plans and feature_plans[index].feature_points else complete(
             "feature.generated",
             CASE_DESIGN_INSTRUCTION + "按本批资料规划全部相关功能，保留具体规则和来源。不生成用例。"
             "module 为业务模块路径，name 为功能名；不得为凑数量合并不同功能。"
@@ -148,7 +205,7 @@ def build_planning(
             "同一规则的样例记录不是新功能，功能名使用资料中的规则名称，保留原始规则编号。",
             common,
             FeaturePlan,
-        )
+        ))
         for ordinal, feature in enumerate(feature_plan.feature_points):
             feature.id = f"FP-{index + 1}-{ordinal + 1}"
             feature.name = source_rule_name(feature, batch) or feature.name
@@ -164,11 +221,24 @@ def build_planning(
         on_progress=on_feature_progress or (lambda *_: None),
         check_cancelled=check_cancelled, concurrency=PLANNING_CONCURRENCY,
     )
+    # A verified rule in the same document is still the same rule when different
+    # slices propose different module paths. Conflicting definitions never qualify.
+    rule_modules = {}
+    known_documents = {item.get("document_id") for item in context.get("evidence", [])}
+    for _, feature_plan in feature_results:
+        for feature in feature_plan.feature_points:
+            name = source_rule_name(feature, context)
+            documents = {ref.document_id for ref in feature.source_refs}
+            if (name and len(documents) == 1 and None not in documents
+                    and documents <= known_documents):
+                identity = (next(iter(documents)), name)
+                feature.module = rule_modules.setdefault(identity, feature.module)
     # Completion order must not change IDs, budgets, or downstream batch membership.
     for common, feature_plan in feature_results:
         features.extend(feature_plan.feature_points)
         for start in range(0, len(feature_plan.feature_points), FEATURES_PER_BATCH):
-            groups.append((common, feature_plan.feature_points[start : start + FEATURES_PER_BATCH]))
+            group = feature_plan.feature_points[start : start + FEATURES_PER_BATCH]
+            groups.append((compact_planning_context(common, group), group))
 
     if not features:
         raise ValueError("planning_has_no_features")

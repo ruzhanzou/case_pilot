@@ -17,6 +17,7 @@ from casepilot_agent.case_analysis import CaseAnalysisReport, analysis_batches, 
 from casepilot_agent.config import get_settings
 from casepilot_agent.contracts import (
     EmbeddingProvider,
+    FeaturePlan,
     GenerationRequest,
     KnowledgeAnswer,
     QualityIssue,
@@ -43,6 +44,7 @@ from casepilot_agent.pipeline import (
     requested_case_count,
 )
 from casepilot_agent.planning import (
+    PlanningAnalysis,
     analyze_batches,
     build_planning,
     evidence_batches,
@@ -650,10 +652,20 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
         )
         model_id = str(payload.get("model_id", "auto"))
         batches = evidence_batches(context)
+        analysis_type = PlanningAnalysis if len(batches) > 1 else RequirementAnalysis
+        if analysis_type is PlanningAnalysis:
+            instruction += (
+                "同时在feature_points提取本批全部明确功能，省去再次阅读原文。"
+                "每条独立规则对应一个功能；重复样例不新增功能，不为用户全局数量补位。"
+                "name保留原始规则编号和名称，module沿用原文章节，description保留数值、例外和条件。"
+                "requirement_refs引用原始规则编号；无编号则使用准确规则名称。"
+                "source_refs必须逐字引用原文规则及相关例外，复用context.evidence的来源标识。"
+                "当前分片没有相关功能则返回空列表；不生成测试点或用例正文。"
+            )
 
         def batch_input(index, batch):
             return {**stage_input, "context": batch, "model_id": model_id,
-                    "instruction": instruction, "analysis_version": 2, "batch_index": index}
+                    "instruction": instruction, "analysis_version": 3, "batch_index": index}
 
         def load_batch(index, batch):
             with store.connection() as connection:
@@ -662,15 +674,16 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                     batch_input(index, batch),
                 )
             if cached:
-                return (RequirementAnalysis.model_validate(cached["output_payload"]),
+                return (analysis_type.model_validate(cached["output_payload"]),
                         UsageMetadata(model=cached["model"], latency_ms=cached["latency_ms"],
                                       token_usage=cached["token_usage"]))
             return None
 
         def complete_batch(index, batch):
             return provider.complete(
-                stage="requirement.analyzed", instruction=instruction,
-                payload={**stage_input, "context": batch}, result_type=RequirementAnalysis,
+                stage="requirement.extracted" if analysis_type is PlanningAnalysis
+                else "requirement.analyzed", instruction=instruction,
+                payload={**stage_input, "context": batch}, result_type=analysis_type,
                 model_id=model_id,
             )
 
@@ -712,7 +725,7 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                          if all(isinstance(item.token_usage.get(key, 0), (int, float))
                                 for _, item in results)},
         )
-        requirement = analyses[0].model_copy(deep=True)
+        requirement = RequirementAnalysis.model_validate(analyses[0].model_dump())
         for field in ("actors", "flows", "business_rules", "constraints", "risks", "assumptions"):
             setattr(requirement, field, list(dict.fromkeys(
                 value for item in analyses for value in getattr(item, field)
@@ -850,6 +863,8 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                 requirement, context, complete_plan, analyses, target_count=count,
                 on_progress=publish_planning,
                 on_feature_progress=publish_features,
+                feature_plans=[FeaturePlan(feature_points=item.feature_points) for item in analyses]
+                if all(isinstance(item, PlanningAnalysis) for item in analyses) else None,
                 check_cancelled=lambda: ensure_not_cancelled(store, parsed_job_id),
             )
         with store.connection() as connection:

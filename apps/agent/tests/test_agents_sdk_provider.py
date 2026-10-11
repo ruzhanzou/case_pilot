@@ -421,6 +421,10 @@ def test_ark_rewrite_uses_fast_inference_without_affecting_other_stages():
     from casepilot_agent.providers.agents_sdk import _response_options
     ark = "https://ark.cn-beijing.volces.com/api/coding/v3"
     assert _response_options(ark, "rewrite.batch")["thinking"] == {"type": "disabled"}
+    assert _response_options(ark, "requirement.extracted")["thinking"] == {"type": "disabled"}
+    assert "thinking" not in _response_options(ark, "test_point.generated")
+    assert "thinking" not in _response_options(ark, "test_case.grounded")
+    assert "thinking" not in _response_options("https://api.openai.com/v1", "requirement.extracted")
     assert "thinking" not in _response_options(ark, "requirement.analyzed")
     assert "thinking" not in _response_options("https://api.openai.com/v1", "rewrite.batch")
     assert "thinking" not in _response_options("https://ark.volces.com.example.org/v1", "rewrite.batch")

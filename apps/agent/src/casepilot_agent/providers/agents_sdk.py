@@ -22,11 +22,11 @@ from casepilot_agent.skills import load_test_case_generation_skill
 
 def _response_options(base_url: str, stage: str) -> dict:
     options = {"response_format": {"type": "json_object"}}
-    # Ark supports disabling deep thinking for bounded edits. Keep planning and
-    # other providers on their existing behavior.
+    # Bounded edits and literal rule extraction do not need deep thinking.
+    # Keep scenario design, audits and other providers on their existing behavior.
     host = urlparse(base_url).hostname or ""
     if host.endswith(".volces.com") and host.startswith("ark.") and stage in {
-        "rewrite.batch", "test_case.rewritten",
+        "rewrite.batch", "test_case.rewritten", "requirement.extracted",
     }:
         options["thinking"] = {"type": "disabled"}
     return options
