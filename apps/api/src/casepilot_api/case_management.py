@@ -801,6 +801,12 @@ def list_test_cases(
             .order_by(CollectionCaseMembership.position, TestCase.created_at)
         )
     )
+    views = cases_to_views(db, cases)
+    return [item for item in views if matches_case_search(item, q)] if q.strip() else views
+
+
+def cases_to_views(db: Session, cases: list[TestCase]) -> list[TestCaseView]:
+    """Load case metadata once per batch instead of once per case."""
     if not cases:
         return []
     case_ids = [test_case.id for test_case in cases]
@@ -870,7 +876,7 @@ def list_test_cases(
         )
         for test_case in cases
     ]
-    return [item for item in views if matches_case_search(item, q)] if q.strip() else views
+    return views
 
 
 @router.get(
@@ -895,62 +901,88 @@ def search_space_test_cases(
             .order_by(TestCase.created_at, TestCase.id)
         )
     )
-    views = [case_to_view(db, test_case) for test_case in cases]
+    views = cases_to_views(db, cases)
     if not q.strip():
         return views
     return [item for item in views if matches_case_search(item, q)]
 
 
 def playlist_to_view(db: Session, playlist: Playlist) -> PlaylistView:
-    source_links = list(
-        db.scalars(
-            select(PlaylistSourceCollection)
-            .where(PlaylistSourceCollection.playlist_id == playlist.id)
-            .order_by(PlaylistSourceCollection.position, PlaylistSourceCollection.id)
+    return playlists_to_views(db, [playlist])[0]
+
+
+def playlists_to_views(db: Session, playlists: list[Playlist]) -> list[PlaylistView]:
+    if not playlists:
+        return []
+    playlist_ids = [item.id for item in playlists]
+    source_links = list(db.scalars(
+        select(PlaylistSourceCollection)
+        .where(PlaylistSourceCollection.playlist_id.in_(playlist_ids))
+        .order_by(PlaylistSourceCollection.position, PlaylistSourceCollection.id)
+    ))
+    collection_ids = {link.collection_id for link in source_links}
+    collections = {
+        item.id: item for item in db.scalars(
+            select(CaseCollection).where(CaseCollection.id.in_(collection_ids))
         )
-    )
-    source_collections = [db.get(CaseCollection, link.collection_id) for link in source_links]
-    case_links = list(
-        db.scalars(
-            select(PlaylistCaseMembership)
-            .where(PlaylistCaseMembership.playlist_id == playlist.id)
-            .order_by(PlaylistCaseMembership.position, PlaylistCaseMembership.id)
+    } if collection_ids else {}
+    case_links = list(db.scalars(
+        select(PlaylistCaseMembership)
+        .where(PlaylistCaseMembership.playlist_id.in_(playlist_ids))
+        .order_by(PlaylistCaseMembership.position, PlaylistCaseMembership.id)
+    ))
+    case_ids = {link.test_case_id for link in case_links}
+    test_cases = {
+        item.id: item for item in db.scalars(
+            select(TestCase).where(TestCase.id.in_(case_ids))
         )
-    )
-    cases: list[PlaylistCaseView] = []
-    unavailable_case_ids: list[UUID] = []
-    for link in case_links:
-        test_case = db.get(TestCase, link.test_case_id)
-        available = bool(
-            test_case
-            and test_case.space_id == playlist.space_id
-            and test_case.deleted_at is None
-            and test_case.current_revision_id is not None
-        )
-        if not available:
-            unavailable_case_ids.append(link.test_case_id)
-        cases.append(
-            PlaylistCaseView(
+    } if case_ids else {}
+    sources_by_playlist: dict[UUID, list[PlaylistSourceCollection]] = {}
+    cases_by_playlist: dict[UUID, list[PlaylistCaseMembership]] = {}
+    for source_link in source_links:
+        sources_by_playlist.setdefault(source_link.playlist_id, []).append(source_link)
+    for case_link in case_links:
+        cases_by_playlist.setdefault(case_link.playlist_id, []).append(case_link)
+    available_cases = {
+        item.id: item
+        for playlist in playlists
+        for link in cases_by_playlist.get(playlist.id, [])
+        if (item := test_cases.get(link.test_case_id)) is not None
+        and item.space_id == playlist.space_id
+        and item.deleted_at is None
+        and item.current_revision_id is not None
+    }
+    case_views = {item.id: item for item in cases_to_views(db, list(available_cases.values()))}
+    views = []
+    for playlist in playlists:
+        sources = sources_by_playlist.get(playlist.id, [])
+        cases = []
+        for link in cases_by_playlist.get(playlist.id, []):
+            test_case = available_cases.get(link.test_case_id)
+            available = test_case is not None and test_case.space_id == playlist.space_id
+            cases.append(PlaylistCaseView(
                 case_id=link.test_case_id,
                 position=link.position,
                 available=available,
-                test_case=case_to_view(db, test_case) if available and test_case else None,
-            )
-        )
-    return PlaylistView(
-        id=playlist.id,
-        space_id=playlist.space_id,
-        name=playlist.name,
-        source_collection_ids=[item.collection_id for item in source_links],
-        source_collection_names=[
-            collection.name if collection else "已删除集合" for collection in source_collections
-        ],
-        cases=cases,
-        case_count=len(cases),
-        unavailable_case_ids=unavailable_case_ids,
-        created_at=playlist.created_at,
-        updated_at=playlist.updated_at,
-    )
+                test_case=case_views.get(link.test_case_id) if available else None,
+            ))
+        views.append(PlaylistView(
+            id=playlist.id,
+            space_id=playlist.space_id,
+            name=playlist.name,
+            source_collection_ids=[link.collection_id for link in sources],
+            source_collection_names=[
+                collections[link.collection_id].name
+                if link.collection_id in collections else "已删除集合"
+                for link in sources
+            ],
+            cases=cases,
+            case_count=len(cases),
+            unavailable_case_ids=[item.case_id for item in cases if not item.available],
+            created_at=playlist.created_at,
+            updated_at=playlist.updated_at,
+        ))
+    return views
 
 
 def validate_playlist_write(
@@ -1052,7 +1084,7 @@ def list_playlists(
             .order_by(Playlist.updated_at.desc(), Playlist.created_at.desc())
         )
     )
-    return [playlist_to_view(db, playlist) for playlist in playlists]
+    return playlists_to_views(db, playlists)
 
 
 @router.post(
