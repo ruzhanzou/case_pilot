@@ -7525,6 +7525,8 @@ button.case-tag:hover {
   color: #35455a;
   font-size: 13px;
   line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .execution-steps article p {
@@ -7532,6 +7534,8 @@ button.case-tag:hover {
   color: #267b68;
   font-size: 12px;
   line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .execution-steps article p span {
