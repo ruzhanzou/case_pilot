@@ -13408,3 +13408,70 @@ fieldset.principle-candidate-editor { border: 0; padding: 0; margin: 0; min-widt
   .execution-filters__row > select:nth-of-type(3) { grid-column: 2 / -1; grid-row: 3; }
   .execution-filters__row > button { grid-column: 3; }
 }
+
+/* Manual editing uses the details panel instead of a nested modal layout. */
+.principle-inspector:has(.case-workspace-editor) {
+  padding: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.principle-inspector .case-workspace-editor {
+  height: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+}
+.principle-inspector .case-workspace-editor .case-editor {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+.principle-inspector .management-modal__header {
+  flex: 0 0 auto;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+}
+.principle-inspector .management-modal__header > div { min-width: 0; }
+.principle-inspector .management-modal__header h2 {
+  margin: 6px 0 0;
+  font-size: 16px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.principle-inspector .management-modal__header > button { flex-shrink: 0; }
+.principle-inspector .case-workspace-editor .case-editor__form {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.principle-inspector .case-editor__grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  padding: 16px;
+}
+.principle-inspector .case-editor__wide { grid-column: auto; }
+.principle-inspector .case-editor__section { min-width: 0; padding: 16px; }
+.principle-inspector .case-editor label,
+.principle-inspector .case-editor input,
+.principle-inspector .case-editor select,
+.principle-inspector .case-editor textarea { min-width: 0; max-width: 100%; }
+.principle-inspector .case-editor__section-title { flex-wrap: wrap; }
+.principle-inspector .management-modal__footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding: 12px 16px;
+  flex-wrap: wrap;
+  box-shadow: 0 -4px 12px rgb(23 32 51 / 5%);
+}
+.principle-inspector .management-modal__footer button {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+}

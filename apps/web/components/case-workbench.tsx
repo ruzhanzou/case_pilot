@@ -333,7 +333,6 @@ export function CaseWorkbench({
   const [planMessageId, setPlanMessageId] = useState("");
   const [polishOpen, setPolishOpen] = useState(false);
   const [editingCaseId, setEditingCaseId] = useState("");
-  const [creatingInWorkspace, setCreatingInWorkspace] = useState(false);
   const [savingInWorkspace, setSavingInWorkspace] = useState(false);
   const [selectedTargets, setSelectedTargets] = useState<
     { key: string; label: string; target: ConversationTarget }[]
@@ -558,13 +557,8 @@ export function CaseWorkbench({
   const openCaseEditor = (testCase: TestCaseDto) => {
     setSelectedCaseId(testCase.id);
     setEditingCaseId(testCase.id);
-    setCreatingInWorkspace(false);
-    openReviewPlan();
+    setInspectorHidden(false);
   };
-  useEffect(() => {
-    if (viewMode !== "plan" || (!editingCaseId && !creatingInWorkspace)) return;
-    document.querySelector(".case-workspace-editor")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [creatingInWorkspace, editingCaseId, viewMode]);
   const operationPlan = workspace?.operation_plan ?? null;
   const pendingIntentOperations = operationPlan?.operations.filter((operation) =>
     operation.status === "awaiting_intent" && !messages.some((message) =>
@@ -577,7 +571,7 @@ export function CaseWorkbench({
   const latestMessage = messages.at(-1);
   const inspectorCollapsed =
     inspectorHidden ||
-    viewMode === "plan" ||
+    (viewMode === "plan" && !editingCaseId) ||
     artifactOpen ||
     !visibleCases.length;
 
@@ -2503,7 +2497,7 @@ export function CaseWorkbench({
                     <Sparkles size={17} /> {pick("Case workspace", "用例工作区")}
                 </button>
                 {selectedBrief && (
-                  <button type="button" disabled={Boolean(editingCaseId || creatingInWorkspace)} onClick={() => setArtifactOpen(true)}>
+                  <button type="button" disabled={Boolean(editingCaseId)} onClick={() => setArtifactOpen(true)}>
                     <Sparkles size={17} /> {pick("Structured brief", "结构化测试说明")}
                   </button>
                 )}
@@ -2619,29 +2613,6 @@ export function CaseWorkbench({
               }}
               onCommit={() => void commitCandidates()} onBrief={selectBriefVersion} onGenerate={() => void confirmBriefAndGenerate()}
             />}
-            {(editingCaseId || creatingInWorkspace) && (
-              <div hidden={viewMode !== "plan"}>
-              <CaseEditorDialog
-                key={editingCaseId || "workspace-new-case"}
-                inline
-                testCase={cases.find((item) => item.id === editingCaseId) ?? null}
-                saving={savingInWorkspace}
-                onClose={() => { setEditingCaseId(""); setCreatingInWorkspace(false); }}
-                onSave={async (input) => {
-                  setSavingInWorkspace(true);
-                  try {
-                    const current = cases.find((item) => item.id === editingCaseId);
-                    if (current) await onSaveCase(current, input);
-                    else await onCreateCaseInline(input);
-                    setEditingCaseId("");
-                    setCreatingInWorkspace(false);
-                  } finally {
-                    setSavingInWorkspace(false);
-                  }
-                }}
-              />
-              </div>
-            )}
             {activePlanReport && !["running", "queued"].includes(selectedTask?.status ?? "") && (
               <CaseReviewPlan
                 hidden={viewMode !== "plan"}
@@ -2851,7 +2822,27 @@ export function CaseWorkbench({
 
       {!inspectorCollapsed && (
         <aside className="principle-inspector">
-          {selectedCase ? (
+          {editingCaseId ? (
+            <CaseEditorDialog
+              key={editingCaseId}
+              inline
+              testCase={cases.find((item) => item.id === editingCaseId) ?? null}
+              saving={savingInWorkspace}
+              onClose={() => setEditingCaseId("")}
+              onSave={async (input) => {
+                const current = cases.find((item) => item.id === editingCaseId);
+                if (!current) return;
+                setSavingInWorkspace(true);
+                try {
+                  await onSaveCase(current, input);
+                  setSelectedCaseId(current.id);
+                  setEditingCaseId("");
+                } finally {
+                  setSavingInWorkspace(false);
+                }
+              }}
+            />
+          ) : selectedCase ? (
             <>
               <header>
                 <span>{pick("CASE DETAILS", "用例详情")}</span>
