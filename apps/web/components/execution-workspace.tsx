@@ -32,6 +32,8 @@ import {
   ArrowLeft,
   Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Circle,
   ClipboardCheck,
   Clock3,
@@ -143,6 +145,7 @@ export function ExecutionWorkspace({
   const [memberEmail, setMemberEmail] = useState("");
   const [recordFilter, setRecordFilter] = useState("all");
   const [caseFilters, setCaseFilters] = useState<ExecutionFilter[]>([]);
+  const [filtersExpanded, setFiltersExpanded] = useState(true);
   const [filterMode, setFilterMode] = useState<ExecutionFilterMode>("and");
   const nextFilterId = useRef(0);
   const updateCaseFilter = (id: number, patch: Partial<ExecutionFilter>) =>
@@ -1030,16 +1033,25 @@ export function ExecutionWorkspace({
               <button type="button" className="management-button" onClick={() => {
                 const id = nextFilterId.current++;
                 setCaseFilters((current) => [...current, { id, field: "title", operator: "contains", value: "" }]);
+                setFiltersExpanded(true);
               }}>
                 <Plus size={14} />{pick("Add filter", "添加条件")}
               </button>
+              {caseFilters.length > 0 && <button type="button" className="management-button execution-filters__toggle"
+                aria-expanded={filtersExpanded} aria-controls="execution-filter-conditions"
+                onClick={() => setFiltersExpanded((current) => !current)}>
+                {filtersExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                {filtersExpanded
+                  ? pick(`Collapse (${caseFilters.length})`, `收起条件 (${caseFilters.length})`)
+                  : pick(`Expand (${caseFilters.length})`, `展开条件 (${caseFilters.length})`)}
+              </button>}
               {(caseFilters.length > 0 || recordFilter !== "all") && <button type="button" className="management-button"
                 onClick={() => { setCaseFilters([]); setRecordFilter("all"); setFilterMode("and"); }}>
                 {pick("Clear filters", "清空筛选")}
               </button>}
               <span role="status">{pick(`${filteredRecords.length} / ${run.records.length} cases`, `${filteredRecords.length} / ${run.records.length} 条用例`)}</span>
             </div>
-            {caseFilters.length > 0 && <div className="execution-filters__rows">
+            {caseFilters.length > 0 && <div id="execution-filter-conditions" className="execution-filters__rows" hidden={!filtersExpanded}>
               {caseFilters.map((filter, index) => <div className="execution-filters__row" key={filter.id}>
                 <span>{index === 0 ? pick("Where", "条件") : filterMode.toUpperCase()}</span>
                 <select aria-label={pick(`Filter ${index + 1} field`, `条件 ${index + 1} 字段`)} value={filter.field}
