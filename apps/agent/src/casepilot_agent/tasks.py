@@ -644,6 +644,8 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
             "时间阈值、边界条件和错误码均属于已明确的信息，不是猜测。"
             "在 business_rules 中逐条写出与测试对象相关的原始精确值及对应行为，"
             "不得用‘规定时长’‘金额上限’等笼统说法替代证据中的具体值。"
+            "资料按批次分片提供，其他分片会单独处理并汇总；本批未出现的模块不代表资料缺失，"
+            "不要为其创建缺失风险、假设、占位规则或澄清问题，仅提取当前分片实际存在的规则。"
             "若用户要求不要猜测，只禁止补造资料未写明的值；仍须保留资料已写明的值。"
         )
         model_id = str(payload.get("model_id", "auto"))
@@ -651,7 +653,7 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
 
         def batch_input(index, batch):
             return {**stage_input, "context": batch, "model_id": model_id,
-                    "instruction": instruction, "analysis_version": 1, "batch_index": index}
+                    "instruction": instruction, "analysis_version": 2, "batch_index": index}
 
         def load_batch(index, batch):
             with store.connection() as connection:
@@ -764,28 +766,75 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
         if requirement.test_object_specified:
             def complete_plan(stage, instruction, inputs, result_type):
                 ensure_not_cancelled(store, parsed_job_id)
+                plan_payload = {**inputs, "prompt": (
+                    "仅为本批功能生成测试点；batch_count是本批数量预算，其他功能由其他并发批次负责。"
+                    if stage == "test_point.generated" else str(payload["prompt"]))}
+                cache_input = {**plan_payload, "_execution_contract": sha256(json.dumps({
+                    "instruction": instruction, "schema": result_type.model_json_schema(),
+                    "model": model_id,
+                }, ensure_ascii=False, sort_keys=True).encode()).hexdigest()}
+                with store.connection() as connection:
+                    cached = store.load_completed_stage(
+                        connection, parsed_job_id, stage, cache_input,
+                    )
+                    if not cached and stage == "test_point.generated":
+                        # Reuse the previous unconstrained list schema only after
+                        # validating against today's stricter count/coverage contract.
+                        legacy_schema = result_type.model_json_schema()
+                        point_schema = legacy_schema["properties"]["test_points"]
+                        point_schema.pop("minItems", None)
+                        point_schema.pop("maxItems", None)
+                        legacy_input = {**plan_payload, "_execution_contract": sha256(json.dumps({
+                            "instruction": instruction, "schema": legacy_schema,
+                            "model": model_id,
+                        }, ensure_ascii=False, sort_keys=True).encode()).hexdigest()}
+                        cached = store.load_completed_stage(
+                            connection, parsed_job_id, stage, legacy_input,
+                        )
+                if cached:
+                    try:
+                        return result_type.model_validate(cached["output_payload"])
+                    except ValueError:
+                        # Legacy checkpoints may predate semantic batch validation.
+                        # Regenerate only this invalid result; retain valid batches.
+                        pass
                 result, plan_usage = provider.complete(
                     stage=stage, instruction=instruction,
-                    payload={**inputs, "prompt": (
-                        "仅为本批功能生成测试点；batch_count是本批数量预算，其他功能由其他并发批次负责。"
-                        if stage == "test_point.generated" else str(payload["prompt"]))},
+                    payload=plan_payload,
                     result_type=result_type, model_id=str(payload.get("model_id", "auto")),
                 )
+                # Includes coverage/cardinality validators, before checkpointing.
+                result = result_type.model_validate(result.model_dump(mode="json"))
                 with store.connection() as connection:
                     locked_job = store.get_job_for_update(connection, parsed_job_id)
                     if str(getattr(locked_job["status"], "value", locked_job["status"])) == "cancelled":
                         raise GenerationCancelled("generation_cancelled")
                     store.record_stage(
                         connection, job_id=parsed_job_id, stage=stage,
-                        input_payload=inputs, output_payload=result.model_dump(mode="json"),
+                        input_payload=cache_input, output_payload=result.model_dump(mode="json"),
                         status="completed", model=plan_usage.model,
                         latency_ms=plan_usage.latency_ms, token_usage=plan_usage.token_usage,
                     )
                     store.update_job(connection, parsed_job_id, status="running", stage=stage)
                 return result
+
+            def publish_features(done, total, active):
+                metadata = {"phase": "features", "completed_batches": done,
+                            "total_batches": total,
+                            "active_batches": [{"batch": i + 1, "features": []} for i in active],
+                            "progress": 22 + int(13 * done / max(1, total))}
+                output = {"planning_preview": content, "planning_progress": metadata,
+                          "started_at": started_at}
+                with store.connection() as connection:
+                    lock_active_job(store, connection, parsed_job_id)
+                    store.update_job(connection, parsed_job_id, stage="feature.generated",
+                                     output_payload=output)
+                store.publish(parsed_job_id, {"event": "feature.generated", "job_id": job_id,
+                              "progress": metadata["progress"], **output})
+
             def publish_planning(planning, metadata):
                 progress = 35 + int(60 * metadata["completed_batches"] / max(1, metadata["total_batches"]))
-                metadata = {**metadata, "progress": progress}
+                metadata = {**metadata, "phase": "test_points", "progress": progress}
                 preview = {**content, "planning": planning}
                 output = {"planning_preview": preview, "planning_progress": metadata,
                           "started_at": started_at}
@@ -800,6 +849,7 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
             content["planning"] = build_planning(
                 requirement, context, complete_plan, analyses, target_count=count,
                 on_progress=publish_planning,
+                on_feature_progress=publish_features,
                 check_cancelled=lambda: ensure_not_cancelled(store, parsed_job_id),
             )
         with store.connection() as connection:

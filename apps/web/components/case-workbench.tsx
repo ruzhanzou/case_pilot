@@ -483,6 +483,8 @@ export function CaseWorkbench({
     ? pick("Thinking — understanding your request and selecting cases", "正在思考 · 理解需求并筛选用例")
     : planningProgress?.phase === "requirements"
       ? pick(`Analyzing requirements · ${planningProgress.completed_batches ?? 0}/${planningProgress.total_batches} batches`, `分析测试需求 · 已完成 ${planningProgress.completed_batches ?? 0}/${planningProgress.total_batches} 批`)
+    : planningProgress?.phase === "features"
+      ? pick(`Organizing features · ${planningProgress.completed_batches ?? 0}/${planningProgress.total_batches} batches`, `整理功能点 · 已完成 ${planningProgress.completed_batches ?? 0}/${planningProgress.total_batches} 批`)
     : planningProgress?.total_batches
       ? pick(`Planning · ${planningProgress.completed_batches ?? 0}/${planningProgress.total_batches} batches · ${planningProgress.test_point_count ?? 0} test points ready`, `规划中 · ${planningProgress.completed_batches ?? 0}/${planningProgress.total_batches} 批 · ${planningProgress.test_point_count ?? 0} 个测试点已就绪`)
     : progress?.total_count

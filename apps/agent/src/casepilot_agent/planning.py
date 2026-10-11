@@ -1,11 +1,15 @@
 """Persistable planning, independent of executable test case generation."""
 
 import asyncio
+import json
+import re
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from time import sleep
 from typing import Any, Literal
 from uuid import NAMESPACE_URL, uuid5
 
-from pydantic import create_model
+from openai import APIConnectionError, InternalServerError, RateLimitError
+from pydantic import Field, create_model, model_validator
 
 from casepilot_agent.contracts import (
     CASE_DESIGN_INSTRUCTION,
@@ -36,7 +40,8 @@ def evidence_batches(context: dict[str, Any], budget: int = 18000) -> list[dict[
     return batches
 
 
-def analyze_batches(batches, complete, *, load, save, on_progress, check_cancelled):
+def analyze_batches(batches, complete, *, load, save, on_progress, check_cancelled,
+                    concurrency=3):
     """Bound model calls; checkpoint each result before publishing progress."""
     completed, active = {}, {}
     pending = []
@@ -60,16 +65,26 @@ def analyze_batches(batches, complete, *, load, save, on_progress, check_cancell
     def worker(index):
         with asyncio.Runner() as runner:
             asyncio.set_event_loop(runner.get_loop())
-            check_cancelled()
-            return complete(index, batches[index])
+            for attempt in range(2):
+                check_cancelled()
+                try:
+                    return complete(index, batches[index])
+                except (APIConnectionError, InternalServerError, RateLimitError):
+                    # A transient request failure must not discard the whole
+                    # large-document run. Retry this batch once, in the same slot.
+                    if attempt:
+                        raise
+                    for _ in range(4):
+                        check_cancelled()
+                        sleep(0.5)
 
     publish()
-    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="requirements") as pool:
+    with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="evidence") as pool:
         remaining = iter(pending)
         failure = None
         try:
             while True:
-                while len(active) < 3 and failure is None:
+                while len(active) < concurrency and failure is None:
                     check_cancelled()
                     index = next(remaining, None)
                     if index is None:
@@ -103,6 +118,7 @@ def analyze_batches(batches, complete, *, load, save, on_progress, check_cancell
 PLANNING_CONCURRENCY = 3
 FEATURES_PER_BATCH = 3
 POINTS_PER_BATCH = 12
+MAX_CONSOLIDATED_EVIDENCE_CHARS = 180000
 
 
 def build_planning(
@@ -113,34 +129,51 @@ def build_planning(
     *,
     target_count=None,
     on_progress=None,
+    on_feature_progress=None,
     check_cancelled=lambda: None,
 ):
     """Plan disjoint feature groups concurrently; publish validated, stable snapshots."""
     features, points, groups = [], [], []
     batches = evidence_batches(context)
-    for index, batch in enumerate(batches):
+    def plan_features(index, batch):
         check_cancelled()
         local = analyses[index] if analyses else requirement
         common = {"requirement": local.model_dump(mode="json"), "context": batch}
         feature_plan = complete(
             "feature.generated",
             CASE_DESIGN_INSTRUCTION + "按本批资料规划全部相关功能，保留具体规则和来源。不生成用例。"
-            "module 为业务模块路径，name 为功能名；不得为凑数量合并不同功能。",
+            "module 为业务模块路径，name 为功能名；不得为凑数量合并不同功能。"
+            "当前只是完整资料的一个分片，其他模块由其他批次处理。"
+            "仅为本批有明确证据的规则生成功能；不得为全局数量补位、生成占位功能或推测其他模块规则。"
+            "同一规则的样例记录不是新功能，功能名使用资料中的规则名称，保留原始规则编号。",
             common,
             FeaturePlan,
         )
         for ordinal, feature in enumerate(feature_plan.feature_points):
             feature.id = f"FP-{index + 1}-{ordinal + 1}"
+            feature.name = source_rule_name(feature, batch) or feature.name
             if not feature.source_refs:
                 feature.source_refs = [
                     SourceRef.model_validate(item) for item in batch.get("evidence", [])
                 ]
+        check_cancelled()
+        return common, feature_plan
+
+    feature_results = analyze_batches(
+        batches, plan_features, load=lambda *_: None, save=lambda *_: None,
+        on_progress=on_feature_progress or (lambda *_: None),
+        check_cancelled=check_cancelled, concurrency=PLANNING_CONCURRENCY,
+    )
+    # Completion order must not change IDs, budgets, or downstream batch membership.
+    for common, feature_plan in feature_results:
         features.extend(feature_plan.feature_points)
         for start in range(0, len(feature_plan.feature_points), FEATURES_PER_BATCH):
             groups.append((common, feature_plan.feature_points[start : start + FEATURES_PER_BATCH]))
 
     if not features:
         raise ValueError("planning_has_no_features")
+
+    features, groups = consolidate_feature_groups(features, groups, context)
 
     # The quantity is a planning budget, while every feature retains coverage.
     # Do not silently drop business features when the requested count is smaller.
@@ -179,8 +212,14 @@ def build_planning(
             point_type = create_model(
                 "BatchTestPoint", __base__=TestPoint, feature_point_ids=(list[allowed_ref], ...)
             )
+            def validate_batch(plan):
+                validate_point_batch(plan, {f.id for f in feature_slice}, count)
+                return plan
+
             plan_type = create_model(
-                "BatchTestPointPlan", __base__=TestPointPlan, test_points=(list[point_type], ...)
+                "BatchTestPointPlan", __base__=TestPointPlan,
+                test_points=(list[point_type], Field(min_length=1, max_length=count)),
+                __validators__={"validate_batch": model_validator(mode="after")(validate_batch)},
             )
             plan = complete(
                 "test_point.generated",
@@ -205,14 +244,8 @@ def build_planning(
                 },
                 plan_type,
             )
-            if not plan.test_points or len(plan.test_points) > count:
-                raise ValueError("planning_point_batch_size_invalid")
-            slice_ids = {f.id for f in feature_slice}
-            covered = set()
+            validate_point_batch(plan, {f.id for f in feature_slice}, count)
             for ordinal, point in enumerate(plan.test_points):
-                if not point.feature_point_ids or set(point.feature_point_ids) - slice_ids:
-                    raise ValueError("planning_feature_reference_invalid")
-                covered.update(point.feature_point_ids)
                 point.id = f"TP-{index + 1}-{ordinal + 1}"
                 # Hydrate citations from the actual referenced features.
                 point.source_refs = list(
@@ -226,8 +259,6 @@ def build_planning(
                 point.source_refs = [
                     SourceRef.model_validate_json(ref) for ref in point.source_refs
                 ]
-            if covered != slice_ids:
-                raise ValueError("planning_feature_uncovered")
             check_cancelled()
             return plan.test_points
 
@@ -259,6 +290,105 @@ def build_planning(
             raise
     points = [p for index in sorted(completed) for p in completed[index]]
     return merge_planning(features, points, context, len(batches))
+
+
+def validate_point_batch(plan, feature_ids, count):
+    if not plan.test_points or len(plan.test_points) > count:
+        raise ValueError("planning_point_batch_size_invalid")
+    covered = set()
+    for point in plan.test_points:
+        if not point.feature_point_ids or set(point.feature_point_ids) - feature_ids:
+            raise ValueError("planning_feature_reference_invalid")
+        covered.update(point.feature_point_ids)
+    if covered != feature_ids:
+        raise ValueError("planning_feature_uncovered")
+
+
+def source_rule_name(feature, batch):
+    """Canonicalize a single cited rule only against its original definition."""
+    if len(feature.requirement_refs) != 1:
+        return None
+    reference = feature.requirement_refs[0].strip()
+    if not reference or len(reference) > 80:
+        return None
+    # Providers sometimes invent a prefix in requirement_refs. A label in their
+    # citation is usable only when the original batch confirms its definition.
+    quoted = {
+        match
+        for ref in feature.source_refs
+        for match in re.findall(r"(?<![A-Za-z0-9_.-])([A-Za-z][A-Za-z0-9_.-]{0,79})\s*[:：]",
+                                ref.excerpt or "")
+    }
+    candidates = [reference, *sorted(quoted - {reference})]
+    names = set()
+    for candidate in candidates:
+        pattern = re.compile(r"(?<![A-Za-z0-9_.-])" + re.escape(candidate)
+                             + r"\s*[:：]\s*([^\n。；;]+)")
+        definitions = {
+            match.strip().rstrip("。.")
+            for item in batch.get("evidence", [])
+            for match in pattern.findall(str(item.get("excerpt", "")))
+        }
+        if len(definitions) != 1:
+            continue
+        definition = definitions.pop()
+        if definition and len(definition) <= 160:
+            names.add(f"{candidate} {definition}")
+    return names.pop() if len(names) == 1 else None
+
+
+def consolidate_feature_groups(features, groups, context):
+    """Merge repeated named features before spending calls and quotas on points.
+
+    Use the same exact module/name identity as final snapshots. Retain all rules
+    and all contributing original evidence; no similarity-based deletion.
+    """
+    def key(feature):
+        return feature.module, feature.name
+    canonical = FeaturePlan.model_validate(merge_planning(features, [], {}, 0)).feature_points
+    by_key = {key(feature): feature for feature in canonical}
+    origins = {}
+    for common, group in groups:
+        for feature in group:
+            origins.setdefault(key(feature), []).append(common)
+    planned, consolidated = set(), []
+    for common, group in groups:
+        selected = []
+        for feature in group:
+            identity = key(feature)
+            if identity not in planned:
+                planned.add(identity)
+                selected.append(by_key[identity])
+        if not selected:
+            continue
+        contributing = [item for feature in selected for item in origins[key(feature)]]
+        # For disjoint batches the original local context remains unchanged.
+        if all(item is common for item in contributing):
+            consolidated.append((common, selected))
+            continue
+        evidence, seen = [], set()
+        local = dict(common["requirement"])
+        for field in local:
+            if isinstance(local[field], list):
+                values = {}
+                for item in contributing:
+                    for value in item["requirement"].get(field, []):
+                        values.setdefault(json.dumps(value, sort_keys=True), value)
+                local[field] = list(values.values())
+        for item in contributing:
+            for source in item["context"].get("evidence", []):
+                identity = json.dumps(source, sort_keys=True)
+                if identity not in seen:
+                    seen.add(identity)
+                    evidence.append(source)
+        # Never turn arbitrarily large documents into one unbounded model call.
+        # Preserve the original bounded groups when consolidation exceeds budget.
+        evidence_chars = sum(len(str(item.get("excerpt", ""))) for item in evidence)
+        if evidence_chars > MAX_CONSOLIDATED_EVIDENCE_CHARS:
+            return features, groups
+        consolidated.append(({"requirement": local,
+                              "context": {**context, "evidence": evidence}}, selected))
+    return canonical, consolidated
 
 
 def merge_planning(features, points, context, processed_batches):

@@ -1,5 +1,5 @@
 from copy import deepcopy
-from threading import Barrier, Event
+from threading import Barrier, Event, Lock
 
 import pytest
 
@@ -156,3 +156,116 @@ def test_missing_feature_is_rejected_instead_of_reported_complete():
 
     with pytest.raises(ValueError, match="planning_feature_uncovered"):
         build_planning(RequirementAnalysis(summary="登录"), {}, complete)
+
+
+def test_large_document_features_are_bounded_parallel_and_keep_source_order():
+    barrier, release, lock = Barrier(3, timeout=5), Event(), Lock()
+    active = peak = 0
+    progress, point_batches = [], []
+    evidence = [{"label": str(i), "excerpt": str(i % 10) * 18000} for i in range(32)]
+    analyses = [RequirementAnalysis(summary=f"需求{i}") for i in range(32)]
+
+    def complete(stage, instruction, payload, result_type):
+        nonlocal active, peak
+        if stage != "feature.generated":
+            point_batches.append((payload["batch_index"], payload["requirement"]["summary"]))
+            return points(payload)
+        index = int(payload["context"]["evidence"][0]["label"])
+        assert payload["requirement"]["summary"] == f"需求{index}"
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        if index < 3:
+            barrier.wait()
+        if index == 0:
+            assert release.wait(5)
+        result = features(1)
+        result.feature_points[0].name = f"功能{index}"
+        result.feature_points[0].source_refs = []
+        with lock:
+            active -= 1
+        return result
+
+    def publish(done, total, active_batches):
+        assert total == 32
+        assert len(active_batches) <= 3
+        progress.append(done)
+        if done:
+            release.set()
+
+    result = build_planning(
+        RequirementAnalysis(summary="全部需求"), {"evidence": evidence}, complete,
+        analyses, on_feature_progress=publish,
+    )
+    assert peak == 3
+    assert progress == sorted(progress)
+    assert progress[-1] == 32
+    assert sorted(point_batches) == [(i + 1, f"需求{i}") for i in range(32)]
+    assert [f["name"] for f in result["feature_points"]] == [f"功能{i}" for i in range(32)]
+    assert [f["source_refs"][0]["label"] for f in result["feature_points"]] == [
+        str(i) for i in range(32)
+    ]
+    assert len(result["test_points"]) == 32
+
+
+def test_repeated_features_share_point_budget_without_dropping_rules_or_evidence():
+    point_inputs = []
+    evidence = [{"label": str(i), "excerpt": str(i) * 18000} for i in range(3)]
+    analyses = [RequirementAnalysis(summary="登录", business_rules=[f"边界{i}"])
+                for i in range(3)]
+
+    def complete(stage, instruction, payload, result_type):
+        if stage == "feature.generated":
+            result = features(1)
+            index = payload["context"]["evidence"][0]["label"]
+            result.feature_points[0].description = f"边界{index}"
+            result.feature_points[0].source_refs = []
+            return result
+        point_inputs.append(payload)
+        return points(payload, fill_budget=True)
+
+    result = build_planning(analyses[0], {"evidence": evidence}, complete, analyses,
+                            target_count=3)
+    assert len(point_inputs) == 1
+    assert point_inputs[0]["batch_count"] == 3
+    assert point_inputs[0]["context"]["evidence"] == evidence
+    assert point_inputs[0]["requirement"]["business_rules"] == [f"边界{i}" for i in range(3)]
+    assert len(result["feature_points"]) == 1
+    assert result["feature_points"][0]["description"] == "边界0\n边界1\n边界2"
+    assert len(result["feature_points"][0]["source_refs"]) == 3
+    assert len(result["test_points"]) == 3
+    assert result["evidence"] == evidence
+
+
+def test_consolidation_preserves_bounded_groups_when_combined_evidence_is_too_large(monkeypatch):
+    from casepilot_agent import planning
+
+    monkeypatch.setattr(planning, 'MAX_CONSOLIDATED_EVIDENCE_CHARS', 18000)
+    original, groups = [], []
+    for index in range(2):
+        feature = features(1).feature_points[0]
+        feature.id = f'FP-{index}'
+        original.append(feature)
+        common = {'requirement': RequirementAnalysis(summary='登录').model_dump(),
+                  'context': {'evidence': [{'label': str(index), 'excerpt': 'x' * 18000}]}}
+        groups.append((common, [feature]))
+    merged, bounded = planning.consolidate_feature_groups(original, groups, {})
+    assert merged is original
+    assert bounded is groups
+
+
+def test_only_verified_unambiguous_rule_labels_normalize_feature_names():
+    from casepilot_agent.planning import source_rule_name
+
+    feature = features(1).feature_points[0]
+    feature.requirement_refs = ['RULE-1']
+    batch = {'evidence': [{'excerpt': 'RULE-1: 连续5次错误锁定15分钟。\nRULE-10: 其他规则。'}]}
+    assert source_rule_name(feature, batch) == 'RULE-1 连续5次错误锁定15分钟'
+    assert source_rule_name(feature, {'evidence': [{'excerpt': 'RULE-10: 其他规则。'}]}) is None
+    assert source_rule_name(feature, {'evidence': [
+        {'excerpt': '样例记录，适用规则RULE-1：连续5次错误锁定15分钟。此为样例。'}
+    ]}) == 'RULE-1 连续5次错误锁定15分钟'
+    batch['evidence'].append({'excerpt': 'RULE-1: 连续3次错误锁定10分钟。'})
+    assert source_rule_name(feature, batch) is None  # Conflicting definitions must survive.
+    feature.requirement_refs = ['RULE-1', 'RULE-2']
+    assert source_rule_name(feature, batch) is None

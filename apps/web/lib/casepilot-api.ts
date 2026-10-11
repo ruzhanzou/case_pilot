@@ -448,7 +448,7 @@ export type KnowledgeUploadDto = {
 };
 
 export type PlanningProgress = {
-  phase?: "requirements";
+  phase?: "requirements" | "features" | "test_points";
   progress: number;
   completed_batches?: number;
   total_batches?: number;

@@ -1,5 +1,7 @@
+import json
 from contextlib import contextmanager
 from copy import deepcopy
+from hashlib import sha256
 from threading import RLock
 from uuid import uuid4
 
@@ -71,9 +73,11 @@ class Store:
 @pytest.mark.parametrize("fail", [False, True])
 def test_draft_persists_before_streaming_and_only_finalizes_complete_plan(monkeypatch, fail):
     store = Store()
+    calls = []
 
     class Provider:
         def complete(self, *, stage, payload, **kwargs):
+            calls.append(stage)
             if stage == "requirement.analyzed":
                 result = RequirementAnalysis(
                     summary="为登录生成12条测试用例", test_object="登录", test_object_specified=True
@@ -102,6 +106,7 @@ def test_draft_persists_before_streaming_and_only_finalizes_complete_plan(monkey
         tasks.draft_test_brief(str(store.job["id"]))
         assert store.job["status"] == "completed"
         assert len([s for s in store.stages if s["stage"] == "requirement.batch.1"]) == 1
+        assert calls.count("feature.generated") == 1
     else:
         tasks.draft_test_brief(str(store.job["id"]))
         assert store.job["status"] == "completed"
@@ -113,3 +118,56 @@ def test_draft_persists_before_streaming_and_only_finalizes_complete_plan(monkey
         ]
         assert previews
         assert previews[-1]["planning_progress"]["progress"] == 95
+        feature_events = [e for e in store.events
+                          if e.get("planning_progress", {}).get("phase") == "features"]
+        assert feature_events[0]["planning_progress"]["completed_batches"] == 0
+        assert feature_events[-1]["planning_progress"]["completed_batches"] == 1
+        assert feature_events[-1]["progress"] == 35
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_invalid_point_checkpoint_is_regenerated_without_repeating_valid_batches(
+    monkeypatch, legacy,
+):
+    store = Store()
+    calls = []
+    contracts = {}
+
+    class Provider:
+        def complete(self, *, stage, payload, **kwargs):
+            calls.append((stage, payload.get('batch_index')))
+            if stage == 'requirement.analyzed':
+                result = RequirementAnalysis(summary='登录', test_object='登录',
+                                             test_object_specified=True)
+            elif stage == 'feature.generated':
+                result = features(6)
+            else:
+                contracts[payload['batch_index']] = (
+                    kwargs['instruction'], kwargs['result_type'].model_json_schema(),
+                )
+                result = points(payload, fill_budget=True)
+            return result, UsageMetadata(model='mock')
+
+    monkeypatch.setattr(tasks, 'JobStore', lambda *args: store)
+    monkeypatch.setattr(tasks, 'create_provider', lambda *args: Provider())
+    monkeypatch.setattr(tasks, 'create_embedding_provider', lambda: None)
+    monkeypatch.setattr(tasks, '_context_payload', lambda *args, **kwargs: {'evidence': []})
+    tasks.draft_test_brief(str(store.job['id']))
+    if legacy:
+        for checkpoint in store.stages:
+            if checkpoint['stage'] != 'test_point.generated':
+                continue
+            instruction, schema = contracts[checkpoint['input_payload']['batch_index']]
+            schema['properties']['test_points'].pop('minItems')
+            schema['properties']['test_points'].pop('maxItems')
+            checkpoint['input_payload']['_execution_contract'] = sha256(json.dumps({
+                'instruction': instruction, 'schema': schema, 'model': 'auto',
+            }, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    checkpoint = next(s for s in store.stages if s['stage'] == 'test_point.generated'
+                      and s['input_payload']['batch_index'] == 1)
+    # Simulate a legacy checkpoint saved before the cardinality check.
+    checkpoint['output_payload']['test_points'] *= 3
+    calls.clear()
+    tasks.draft_test_brief(str(store.job['id']))
+    assert calls == [('test_point.generated', 1)]
+    assert len(store.briefs[-1]['planning']['test_points']) == 12

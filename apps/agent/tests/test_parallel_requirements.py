@@ -102,3 +102,61 @@ def test_cancel_during_requests_stops_queue_and_discards_late_results():
                         check_cancelled=check)
     assert len(called) <= 3
     assert saved == []
+
+
+def test_transient_request_retry_keeps_completed_batches(monkeypatch):
+    import httpx
+    from openai import APIConnectionError
+
+    import casepilot_agent.planning as planning
+
+    monkeypatch.setattr(planning, 'sleep', lambda _: None)
+    calls, saved = {}, {}
+
+    def complete(index, batch):
+        calls[index] = calls.get(index, 0) + 1
+        if index == 1 and calls[index] == 1:
+            raise APIConnectionError(request=httpx.Request('POST', 'https://example.test'))
+        return batch
+
+    result = analyze_batches([10, 20, 30], complete, load=lambda *_: None,
+                             save=lambda i, b, value: saved.__setitem__(i, value),
+                             on_progress=lambda *_: None, check_cancelled=lambda: None)
+    assert result == [10, 20, 30]
+    assert calls == {0: 1, 1: 2, 2: 1}
+    assert saved == {0: 10, 1: 20, 2: 30}
+
+
+def test_transient_request_retry_is_bounded_and_cancelable(monkeypatch):
+    import httpx
+    from openai import APIConnectionError
+
+    import casepilot_agent.planning as planning
+
+    calls = []
+    cancelled = False
+    monkeypatch.setattr(planning, 'sleep', lambda _: None)
+
+    def complete(*args):
+        calls.append(1)
+        raise APIConnectionError(request=httpx.Request('POST', 'https://example.test'))
+
+    def check():
+        if cancelled:
+            raise RuntimeError('cancelled')
+
+    args = dict(load=lambda *_: None, save=lambda *_: pytest.fail('failed result saved'),
+                on_progress=lambda *_: None, check_cancelled=check)
+    with pytest.raises(APIConnectionError):
+        analyze_batches([10], complete, **args)
+    assert len(calls) == 2
+
+    def cancel(_):
+        nonlocal cancelled
+        cancelled = True
+
+    calls.clear()
+    monkeypatch.setattr(planning, 'sleep', cancel)
+    with pytest.raises(RuntimeError, match='cancelled'):
+        analyze_batches([10], complete, **args)
+    assert len(calls) == 1
