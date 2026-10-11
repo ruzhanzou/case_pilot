@@ -47,7 +47,7 @@ import {
   Users,
   XCircle,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type ExecutionWorkspaceProps = {
   spaceId: string;
@@ -158,6 +158,8 @@ export function ExecutionWorkspace({
     useState<ExecutionRecordDraft | null>(null);
   const descriptionRef = useRef<HTMLTextAreaElement>(null);
   const actualResultRef = useRef<HTMLTextAreaElement>(null);
+  const queueRef = useRef<HTMLElement>(null);
+  const keyboardSelection = useRef<string | null>(null);
   const activeRunId = run?.id;
 
   const refreshHistory = async () => {
@@ -526,14 +528,46 @@ export function ExecutionWorkspace({
     !recordDraftDirty ||
     window.confirm(pick("The current result is unsaved and will be lost. Continue?", "当前执行结果尚未保存，离开将丢失这些修改。是否继续？"));
 
-  const selectExecutionRecord = (recordId: string) => {
-    if (!confirmDiscardRecordDraft()) return;
+  const selectExecutionRecord = useCallback((recordId: string) => {
+    if (saving || recordId === selectedRecordId) return false;
+    if (recordDraftDirty && !window.confirm(pick("The current result is unsaved and will be lost. Continue?", "当前执行结果尚未保存，离开将丢失这些修改。是否继续？"))) return false;
     const nextRecord =
       run?.records.find((record) => record.id === recordId) ?? null;
     setRecordDraft(nextRecord ? draftFromRecord(nextRecord) : null);
     setRecordValidationError("");
     setSelectedRecordId(recordId);
-  };
+    return true;
+  }, [saving, selectedRecordId, recordDraftDirty, pick, run]);
+
+  useEffect(() => {
+    if (keyboardSelection.current !== selectedRecordId) return;
+    const button = queueRef.current?.querySelector<HTMLButtonElement>('[aria-current="true"]');
+    button?.focus({ preventScroll: true });
+    button?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    keyboardSelection.current = null;
+  }, [selectedRecordId]);
+
+  useEffect(() => {
+    if (view !== "detail" || loading || saving) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey ||
+        event.metaKey || event.shiftKey || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (target?.isContentEditable || target?.closest(
+        'input, textarea, select, [role="combobox"], [role="listbox"], [role="menu"], [role="slider"]',
+      ) || document.querySelector('[aria-modal="true"], dialog[open], [role="menu"]')) return;
+      if (!filteredRecords.length) return;
+      event.preventDefault();
+      const index = filteredRecords.findIndex((record) => record.id === selectedRecordId);
+      const nextIndex = index < 0 ? 0 : Math.max(0, Math.min(
+        filteredRecords.length - 1, index + (event.key === "ArrowDown" ? 1 : -1),
+      ));
+      const next = filteredRecords[nextIndex];
+      if (selectExecutionRecord(next.id)) keyboardSelection.current = next.id;
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [view, loading, saving, filteredRecords, selectedRecordId, selectExecutionRecord]);
 
   const saveRecordDraft = async () => {
     if (!selectedRecord || !recordDraft || recordReadOnly) return;
@@ -1090,7 +1124,7 @@ export function ExecutionWorkspace({
             </div>
           ) : (
             <div className="execution-layout">
-              <aside className="execution-queue">
+              <aside className="execution-queue" ref={queueRef}>
                 <div className="execution-queue__head">
                   <strong>{pick("Execution queue", "执行队列")}</strong>
                   <select
