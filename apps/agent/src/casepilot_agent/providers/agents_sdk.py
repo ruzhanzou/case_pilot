@@ -26,11 +26,11 @@ from casepilot_agent.providers.structured_output import recovering_output_schema
 
 def _response_options(base_url: str, stage: str) -> dict:
     options = {"response_format": {"type": "json_object"}}
-    # Bounded edits and literal rule extraction do not need deep thinking.
-    # Keep scenario design, audits and other providers on their existing behavior.
+    # Literal rule extraction can skip thinking. Case generation and rewriting
+    # share the configured model's default inference behavior.
     host = urlparse(base_url).hostname or ""
     if host.endswith(".volces.com") and host.startswith("ark.") and stage in {
-        "rewrite.batch", "rewrite.evidence", "test_case.rewritten", "requirement.extracted",
+        "requirement.extracted",
     }:
         options["thinking"] = {"type": "disabled"}
     return options

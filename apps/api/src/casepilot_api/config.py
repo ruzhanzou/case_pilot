@@ -1,7 +1,7 @@
 from functools import lru_cache
 from urllib.parse import urlsplit
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     )
     agent_api_key: str = Field(
         default="",
-        validation_alias="CASEPILOT_AGENT_API_KEY",
+        validation_alias=AliasChoices("CASEPILOT_AGENT_API_KEY", "DASHSCOPE_API_KEY"),
     )
     agent_timeout_seconds: float = Field(
         default=60,
@@ -190,6 +190,16 @@ class Settings(BaseSettings):
                 self.agent_local_model,
             ]
         return tuple(dict.fromkeys(models))
+
+    def resolve_agent_model(self, model_id: str) -> str:
+        """Use the same model aliases as the generation worker."""
+        if model_id in {"test-design-pro", "pro"}:
+            return self.agent_pro_model
+        if model_id == "local":
+            return self.agent_local_model
+        if model_id in self.available_agent_models:
+            return model_id
+        return self.agent_model
 
     def is_agent_model_allowed(self, model_id: str) -> bool:
         if self.ai_mode == "mock" or self.agent_provider == "mock":

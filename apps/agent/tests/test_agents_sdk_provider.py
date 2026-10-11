@@ -446,10 +446,12 @@ def test_batch_instruction_is_scoped_to_one_existing_case(monkeypatch):
     assert captured["output"] is RewriteCandidate
 
 
-def test_ark_rewrite_uses_fast_inference_without_affecting_other_stages():
+def test_ark_rewrite_uses_same_inference_options_as_generation():
     from casepilot_agent.providers.agents_sdk import _response_options
     ark = "https://ark.cn-beijing.volces.com/api/coding/v3"
-    assert _response_options(ark, "rewrite.batch")["thinking"] == {"type": "disabled"}
+    for stage in ("rewrite.batch", "rewrite.evidence", "test_case.rewritten"):
+        assert _response_options(ark, stage) == _response_options(ark, "test_case.generated")
+        assert "thinking" not in _response_options(ark, stage)
     assert _response_options(ark, "requirement.extracted")["thinking"] == {"type": "disabled"}
     assert "thinking" not in _response_options(ark, "test_point.generated")
     assert "thinking" not in _response_options(ark, "test_case.grounded")

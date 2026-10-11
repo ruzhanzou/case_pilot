@@ -1597,7 +1597,7 @@ def _resolve_model_scope(db, conversation, payload, intent):
         for attempt in range(2):
             try:
                 decision = select_case_scope(payload.content, catalog, context, intent=intent,
-                    model_name=settings.agent_model, base_url=settings.agent_base_url,
+                    model_name=settings.resolve_agent_model(payload.model_id), base_url=settings.agent_base_url,
                     api_key=settings.agent_api_key, timeout_seconds=settings.agent_timeout_seconds,
                     tracing_enabled=settings.agent_tracing_enabled)
             except (TimeoutError, APIConnectionError, InternalServerError, RateLimitError,
@@ -1895,7 +1895,7 @@ def _resolve_action_scope(
     elif topic_condition and selected:
         try:
             matched_ids = set(select_query_case_ids(condition_text, selected,
-                model_name=settings.agent_model, base_url=settings.agent_base_url,
+                model_name=settings.resolve_agent_model(payload.model_id), base_url=settings.agent_base_url,
                 api_key=settings.agent_api_key, timeout_seconds=settings.agent_timeout_seconds,
                 tracing_enabled=settings.agent_tracing_enabled))
         except Exception:
@@ -3958,7 +3958,7 @@ def send_message(
                 conversation_memory=_agent_conversation_memory(db, conversation.id),
                 active_operations=active_operation_context,
                 provider=settings.agent_provider,
-                model_name=settings.agent_model,
+                model_name=settings.resolve_agent_model(payload.model_id),
                 base_url=settings.agent_base_url,
                 api_key=settings.agent_api_key,
                 timeout_seconds=settings.agent_timeout_seconds,
@@ -4499,7 +4499,8 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
             reply = interpret_rewrite_reply(text, {
                 **state, "has_confirmation": bool(pending),
                 "scope_cases": (pending or {}).get("cases", []) or dict(operation.target),
-            }, provider=settings.agent_provider, model_name=settings.agent_model,
+            }, provider=settings.agent_provider, model_name=settings.resolve_agent_model(
+                dict(user_message.message_metadata).get("request", {}).get("model_id", "auto")),
                 base_url=settings.agent_base_url, api_key=settings.agent_api_key,
                 timeout_seconds=settings.agent_timeout_seconds,
                 tracing_enabled=settings.agent_tracing_enabled)
@@ -4785,7 +4786,8 @@ def resume_conversation_operation(
             ),
             phase=str(dict(conversation.context).get("phase", "idle")),
             target_context=[item.model_dump(mode="json") for item in resume_targets],
-            provider=settings.agent_provider, model_name=settings.agent_model,
+            provider=settings.agent_provider, model_name=settings.resolve_agent_model(
+                request_data.get("model_id", "auto")),
             base_url=settings.agent_base_url, api_key=settings.agent_api_key,
             timeout_seconds=settings.agent_timeout_seconds,
             tracing_enabled=settings.agent_tracing_enabled,
