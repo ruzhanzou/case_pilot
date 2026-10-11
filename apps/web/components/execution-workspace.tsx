@@ -24,6 +24,7 @@ import {
   type PlaylistDto,
   type SpaceMemberDto,
 } from "@/lib/casepilot-api";
+import { executionFilterFields, matchesExecutionFilters, type ExecutionFilter, type ExecutionFilterMode, type ExecutionFilterField, type ExecutionFilterOperator } from "@/lib/execution-filters";
 import { matchesExecutionSearch } from "@/lib/execution-search";
 import { useI18n } from "@/lib/i18n";
 import {
@@ -141,6 +142,11 @@ export function ExecutionWorkspace({
   const [selectedAssigneeIds, setSelectedAssigneeIds] = useState<string[]>([]);
   const [memberEmail, setMemberEmail] = useState("");
   const [recordFilter, setRecordFilter] = useState("all");
+  const [caseFilters, setCaseFilters] = useState<ExecutionFilter[]>([]);
+  const [filterMode, setFilterMode] = useState<ExecutionFilterMode>("and");
+  const nextFilterId = useRef(0);
+  const updateCaseFilter = (id: number, patch: Partial<ExecutionFilter>) =>
+    setCaseFilters((current) => current.map((filter) => filter.id === id ? { ...filter, ...patch } : filter));
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -246,15 +252,12 @@ export function ExecutionWorkspace({
   );
   const filteredRecords = useMemo(() => {
     if (!run) return [];
-    if (recordFilter === "mine") {
-      return run.records.filter((record) => record.assignee_id === accountId);
-    }
-    if (recordFilter.startsWith("assignee:")) {
-      const assigneeId = recordFilter.slice("assignee:".length);
-      return run.records.filter((record) => record.assignee_id === assigneeId);
-    }
-    return run.records;
-  }, [accountId, recordFilter, run]);
+    return run.records.filter((record) => {
+      const assigneeMatches = recordFilter === "mine" ? record.assignee_id === accountId
+        : recordFilter.startsWith("assignee:") ? record.assignee_id === recordFilter.slice("assignee:".length) : true;
+      return assigneeMatches && matchesExecutionFilters(record, caseFilters, filterMode);
+    });
+  }, [accountId, recordFilter, run, caseFilters, filterMode]);
   const recordDraftDirty = Boolean(
     selectedRecord &&
       recordDraft?.recordId === selectedRecord.id &&
@@ -1016,6 +1019,58 @@ export function ExecutionWorkspace({
             <small>{pick("Multi-user updates sync every 5 seconds", "多人更新每 5 秒自动同步")}</small>
           </section>
 
+          <section className="execution-filters" aria-label={pick("Case filters", "用例筛选")}>
+            <div className="execution-filters__toolbar">
+              <strong>{pick("Case filters", "用例筛选")}</strong>
+              <select aria-label={pick("Filter combination", "条件组合方式")} value={filterMode}
+                onChange={(event) => setFilterMode(event.target.value as ExecutionFilterMode)}>
+                <option value="and">{pick("AND · Match all", "AND · 满足全部条件")}</option>
+                <option value="or">{pick("OR · Match any", "OR · 满足任一条件")}</option>
+              </select>
+              <button type="button" className="management-button" onClick={() => {
+                const id = nextFilterId.current++;
+                setCaseFilters((current) => [...current, { id, field: "title", operator: "contains", value: "" }]);
+              }}>
+                <Plus size={14} />{pick("Add filter", "添加条件")}
+              </button>
+              {(caseFilters.length > 0 || recordFilter !== "all") && <button type="button" className="management-button"
+                onClick={() => { setCaseFilters([]); setRecordFilter("all"); setFilterMode("and"); }}>
+                {pick("Clear filters", "清空筛选")}
+              </button>}
+              <span role="status">{pick(`${filteredRecords.length} / ${run.records.length} cases`, `${filteredRecords.length} / ${run.records.length} 条用例`)}</span>
+            </div>
+            {caseFilters.length > 0 && <div className="execution-filters__rows">
+              {caseFilters.map((filter, index) => <div className="execution-filters__row" key={filter.id}>
+                <span>{index === 0 ? pick("Where", "条件") : filterMode.toUpperCase()}</span>
+                <select aria-label={pick(`Filter ${index + 1} field`, `条件 ${index + 1} 字段`)} value={filter.field}
+                  onChange={(event) => updateCaseFilter(filter.id, { field: event.target.value as ExecutionFilterField, value: "" })}>
+                  {executionFilterFields.map(([value, en, zh]) => <option key={value} value={value}>{pick(en, zh)}</option>)}
+                </select>
+                <select aria-label={pick(`Filter ${index + 1} operator`, `条件 ${index + 1} 运算符`)} value={filter.operator}
+                  onChange={(event) => updateCaseFilter(filter.id, { operator: event.target.value as ExecutionFilterOperator })}>
+                  <option value="contains">{pick("CONTAINS", "CONTAINS · 包含")}</option>
+                  <option value="not_contains">{pick("NOT CONTAINS", "NOT CONTAINS · 不包含")}</option>
+                  <option value="equals">{pick("EQUALS", "EQUALS · 等于")}</option>
+                  <option value="not_equals">{pick("NOT EQUALS", "NOT EQUALS · 不等于")}</option>
+                </select>
+                {filter.field === "status" || filter.field === "priority" ?
+                  <select aria-label={pick(`Filter ${index + 1} value`, `条件 ${index + 1} 值`)} value={filter.value}
+                    onChange={(event) => updateCaseFilter(filter.id, { value: event.target.value })}>
+                    <option value="">{pick("Choose a value", "请选择")}</option>
+                    {filter.field === "status" ? executionOptions.map((option) =>
+                      <option key={option.value} value={option.value}>{pick(option.en, option.zh)}</option>)
+                      : ["P0", "P1", "P2"].map((value) => <option key={value} value={value}>{value}</option>)}
+                  </select> :
+                  <input aria-label={pick(`Filter ${index + 1} value`, `条件 ${index + 1} 值`)} value={filter.value}
+                    placeholder={pick("Enter a value", "输入筛选内容")}
+                    onChange={(event) => updateCaseFilter(filter.id, { value: event.target.value })} />}
+                <button type="button" className="management-button" aria-label={pick(`Remove filter ${index + 1}`, `删除条件 ${index + 1}`)}
+                  onClick={() => setCaseFilters((current) => current.filter((item) => item.id !== filter.id))}><Trash2 size={14} /></button>
+              </div>)}
+              <small>{pick("Empty conditions are ignored. Assignee selection applies to all results.", "空条件不参与筛选；执行人筛选始终作用于全部结果。")}</small>
+            </div>}
+          </section>
+
           {loading ? (
             <div className="management-loading">
               <LoaderCircle className="auth-spinner" size={22} />
@@ -1029,26 +1084,7 @@ export function ExecutionWorkspace({
                   <select
                     aria-label={pick("Filter by assignee", "按执行人筛选")}
                     value={recordFilter}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      setRecordFilter(value);
-                      const nextRecord =
-                        value === "all"
-                          ? run.records[0]
-                          : value === "mine"
-                            ? run.records.find(
-                                (record) => record.assignee_id === accountId,
-                              )
-                            : run.records.find(
-                                (record) =>
-                                  record.assignee_id ===
-                                  value.slice("assignee:".length),
-                              );
-                      if (nextRecord) {
-                        setSelectedRecordId(nextRecord.id);
-                        setRecordDraft(draftFromRecord(nextRecord));
-                      }
-                    }}
+                    onChange={(event) => setRecordFilter(event.target.value)}
                   >
                     <option value="all">{pick(`All · ${run.records.length}`, `全部 · ${run.records.length}`)}</option>
                     <option value="mine">{pick("My cases", "我的用例")}</option>
@@ -1063,6 +1099,7 @@ export function ExecutionWorkspace({
                   </select>
                   <span>{pick(`${filteredRecords.length} cases`, `${filteredRecords.length} 条`)}</span>
                 </div>
+                {filteredRecords.length === 0 && <p className="execution-filters__empty">{pick("No matching cases. Adjust or clear the filters.", "没有匹配的用例，请调整或清空筛选条件。")}</p>}
                 {filteredRecords.map((record, index) => (
                   <button
                     type="button"
@@ -1100,6 +1137,8 @@ export function ExecutionWorkspace({
               <section className="execution-case">
                 {selectedRecord ? (
                   <>
+                    {!filteredRecords.some((record) => record.id === selectedRecord.id) &&
+                      <p className="execution-filters__empty" role="status">{pick("The open case is outside the current filters. Your edits are preserved.", "当前打开的用例不在筛选结果中，编辑内容已保留。")}</p>}
                     <header className="execution-case__header">
                       <div>
                         <span className="management-kicker">
