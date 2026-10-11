@@ -32,6 +32,7 @@ export function CaseCollectionChanges({ cases, changeSet, acceptedFields, busy, 
   const readOnly = changeSet.status !== "ready";
   const isDeleteChange = Boolean(changeSet?.items.some((item) => item.operation === "delete"));
   const pendingItems = changeSet.items.filter((item) => !["applied", "rejected"].includes(item.status ?? ""));
+  const needsCompletionCount = changeSet.items.filter(item => item.quality?.passed === false).length;
   const reviewedCount = changeSet.items.length - pendingItems.length;
   const selectedItems = pendingItems.filter((item) => item.field_diff.some((diff) =>
     acceptedFields[item.ref]?.includes(diff.field)));
@@ -40,7 +41,8 @@ export function CaseCollectionChanges({ cases, changeSet, acceptedFields, busy, 
 
   return (
     <section className="collection-changes collection-changes--inline" aria-label={pick("Review pending case changes", "审阅待确认用例变更")}>
-      <div className="collection-changes__heading"><strong>{readOnly ? pick("Change result", "变更结果") : pick("Pending changes", "待确认变更")}</strong><span className="collection-changes__badge">{changeSet.status === "generating" ? pick("Generating preview", "改写预览生成中") : changeSet.status === "superseded" ? pick("Superseded", "已有新版本") : changeSet.status === "no_changes" ? pick("No changes needed", "无需修改") : changeSet.status === "applied" ? pick("Applied", "已应用") : changeSet.status === "rejected" ? pick("Discarded", "已丢弃") : changeSet.status === "conflict" ? pick("Version conflict", "版本冲突") : pick("Pending confirmation", "待确认")}</span></div>
+      <div className="collection-changes__heading"><strong>{readOnly ? pick("Change result", "变更结果") : pick("Pending changes", "待确认变更")}</strong><span className="collection-changes__badge">{changeSet.status === "generating" ? pick("Generating preview", "改写预览生成中") : changeSet.status === "superseded" ? pick("Superseded", "已有新版本") : changeSet.status === "no_changes" ? (needsCompletionCount ? pick("Needs attention", "待完善") : pick("No changes needed", "无需修改")) : changeSet.status === "applied" ? pick("Applied", "已应用") : changeSet.status === "rejected" ? pick("Discarded", "已丢弃") : changeSet.status === "conflict" ? pick("Version conflict", "版本冲突") : pick("Pending confirmation", "待确认")}</span></div>
+      {!!needsCompletionCount && <p role="status">{pick(`${needsCompletionCount} cases need attention. Their original content is preserved; review the completed changes before accepting.`, `${needsCompletionCount} 条用例待完善，已保留原内容；其余修改请人工审阅后采纳。`)}</p>}
       {changeSet.status === "generating" && <p role="status" data-testid="rewrite-batch-preview">{pick("Completed batches appear here. Review and accept after all batches finish.", "已完成的批次会逐批展示；全部改写完成后，即可审阅并采纳。")}</p>}
       {changeSet.status === "conflict" && <p role="alert">{pick("Cases changed after this proposal was created. Start a new rewrite using current versions.", "用例在方案生成后发生了变化，请基于最新版本重新发起改写。")}</p>}
       {changeSet && (
@@ -74,7 +76,7 @@ export function CaseCollectionChanges({ cases, changeSet, acceptedFields, busy, 
                 <button type="button" disabled={busy || !item.field_diff.length} onClick={() => void onReviewItem(item.ref, true)}>{pick("Accept this case", "采纳此用例")}</button>
                 <button type="button" disabled={busy} onClick={() => void onReviewItem(item.ref, false)}>{pick("Discard this suggestion", "丢弃此建议")}</button>
               </div>}
-              {!diffs.length && <p>{pick("No changes needed for this case.", "此用例无需修改。")}</p>}
+              {!diffs.length && <p>{item.quality?.passed === false ? pick("Needs attention; original content preserved.", "待完善，已保留原内容。") : pick("No changes needed for this case.", "此用例无需修改。")}</p>}
               {diffs.map((diff) => (
                 <div className="collection-changes__field" key={diff.field}>
                   <label><input type="checkbox" disabled={busy || itemReadOnly || comparePrevious} checked={itemReadOnly ? item.status === "applied" && (!item.accepted_fields || item.accepted_fields.includes(diff.field)) : acceptedFields[item.ref]?.includes(diff.field) ?? false} onChange={() => onToggleField(item.ref, diff.field)} />{diff.field === "delete" ? pick("Soft delete this case", "软删除此用例") : fieldLabel(diff.field, pick)}</label>

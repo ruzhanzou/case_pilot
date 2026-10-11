@@ -390,13 +390,13 @@ def test_rewrite_rule_id_hint_restores_original_conditions_and_overlapping_windo
     assert all(any(x['excerpt'] in s['excerpt'] for s in context['evidence']) for x in result['evidence'])
 
 
-def test_rewrite_timeout_splits_batch_and_preserves_targets():
+def test_rewrite_timeout_retries_once_and_preserves_targets():
     import httpx
     from openai import APITimeoutError
     calls = []
     def complete(**kwargs):
         items = kwargs['payload']['items'];calls.append(len(items))
-        if len(items) > 1:
+        if not kwargs['payload'].get('validation_feedback'):
             raise APITimeoutError(request=httpx.Request('POST', 'https://example.test'))
         return kwargs['result_type'].model_validate({'items': [
             {'ref':item['ref'], 'changes':{'title':'复核 '+item['test_case']['title']},
@@ -404,7 +404,7 @@ def test_rewrite_timeout_splits_batch_and_preserves_targets():
     requests = {str(i): RewriteRequest(test_case=case(), instruction='润色标题') for i in range(2)}
     result = GenerationPipeline(SimpleNamespace(name='real',complete=complete)).rewrite_many(requests)
     assert set(result) == set(requests)
-    assert calls == [2,1,1]
+    assert calls == [2,2]
 
 
 def test_rewrite_schema_forbids_unrequested_system_fields():
@@ -429,5 +429,7 @@ def test_rewrite_sources_are_restored_from_server_catalog(index, valid):
         result=pipeline.rewrite_many(requests)
         assert result['one'].proposed.source_refs==original.source_refs
     else:
-        with pytest.raises(ValueError,match='less_than'):
-            pipeline.rewrite_many(requests)
+        candidate = pipeline.rewrite_many(requests)['one']
+        assert not candidate.quality.passed
+        assert candidate.proposed == original
+        assert candidate.diff == []

@@ -121,7 +121,8 @@ class AgentsSdkProvider:
         ) and any(re.search(r"核对|原文|依据|预期|校验|expected|evidence|assertion|verify",
                             str(item.get("instruction", "")), re.I)
                   for item in payload.get("shared", []))
-        if model_id == "auto" and (
+        basic_review = payload.get("validation_mode") == "human_review_basic"
+        if model_id == "auto" and not basic_review and (
             stage == "test_case.grounded"
             or (stage == "rewrite.batch" and (self._prefer_pro_rewrite or evidence_review))
         ):
@@ -254,7 +255,7 @@ class AgentsSdkProvider:
                             "必填项与数据类型，并只返回修正后的完整 JSON 对象。"
                         )
             except (APITimeoutError, ModelBehaviorError):
-                quality_fallback = (allow_model_fallback and stage == "rewrite.batch"
+                quality_fallback = (not basic_review and allow_model_fallback and stage == "rewrite.batch"
                                     and model_id == "auto" and resolved_model == self.model
                                     and self.pro_model != self.model)
                 if quality_fallback or (allow_model_fallback and resolved_model != self.model):

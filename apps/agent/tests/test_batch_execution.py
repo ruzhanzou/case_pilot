@@ -146,7 +146,7 @@ def test_semantic_rewrite_is_one_call_per_batch_and_diffs_are_server_computed(co
     assert all([diff.field for diff in case.diff] == ["steps"] for case in result.values())
 
 
-@pytest.mark.parametrize("corrupt", ["missing", "duplicate", "foreign", "identity", "invalid_priority", "empty_steps"])
+@pytest.mark.parametrize("corrupt", ["duplicate", "foreign"])
 def test_batch_rewrite_rejects_incomplete_or_changed_identity(corrupt):
     with pytest.raises(ValueError):
         GenerationPipeline(BatchProvider(corrupt)).rewrite_many(requests(2))
@@ -319,7 +319,7 @@ def test_patch_rewrite_preserves_untouched_fields_and_does_not_request_full_outp
         k: v for k, v in after.items() if k != "steps"
     }
     schema = provider.calls[0]["result_type"].model_json_schema()
-    item_name = schema["properties"]["items"]["items"]["$ref"].rsplit("/", 1)[-1]
+    item_name = schema["properties"]["items"]["items"]["anyOf"][0]["$ref"].rsplit("/", 1)[-1]
     fields = schema["$defs"][item_name]["properties"]
     changes_name = fields["changes"]["$ref"].rsplit("/", 1)[-1]
     change_fields = schema["$defs"][changes_name]["properties"]
@@ -338,8 +338,9 @@ def test_expected_delta_preserves_actions_and_rejects_whole_steps():
                 'reason': '删除无依据断言', 'quality': {'passed': True, 'score': 90}}
             from pydantic import ValidationError
             with pytest.raises(ValidationError):
-                result_type.model_validate({'items': [{**item, 'changes': {
-                    'steps': [{'action': '修改操作', 'expected': '结果'}]}}]})
+                item_type = result_type.model_fields['items'].annotation.__args__[0].__args__[0]
+                item_type.model_validate({**item, 'changes': {
+                    'steps': [{'action': '修改操作', 'expected': '结果'}]}})
             return result_type.model_validate({'items': [item]}), None
     source = requests(1)
     source['ref-0'].instruction = '核对预期，保留已有全部操作步骤'
@@ -355,7 +356,7 @@ def test_malformed_rewrite_splits_only_failed_batch_and_publishes_progress():
 
     class TruncatedProvider(BatchProvider):
         def complete(self, **kwargs):
-            if len(kwargs["payload"]["items"]) > 2:
+            if not kwargs["payload"].get("validation_feedback"):
                 self.calls.append(kwargs)
                 raise ModelBehaviorError("truncated output")
             return super().complete(**kwargs)
@@ -365,8 +366,8 @@ def test_malformed_rewrite_splits_only_failed_batch_and_publishes_progress():
     result = GenerationPipeline(provider).rewrite_many(
         requests(5), on_batch=lambda items, total: previews.append((list(items), total))
     )
-    assert [len(call["payload"]["items"]) for call in provider.calls] == [5, 2, 3, 1, 2]
-    assert [len(items) for items, _ in previews] == [2, 3, 5]
+    assert [len(call["payload"]["items"]) for call in provider.calls] == [5, 5]
+    assert [len(items) for items, _ in previews] == [5]
     assert set(result) == set(requests(5))
     assert all(total == 5 for _, total in previews)
 
@@ -381,12 +382,14 @@ def test_persistent_malformed_single_rewrite_has_bounded_retry():
 
     provider = BrokenProvider()
     previews = []
-    with pytest.raises(ModelBehaviorError):
-        GenerationPipeline(provider).rewrite_many(
-            requests(1), on_batch=lambda *args: previews.append(args)
-        )
+    result = GenerationPipeline(provider).rewrite_many(
+        requests(1), on_batch=lambda *args: previews.append(args)
+    )
+    assert not result["ref-0"].quality.passed
+    assert result["ref-0"].proposed == requests(1)["ref-0"].test_case
+    assert result["ref-0"].diff == []
     assert len(provider.calls) == 2
-    assert previews == []
+    assert len(previews) == 1
 
 
 def test_cancel_during_rewrite_recovery_stops_before_next_call():
@@ -424,3 +427,42 @@ def test_explicit_rewrites_publish_before_semantic_model_call():
     assert previews == [(1, 2), (2, 2)]
     assert result["ref-0"].proposed.priority == "P0"
     assert len(provider.calls) == 1
+
+
+@pytest.mark.parametrize("corrupt", ["missing", "identity", "invalid_priority", "empty_steps"])
+def test_invalid_rewrite_is_bounded_and_keeps_original(corrupt):
+    provider = BatchProvider(corrupt)
+    source = requests(2)
+    result = GenerationPipeline(provider).rewrite_many(source)
+    assert len(provider.calls) <= 3
+    assert set(result) == set(source)
+    for ref, candidate in result.items():
+        if not candidate.quality.passed:
+            assert candidate.proposed == source[ref].test_case
+            assert candidate.diff == []
+            assert "待完善" in candidate.reason
+
+
+def test_rewrite_salvages_valid_entries_and_repairs_only_invalid_target():
+    class PartialProvider(BatchProvider):
+        def complete(self, **kwargs):
+            self.calls.append(kwargs)
+            items = []
+            for item in kwargs['payload']['items']:
+                patch = {'ref': item['ref'], 'changes': {'title': '改写标题'}, 'reason': '修改'}
+                if item['ref'] == 'ref-1':
+                    patch['changes'] = {'priority': 'P99'}
+                items.append(patch)
+            return kwargs['result_type'].model_validate({'items': items}), None
+    provider = PartialProvider()
+    source = requests(3)
+    previews = []
+    result = GenerationPipeline(provider).rewrite_many(source,
+        on_batch=lambda items, total: previews.append(list(items)))
+    assert [[i['ref'] for i in call['payload']['items']] for call in provider.calls] == [
+        ['ref-0', 'ref-1', 'ref-2'], ['ref-1']]
+    assert previews[0] == ['ref-0', 'ref-2']
+    assert result['ref-0'].quality.passed and result['ref-2'].quality.passed
+    assert not result['ref-1'].quality.passed
+    assert result['ref-1'].proposed == source['ref-1'].test_case
+    assert all(c['payload']['validation_mode'] == 'human_review_basic' for c in provider.calls)

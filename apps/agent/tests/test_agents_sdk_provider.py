@@ -519,3 +519,29 @@ def test_evidence_review_uses_quality_model_only_in_auto_mode(monkeypatch, stage
         payload={'shared': [{'instruction': '核对预期', 'context': {'evidence_ref_indexes': [0]}}]},
         result_type=KnowledgeAnswer, model_id=model_id)
     assert models == [expected]
+
+
+@pytest.mark.parametrize('fail', [False, True])
+def test_basic_rewrite_does_not_upgrade_model_for_evidence_or_retry(monkeypatch, fail):
+    from agents import Runner
+    from agents.exceptions import ModelBehaviorError
+    models = []
+    async def run(agent, *args, **kwargs):
+        models.append(agent.model.model)
+        if fail:
+            raise ModelBehaviorError('invalid output')
+        return SimpleNamespace(final_output=KnowledgeAnswer(answer='结果'),
+                               context_wrapper=SimpleNamespace(usage=SimpleNamespace()))
+    monkeypatch.setattr(Runner, 'run', run)
+    provider = AgentsSdkProvider(base_url='https://example.test/v1', api_key='test-only',
+        model='fast', pro_model='quality', local_model='fast', timeout=5)
+    kwargs = dict(stage='rewrite.batch', instruction='核对预期',
+        payload={'validation_mode':'human_review_basic', 'shared': [
+            {'instruction':'核对预期','context':{'evidence_ref_indexes':[0]}}]},
+        result_type=KnowledgeAnswer, model_id='auto')
+    if fail:
+        with pytest.raises(ModelBehaviorError):
+            provider.complete(**kwargs)
+    else:
+        provider.complete(**kwargs)
+    assert models == ['fast']

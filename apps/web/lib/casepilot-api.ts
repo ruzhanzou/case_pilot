@@ -682,6 +682,7 @@ export type ConversationTurnDto = {
 };
 
 export type CaseChangeItemDto = {
+  quality?: { passed?: boolean; issues?: { code: string; message: string }[] };
   operation?: "delete" | "modify";
   ref: string;
   target_type: "candidate" | "formal";

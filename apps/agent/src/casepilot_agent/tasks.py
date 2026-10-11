@@ -1551,7 +1551,7 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
                     "ref": ref, "target_type": kind, **extra, "base_snapshot": base,
                     "previous_snapshot": requests[ref].test_case.model_dump(mode="json") if previous else None,
                     "candidate_revision_id": None, "proposed_snapshot": rebased["proposed"],
-                    "field_diff": rebased["diff"], "reason": rebased["reason"], "quality": rebased["quality"],
+                    "field_diff": rebased["diff"] if candidate.quality.passed else [], "reason": rebased["reason"], "quality": rebased["quality"],
                     "status": "ready", "proposal_version": int(payload.get("task_revision") or 1),
                 })
             with store.connection() as connection:
@@ -1606,7 +1606,7 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
                     ),
                     "previous_change_set_id": payload.get("previous_change_set_id"),
                     "proposed_snapshot": candidate_payload["proposed"],
-                    "field_diff": candidate_payload["diff"],
+                    "field_diff": candidate_payload["diff"] if candidate.quality.passed else [],
                     "reason": candidate_payload["reason"],
                     "quality": candidate_payload["quality"],
                     "status": "ready",
@@ -1638,7 +1638,7 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
                     ),
                     "previous_change_set_id": payload.get("previous_change_set_id"),
                     "proposed_snapshot": candidate_payload["proposed"],
-                    "field_diff": candidate_payload["diff"],
+                    "field_diff": candidate_payload["diff"] if candidate.quality.passed else [],
                     "reason": candidate_payload["reason"],
                     "quality": candidate_payload["quality"],
                     "status": "ready",
@@ -1646,6 +1646,7 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
             )
         changed_count = sum(bool(item["field_diff"]) for item in items)
         output = {
+            "needs_completion_count": sum(not item.get("quality", {}).get("passed", True) for item in items),
             "no_changes": changed_count == 0,
             "unchanged_count": len(items) - changed_count,
             "change_set_id": str(payload["change_set_id"]),
@@ -1689,7 +1690,7 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
                 connection,
                 job,
                 content=(f"已检查 {len(items)} 条用例，{changed_count} 条待确认修改，"
-                         f"{output['unchanged_count']} 条无需修改。"),
+                         f"{output['needs_completion_count']} 条待完善。请人工审阅后采纳。"),
                 metadata_values={
                     "change_set_id": str(payload["change_set_id"]),
                     "item_count": len(items),
