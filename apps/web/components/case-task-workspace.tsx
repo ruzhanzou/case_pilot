@@ -27,6 +27,7 @@ export function CaseTaskWorkspace({ tasks, selectedId, onSelect, labels, statusL
   const [historyOpen, setHistoryOpen] = useState(false);
   const task = tasks.find((item) => item.id === selectedId) ?? tasks[0];
   const isRunning = task && !task.waitingOn && ["queued", "running"].includes(task.status);
+  const needsDetails = task && ["awaiting_target", "awaiting_clarification"].includes(task.status);
   const taskLabel = (item: Task) => item.message.metadata.action === "module_created" ? pick("Create module", "创建模块") : labels[(item.operation?.payload.task_intent ?? item.message.intent) as ConversationIntent];
   const sourceTask = tasks.find((item) => item.id === task?.sourceTaskId);
   const statusLabel = (status: string) => statusLabels[status] ?? ({
@@ -55,7 +56,9 @@ export function CaseTaskWorkspace({ tasks, selectedId, onSelect, labels, statusL
           </nav>
           <div className="case-task-detail" key={task.id}>
             <header><div><h3>{taskLabel(task)}{task.versions && <small> · V{task.versions.length}</small>}</h3>{task.message.created_at && <time dateTime={task.message.created_at}>{new Date(task.message.created_at).toLocaleString(locale === "en" ? "en-US" : "zh-CN")}</time>}</div><div className="case-task-detail__actions"><span className="case-task-status" data-status={task.status}>{icon(task.status)}{statusLabel(task.status)}</span><button type="button" aria-expanded={historyOpen} aria-controls="case-task-history" onClick={() => setHistoryOpen(!historyOpen)}><History size={15} />{pick("Result history", "历史结果")} · {tasks.length}</button></div></header>
-            {!hasLiveResults && (task.waitingOn || isRunning || task.status.startsWith("awaiting_") && task.status !== "awaiting_confirmation" || ["failed", "cancelled"].includes(task.status)) && <div className="case-task-running" role="status"><p>{pick("Results will appear here. Follow progress or provide details in the conversation.", "结果将在这里展示，请在对话区查看进度或补充信息。")}</p><button type="button" onClick={() => onConversation(task.messageIds.at(-1))}>{pick("View conversation", "查看对话")}</button></div>}
+            {!hasLiveResults && (task.waitingOn || isRunning || task.status.startsWith("awaiting_") && task.status !== "awaiting_confirmation" || ["failed", "cancelled"].includes(task.status)) && <div className="case-task-running" role="status"><p>{needsDetails
+              ? task.message.content || pick("Select the cases to modify or describe the changes in the conversation.", "请在对话区选择要修改的用例或补充修改要求。")
+              : pick("Results will appear here. Follow progress or provide details in the conversation.", "结果将在这里展示，请在对话区查看进度或补充信息。")}</p><button type="button" onClick={() => onConversation(task.messageIds.at(-1))}>{needsDetails ? pick("Provide details", "补充信息") : pick("View conversation", "查看对话")}</button></div>}
             {task.message.metadata.action === "module_created" && <button type="button" onClick={() => onArtifact(task)}>{pick("View module", "查看模块")}</button>}
             {onDiscard && task.operation && (task.id === activeTaskId || task.message.intent === "CASE_GENERATE" && task.status === "awaiting_confirmation") && <button type="button" disabled={running} onClick={() => onDiscard(task)}>{pick("Abandon this task", "放弃当前任务")}</button>}
             {children}

@@ -5,6 +5,7 @@ import { nanoid } from "nanoid/non-secure";
 
 import { ConversationAttachments } from "@/components/conversation-attachments";
 import { planningModuleAliases } from "@/lib/case-module-tree";
+import { matchesRewriteScope, toggleRewriteSelection } from "@/lib/rewrite-selection";
 
 import { summarizeWorkflowStages } from "@/lib/workflow-stages";
 import { CasePolishDialog } from "@/components/case-polish-dialog";
@@ -583,26 +584,29 @@ export function CaseWorkbench({
     return () => { active = false; };
   }, []);
 
+  const selectionSave = useRef<Promise<unknown>>(Promise.resolve());
+  const persistTargetSelection = useCallback((next: typeof selectedTargets) => {
+    if (!workspace) return;
+    const workspaceId = workspace.id;
+    selectionSave.current = selectionSave.current.catch(() => undefined).then(() =>
+      updateWorkspaceState(workspaceId, {
+        selected_targets: next.map(({ label, target }) => ({ label, target })),
+      })
+    );
+    void selectionSave.current.catch((caught) =>
+      setError(caught instanceof Error ? caught.message : pick("Could not save selection", "保存选择失败"))
+    );
+  }, [workspace, pick]);
+
   const toggleTarget = useCallback(
     (target: ConversationTarget, label: string) => {
-      const key = JSON.stringify(target);
-      setSelectedTargets((current) => {
-        const next = current.some((item) => item.key === key)
-          ? current.filter((item) => item.key !== key)
-          : [...current, { key, label, target }];
-        setRewriteTargets(next);
-        if (workspace) {
-          void updateWorkspaceState(workspace.id, {
-            selected_targets: next.map((item) => ({
-              label: item.label,
-              target: item.target,
-            })),
-          });
-        }
-        return next;
-      });
+      const next = toggleRewriteSelection(selectedTargets, target, label,
+        count => pick(`${count} cases`, `${count} 条用例`));
+      setSelectedTargets(next);
+      setRewriteTargets(next);
+      persistTargetSelection(next);
     },
-    [workspace],
+    [selectedTargets, persistTargetSelection, pick],
   );
 
   const selectTarget = useCallback(
@@ -610,13 +614,9 @@ export function CaseWorkbench({
       const next = [{ key: JSON.stringify(target), label, target }];
       setSelectedTargets(next);
       setRewriteTargets(next);
-      if (workspace) {
-        void updateWorkspaceState(workspace.id, {
-          selected_targets: [{ label, target }],
-        });
-      }
+      persistTargetSelection(next);
     },
-    [workspace],
+    [persistTargetSelection],
   );
 
   const caseTarget = useCallback((testCase: TestCaseDto): ConversationTarget => {
@@ -1164,6 +1164,7 @@ export function CaseWorkbench({
     setError("");
     setNotice("");
     try {
+      await selectionSave.current;
       const turn = effectivePendingOperationId
         ? await resumeConversationOperation(effectivePendingOperationId, {
             targets: structuredTargets,
@@ -1195,8 +1196,10 @@ export function CaseWorkbench({
         setArtifactOpen(false);
       }
       if (turn.action.type === "module_created") await onCasesChanged();
-      const resolvedOperation = turn.operation_plan?.operations.find((item) => item.target.resolved);
-      if (resolvedOperation) {
+      const resolvedOperation = turn.operation_plan?.operations.find((item) =>
+        item.id === (effectivePendingOperationId || turn.assistant_message?.metadata.operation_id || turn.operation_plan?.current_operation_id)
+      ) ?? turn.operation_plan?.operations.findLast((item) => item.target.resolved);
+      if (resolvedOperation?.target.resolved) {
         const ids = new Set(resolvedOperation.target.case_ids as string[] ?? []);
         const refs = new Set(resolvedOperation.target.candidate_refs as string[] ?? []);
         const candidateIds = new Set(candidates.filter((item) => refs.has(item.ref)).map((item) => item.id));
@@ -1224,8 +1227,7 @@ export function CaseWorkbench({
           onSelectCase(resolvedCaseId);
         }
       }
-      const retainedSelections = resolvedSelections.length === 1 &&
-        ["CASE_MODIFY", "CASE_DELETE"].includes(turn.intent)
+      const retainedSelections = ["CASE_MODIFY", "CASE_DELETE"].includes(turn.intent)
           ? resolvedSelections
           : [];
       setSelectedTargets(retainedSelections);
@@ -1257,7 +1259,7 @@ export function CaseWorkbench({
           ),
         );
       }
-      if (effectivePendingOperationId) { setSelectedTargets([]); setResumeTaskId(""); }
+      if (effectivePendingOperationId) setResumeTaskId("");
       if (!turn.action.change_set_id) {
         await continueTaskQueue(await refreshWorkspace());
       }
@@ -1271,10 +1273,25 @@ export function CaseWorkbench({
   };
 
   const confirmModification = async (operationId: string) => {
+    if (conversationRunning) return;
+    if (!selectedTargets.length) {
+      setError(pick("Select the cases to modify before confirming.", "请先选择要修改的用例，再确认修改。"));
+      return;
+    }
     setBusy(true);
     setError("");
     try {
-      const turn = await resumeConversationOperation(operationId, { confirmModification: true });
+      await selectionSave.current;
+      const operation = workspace?.operation_plan?.operations.find(item => item.id === operationId);
+      const targets = selectedTargets.map(item => item.target);
+      const content = prompt.trim();
+      const changed = content || !matchesRewriteScope(targets, operation?.target ?? {});
+      // Changed scope or unsent requirements need a new preview, not execution
+      // of the confirmation text that was rendered before those edits.
+      const turn = await resumeConversationOperation(operationId, changed
+        ? { targets, content: content || undefined }
+        : { confirmModification: true });
+      if (content) editPrompt("");
       if (turn.action.job_id) {
         openReviewPlan(operationId);
         await waitAndRefresh(turn.action.job_id);
@@ -2763,6 +2780,7 @@ export function CaseWorkbench({
                                 item.target.kind === "case" &&
                                 item.target.case_ids?.includes(testCase.id),
                             )}
+                            disabled={conversationRunning}
                             onChange={() =>
                               toggleTarget(
                                 { kind: "case", case_ids: [testCase.id] },

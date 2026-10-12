@@ -59,6 +59,36 @@ def test_model_receives_full_request_catalog_and_selection_context(scope, intent
     assert selector.call_args.args[2]["selected_ids"] == [cases[0]["id"]]
 
 
+def test_scope_uses_routing_model_with_shared_retry_budget(scope, monkeypatch):
+    db, conversation, cases, selector = scope
+    monkeypatch.setattr(conversations.settings, "agent_routing_model", "fast-parser")
+    monkeypatch.setattr(conversations.settings, "agent_timeout_seconds", 120)
+    monkeypatch.setattr(conversations.settings, "agent_routing_timeout_seconds", 45)
+    times = iter([100, 100, 130])
+    monkeypatch.setattr(conversations, "monotonic", lambda: next(times))
+    selector.side_effect = [TimeoutError(), selector.return_value]
+    result, error = conversations._resolve_model_scope(db, conversation,
+        ConversationMessageCreate(content="修改登录步骤", model_id="ark-code-latest"), "CASE_MODIFY")
+    assert error is None
+    assert list(map(str, result.target_case_ids)) == [cases[1]["id"]]
+    assert [call.kwargs["timeout_seconds"] for call in selector.call_args_list] == [45, 15]
+    assert all(call.kwargs["model_name"] == "fast-parser" for call in selector.call_args_list)
+
+
+def test_scope_timeout_does_not_start_another_full_wait(scope, monkeypatch):
+    db, conversation, _, selector = scope
+    monkeypatch.setattr(conversations.settings, "agent_timeout_seconds", 120)
+    monkeypatch.setattr(conversations.settings, "agent_routing_timeout_seconds", 45)
+    times = iter([100, 100, 146])
+    monkeypatch.setattr(conversations, "monotonic", lambda: next(times))
+    selector.side_effect = TimeoutError()
+    payload = ConversationMessageCreate(content="修改登录步骤")
+    result, error = conversations._resolve_model_scope(db, conversation, payload, "CASE_MODIFY")
+    assert result is payload
+    assert "本次没有修改" in error
+    assert selector.call_count == 1
+
+
 @pytest.mark.parametrize(
     "update",
     [
@@ -230,7 +260,12 @@ def test_scope_transient_failure_retries_without_changing_catalog(scope):
     assert error is None
     assert list(map(str, result.target_case_ids)) == [cases[1]["id"]]
     assert selector.call_count == 2
-    assert selector.call_args_list[0] == selector.call_args_list[1]
+    first, second = selector.call_args_list
+    assert first.args == second.args
+    assert {k: v for k, v in first.kwargs.items() if k != "timeout_seconds"} == {
+        k: v for k, v in second.kwargs.items() if k != "timeout_seconds"
+    }
+    assert 0 < second.kwargs["timeout_seconds"] <= first.kwargs["timeout_seconds"]
 
 
 def test_router_scope_question_cannot_bypass_catalog_selector(monkeypatch):

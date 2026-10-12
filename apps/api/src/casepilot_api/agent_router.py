@@ -2,6 +2,7 @@ import json
 import logging
 import re
 from collections.abc import Callable
+from time import perf_counter
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -22,6 +23,22 @@ IntentName = Literal[
 ]
 
 logger = logging.getLogger(__name__)
+
+
+def _run_routing_agent(runner, agent, prompt: str, *, stage: str, model_name: str):
+    started = perf_counter()
+    outcome = "error"
+    try:
+        result = runner.run_sync(agent, prompt, max_turns=1).final_output
+        outcome = "ok"
+        return result
+    finally:
+        elapsed = perf_counter() - started
+        log = logger.warning if elapsed >= 20 else logger.info
+        # No user content, asset bodies, credentials or provider URLs in metrics.
+        log("routing_stage stage=%s model=%s outcome=%s duration_seconds=%.3f",
+            stage, model_name, outcome, elapsed)
+
 
 INTENT_THRESHOLDS: dict[str, float] = {
     "KNOWLEDGE_QA": 0.72,
@@ -498,6 +515,7 @@ def sdk_plan(
         api_key=api_key,
         base_url=base_url.rstrip("/"),
         timeout=timeout_seconds,
+        max_retries=0,
     )
     model = OpenAIChatCompletionsModel(model=model_name, openai_client=client)
     agent = Agent(
@@ -549,7 +567,7 @@ def sdk_plan(
         },
         ensure_ascii=False,
     )
-    return Runner.run_sync(agent, prompt, max_turns=3).final_output
+    return _run_routing_agent(Runner, agent, prompt, stage="intent", model_name=model_name)
 
 
 def plan_intents(
@@ -767,13 +785,13 @@ def select_case_scope(instruction: str, cases: list[dict], context: dict, *, int
         model_settings=ModelSettings(extra_body={'response_format': {'type': 'json_object'}}),
         output_type=AgentOutputSchema(CaseScopeDecision, strict_json_schema=False),
     )
-    decision = Runner.run_sync(agent, json.dumps({
+    decision = _run_routing_agent(Runner, agent, json.dumps({
         'intent': intent, 'instruction': instruction, 'context': compact_context(context),
         'cases': [
             {**case, 'source_id': str(case['id']), 'id': aliases[str(case['id'])]}
             for case in cases
         ],
-    }, ensure_ascii=False, default=str), max_turns=1).final_output
+    }, ensure_ascii=False, default=str), stage="scope", model_name=model_name)
     resolved_ids = []
     for ref in decision.ids:
         if ref in original_ids:

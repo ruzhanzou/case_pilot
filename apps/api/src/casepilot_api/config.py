@@ -36,6 +36,14 @@ class Settings(BaseSettings):
         gt=0,
         validation_alias="CASEPILOT_AGENT_TIMEOUT_SECONDS",
     )
+    # Intent and scope selection are short control requests, independent of the
+    # user's content-generation model. Empty uses the configured default model.
+    agent_routing_model: str = Field(
+        default="", validation_alias="CASEPILOT_AGENT_ROUTING_MODEL",
+    )
+    agent_routing_timeout_seconds: float = Field(
+        default=45, gt=0, validation_alias="CASEPILOT_AGENT_ROUTING_TIMEOUT_SECONDS",
+    )
     agent_tracing_enabled: bool = Field(
         default=False,
         validation_alias="CASEPILOT_AGENT_TRACING_ENABLED",
@@ -190,6 +198,14 @@ class Settings(BaseSettings):
                 self.agent_local_model,
             ]
         return tuple(dict.fromkeys(models))
+
+    @property
+    def routing_model(self) -> str:
+        return self.agent_routing_model.strip() or self.agent_model
+
+    @property
+    def routing_timeout_seconds(self) -> float:
+        return min(self.agent_timeout_seconds, self.agent_routing_timeout_seconds)
 
     def resolve_agent_model(self, model_id: str) -> str:
         """Use the same model aliases as the generation worker."""

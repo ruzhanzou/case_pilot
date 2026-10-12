@@ -217,3 +217,115 @@ async def test_missing_direction_is_resolved_by_followup_without_asking_again(dr
     assert resumed.json()['assistant_message']['metadata'].get('modification_confirmation'), resumed.text
     assert set(resumed.json()['assistant_message']['target_case_ids']) == {case['id'] for case in cases}
     assert not dispatched
+
+
+@pytest.mark.asyncio
+async def test_direction_question_persists_inferred_scope_before_short_reply(draft, monkeypatch):
+    client, workspace, oid, cases, dispatched = draft
+    from casepilot_api.models import Conversation, ConversationMessage
+    from casepilot_api.schemas import ConversationMessageCreate
+    selector = Mock(side_effect=lambda db, c, payload, *a: (
+        payload.model_copy(update={'target_case_ids': [UUID(cases[0]['id'])]}), None))
+    monkeypatch.setattr(conversations, '_resolve_action_scope', selector)
+    with get_session_factory()() as db:
+        operation = db.get(ConversationOperation, UUID(oid))
+        operation.target = {'resolved': False, 'case_ids': [], 'candidate_refs': []}
+        operation.payload = {**operation.payload, 'instruction': '步骤太简单，丰富以下',
+            'modification_confirmation': None, 'plan': {
+                'clarification_questions': ['希望重点补充哪些内容：操作细节还是预期结果？'],
+            }}
+        conversation = db.get(Conversation, UUID(workspace))
+        user = db.get(ConversationMessage, operation.message_id)
+        assistant, _, task = conversations._start_action(db, db.get(Account, conversation.account_id),
+            conversation, user, ConversationMessageCreate(content='步骤太简单，丰富以下'),
+            'CASE_MODIFY', 1, operation.id)
+        assert not task
+        assert assistant.target_case_ids == [cases[0]['id']]
+        assert operation.target['resolved']
+        assert not operation.payload['rewrite_draft']['requirements_ready']
+        db.commit()
+    selector.assert_called_once()
+    restored = (await client.get(f'/api/v1/conversations/{workspace}')).json()
+    assert restored['context']['selected_targets'][0]['target']['case_ids'] == [cases[0]['id']]
+    selector.side_effect = AssertionError('A direction-only reply must retain resolved scope')
+    monkeypatch.setattr(conversations, 'interpret_rewrite_reply', lambda *a, **k: RewriteReply(
+        action='update', requirements='丰富操作细节，保留原预期结果'))
+    result = await client.post(f'/api/v1/conversation-operations/{oid}/resume', json={'content': '操作细节'})
+    assert result.status_code == 202, result.text
+    assert result.json()['assistant_message']['target_case_ids'] == [cases[0]['id']]
+    assert result.json()['assistant_message']['metadata']['modification_confirmation']
+    assert not dispatched
+    confirmed = await client.post(f'/api/v1/conversation-operations/{oid}/resume', json={'content': '确认'})
+    assert confirmed.json()['action']['job_id']
+    assert len(dispatched) == 1
+
+
+@pytest.mark.asyncio
+async def test_selection_is_saved_while_waiting_for_direction(draft, monkeypatch):
+    client, _, oid, cases, dispatched = draft
+    with get_session_factory()() as db:
+        operation = db.get(ConversationOperation, UUID(oid))
+        operation.target = {'resolved': False, 'case_ids': [], 'candidate_refs': []}
+        operation.payload = {**operation.payload, 'modification_confirmation': None,
+            'rewrite_draft': {'version': 1, 'scope_instruction': '重写用例',
+                'requirements': '重写用例', 'requirements_ready': False, 'scope_resolved': False}}
+        db.commit()
+    resume = f'/api/v1/conversation-operations/{oid}/resume'
+    selected = await client.post(resume, json={'targets': [{'kind': 'case', 'case_ids': [cases[1]['id']]}]})
+    assert selected.status_code == 202, selected.text
+    assert selected.json()['assistant_message']['target_case_ids'] == [cases[1]['id']]
+    assert not selected.json()['assistant_message']['metadata'].get('modification_confirmation')
+    monkeypatch.setattr(conversations, 'interpret_rewrite_reply', lambda *a, **k: RewriteReply(
+        action='update', requirements='丰富操作细节'))
+    result = await client.post(resume, json={'content': '操作细节'})
+    assert result.json()['assistant_message']['target_case_ids'] == [cases[1]['id']]
+    assert result.json()['assistant_message']['metadata']['modification_confirmation']
+    assert not dispatched
+
+
+@pytest.mark.asyncio
+async def test_unresolved_scope_never_dispatches_and_retains_answered_direction(draft, monkeypatch):
+    client, _, oid, _, dispatched = draft
+    with get_session_factory()() as db:
+        operation = db.get(ConversationOperation, UUID(oid))
+        operation.target = {'resolved': False, 'case_ids': [], 'candidate_refs': []}
+        operation.payload = {**operation.payload, 'modification_confirmation': None,
+            'rewrite_draft': {'version': 1, 'scope_instruction': '步骤太简单，丰富以下',
+                'requirements': '丰富步骤', 'requirements_ready': False, 'scope_resolved': False}}
+        db.commit()
+    monkeypatch.setattr(conversations, 'interpret_rewrite_reply', lambda *a, **k: RewriteReply(
+        action='update', requirements='丰富操作细节'))
+    monkeypatch.setattr(conversations, '_resolve_action_scope', lambda db, c, p, *a: (p, '请选择要修改的用例。'))
+    resume = f'/api/v1/conversation-operations/{oid}/resume'
+    result = await client.post(resume, json={'content': '操作细节'})
+    assert result.json()['assistant_message']['content'] == '请选择要修改的用例。'
+    operation = result.json()['operation_plan']['operations'][0]
+    assert operation['payload']['rewrite_draft']['requirements'] == '丰富操作细节'
+    assert operation['payload']['rewrite_draft']['requirements_ready']
+    assert not operation['target']['resolved']
+    assert (await client.post(resume, json={'confirm_modification': True})).status_code == 422
+    assert not dispatched
+
+
+@pytest.mark.asyncio
+async def test_legacy_pending_task_recovers_original_explicit_targets(draft, monkeypatch):
+    client, _, oid, cases, dispatched = draft
+    from casepilot_api.models import ConversationMessage
+    with get_session_factory()() as db:
+        operation = db.get(ConversationOperation, UUID(oid))
+        operation.target = {'resolved': False, 'case_ids': [], 'candidate_refs': []}
+        operation.payload = {**operation.payload, 'instruction': '步骤太简单，丰富以下',
+            'modification_confirmation': None, 'plan': {}}
+        message = db.get(ConversationMessage, operation.message_id)
+        message.message_metadata = {**message.message_metadata, 'request': {
+            **message.message_metadata['request'], 'content': '步骤太简单，丰富以下',
+            'target_case_ids': [cases[1]['id']], 'targets': [],
+        }}
+        db.commit()
+    monkeypatch.setattr(conversations, 'interpret_rewrite_reply', lambda *a, **k: RewriteReply(
+        action='update', requirements='丰富操作细节'))
+    result = await client.post(f'/api/v1/conversation-operations/{oid}/resume', json={'content': '操作细节'})
+    assert result.status_code == 202, result.text
+    assert result.json()['assistant_message']['target_case_ids'] == [cases[1]['id']]
+    assert result.json()['assistant_message']['metadata']['modification_confirmation']
+    assert not dispatched

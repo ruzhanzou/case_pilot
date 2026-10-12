@@ -259,6 +259,7 @@ def test_sdk_router_uses_the_configured_chat_completions_provider(
         @staticmethod
         def run_sync(agent, prompt, max_turns):
             captured["prompt"] = prompt
+            captured["max_turns"] = max_turns
             return SimpleNamespace(
                 final_output=IntentPlanDraft.model_validate(
                     {
@@ -294,6 +295,8 @@ def test_sdk_router_uses_the_configured_chat_completions_provider(
 
     assert plan.operations[0].intent == "KNOWLEDGE_QA"
     assert captured["client"]["base_url"] == "https://ark.example/v1"
+    assert captured["client"]["max_retries"] == 0
+    assert captured["max_turns"] == 1
     assert captured["model"]["model"] == "doubao-test"
     assert captured["agent"]["output_type"] is IntentPlanDraft
     assert captured["tracing_disabled"] is True

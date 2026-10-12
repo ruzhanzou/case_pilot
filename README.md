@@ -428,6 +428,9 @@ CASEPILOT_AGENT_API_KEY=替换为你的服务端密钥
 
 # 默认模型与工作台可选模型；逗号顺序就是下拉框显示顺序。
 CASEPILOT_AGENT_MODEL=doubao-seed-2.0-lite
+# 意图与范围解析；留空使用上面的默认模型。
+CASEPILOT_AGENT_ROUTING_MODEL=
+CASEPILOT_AGENT_ROUTING_TIMEOUT_SECONDS=45
 CASEPILOT_AGENT_PRO_MODEL=deepseek-v4-pro
 CASEPILOT_AGENT_LOCAL_MODEL=ark-code-latest
 CASEPILOT_AGENT_MODELS=ark-code-latest,doubao-seed-2.0-lite,glm-5.2,kimi-k2.7-code,deepseek-v4-pro,deepseek-v4-flash,minimax-m3,minimax-m2.7,kimi-k2.6,doubao-seed-2.1-turbo
@@ -455,6 +458,8 @@ CASEPILOT_AGENT_TRACING_ENABLED=false
 | --- | --- |
 | `CASEPILOT_AGENT_MODELS` | 工作台模型下拉框的数据源和服务端允许列表，使用逗号分隔 |
 | `CASEPILOT_AGENT_MODEL` | 默认模型，也是未指定或旧任务模型无法解析时的回退模型 |
+| `CASEPILOT_AGENT_ROUTING_MODEL` | 意图与范围解析专用模型；留空使用默认模型。实际生成、改写和对改写要求的补充解释仍使用任务所选模型 |
+| `CASEPILOT_AGENT_ROUTING_TIMEOUT_SECONDS` | 解析等待窗口，默认 45 秒且不超过通用超时；意图解析关闭 SDK 自动重试，范围纠错重试共用一个窗口。超时进入澄清，不执行写操作 |
 | `CASEPILOT_AGENT_PRO_MODEL` | 兼容旧任务中的 `pro`、`test-design-pro` 模型别名 |
 | `CASEPILOT_AGENT_LOCAL_MODEL` | 兼容旧任务中的 `local` 模型别名 |
 | `CASEPILOT_AGENT_MODEL_FALLBACK_TIMEOUT_SECONDS` | 非默认模型在需求、功能点、测试点、用例与质量修复阶段的首选等待窗口；超时后切换默认模型 |

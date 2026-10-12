@@ -58,3 +58,20 @@ def test_api_accepts_worker_fallback_key(monkeypatch, ai_settings):
     assert Settings(_env_file=None).agent_api_key == "fallback-test-key"
     monkeypatch.setenv("CASEPILOT_AGENT_API_KEY", "primary-test-key")
     assert Settings(_env_file=None).agent_api_key == "primary-test-key"
+
+
+def test_routing_model_does_not_change_content_generation_model(ai_settings):
+    assert ai_settings.routing_model == "default-model"
+    assert ai_settings.resolve_agent_model("custom-model") == "custom-model"
+    ai_settings.agent_routing_model = " fast-parser "
+    assert ai_settings.routing_model == "fast-parser"
+    assert ai_settings.resolve_agent_model("custom-model") == "custom-model"
+    ai_settings.agent_routing_model = " "
+    assert ai_settings.routing_model == "default-model"
+
+
+def test_routing_timeout_respects_shorter_provider_timeout(ai_settings):
+    ai_settings.agent_timeout_seconds = 120
+    assert ai_settings.routing_timeout_seconds == 45
+    ai_settings.agent_timeout_seconds = 10
+    assert ai_settings.routing_timeout_seconds == 10
