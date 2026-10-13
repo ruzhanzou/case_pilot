@@ -553,9 +553,31 @@ export function CaseManagementApp({
     applyingRouteRef.current = true;
 
     if (routePage === "workbench" && routeConversationId) {
+      // Resolve the conversation before choosing a collection. Publish the
+      // conversation and its cases together so the workspace never mixes scopes.
       void getConversation(routeConversationId)
-        .then((conversation) => {
+        .then(async (conversation) => {
           if (!active) return;
+          let availableCollections = await listCollections(conversation.space_id);
+          if (!active) return;
+          if (conversation.collection_id && !availableCollections.some(
+            (collection) => collection.id === conversation.collection_id,
+          )) {
+            const linkedCollection = await getCollection(conversation.collection_id);
+            if (!active) return;
+            availableCollections = [linkedCollection, ...availableCollections];
+          }
+          const conversationCases = conversation.collection_id
+            ? await listTestCases(conversation.collection_id)
+            : [];
+          if (!active) return;
+          loadedSpaceRef.current = conversation.space_id;
+          setCollections(availableCollections.map((collection) =>
+            collection.id === conversation.collection_id
+              ? { ...collection, case_count: conversationCases.length }
+              : collection,
+          ));
+          setCases(conversationCases);
           setHistoryOpen(false);
           setLandingConversation(conversation);
           setSelectedSpaceId(conversation.space_id);
@@ -570,6 +592,7 @@ export function CaseManagementApp({
         .catch((caught) => {
           if (!active) return;
           setHistoryOpen(false);
+          setLandingConversation(null);
           setError(
             caught instanceof Error
               ? pick(`Failed to load conversation: ${publicErrorMessage(caught.message)}`, `对话加载失败：${publicErrorMessage(caught.message)}`)
@@ -580,7 +603,10 @@ export function CaseManagementApp({
           router.replace("/workbench", { scroll: false });
         })
         .finally(() => {
-          if (active) applyingRouteRef.current = false;
+          if (active) {
+            applyingRouteRef.current = false;
+            setLoading(false);
+          }
         });
       return () => {
         active = false;
@@ -684,6 +710,8 @@ export function CaseManagementApp({
       internalRoutePathRef.current = "";
       return;
     }
+    // Conversation routes load their own collection and cases atomically above.
+    if (routeConversationId) return;
     let active = true;
     if (!activeSpaceId) return;
     void (async () => {
@@ -744,6 +772,7 @@ export function CaseManagementApp({
     routeCaseId,
     routePage,
     routePath,
+    routeConversationId,
     pick,
   ]);
 
@@ -1143,7 +1172,7 @@ export function CaseManagementApp({
           onOpenConversation={openHistoryConversation}
         />
 
-        {loading && !collections.length ? (
+        {(routeConversationId && landingConversation?.id !== routeConversationId) || (loading && !collections.length) ? (
           <div className="management-loading management-loading--page">
             <LoaderCircle className="auth-spinner" size={24} />
             {t("common.loadingWorkspace")}
