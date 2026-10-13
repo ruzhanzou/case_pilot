@@ -1964,6 +1964,8 @@ def update_execution_record(
     run = db.get(ExecutionRun, record.run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="execution_run_not_found")
+    # Read the version again under the write lock before checking the client's base.
+    db.refresh(record, with_for_update=True)
     require_space_membership(db, account.id, run.space_id)
     if record.assignee_id != account.id:
         raise HTTPException(status_code=403, detail="execution_record_assignee_required")

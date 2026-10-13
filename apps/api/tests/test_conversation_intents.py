@@ -244,7 +244,7 @@ def test_failed_generation_is_recovered_when_workspace_is_read() -> None:
         def commit(self):
             self.committed = True
 
-        def refresh(self, item):
+        def refresh(self, item, *, with_for_update=False):
             assert item is conversation
 
     db = FakeDb()

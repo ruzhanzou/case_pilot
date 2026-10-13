@@ -2,6 +2,7 @@
 
 import { ExcelExportButton } from "@/components/excel-export-button";
 import { createExecutionWorkbook, createExecutionSummaryWorkbook, downloadExcel } from "@/lib/excel-export";
+import { draftFromRecord, executionRecordUpdate, type ExecutionRecordDraft } from "@/lib/execution-record-draft";
 import { ExecutionNotes } from "@/components/execution-notes";
 import { PlaylistPicker } from "@/components/playlist-picker";
 import {
@@ -77,22 +78,6 @@ const executionOptions: {
   { value: "skipped", en: "Skipped", zh: "跳过", icon: SkipForward },
   { value: "blocked", en: "Blocked", zh: "堵塞", icon: AlertTriangle },
 ];
-
-type ExecutionRecordDraft = {
-  recordId: string;
-  status: ExecutionStatusApi;
-  actualResult: string;
-  defectRef: string;
-};
-
-function draftFromRecord(record: ExecutionRecordDto): ExecutionRecordDraft {
-  return {
-    recordId: record.id,
-    status: record.status,
-    actualResult: record.actual_result,
-    defectRef: record.defect_ref,
-  };
-}
 
 function formatTime(value: string, locale: string) {
   return new Intl.DateTimeFormat(locale, {
@@ -272,9 +257,11 @@ export function ExecutionWorkspace({
   );
   useEffect(() => {
     if (view !== "detail" || !activeRunId || saving) return;
+    let ignored = false;
     const timer = window.setInterval(() => {
       void getExecutionRun(activeRunId)
         .then((latestRun) => {
+          if (ignored) return;
           setRun(latestRun);
           if (!recordDraftDirty) {
             const latestRecord =
@@ -288,7 +275,10 @@ export function ExecutionWorkspace({
         })
         .catch(() => undefined);
     }, 5000);
-    return () => window.clearInterval(timer);
+    return () => {
+      ignored = true;
+      window.clearInterval(timer);
+    };
   }, [
     activeRunId,
     recordDraftDirty,
@@ -470,14 +460,13 @@ export function ExecutionWorkspace({
     setSaving(true);
     setError("");
     try {
-      const updated = await updateExecutionRecord(record.id, {
-        status: patch.status ?? record.status,
-        completed_step_ids:
-          patch.completed_step_ids ?? record.completed_step_ids,
-        actual_result: patch.actual_result ?? record.actual_result,
-        defect_ref: patch.defect_ref ?? record.defect_ref,
-        base_updated_at: record.updated_at,
-      });
+      const input = executionRecordUpdate(record, patch, recordDraft);
+      const updated = await updateExecutionRecord(record.id, input);
+      setRecordDraft((current) =>
+        current?.recordId === updated.id && current.baseUpdatedAt === input.base_updated_at
+          ? { ...current, baseUpdatedAt: updated.updated_at }
+          : current,
+      );
       setRun((current) =>
         current
           ? {
@@ -511,7 +500,7 @@ export function ExecutionWorkspace({
           const latestRun = await getExecutionRun(run.id);
           setRun(latestRun);
         }
-        setError(pick("Another member just updated this case. The latest result has been loaded; review it and try again.", "该用例刚被其他成员更新，已为你加载最新结果，请确认后重试。"));
+        setError(pick("Another member just updated this case. Your draft was not saved. Reload the latest result before editing again.", "该用例刚被其他成员更新，草稿未保存，请点击“重新载入”获取最新结果后再编辑。"));
       } else {
         setError(
           caught instanceof Error
@@ -1308,6 +1297,19 @@ export function ExecutionWorkspace({
                       })}
                     </section>
 
+                    {recordDraft && recordDraft.baseUpdatedAt !== selectedRecord.updated_at && (
+                      <div className="execution-record-error" role="alert">
+                        {pick("This result has changed. Reload it before saving your draft.", "执行结果已更新，请重新载入后再保存。")}
+                        <button type="button" className="management-button" disabled={saving}
+                          onClick={() => {
+                            if (!confirmDiscardRecordDraft()) return;
+                            discardRecordDraft();
+                            setError("");
+                          }}>
+                          {pick("Reload latest result", "重新载入")}
+                        </button>
+                      </div>
+                    )}
                     <ExecutionNotes
                       actualResult={recordDraft?.actualResult ?? ""}
                       defectRef={recordDraft?.defectRef ?? ""}

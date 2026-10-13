@@ -18,6 +18,7 @@ from casepilot_api.models import (
     CandidateRevision,
     CaseCollection,
     Conversation,
+    ExecutionRun,
     GenerationJob,
     Space,
     SpaceMembership,
@@ -48,6 +49,7 @@ def team():
         yield factory, accounts, space, collection
     finally:
         with factory() as db:
+            db.execute(delete(ExecutionRun).where(ExecutionRun.space_id == space.id))
             db.execute(delete(Space).where(Space.id == space.id))
             db.execute(delete(Account).where(Account.id.in_([a.id for a in accounts])))
             db.commit()
@@ -292,3 +294,58 @@ def test_workspace_open_does_not_invert_message_collection_lock_order(team):
         reader = pool.submit(open_workspace)
         writer.result(timeout=15)
         assert reader.result(timeout=15).id == current.id
+
+
+def test_overlapping_execution_saves_reject_stale_version(team):
+    from casepilot_api.case_management import (
+        create_execution_run_from_cases,
+        update_execution_record,
+    )
+    from casepilot_api.models import ExecutionRecord, TestCase
+    from casepilot_api.schemas import ExecutionRecordUpdate, ExecutionRunCreate
+
+    factory, (account, _), space, collection = team
+    with factory() as db:
+        case = create_test_case(
+            collection.id,
+            CaseCreate(title="Concurrent result", steps=[{"action": "Act", "expected": "Pass"}]),
+            account, db,
+        )
+        run = create_execution_run_from_cases(
+            db, account=account,
+            payload=ExecutionRunCreate(description="Race", assignee_ids=[account.id]),
+            space_id=space.id, cases=[db.get(TestCase, case.id)], collection_id=collection.id,
+            playlist_id=None, source_type="collection", source_name="Race",
+            source_collection_count=1,
+        )
+        record = run.records[0]
+    barrier = Barrier(2)
+
+    def save(value):
+        with factory() as db:
+            original_get = db.get
+
+            def overlapping_get(model, *args, **kwargs):
+                row = original_get(model, *args, **kwargs)
+                if model is ExecutionRecord:
+                    barrier.wait(timeout=10)
+                return row
+
+            db.get = overlapping_get
+            try:
+                result = update_execution_record(
+                    record.id,
+                    ExecutionRecordUpdate(
+                        status="passed", actual_result=value, base_updated_at=record.updated_at,
+                    ), account, db,
+                )
+                return result.actual_result
+            except HTTPException as error:
+                assert error.status_code == 409
+                return error.detail
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(save, ["A", "B"]))
+    assert results.count("execution_record_changed") == 1
+    with factory() as db:
+        assert db.get(ExecutionRecord, record.id).actual_result in results

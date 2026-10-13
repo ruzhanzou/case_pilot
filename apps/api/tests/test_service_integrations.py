@@ -240,13 +240,21 @@ async def test_testweb_mock_generation_and_testtool_execution_loop(
             assert [item["test_task_id"] for item in listed.json()["items"]] == [task_id]
 
             claimed = await client.post(
-                f"/api/test-tool/v1/tasks/{task_id}/claim",
+                "/api/test-tool/v1/tasks/claim",
                 headers=tool_headers,
                 json={"worker_id": "mock-worker", "lease_seconds": 60},
             )
             assert claimed.status_code == 200
             lease_token = claimed.json()["lease_token"]
             assert claimed.json()["execution_status"] == "running"
+
+            for worker_id in ("other-worker", "mock-worker"):
+                rejected = await client.post(
+                    f"/api/test-tool/v1/tasks/{task_id}/claim",
+                    headers=tool_headers, json={"worker_id": worker_id},
+                )
+                assert rejected.status_code == 409
+                assert rejected.json()["detail"] == "task_already_claimed"
 
             heartbeat = await client.post(
                 f"/api/test-tool/v1/tasks/{task_id}/heartbeat",
@@ -292,6 +300,26 @@ async def test_testweb_mock_generation_and_testtool_execution_loop(
             )
             assert idempotent.status_code == 200
             assert idempotent.json() == updated.json()
+            for final_status in ("completed", "failed", "cancelled"):
+                from casepilot_api.models import IntegrationTask
+                with get_session_factory()() as db:
+                    task = db.scalar(select(IntegrationTask).where(
+                        IntegrationTask.public_id == task_id,
+                    ))
+                    task.status = final_status
+                    db.commit()
+                rejected = await client.post(
+                    f"/api/test-tool/v1/tasks/{task_id}/claim",
+                    headers=tool_headers, json={"worker_id": "mock-worker"},
+                )
+                assert rejected.status_code == 409
+                assert rejected.json()["detail"] == "task_not_claimable"
+            with get_session_factory()() as db:
+                task = db.scalar(
+                    select(IntegrationTask).where(IntegrationTask.public_id == task_id)
+                )
+                task.status = "completed"
+                db.commit()
 
             case_id = next(iter(updated.json()["cases"]))
             single_case = await client.get(
@@ -596,4 +624,129 @@ async def test_v14_caller_callbacks_and_playlist_creation_flow() -> None:
                     db.execute(delete(Space).where(Space.id == UUID(space_id)))
                 if account_id:
                     db.execute(delete(Account).where(Account.id == UUID(account_id)))
+                db.commit()
+
+
+@pytest.mark.asyncio
+async def test_task_pagination_uses_timestamp_and_id_and_expired_lease_recovers():
+    from casepilot_api.models import IntegrationTask, TestToolLease
+
+    account_id = space_id = None
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        try:
+            response = await client.post("/api/v1/auth/register", json={
+                "email": f"page-{uuid4()}@casepilot.test", "display_name": "Pagination",
+                "password": "CasePilot123!",
+            })
+            assert response.status_code == 201
+            account = response.json()
+            account_id, space_id = UUID(account["id"]), UUID(account["spaces"][0]["id"])
+            headers = {**TOOL_HEADERS, "X-TestTool-User-ID": account["email"]}
+            target = {"target_type": "fr_test", "target_id": int(uuid4().hex[:10], 16),
+                      "title": "Pagination regression"}
+            response = await client.post("/case-projects", headers=SERVICE_HEADERS, json={
+                "space_id": str(space_id), "test_target": target,
+            })
+            assert response.status_code == 201
+            project_id = response.json()["case_project_id"]
+            response = await client.post(
+                f"/case-projects/{project_id}/case-generation-jobs", headers=SERVICE_HEADERS,
+                json={"test_target": target},
+            )
+            assert response.status_code == 202
+            generation_id = response.json()["case_generation_id"]
+            ids = []
+            for _ in range(3):
+                request_id = str(uuid4())
+                response = await client.post(
+                    f"/case-projects/{project_id}/tasks", headers=SERVICE_HEADERS,
+                    json={"test_target": target, "task_request_id": request_id,
+                          "case_generation_id": generation_id,
+                          "task_context": {"tester": account["email"]}},
+                )
+                assert response.status_code == 202
+                ids.append(response.json()["test_task_id"])
+                response = await client.post(
+                    f"/api/v1/integration-task-requests/{request_id}/confirm", json={},
+                )
+                assert response.status_code == 200
+            current = datetime.now(UTC)
+            with get_session_factory()() as db:
+                for index, task_id in enumerate(ids):
+                    task = db.scalar(
+                        select(IntegrationTask).where(IntegrationTask.public_id == task_id)
+                    )
+                    # The oldest-created task is newest-updated; the others tie.
+                    task.updated_at = current - timedelta(days=min(index, 1))
+                db.commit()
+            seen, cursor = [], None
+            for _ in range(3):
+                params = {"limit": 1}
+                if cursor:
+                    params["cursor"] = cursor
+                response = await client.get(
+                    "/api/test-tool/v1/tasks", headers=headers, params=params,
+                )
+                assert response.status_code == 200
+                seen.extend(item["test_task_id"] for item in response.json()["items"])
+                cursor = response.json()["next_cursor"]
+            assert seen == [ids[0], ids[2], ids[1]]
+            assert cursor is None
+            invalid = await client.get("/api/test-tool/v1/tasks", headers=headers,
+                                       params={"cursor": "invalid"})
+            assert invalid.status_code == 422
+            # Both workers load an unleased task before either claims it.
+            from concurrent.futures import ThreadPoolExecutor
+            from threading import Barrier
+
+            from fastapi import HTTPException
+
+            barrier = Barrier(2)
+
+            def competing_claim(worker):
+                with get_session_factory()() as db:
+                    bound_account = db.get(Account, account_id)
+                    task = integrations.get_test_tool_task(db, ids[1], bound_account)
+                    barrier.wait(timeout=10)
+                    try:
+                        integrations.claim_task(
+                            db, task, bound_account, integrations.ClaimRequest(worker_id=worker),
+                        )
+                        return "claimed"
+                    except HTTPException as error:
+                        assert error.status_code == 409
+                        return error.detail
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                outcomes = list(pool.map(competing_claim, ["worker-a", "worker-b"]))
+            assert sorted(outcomes) == ["claimed", "task_already_claimed"]
+            first = await client.post(f"/api/test-tool/v1/tasks/{ids[0]}/claim",
+                                      headers=headers, json={"worker_id": "first"})
+            assert first.status_code == 200
+            with get_session_factory()() as db:
+                task = db.scalar(
+                    select(IntegrationTask).where(IntegrationTask.public_id == ids[0])
+                )
+                lease = db.scalar(
+                    select(TestToolLease).where(TestToolLease.integration_task_id == task.id)
+                )
+                lease.expires_at = current - timedelta(seconds=1)
+                db.commit()
+            second = await client.post(f"/api/test-tool/v1/tasks/{ids[0]}/claim",
+                                       headers=headers, json={"worker_id": "second"})
+            assert second.status_code == 200
+            assert second.json()["lease_token"] != first.json()["lease_token"]
+            old = await client.post(f"/api/test-tool/v1/tasks/{ids[0]}/heartbeat",
+                                   headers={
+                                       **headers, "X-Lease-Token": first.json()["lease_token"],
+                                   },
+                                   json={"worker_id": "first"})
+            assert old.status_code == 409
+        finally:
+            with get_session_factory()() as db:
+                if space_id:
+                    db.execute(delete(ExecutionRun).where(ExecutionRun.space_id == space_id))
+                    db.execute(delete(Space).where(Space.id == space_id))
+                if account_id:
+                    db.execute(delete(Account).where(Account.id == account_id))
                 db.commit()

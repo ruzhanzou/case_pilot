@@ -18,7 +18,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -1677,6 +1677,25 @@ def assert_task_owner(task: IntegrationTask, account: Account) -> None:
         raise HTTPException(status_code=403, detail="task_not_assigned_to_current_user")
 
 
+def encode_task_cursor(task: IntegrationTask) -> str:
+    payload = json.dumps([task.updated_at.isoformat(), task.public_id]).encode()
+    return base64.urlsafe_b64encode(payload).decode()
+
+
+def decode_task_cursor(cursor: str) -> tuple[datetime, str]:
+    try:
+        values = json.loads(base64.b64decode(cursor, altchars=b"-_", validate=True))
+        if not isinstance(values, list) or len(values) != 2:
+            raise ValueError
+        timestamp, public_id = values
+        timestamp = datetime.fromisoformat(timestamp)
+        if timestamp.utcoffset() is None or not isinstance(public_id, str) or not public_id:
+            raise ValueError
+        return timestamp, public_id
+    except (ValueError, TypeError) as error:
+        raise HTTPException(status_code=422, detail="invalid_task_cursor") from error
+
+
 @router.get("/api/test-tool/v1/tasks", response_model=TaskListResponse)
 def list_test_tool_tasks(
     account: TestToolAccount,
@@ -1717,7 +1736,10 @@ def list_test_tool_tasks(
     if updated_after:
         query = query.where(IntegrationTask.updated_at > updated_after)
     if cursor:
-        query = query.where(IntegrationTask.public_id < cursor)
+        query = query.where(
+            tuple_(IntegrationTask.updated_at, IntegrationTask.public_id)
+            < decode_task_cursor(cursor)
+        )
     if case_id:
         query = (
             query.join(ExecutionRecord, ExecutionRecord.run_id == IntegrationTask.execution_run_id)
@@ -1729,7 +1751,7 @@ def list_test_tool_tasks(
     tasks = tasks[:limit]
     return {
         "items": [task_detail(db, task, include_lease=True) for task in tasks],
-        "next_cursor": tasks[-1].public_id if has_more else None,
+        "next_cursor": encode_task_cursor(tasks[-1]) if has_more else None,
     }
 
 
@@ -1761,11 +1783,15 @@ def get_test_tool_case(
 
 
 def claim_task(db: Session, task: IntegrationTask, account: Account, payload: ClaimRequest) -> dict:
+    # Lock the task even before a lease exists, serializing first-time claims.
+    db.refresh(task, with_for_update=True)
+    if task.status not in {"confirmed", "running"}:
+        raise HTTPException(status_code=409, detail="task_not_claimable")
     current = now()
     lease = db.scalar(
         select(TestToolLease).where(TestToolLease.integration_task_id == task.id).with_for_update()
     )
-    if lease is not None and lease.expires_at > current and lease.account_id != account.id:
+    if lease is not None and lease.expires_at > current:
         raise HTTPException(status_code=409, detail="task_already_claimed")
     token = secrets.token_urlsafe(32)
     expires_at = current + timedelta(
@@ -1815,8 +1841,9 @@ def claim_next_task(payload: ClaimRequest, account: TestToolAccount, db: DbSessi
             IntegrationTask.tester.in_([account.email.lower(), str(account.id).lower()]),
             or_(TestToolLease.id.is_(None), TestToolLease.expires_at <= current),
         )
-        .order_by(IntegrationTask.created_at)
-        .with_for_update(skip_locked=True)
+        .order_by(IntegrationTask.created_at, IntegrationTask.id)
+        .limit(1)
+        .with_for_update(of=IntegrationTask, skip_locked=True)
     )
     if task is None:
         raise HTTPException(status_code=404, detail="no_claimable_task")
@@ -1857,7 +1884,12 @@ def heartbeat_task(
     x_lease_token: Annotated[str | None, Header()] = None,
 ) -> dict:
     task = get_test_tool_task(db, test_task_id, account)
+    db.refresh(task, with_for_update=True)
+    if task.status not in {"confirmed", "running"}:
+        raise HTTPException(status_code=409, detail="task_not_claimable")
     lease = validate_lease(db, task, account, x_lease_token or "")
+    if lease.worker_id != payload.worker_id:
+        raise HTTPException(status_code=409, detail="task_already_claimed")
     lease.worker_id = payload.worker_id
     lease.expires_at = now() + timedelta(
         seconds=payload.lease_seconds or settings.test_tool_lease_seconds
@@ -1875,9 +1907,12 @@ def update_test_tool_task(
     db: DbSession,
 ) -> dict:
     task = get_test_tool_task(db, test_task_id, account)
+    db.refresh(task, with_for_update=True)
     previous = db.get(IntegrationUpdate, payload.update_id)
     if previous is not None:
         return previous.response_payload
+    if task.status not in {"confirmed", "running"}:
+        raise HTTPException(status_code=409, detail="task_not_claimable")
     validate_lease(db, task, account, payload.lease_token)
     if payload.updated_at <= task.updated_at:
         raise HTTPException(status_code=409, detail="stale_task_update")
