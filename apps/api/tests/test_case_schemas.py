@@ -287,19 +287,27 @@ def test_workspace_state_accepts_safe_model_names() -> None:
         WorkspaceStateUpdate.model_validate({"model_id": "../unexpected-model"})
 
 
-@pytest.mark.parametrize("status", ["failed", "skipped", "blocked"])
-def test_execution_result_reason_is_required(status: str) -> None:
+@pytest.mark.parametrize("status", ["not_run", "passed", "failed", "skipped", "blocked"])
+@pytest.mark.parametrize("notes", ["", "  ", "Observed a different result"])
+def test_execution_status_allows_optional_notes(status: str, notes: str) -> None:
     payload = ExecutionRecordUpdate.model_validate(
         {
             "status": status,
             "completed_step_ids": [],
-            "actual_result": "",
+            "actual_result": notes,
             "defect_ref": "",
         }
     )
+    validate_execution_record_update(payload, {"submit-login"})
+
+
+def test_execution_status_rejects_unknown_steps() -> None:
+    payload = ExecutionRecordUpdate.model_validate(
+        {"status": "failed", "completed_step_ids": ["unknown"], "actual_result": ""}
+    )
     with pytest.raises(HTTPException) as caught:
         validate_execution_record_update(payload, {"submit-login"})
-    assert caught.value.detail == "execution_result_reason_required"
+    assert caught.value.detail == "invalid_execution_step"
 
 
 def test_passed_execution_allows_optional_step_tracking() -> None:

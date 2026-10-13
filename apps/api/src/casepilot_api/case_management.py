@@ -81,22 +81,8 @@ def validate_execution_record_update(
     valid_step_ids: set[str],
 ) -> None:
     completed_step_ids = set(payload.completed_step_ids)
-    status = payload.status.value
     if not completed_step_ids.issubset(valid_step_ids):
         raise HTTPException(status_code=422, detail="invalid_execution_step")
-    if (
-        status
-        in {
-            ExecutionStatus.FAILED.value,
-            ExecutionStatus.SKIPPED.value,
-            ExecutionStatus.BLOCKED.value,
-        }
-        and not payload.actual_result.strip()
-    ):
-        raise HTTPException(
-            status_code=422,
-            detail="execution_result_reason_required",
-        )
 
 
 def create_test_case_record(

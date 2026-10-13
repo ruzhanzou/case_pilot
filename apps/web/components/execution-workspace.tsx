@@ -577,20 +577,6 @@ export function ExecutionWorkspace({
 
   const saveRecordDraft = async () => {
     if (!selectedRecord || !recordDraft || recordReadOnly) return;
-    if (
-      ["failed", "skipped", "blocked"].includes(recordDraft.status) &&
-      !recordDraft.actualResult.trim()
-    ) {
-      setRecordValidationError(
-        recordDraft.status === "failed"
-          ? pick("Enter the actual result when marking a case as failed.", "标记不通过时必须填写实际结果。")
-          : recordDraft.status === "skipped"
-            ? pick("Enter a reason when marking a case as skipped.", "标记跳过时必须填写跳过原因。")
-            : pick("Enter the cause, dependency, and unblock condition when marking a case as blocked.", "标记堵塞时必须填写原因、依赖和解除条件。"),
-      );
-      actualResultRef.current?.focus();
-      return;
-    }
     setRecordValidationError("");
     const updated = await persistRecord(selectedRecord, {
       status: recordDraft.status,
@@ -1246,23 +1232,16 @@ export function ExecutionWorkspace({
                               aria-pressed={recordDraft?.status === option.value}
                               onClick={async () => {
                                 setRecordValidationError("");
-                                if (option.value === "passed") {
-                                  const updated = await persistRecord(selectedRecord, {
-                                    status: option.value,
-                                  });
-                                  if (updated) {
-                                    setRecordDraft((current) =>
-                                      current?.recordId === updated.id
-                                        ? { ...current, status: updated.status }
-                                        : current,
-                                    );
-                                  }
-                                  return;
-                                }
-                                setRecordDraft((current) => ({
-                                  ...(current ?? draftFromRecord(selectedRecord)),
+                                const updated = await persistRecord(selectedRecord, {
                                   status: option.value,
-                                }));
+                                });
+                                if (updated) {
+                                  setRecordDraft((current) =>
+                                    current?.recordId === updated.id
+                                      ? { ...current, status: updated.status }
+                                      : current,
+                                  );
+                                }
                               }}
                             >
                               <Icon size={15} /> {pick(option.en, option.zh)}
