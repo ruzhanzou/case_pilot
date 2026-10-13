@@ -87,7 +87,7 @@ def list_generation_models(account: CurrentAccount) -> dict[str, object]:
 
 def ensure_job_access(db: Session, account: Account, job_id: UUID) -> GenerationJob:
     job = db.scalar(select(GenerationJob).where(GenerationJob.id == job_id))
-    if job is None:
+    if job is None or (job.account_id is not None and job.account_id != account.id):
         raise HTTPException(status_code=404, detail="generation_job_not_found")
     require_space_membership(db, account.id, job.space_id)
     return job

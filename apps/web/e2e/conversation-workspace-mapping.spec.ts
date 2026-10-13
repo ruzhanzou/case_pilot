@@ -75,3 +75,37 @@ test("maintenance task restores scope across reload, map/list and report navigat
   await page.locator('.principle-composer button[type="submit"]').click();
   await expect.poll(() => submittedTargets).toEqual([{ kind: "case", case_ids: ["case1"] }]);
 });
+
+test('shared collection deep link selects its space instead of the account default', async ({ page }) => {
+  const personal = { id: 'personal-cases', space_id: 'personal', name: 'Private default', case_count: 0, lifecycle_status: 'maintenance', mind_map_notes: [] };
+  const shared = { id: 'shared-cases', space_id: 'shared', name: 'Shared team cases', case_count: 0, lifecycle_status: 'maintenance', mind_map_notes: [] };
+  const openedWorkspaces: string[] = [];
+  await page.route('**/api/v1/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    let data: unknown = [];
+    if (path.endsWith('/auth/me')) data = {
+      id: 'member', email: 'member@example.com', display_name: 'Member',
+      spaces: [{ id: 'personal', name: 'Personal space', role: 'owner' }, { id: 'shared', name: 'Team space', role: 'member' }],
+    };
+    else if (path.endsWith('/generation-models')) data = { models: [], default_model_id: 'auto' };
+    else if (path.endsWith('/spaces/personal/collections')) data = [personal];
+    else if (path.endsWith('/spaces/shared/collections')) data = [shared];
+    else if (path.endsWith('/collections/shared-cases')) data = shared;
+    else if (path.endsWith('/collections/personal-cases')) data = personal;
+    else if (path.endsWith('/workspace')) {
+      openedWorkspaces.push(path);
+      data = { id: 'shared-conversation', space_id: 'shared', collection_id: shared.id,
+        title: 'Shared team cases', status: 'active', context: { phase: 'maintenance' },
+        messages: [], test_briefs: [], candidates: [], workflow_runs: [], operation_history: [], operation_plan: null };
+    }
+    await route.fulfill({ json: data });
+  });
+  await page.goto('/workbench/collections/shared-cases');
+  await expect(page.getByRole('heading', { name: shared.name, exact: true })).toBeVisible();
+  await expect.poll(() => openedWorkspaces.length).toBeGreaterThan(0);
+  await expect(page).toHaveURL(/\/workbench\/collections\/shared-cases$/);
+  await page.reload();
+  await expect(page.getByRole('heading', { name: shared.name, exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/workbench\/collections\/shared-cases$/);
+  expect(openedWorkspaces.every(path => path.endsWith('/collections/shared-cases/workspace'))).toBe(true);
+});

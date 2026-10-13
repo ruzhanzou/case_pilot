@@ -1061,7 +1061,7 @@ def _ensure_conversation(
     conversation_id: UUID,
 ) -> Conversation:
     conversation = db.get(Conversation, conversation_id)
-    if conversation is None:
+    if conversation is None or conversation.account_id != account_id:
         raise HTTPException(status_code=404, detail="conversation_not_found")
     require_space_membership(db, account_id, conversation.space_id)
     return conversation
@@ -1098,6 +1098,11 @@ def terminal_workspace_context(
 
 
 def recover_terminal_workspace_job(db: Session, conversation: Conversation) -> None:
+    # A GET may have loaded this object before another request started a new job.
+    # Serialize recovery with message sends and re-read the current job pointer.
+    if conversation.context.get("phase") not in {"generating", "brief_drafting"}:
+        return
+    db.refresh(conversation, with_for_update=True)
     context = dict(conversation.context)
     if context.get("phase") not in {"generating", "brief_drafting"}:
         return
@@ -2716,6 +2721,7 @@ def get_or_create_workspace(
         select(Conversation)
         .where(
             Conversation.collection_id == collection.id,
+            Conversation.account_id == account.id,
             Conversation.status == "active",
         )
         .order_by(Conversation.updated_at.desc())
@@ -2732,7 +2738,11 @@ def get_or_create_workspace(
         )
         existing = _ensure_conversation(db, account.id, created.id)
 
+    # Message handlers lock the conversation before touching its collection.
+    # Release the creation lock before recovery acquires a conversation lock.
+    db.commit()
     recover_terminal_workspace_job(db, existing)
+    db.refresh(existing, with_for_update=True)
     normalized_context = collection_workspace_context(dict(existing.context))
     if normalized_context != dict(existing.context):
         existing.context = normalized_context
@@ -2804,6 +2814,9 @@ def upload_conversation_attachments(
         files,
         "temporary",
     )
+    # Storage commits independently; its pre-upload ORM snapshot is now stale.
+    # Merge attachment references under the same lock used by message sends.
+    db.refresh(conversation, with_for_update=True)
     source_ids = list(dict(conversation.context).get("knowledge_source_ids", []))
     source_ids.append(str(result.source.id))
     document_ids = list(dict(conversation.context).get("document_ids", []))
@@ -2832,6 +2845,7 @@ def get_latest_conversation(
         select(Conversation)
         .where(
             Conversation.collection_id == collection.id,
+            Conversation.account_id == account.id,
             Conversation.status == "active",
         )
         .order_by(Conversation.updated_at.desc())

@@ -119,6 +119,7 @@ def apply_candidate(
     db: DbSession,
 ) -> TestCaseView:
     candidate, test_case = get_candidate_access(db, account.id, candidate_id)
+    db.refresh(candidate, with_for_update=True)
     if candidate.status == "applied":
         return case_to_view(db, test_case)
     if candidate.status != "pending":
@@ -189,6 +190,7 @@ def reject_candidate(
     db: DbSession,
 ) -> CandidateView:
     candidate, test_case = get_candidate_access(db, account.id, candidate_id)
+    db.refresh(candidate, with_for_update=True)
     if candidate.status == "pending":
         candidate.status = "rejected"
         write_audit(

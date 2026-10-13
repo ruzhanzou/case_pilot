@@ -687,7 +687,21 @@ export function CaseManagementApp({
     let active = true;
     if (!activeSpaceId) return;
     void (async () => {
-      const availableCollections = await listCollections(activeSpaceId);
+      let availableCollections = await listCollections(activeSpaceId);
+      if (!active) return;
+      if (deepLinkedCollectionId && !availableCollections.some(
+        (collection) => collection.id === deepLinkedCollectionId,
+      )) {
+        // A shared collection link may belong to a different space than the
+        // account's default. Resolve it before selecting any fallback collection.
+        const linkedCollection = await getCollection(deepLinkedCollectionId);
+        if (!active) return;
+        if (linkedCollection.space_id !== activeSpaceId) {
+          setSelectedSpaceId(linkedCollection.space_id);
+          return;
+        }
+        availableCollections = [linkedCollection, ...availableCollections];
+      }
       const initialCollection =
         availableCollections.find(
           (collection) => collection.id === deepLinkedCollectionId,
