@@ -496,7 +496,13 @@ export function ExecutionWorkspace({
             }
           : current,
       );
-      if (!recordDraftDirty) setRecordDraft(draftFromRecord(updated));
+      if (!recordDraftDirty) {
+        setRecordDraft((current) =>
+          current?.recordId === updated.id
+            ? { ...current, status: updated.status }
+            : current,
+        );
+      }
       await refreshHistory();
       return updated;
     } catch (caught) {
@@ -1238,12 +1244,25 @@ export function ExecutionWorkspace({
                               }
                               disabled={saving || recordReadOnly}
                               aria-pressed={recordDraft?.status === option.value}
-                              onClick={() => {
+                              onClick={async () => {
+                                setRecordValidationError("");
+                                if (option.value === "passed") {
+                                  const updated = await persistRecord(selectedRecord, {
+                                    status: option.value,
+                                  });
+                                  if (updated) {
+                                    setRecordDraft((current) =>
+                                      current?.recordId === updated.id
+                                        ? { ...current, status: updated.status }
+                                        : current,
+                                    );
+                                  }
+                                  return;
+                                }
                                 setRecordDraft((current) => ({
                                   ...(current ?? draftFromRecord(selectedRecord)),
                                   status: option.value,
                                 }));
-                                setRecordValidationError("");
                               }}
                             >
                               <Icon size={15} /> {pick(option.en, option.zh)}
