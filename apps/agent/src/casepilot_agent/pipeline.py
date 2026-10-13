@@ -10,6 +10,7 @@ from pydantic import Field, ValidationError, create_model
 from casepilot_agent.contracts import (
     CASE_DESIGN_INSTRUCTION,
     GENERATION_GROUNDING_INSTRUCTION,
+    TEST_POINT_DESIGN_INSTRUCTION,
     AgentProvider,
     EnhancementResult,
     FeaturePlan,
@@ -797,11 +798,11 @@ class GenerationPipeline:
         for group_index, group in enumerate(point_groups):
             planned = execute_stage(
                 "test_point.generated",
-                (
+                TEST_POINT_DESIGN_INSTRUCTION + (
                     f"只为本批 feature_points 规划共不超过{requested_count}个测试点，"
                     "优先覆盖用户明确指定的场景，不自动增加范围外的边界或异常场景。"
                     if requested_count and requested_count <= 10
-                    else "只为本批 feature_points 规划测试点；每个功能点恰好3个：正常、异常、边界。"
+                    else "只为本批 feature_points 规划测试点，在max_test_points预算内按规则复杂度分配覆盖。"
                 )
                 + "标明优先级、类型、可执行性，每个测试点使用 point_id_prefix 开头的唯一ID。"
                 "覆盖矩阵只保留需求、功能点和测试点编号映射，不输出解释性长文。"

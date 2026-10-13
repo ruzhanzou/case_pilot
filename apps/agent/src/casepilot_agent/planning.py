@@ -13,6 +13,7 @@ from pydantic import Field, create_model, model_validator
 
 from casepilot_agent.contracts import (
     CASE_DESIGN_INSTRUCTION,
+    TEST_POINT_DESIGN_INSTRUCTION,
     FeaturePlan,
     FeaturePoint,
     RequirementAnalysis,
@@ -294,8 +295,7 @@ def build_planning(
             )
             plan = complete(
                 "test_point.generated",
-                CASE_DESIGN_INSTRUCTION + "只为本批给定功能规划测试点，不生成用例正文。"
-                "每个功能至少覆盖一次，优先关键规则；跨功能场景归属本批功能时才生成，避免重复。"
+                TEST_POINT_DESIGN_INSTRUCTION + "\n【本批输出约束】\n"
                 "title保留边界数值和例外。feature_point_ids是所属功能ID，不是测试点序号，"
                 "必须逐字复用本批feature_points的id，多个测试点可以复用同一个功能ID，严禁递增或发明功能ID。"
                 "本批数量预算为batch_count，最多生成该数量；不得在本批重复追求全局总数。"
