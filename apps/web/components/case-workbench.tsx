@@ -1980,7 +1980,7 @@ export function CaseWorkbench({
                       )}
                     {message.status === "failed" &&
                       message.related_job_id &&
-                      messages.at(-1)?.id === message.id && (
+                      workflow?.status === "failed" && (
                         <button
                           type="button"
                           disabled={busy}

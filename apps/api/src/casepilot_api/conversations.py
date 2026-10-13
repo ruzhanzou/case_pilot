@@ -3905,6 +3905,74 @@ def detach_conversation_attachment(
     return _conversation_view(db, conversation)
 
 
+def _is_generation_retry(content: str) -> bool:
+    # Full commands only: requests to design retry test cases are ordinary input.
+    return bool(re.fullmatch(
+        r"(?:请|帮我)?(?:确认)?(?:重试|重新执行|再试一次)"
+        r"(?:(?:一下|一次)|(?:(?:刚才|上次|本次|这个|当前|失败的|中断的|的)*)"
+        r"(?:生成任务|生成请求|任务|请求|生成))?[。！!？?\s]*"
+        r"|(?:please\s+)?(?:retry|try again)(?:\s+(?:the\s+)?(?:failed\s+)?"
+        r"(?:generation|request|task))?[.!?\s]*",
+        content.strip(), re.I,
+    ))
+
+
+def _retry_generation_from_text(
+    db: Session, account: CurrentAccount, conversation: Conversation,
+    payload: ConversationMessageCreate,
+) -> ConversationTurnView | None:
+    if (payload.intent_override or payload.source_operation_id or payload.targets
+        or payload.target_case_ids or payload.target_candidate_snapshots
+        or payload.document_ids):
+        return None
+    explicit = _is_generation_retry(payload.content)
+    if not explicit:
+        if payload.content.strip().strip("。！! ").casefold() not in {
+            "确认", "是", "是的", "好的", "好", "确认重试", "yes", "ok", "confirm",
+        }:
+            return None
+        recent = list(db.scalars(select(ConversationMessage).where(
+            ConversationMessage.conversation_id == conversation.id,
+        ).order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc()).limit(2)))
+        # Support an outstanding retry question from older conversation turns.
+        # A bare confirmation must never retry an unrelated failure.
+        if (len(recent) != 2 or recent[0].role != "assistant" or recent[1].role != "user"
+            or not _is_generation_retry(recent[1].content)
+            or not re.search(r"(?:是否|要不要|确认|要).*重试|retry.*\?", recent[0].content, re.I)):
+            return None
+    job = db.scalar(select(GenerationJob).where(
+        GenerationJob.input_payload["conversation_id"].astext == str(conversation.id),
+        GenerationJob.operation.in_({"generate", "draft_brief"}),
+    ).order_by(GenerationJob.created_at.desc(), GenerationJob.id.desc()).limit(1))
+    # Do not revive an older failure after a newer generation succeeded.
+    if job is None or job.status != "failed":
+        raise HTTPException(status_code=409, detail="message_not_retryable")
+    assistant = db.scalar(select(ConversationMessage).where(
+        ConversationMessage.conversation_id == conversation.id,
+        ConversationMessage.related_job_id == job.id,
+        ConversationMessage.role == "assistant",
+    ).order_by(ConversationMessage.created_at.desc()).limit(1))
+    if assistant is None:
+        raise HTTPException(status_code=409, detail="retry_context_missing")
+    from casepilot_api.generation import retry_generation
+
+    retry_message = ConversationMessage(
+        conversation_id=conversation.id, role="user", content=payload.content.strip(),
+        intent="CASE_GENERATE", intent_confidence=1.0, status="completed",
+        target_case_ids=[], citations=[], message_metadata={"retry_job_id": str(job.id)},
+    )
+    db.add(retry_message)
+    retry_generation(job.id, account, db)
+    db.refresh(assistant)
+    return ConversationTurnView(
+        conversation_id=conversation.id,
+        user_message=_message_view(retry_message),
+        assistant_message=_message_view(assistant),
+        intent="CASE_GENERATE", intent_confidence=1.0,
+        action={"type": "generation", "job_id": str(job.id)},
+    )
+
+
 @router.post(
     "/conversations/{conversation_id}/messages",
     response_model=ConversationTurnView,
@@ -3918,6 +3986,9 @@ def send_message(
 ) -> ConversationTurnView:
     conversation = _ensure_conversation(db, account.id, conversation_id)
     _require_idle_conversation(db, conversation)
+    retry_turn = _retry_generation_from_text(db, account, conversation, payload)
+    if retry_turn is not None:
+        return retry_turn
     if payload.source_operation_id:
         source_operation = db.get(ConversationOperation, payload.source_operation_id)
         if source_operation is None or source_operation.conversation_id != conversation.id:
