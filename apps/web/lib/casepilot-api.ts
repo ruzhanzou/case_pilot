@@ -781,6 +781,7 @@ export type ExecutionRunSummaryDto = Omit<
 };
 
 const publicErrors: Record<string, string> = {
+  conversation_attachment_type_not_supported: "对话附件支持 PDF、TXT、Excel（.xlsx、.xls）。",
   attachment_not_ready_or_expired: "所选附件尚未解析完成、解析失败或已失效，请等待解析完成或移除后重新上传。",
   provider_temporarily_unavailable: "模型服务暂时不可用，请稍后重试。",
   provider_response_invalid: "模型返回内容暂时无法解析，请重试或更换模型。",

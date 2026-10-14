@@ -94,3 +94,75 @@ def test_chunks_remain_searchable_without_embedding_provider(tmp_path: Path) -> 
     assert chunks
     assert all(chunk["embedding"] is None for chunk in chunks)
     assert all(chunk["search_text"] for chunk in chunks)
+
+
+def test_excel_markdown_is_offline_and_preserves_cells_and_coordinates(tmp_path, monkeypatch):
+    import socket
+
+    def no_network(*args, **kwargs):
+        raise AssertionError("Excel conversion attempted network access")
+
+    monkeypatch.setattr(socket.socket, "connect", no_network)
+    monkeypatch.setattr(socket.socket, "connect_ex", no_network)
+    path = tmp_path / "requirements.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "需求"
+    sheet.append(["编号", "规则"])
+    sheet.append(["00123", "NA"])
+    sheet.append([None, None])
+    sheet.append(["NULL", "第一步\n第二步 | <script>literal</script>"])
+    sheet.append(["公式", "=1+2"])
+    sheet["B4"].hyperlink = "https://example.invalid/never-fetch"
+    for row in range(6, 44):
+        sheet.cell(row, 1, f"REQ-{row}")
+    workbook.create_sheet("其他").append(["第二个工作表"])
+    workbook.save(path)
+    blocks = parse_document(path, "application/octet-stream")
+    assert len(blocks) == 3
+    assert blocks[0].metadata == {"sheet": "需求", "row_start": 1, "row_end": 41}
+    assert blocks[1].locator == "Sheet 需求，行 42-43"
+    assert blocks[2].section_path == "其他"
+    text = blocks[0].content
+    for literal in ("00123", "NA", "NULL", "第一步", "第二步", "literal", "=1+2", "原始行号"):
+        assert literal in text
+    assert "| ---" in text
+    assert "| 4 |" in text
+
+
+def test_legacy_excel_converts_all_sheets_offline(tmp_path, monkeypatch):
+    import socket
+
+    import xlwt
+
+    def no_network(*args, **kwargs):
+        raise AssertionError("Excel conversion attempted network access")
+
+    monkeypatch.setattr(socket.socket, "connect", no_network)
+    path = tmp_path / "requirements.xls"
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("验收规则")
+    sheet.write(0, 0, "编号")
+    sheet.write(2, 0, "00007")
+    sheet.write(2, 1, "NULL")
+    workbook.add_sheet("补充").write(0, 0, "NA")
+    workbook.save(str(path))
+    blocks = parse_document(path, "application/vnd.ms-excel")
+    assert len(blocks) == 2
+    assert blocks[0].locator == "Sheet 验收规则，行 1-3"
+    assert "00007" in blocks[0].content
+    assert "NULL" in blocks[0].content
+    assert "NA" in blocks[1].content
+
+
+def test_corrupt_excel_fails_instead_of_reading_as_text(tmp_path):
+    from zipfile import BadZipFile
+
+    import pytest
+    from xlrd import XLRDError
+
+    for extension in ("xlsx", "xls"):
+        path = tmp_path / f"broken.{extension}"
+        path.write_bytes(b"not an Excel workbook")
+        with pytest.raises((BadZipFile, XLRDError)):
+            parse_document(path, "application/octet-stream")

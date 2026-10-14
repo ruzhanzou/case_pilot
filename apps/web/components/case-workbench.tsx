@@ -2174,14 +2174,16 @@ export function CaseWorkbench({
               ref={fileRef}
               hidden
               type="file"
+              accept=".pdf,.txt,.xlsx,.xls,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
               multiple
+              disabled={uploading || conversationRunning || !workspace || !spaceId}
               onChange={(event) => void handleFiles(event)}
             />
             <button
               type="button"
               className="is-icon"
               onClick={() => fileRef.current?.click()}
-              disabled={uploading || conversationRunning}
+              disabled={uploading || conversationRunning || !workspace || !spaceId}
               aria-label={pick("Add attachment", "添加附件")}
             >
               {uploading ? (

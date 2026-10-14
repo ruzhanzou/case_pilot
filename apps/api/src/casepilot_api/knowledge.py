@@ -26,6 +26,7 @@ ALLOWED_EXTENSIONS = {
     ".pdf",
     ".docx",
     ".xlsx",
+    ".xls",
     ".csv",
     ".md",
     ".txt",
@@ -37,6 +38,8 @@ ALLOWED_MIME_TYPES = {
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel",
+    "application/excel",
     "text/csv",
     "text/markdown",
     "text/plain",
@@ -51,6 +54,8 @@ def _signature_matches(extension: str, content: bytes) -> bool:
         return content.startswith(b"%PDF-")
     if extension in {".docx", ".xlsx"}:
         return content.startswith(b"PK\x03\x04")
+    if extension == ".xls":
+        return content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")
     if extension == ".png":
         return content.startswith(b"\x89PNG\r\n\x1a\n")
     if extension in {".jpg", ".jpeg"}:

@@ -1,6 +1,8 @@
 import csv
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from html import escape
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
@@ -8,8 +10,11 @@ from typing import Any
 import jieba
 import pymupdf as fitz
 import pytesseract
+import xlrd
 from docx import Document
+from markitdown.converters import HtmlConverter
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 from PIL import Image
 
 from casepilot_agent.contracts import EmbeddingProvider
@@ -98,48 +103,116 @@ def _parse_docx(content: bytes) -> list[ParsedBlock]:
     return blocks
 
 
+def _excel_blocks(sheet: str, rows: Iterable[tuple[int, list[Any]]]) -> list[ParsedBlock]:
+    # Keep original cell types/coordinates instead of pandas' automatic type inference.
+    # Use only MarkItDown's local HTML converter: no URL loading, plugins, or LLM calls.
+    converter = HtmlConverter()
+    blocks: list[ParsedBlock] = []
+    batch: list[tuple[int, list[str]]] = []
+
+    def flush() -> None:
+        if not batch:
+            return
+        width = max(len(values) for _, values in batch)
+        header = (
+            "<tr><th>原始行号</th>"
+            + "".join(f"<th>{get_column_letter(column)}</th>" for column in range(1, width + 1))
+            + "</tr>"
+        )
+        body = "".join(
+            f"<tr><td>{number}</td>"
+            + "".join(
+                "<td>" + escape(value).replace("\n", "<br>") + "</td>"
+                for value in [*values, *([""] * (width - len(values)))]
+            )
+            + "</tr>"
+            for number, values in batch
+        )
+        markdown = converter.convert_string(
+            f"<h2>{escape(sheet)}</h2><table>{header}{body}</table>"
+        ).markdown
+        start, end = batch[0][0], batch[-1][0]
+        blocks.append(
+            ParsedBlock(
+                content=markdown,
+                section_path=sheet,
+                locator=f"Sheet {sheet}，行 {start}-{end}",
+                metadata={"sheet": sheet, "row_start": start, "row_end": end},
+            )
+        )
+        batch.clear()
+
+    for number, row in rows:
+        values = ["" if value is None else str(value) for value in row]
+        while values and not values[-1]:
+            values.pop()
+        if not values:
+            continue
+        batch.append((number, values))
+        if len(batch) >= 40:
+            flush()
+    flush()
+    return blocks
+
+
 def _parse_xlsx(content: bytes) -> list[ParsedBlock]:
     workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
-    blocks: list[ParsedBlock] = []
-    for sheet in workbook.worksheets:
-        batch: list[str] = []
-        start_row = 1
-        for row_number, row in enumerate(sheet.iter_rows(values_only=True), start=1):
-            values = ["" if value is None else str(value) for value in row]
-            if not any(values):
-                continue
-            if not batch:
-                start_row = row_number
-            batch.append(" | ".join(values))
-            if len(batch) >= 40:
-                blocks.append(
-                    ParsedBlock(
-                        content="\n".join(batch),
-                        section_path=sheet.title,
-                        locator=f"Sheet {sheet.title}，行 {start_row}-{row_number}",
-                        metadata={
-                            "sheet": sheet.title,
-                            "row_start": start_row,
-                            "row_end": row_number,
-                        },
+    try:
+        formulas = load_workbook(BytesIO(content), read_only=True, data_only=False)
+        try:
+            blocks: list[ParsedBlock] = []
+            for sheet in workbook.worksheets:
+                # Excel is not executed. Preserve uncached formulas instead of silently
+                # dropping them; otherwise use the saved result from the workbook.
+                rows = (
+                    (
+                        number,
+                        [
+                            value if value is not None else formula
+                            for value, formula in zip(values, expressions, strict=True)
+                        ],
+                    )
+                    for number, (values, expressions) in enumerate(
+                        zip(
+                            sheet.iter_rows(values_only=True),
+                            formulas[sheet.title].iter_rows(values_only=True),
+                            strict=True,
+                        ),
+                        start=1,
                     )
                 )
-                batch = []
-        if batch:
-            end_row = start_row + len(batch) - 1
-            blocks.append(
-                ParsedBlock(
-                    content="\n".join(batch),
-                    section_path=sheet.title,
-                    locator=f"Sheet {sheet.title}，行 {start_row}-{end_row}",
-                    metadata={
-                        "sheet": sheet.title,
-                        "row_start": start_row,
-                        "row_end": end_row,
-                    },
-                )
-            )
-    return blocks
+                blocks.extend(_excel_blocks(sheet.title, rows))
+            return blocks
+        finally:
+            formulas.close()
+    finally:
+        workbook.close()
+
+
+def _parse_xls(content: bytes) -> list[ParsedBlock]:
+    workbook = xlrd.open_workbook(file_contents=content, on_demand=True)
+    try:
+        blocks: list[ParsedBlock] = []
+        for sheet in workbook.sheets():
+
+            def rows(sheet: Any = sheet) -> Iterable[tuple[int, list[Any]]]:
+                for number in range(sheet.nrows):
+                    values: list[Any] = []
+                    for cell in sheet.row(number):
+                        value = cell.value
+                        if cell.ctype == xlrd.XL_CELL_DATE:
+                            value = xlrd.xldate_as_datetime(value, workbook.datemode)
+                        elif cell.ctype == xlrd.XL_CELL_BOOLEAN:
+                            value = bool(value)
+                        elif cell.ctype == xlrd.XL_CELL_ERROR:
+                            value = xlrd.error_text_from_code.get(value, "#ERROR")
+                        values.append(value)
+                    yield number + 1, values
+
+            blocks.extend(_excel_blocks(sheet.name, rows()))
+        return blocks
+    finally:
+        workbook.release_resources()
 
 
 def _parse_csv(content: bytes) -> list[ParsedBlock]:
@@ -206,6 +279,8 @@ def parse_document(path: Path, mime_type: str) -> list[ParsedBlock]:
         return _parse_docx(content)
     if extension == ".xlsx":
         return _parse_xlsx(content)
+    if extension == ".xls":
+        return _parse_xls(content)
     if extension == ".csv":
         return _parse_csv(content)
     if extension in {".png", ".jpg", ".jpeg"}:
@@ -280,10 +355,10 @@ def build_chunks(
                     "locator": block.locator,
                     "content": parent_text,
                     "contextual_content": f"{context_prefix}\n{parent_text}",
-                        "search_text": pretokenize(f"{context_prefix} {parent_text}"),
-                        "token_count": token_count(parent_text),
-                        "embedding": None,
-                        "metadata": block.metadata,
+                    "search_text": pretokenize(f"{context_prefix} {parent_text}"),
+                    "token_count": token_count(parent_text),
+                    "embedding": None,
+                    "metadata": block.metadata,
                 }
             )
             ordinal += 1
@@ -316,9 +391,7 @@ def attach_embeddings(
     chunks: list[dict[str, Any]],
     provider: EmbeddingProvider,
 ) -> None:
-    vectors = provider.embed(
-        [chunk["contextual_content"] for chunk in chunks]
-    )
+    vectors = provider.embed([chunk["contextual_content"] for chunk in chunks])
     if len(vectors) != len(chunks):
         raise ValueError("embedding_count_mismatch")
     for chunk, vector in zip(chunks, vectors, strict=True):

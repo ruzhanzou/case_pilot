@@ -149,7 +149,7 @@ export function KnowledgeBase({ spaceId }: KnowledgeBaseProps) {
                     <FileText size={14} /> {file.name}
                   </span>
                 ))
-              : pick("PDF, DOCX, XLSX, CSV, MD/TXT, PNG/JPEG; up to 25 MB per file", "PDF、DOCX、XLSX、CSV、MD/TXT、PNG/JPEG；单文件不超过 25 MB")}
+              : pick("PDF, DOCX, XLSX/XLS, CSV, MD/TXT, PNG/JPEG; up to 25 MB per file", "PDF、DOCX、XLSX/XLS、CSV、MD/TXT、PNG/JPEG；单文件不超过 25 MB")}
           </div>
         </div>
         <button type="button" disabled={!files.length || busy} onClick={upload}>
@@ -161,7 +161,7 @@ export function KnowledgeBase({ spaceId }: KnowledgeBaseProps) {
           hidden
           multiple
           type="file"
-          accept=".pdf,.docx,.xlsx,.csv,.md,.txt,.png,.jpg,.jpeg"
+          accept=".pdf,.docx,.xlsx,.xls,.csv,.md,.txt,.png,.jpg,.jpeg"
           onChange={chooseFiles}
         />
       </section>

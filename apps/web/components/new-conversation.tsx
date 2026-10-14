@@ -267,7 +267,7 @@ export function NewConversation({
           ref={fileRef}
           hidden
           type="file"
-          accept=".pdf,.txt,application/pdf,text/plain"
+          accept=".pdf,.txt,.xlsx,.xls,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
           multiple
           onChange={(event) => {
             const files = Array.from(event.target.files ?? []);

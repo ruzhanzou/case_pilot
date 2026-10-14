@@ -9,6 +9,10 @@ from casepilot_api.schemas import GenerationAnswersRequest, GenerationStartReque
 
 def test_upload_signature_validation_rejects_extension_spoofing() -> None:
     assert _signature_matches(".pdf", b"%PDF-1.7\n")
+    assert _signature_matches(".xlsx", b"PK\x03\x04archive")
+    assert _signature_matches(".xls", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")
+    assert not _signature_matches(".xls", b"not an Excel workbook")
+    assert not _signature_matches(".xlsx", b"%PDF-1.7")
     assert _signature_matches(".docx", b"PK\x03\x04archive")
     assert _signature_matches(".png", b"\x89PNG\r\n\x1a\n")
     assert not _signature_matches(".pdf", b"not-a-pdf")

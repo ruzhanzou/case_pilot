@@ -216,7 +216,7 @@ test("keeps the persisted case management and execution baseline", async () => {
     newConversation,
     /conversation\.routing/,
   );
-  assert.match(newConversation, /accept="\.pdf,\.txt,application\/pdf,text\/plain"/);
+  assert.match(newConversation, /accept="\.pdf,\.txt,\.xlsx,\.xls,/);
   assert.match(caseWorkbench, /selectedTargets/);
   assert.match(caseMindMap, /onSelectTarget/);
   assert.match(apiClient, /conversation-operations/);

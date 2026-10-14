@@ -2797,6 +2797,12 @@ def upload_conversation_attachments(
     allowed = {
         ".pdf": {"application/pdf"},
         ".txt": {"text/plain"},
+        ".xlsx": {
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/octet-stream",
+            "",
+        },
+        ".xls": {"application/vnd.ms-excel", "application/excel", "application/octet-stream", ""},
     }
     for upload in files:
         extension = Path(upload.filename or "").suffix.lower()
