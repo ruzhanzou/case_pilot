@@ -13475,3 +13475,66 @@ fieldset.principle-candidate-editor { border: 0; padding: 0; margin: 0; min-widt
   min-width: 0;
   white-space: normal;
 }
+
+/* Case library: compact controls and independently resizable panes. */
+.case-library {
+  grid-template-columns: clamp(180px, var(--collection-width, 240px), 32%) 8px minmax(0, 1fr);
+}
+.case-library > .collection-sidebar { padding: 16px 12px; border-right: 0; }
+.case-library__main { padding: 12px 16px 0; container-type: inline-size; }
+.case-library__header { min-height: 0; gap: 12px; padding-bottom: 10px; flex-wrap: wrap; align-items: center; }
+.case-library__header > div:first-child { flex: 1 1 180px; }
+.case-library__header h1 { font-size: 21px; }
+.case-library__header p { margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.case-library__header-actions { gap: 6px; flex-wrap: wrap; max-width: 100%; }
+.case-library__header-actions .management-button:not(.management-button--primary) { width: 34px; height: 34px; padding: 0; font-size: 0; }
+.case-library__header-actions .management-button--primary { height: 34px; }
+.case-library__toolbar { gap: 10px; padding: 8px 0; }
+.case-library__toolbar .case-search { min-width: 0; height: 34px; flex: 1; }
+.case-library__toolbar input { min-width: 0; }
+.case-library__view-controls { flex-shrink: 0; }
+.case-library__body { margin-inline: -16px; }
+.case-library__body--list,
+.case-library__body--list.is-detail-expanded { grid-template-columns: minmax(0, 1fr) 8px minmax(0, var(--detail-width, 38%)); }
+.case-library__body--list .case-detail { display: block; border-left: 0; }
+.case-library__divider { display: flex; align-items: center; justify-content: center; min-height: 0; background: #f4f7fb; cursor: col-resize; touch-action: none; user-select: none; }
+.case-library__divider > span { width: 3px; height: 36px; border-radius: 4px; background: #b9c7da; }
+.case-library__divider:hover,
+.case-library__divider:focus-visible { background: #dbeafe; outline: none; }
+.case-library__divider:hover > span,
+.case-library__divider:focus-visible > span { background: #2563eb; }
+.case-library__body--mind-map > .case-library__divider { display: none; }
+.case-detail__back { display: none; }
+.case-library .case-table { min-width: 460px; }
+.case-library .case-table th { height: 36px; padding-inline: 12px; }
+.case-library .case-table td { height: 62px; padding: 8px 12px; overflow-wrap: anywhere; }
+.case-library .case-pagination { flex-wrap: wrap; gap: 8px; min-height: 44px; }
+@container (max-width: 650px) {
+  .case-library__header { gap: 8px; }
+  .case-library__header > div:first-child { flex-basis: 100%; }
+  .case-library__header-actions { justify-content: flex-start; }
+  .case-library__body--list,
+  .case-library__body--list.is-detail-expanded { grid-template-columns: minmax(0, 1fr); }
+  .case-library__body--list > .case-library__divider,
+  .case-library__body--list .case-detail { display: none; }
+  .case-library__body--list[data-detail-open="true"] .case-table-wrap { display: none; }
+  .case-library__body--list[data-detail-open="true"] .case-detail { display: block; }
+  .case-library__body--list .case-detail__back { display: inline-flex; margin-bottom: 12px; }
+  .case-library__body--list .case-detail__header button[aria-pressed] { display: none; }
+}
+@container (max-width: 420px) {
+  .case-library__toolbar { flex-wrap: wrap; }
+  .case-library__toolbar .case-search { flex-basis: 100%; width: 100%; }
+  .case-library__view-controls { justify-content: space-between; width: 100%; }
+}
+@media (max-width: 760px) {
+  .case-library { display: flex; flex-direction: column; overflow: hidden; }
+  .case-library > .collection-sidebar { flex-shrink: 0; max-height: 160px; padding: 8px 12px; border-bottom: 1px solid var(--management-line); }
+  .case-library .collection-sidebar__head { padding-bottom: 6px; }
+  .case-library .collection-sidebar__head .management-kicker { display: none; }
+  .case-library .collection-search { margin: 0 0 6px; }
+  .case-library .collection-sidebar__list { display: flex; gap: 6px; overflow-x: auto; }
+  .case-library .collection-item { flex: 0 0 180px; padding: 8px; }
+  .case-library > .case-library__divider { display: none; }
+  .case-library__main { flex: 1; }
+}

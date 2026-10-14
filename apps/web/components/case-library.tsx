@@ -33,7 +33,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 
 const CASES_PER_PAGE = 20;
 
@@ -86,6 +86,15 @@ export function CaseLibrary({
   const [viewMode, setViewMode] = useState<"list" | "mind-map">("list");
   const [currentPage, setCurrentPage] = useState(1);
   const [detailExpanded, setDetailExpanded] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(240);
+  const [detailWidth, setDetailWidth] = useState(38);
+  const [mobileDetailId, setMobileDetailId] = useState<string | null>(null);
+  const libraryRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const selectCase = (id: string) => {
+    setMobileDetailId(id);
+    onSelectCase(id);
+  };
   const tableRef = useRef<HTMLDivElement>(null);
   const keyboardSelection = useRef<string | null>(null);
   const filteredCases = useMemo(() => {
@@ -129,7 +138,7 @@ export function CaseLibrary({
       const target = event.target instanceof HTMLElement ? event.target : null;
       // Leave editing, dialogs, and controls with their own arrow navigation alone.
       if (target?.isContentEditable || target?.closest(
-        'input, textarea, select, [role="combobox"], [role="listbox"], [role="menu"], [role="slider"], .collection-sidebar',
+        'input, textarea, select, [role="combobox"], [role="listbox"], [role="menu"], [role="slider"], [role="separator"], .collection-sidebar',
       ) || document.querySelector('[aria-modal="true"], dialog[open], [role="menu"]')) return;
       if (!filteredCases.length) return;
       event.preventDefault();
@@ -146,7 +155,7 @@ export function CaseLibrary({
   }, [viewMode, loading, selectedCollection, filteredCases, selectedCase?.id, effectivePage, onSelectCase]);
 
   return (
-    <div className="case-library">
+    <div className="case-library" ref={libraryRef} style={{ "--collection-width": `${sidebarWidth}px`, "--detail-width": `${detailExpanded ? 60 : detailWidth}%` } as CSSProperties}>
       <aside className="collection-sidebar">
         <div className="collection-sidebar__head">
           <div>
@@ -231,6 +240,12 @@ export function CaseLibrary({
         </div>
       </aside>
 
+      <LibraryDivider
+        label={pick("Resize collections", "调整集合栏宽度")}
+        value={sidebarWidth} min={180} max={360}
+        onChange={setSidebarWidth}
+        onDrag={(x) => Math.max(180, Math.min(360, (libraryRef.current?.clientWidth ?? 900) - 480, x - (libraryRef.current?.getBoundingClientRect().left ?? 0)))}
+      />
       <section
         className={
           viewMode === "list"
@@ -240,9 +255,8 @@ export function CaseLibrary({
       >
         <header className="case-library__header">
           <div>
-            <span className="management-kicker">{pick("Test cases", "用例管理")}</span>
             <div className="case-library__title-row">
-              <h1>{selectedCollection?.name ?? pick("Choose a collection", "请选择用例集合")}</h1>
+              <h1 title={selectedCollection?.name}>{selectedCollection?.name ?? pick("Choose a collection", "请选择用例集合")}</h1>
               {selectedCollection && (
                 <CollectionStatusBadge
                   status={
@@ -253,14 +267,8 @@ export function CaseLibrary({
                 />
               )}
             </div>
-            <p>{selectedCollection?.description || pick("Manage structured test cases in this space", "管理当前空间中的结构化测试用例")}</p>
-            {selectedCollection && (
-              <div className="case-library__summary" aria-label={pick("Collection summary", "用例集合摘要")}>
-                <span><b>{cases.length}</b> {pick("cases", "用例")}</span>
-                <span>{pick("Workspace: persistent session · autosaved", "工作区状态：持续 Session · 自动保存")}</span>
-                <span>{pick("View results in QA execution runs", "执行结果请在 QA 执行批次中查看")}</span>
-              </div>
-            )}
+            <p title={selectedCollection?.description}>{selectedCollection?.description || pick("Manage structured test cases in this space", "管理当前空间中的结构化测试用例")}</p>
+
           </div>
           <div className="case-library__header-actions">
             {selectedCollection && (
@@ -354,6 +362,8 @@ export function CaseLibrary({
         </div>
 
         <div
+          ref={bodyRef}
+          data-detail-open={!!selectedCase && mobileDetailId === selectedCase.id}
           className={
             viewMode === "mind-map"
               ? "case-library__body case-library__body--mind-map"
@@ -374,7 +384,7 @@ export function CaseLibrary({
                 searchQuery={query}
                 onSearchQueryChange={setQuery}
                 selectedCaseId={selectedCase?.id ?? ""}
-                onSelectCase={onSelectCase}
+                onSelectCase={selectCase}
                 onCreateCase={onCreateCase}
                 onCreateCaseInline={onCreateCaseInline}
                 onEditCase={onEditCase}
@@ -403,7 +413,7 @@ export function CaseLibrary({
                       <button
                         type="button"
                         className="case-table__title"
-                        onClick={() => onSelectCase(testCase.id)}
+                        onClick={() => selectCase(testCase.id)}
                       >
                         <code>{testCase.case_key}</code>
                         <strong>{testCase.title}</strong>
@@ -473,7 +483,19 @@ export function CaseLibrary({
             )}
           </div>
 
+          <LibraryDivider
+            label={pick("Resize case details", "调整用例详情宽度")}
+            value={detailExpanded ? 60 : detailWidth} min={25} max={65} reverse
+            onChange={(value) => { setDetailExpanded(false); setDetailWidth(value); }}
+            onDrag={(x) => {
+              const bounds = bodyRef.current?.getBoundingClientRect();
+              return bounds ? Math.max(25, Math.min(65, (bounds.right - x) / bounds.width * 100)) : detailWidth;
+            }}
+          />
           <aside className="case-detail">
+            <button type="button" className="management-button case-detail__back" onClick={() => setMobileDetailId(null)}>
+              <ChevronLeft size={16} /> {pick("Back to cases", "返回用例列表")}
+            </button>
             {selectedCase ? (
               <>
                 <header className="case-detail__header">
@@ -581,4 +603,38 @@ export function CaseLibrary({
       </section>
     </div>
   );
+}
+
+/** Pointer capture keeps resizing active even when the pointer leaves the divider. */
+function LibraryDivider({ label, value, min, max, onChange, onDrag, reverse = false }: {
+  label: string; value: number; min: number; max: number; reverse?: boolean;
+  onChange: (value: number) => void; onDrag: (x: number) => number;
+}) {
+  const dragging = useRef(false);
+  return <div
+    className="case-library__divider"
+    role="separator" tabIndex={0} aria-label={label} title={label}
+    aria-orientation="vertical" aria-valuemin={min} aria-valuemax={max} aria-valuenow={Math.round(value)}
+    onPointerDown={(event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      dragging.current = true;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      event.currentTarget.focus();
+    }}
+    onPointerMove={(event) => { if (dragging.current) onChange(onDrag(event.clientX)); }}
+    onPointerUp={(event) => {
+      dragging.current = false;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    }}
+    onLostPointerCapture={() => { dragging.current = false; }}
+    onPointerCancel={() => { dragging.current = false; }}
+    onKeyDown={(event) => {
+      const step = (max > 100 ? 16 : 2) * (reverse ? -1 : 1);
+      const next = event.key === "ArrowLeft" ? value - step : event.key === "ArrowRight" ? value + step : event.key === "Home" ? min : event.key === "End" ? max : null;
+      if (next === null) return;
+      event.preventDefault();
+      onChange(Math.max(min, Math.min(max, next)));
+    }}
+  ><span /></div>;
 }
