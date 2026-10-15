@@ -709,6 +709,14 @@ class ConversationWorkflowRunView(BaseModel):
     updated_at: datetime
 
 
+class PlanningCaseLinkRequest(BaseModel):
+    brief_version: int = Field(ge=1)
+    test_point_id: str = Field(min_length=1, max_length=200)
+    test_case_id: UUID
+    revision_id: UUID
+    remove: bool = False
+
+
 class ConversationView(BaseModel):
     id: UUID
     space_id: UUID
@@ -717,6 +725,7 @@ class ConversationView(BaseModel):
     status: str
     context: dict
     messages: list[ConversationMessageView]
+    planning_case_links: list[dict] = Field(default_factory=list)
     test_briefs: list[WorkspaceTestBriefView] = Field(default_factory=list)
     candidates: list[WorkspaceCandidateView] = Field(default_factory=list)
     workflow_runs: list[ConversationWorkflowRunView] = Field(default_factory=list)

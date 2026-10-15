@@ -276,13 +276,13 @@ def _explicit_rewrite_candidate(
 
 def extract_explicit_test_object(content: str) -> str:
     """Extract a user-provided test object without relying on model output."""
-    normalized = " ".join(content.strip().split())
+    normalized = re.sub(r"[^\S\r\n]+", " ", content.strip())
     if not normalized or any(term in normalized for term in UNKNOWN_TEST_OBJECT_TERMS):
         return ""
 
     marker_patterns = (
-        r"(?:测试对象|被测对象)\s*(?:是|为|：|:|包括|包含)\s*(.+)",
-        r"(?:测试对象|被测对象)\s+(.+)",
+        r"(?:测试对象|被测对象)\s*(?:是|为|：|:|包括|包含)\s*([^。；;\r\n]+)",
+        r"(?:测试对象|被测对象)\s+([^。；;\r\n]+)",
     )
     candidate = ""
     for pattern in marker_patterns:

@@ -12,6 +12,10 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse
+
+from casepilot_api.planning_links import links_view, link_existing_case, link_committed_candidate, inherit_unchanged_links
+from casepilot_api.schemas import PlanningCaseLinkRequest
+from casepilot_api.reuse_choices import apply_reviewer_choices, reviewer_choices
 from pydantic import ValidationError
 from redis import Redis
 from sqlalchemy import func, or_, select, update
@@ -340,7 +344,7 @@ UNKNOWN_TEST_OBJECT_TERMS = (
 
 
 def _extract_explicit_test_object(content: str) -> str:
-    normalized = " ".join(content.strip().split())
+    normalized = re.sub(r"[^\S\r\n]+", " ", content.strip())
     if not normalized or any(term in normalized for term in UNKNOWN_TEST_OBJECT_TERMS):
         return ""
     module = requested_new_module(normalized)
@@ -350,8 +354,8 @@ def _extract_explicit_test_object(content: str) -> str:
     candidate = ""
     count_prefix = False
     for pattern_index, pattern in enumerate((
-        r"(?:测试对象|被测对象)\s*(?:是|为|：|:|包括|包含)\s*(.+)",
-        r"(?:测试对象|被测对象)\s+(.+)",
+        r"(?:测试对象|被测对象)\s*(?:是|为|：|:|包括|包含)\s*([^。；;\r\n]+)",
+        r"(?:测试对象|被测对象)\s+([^。；;\r\n]+)",
         r"(?:为|针对|围绕)\s*(.+?)\s*(?:生成|设计|编写|创建)"
         r"(?:相关|恰好|至少|至多|不少于|不超过|大约|约|总共|共)?\s*"
         r"(?:[0-9一二两三四五六七八九十百]+[+＋]?\s*(?:条|个)?\s*)?"
@@ -692,6 +696,15 @@ def render_test_brief_markdown(version: int, content: dict[str, Any]) -> str:
         if item.get("impact"):
             lines.append(f"  - 影响：{item['impact']}")
     planning = content.get("planning") or {}
+    reuse = planning.get("reuse") or {}
+    if reuse:
+        labels = {"fresh": "全新生成", "regression": "回归补充", "change": "按变更生成", "new": "新增", "reuse": "复用", "modify": "修改"}
+        lines.extend(["", "## 生成与复用策略", "", labels.get(reuse.get("strategy"), "全新生成"), reuse.get("note", "")])
+        for item in reuse.get("decisions", []):
+            source = item.get("source") or {}
+            choice = reuse.get("user_choices", {}).get(item["point_id"])
+            choice_label = "不纳入本次" if choice == "exclude" else "重新生成" if choice == "new" else "使用建议"
+            lines.append(f"- {item['point_id']}：建议{labels.get(item['action'], item['action'])}；本次{choice_label}；{item.get('reason', '')}；{source.get('label', '')} {source.get('locator', '')}")
     if planning.get("test_points"):
         lines.extend(["", "## 测试规划", ""])
         for feature in planning.get("feature_points", []):
@@ -1033,6 +1046,7 @@ def _conversation_view(db: Session, conversation: Conversation) -> ConversationV
         title=conversation.title,
         status=conversation.status,
         context={**dict(conversation.context), "pending_attachments": pending_attachments},
+        planning_case_links=links_view(db, conversation),
         messages=message_views,
         test_briefs=[
             _brief_view(
@@ -3073,6 +3087,7 @@ def create_test_brief(
         )
         .values(status="superseded")
     )
+    reviewer_choices(payload.content.planning)
     brief = WorkspaceTestBrief(
         conversation_id=conversation.id,
         version=latest_version + 1,
@@ -3084,7 +3099,11 @@ def create_test_brief(
         status="draft",
         created_by=account.id,
     )
+    previous = db.scalar(select(WorkspaceTestBrief).where(
+        WorkspaceTestBrief.conversation_id == conversation.id, WorkspaceTestBrief.version == latest_version))
     db.add(brief)
+    db.flush()
+    inherit_unchanged_links(db, previous, brief)
     conversation.context = {
         **dict(conversation.context),
         "phase": "brief_review",
@@ -3143,6 +3162,25 @@ def download_test_brief(
     )
 
 
+def validate_reuse_confirmation(content, planning):
+    reuse = planning.get("reuse") or {}
+    if reuse.get("strategy") not in {"regression", "change"}:
+        return
+    choices = reviewer_choices(planning)
+    inherited_points = [p for p in planning.get("test_points", [])
+                        if choices.get(p["id"]) != "new"]
+    if not inherited_points:
+        return
+    snapshots = reuse.get("brief_snapshot", {})
+    features = {f["id"]: f for f in reuse.get("feature_snapshots", [])}
+    decisions = {d["point_id"]: d for d in reuse.get("decisions", [])}
+    if (any(content.get(k) != v for k, v in snapshots.items())
+            or any(features.get(f["id"]) != f for f in planning.get("feature_points", []))
+            or any(decisions.get(p["id"], {}).get("point_snapshot") != p
+                   for p in inherited_points)):
+        raise HTTPException(status_code=409, detail="reuse_plan_changed_reanalyze_required")
+
+
 @router.post(
     "/workspaces/{conversation_id}/test-briefs/confirm",
     response_model=ConversationTurnView,
@@ -3178,11 +3216,13 @@ def confirm_test_brief(
     planning = dict(brief_content.get("planning") or {})
     if planning:
         points = planning.get("test_points", [])
+        choices = reviewer_choices(planning)
         selected = set(payload.selected_test_point_ids)
         allowed = {str(point["id"]) for point in points}
         if selected - allowed:
             raise HTTPException(status_code=422, detail="planning_selection_invalid")
-        points = [point for point in points if not selected or point["id"] in selected]
+        points = [point for point in points if (not selected or point["id"] in selected)
+                  and choices.get(point["id"]) != "exclude"]
         if not points:
             raise HTTPException(status_code=409, detail="planning_has_no_test_points")
         feature_ids = {ref for point in points for ref in point["feature_point_ids"]}
@@ -3195,9 +3235,17 @@ def confirm_test_brief(
             ],
             "coverage_matrix": [],
             "brief_version": brief.version,
+            **({"reuse": {**planning["reuse"], "user_choices": {
+                key: value for key, value in choices.items() if key in {p["id"] for p in points}
+            }, "decisions": [
+                item for item in planning["reuse"].get("decisions", [])
+                if item["point_id"] in {point["id"] for point in points}
+            ]}} if planning.get("reuse") else {}),
         }
     elif payload.selected_test_point_ids:
         raise HTTPException(status_code=422, detail="planning_selection_invalid")
+    validate_reuse_confirmation(brief_content, planning)
+    planning = apply_reviewer_choices(planning)
     resolved_test_object = str(brief_content.get("test_object") or "").strip()
     if not resolved_test_object:
         resolved_test_object = _test_object_from_memory(
@@ -3527,6 +3575,7 @@ def commit_workspace_candidates(
             ) from error
         validated_candidates.append(validated)
     created: list[TestCase] = []
+    link_context: dict = {}
     for index, (candidate, validated) in enumerate(zip(candidates, validated_candidates, strict=True)):
         test_case = create_test_case_record(
             db,
@@ -3536,6 +3585,7 @@ def commit_workspace_candidates(
             case_key=f"CP-{uuid4().hex[:8].upper()}",
             position=position + index,
         )
+        link_committed_candidate(db, conversation, candidate, test_case, link_context)
         candidate.status = "incorporated"
         created.append(test_case)
     db.flush()
@@ -5563,3 +5613,22 @@ def reject_change_set(
         db.commit()
         db.refresh(change_set)
     return _change_set_view(change_set)
+
+
+@router.put("/workspaces/{conversation_id}/test-point-links")
+def save_planning_case_link(conversation_id: UUID, payload: PlanningCaseLinkRequest,
+                            account: CurrentAccount, db: DbSession):
+    conversation = _ensure_conversation(db, account.id, conversation_id)
+    db.refresh(conversation, with_for_update=True)
+    _require_idle_conversation(db, conversation)
+    brief = db.scalar(select(WorkspaceTestBrief).where(
+        WorkspaceTestBrief.conversation_id == conversation.id,
+        WorkspaceTestBrief.version == payload.brief_version))
+    latest = db.scalar(select(func.max(WorkspaceTestBrief.version)).where(
+        WorkspaceTestBrief.conversation_id == conversation.id))
+    if brief is None or brief.version != latest:
+        raise HTTPException(409, "test_brief_version_changed")
+    link_existing_case(db, conversation, brief, payload.test_point_id,
+                       payload.test_case_id, payload.revision_id, payload.remove)
+    db.commit()
+    return links_view(db, conversation)

@@ -163,6 +163,15 @@ def render_test_brief_markdown(version: int, content: dict[str, Any]) -> str:
         if item.get("impact"):
             lines.append(f"  - 影响：{item['impact']}")
     planning = content.get("planning") or {}
+    reuse = planning.get("reuse") or {}
+    if reuse:
+        labels = {"fresh": "全新生成", "regression": "回归补充", "change": "按变更生成", "new": "新增", "reuse": "复用", "modify": "修改"}
+        lines.extend(["", "## 生成与复用策略", "", labels.get(reuse.get("strategy"), "全新生成"), reuse.get("note", "")])
+        for item in reuse.get("decisions", []):
+            source = item.get("source") or {}
+            choice = reuse.get("user_choices", {}).get(item["point_id"])
+            choice_label = "不纳入本次" if choice == "exclude" else "重新生成" if choice == "new" else "使用建议"
+            lines.append(f"- {item['point_id']}：建议{labels.get(item['action'], item['action'])}；本次{choice_label}；{item.get('reason', '')}；{source.get('label', '')} {source.get('locator', '')}")
     if planning.get("test_points"):
         lines.extend(["", "## 测试规划", ""])
         for feature in planning.get("feature_points", []):
@@ -997,6 +1006,25 @@ class JobStore:
                     created_at=now,
                 )
             )
+
+    def search_reuse_cases(self, connection, *, space_id, terms, limit=100):
+        terms = [str(t).strip()[:100] for t in terms if str(t).strip()][:6]
+        if not terms:
+            return []
+        predicates = [or_(test_case_revisions.c.title.contains(term, autoescape=True),
+                          test_case_revisions.c.module.contains(term, autoescape=True)) for term in terms]
+        score = sum(case((predicate, 1), else_=0) for predicate in predicates)
+        rows = connection.execute(
+            select(test_cases.c.id.label("asset_id"), test_cases.c.case_key, test_case_revisions)
+            .join(test_case_revisions, test_case_revisions.c.id == test_cases.c.current_revision_id)
+            .where(test_cases.c.space_id == space_id, test_cases.c.deleted_at.is_(None), or_(*predicates))
+            .order_by(score.desc(), test_cases.c.id).limit(min(limit, 100))
+        ).mappings()
+        return [{"ref": str(row["asset_id"]), "target_type": "formal", "snapshot": {
+            "id": row["case_key"], "case_key": row["case_key"],
+            "current_revision_id": str(row["id"]), "revision_number": row["revision_number"],
+            **{key: row[key] for key in ("title", "module", "priority", "case_type", "preconditions", "steps", "source_refs")},
+        }} for row in rows]
 
     def load_existing_case_titles(
         self,

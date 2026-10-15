@@ -187,7 +187,11 @@ class MockProvider:
             for case in baseline.test_cases:
                 case.source_refs = [source_ref]
 
-        if result_type is CaseAnalysisReport:
+        from casepilot_agent.reuse import ReuseDecisions
+        if issubclass(result_type, ReuseDecisions):
+            result = ReuseDecisions(decisions=[{"point_id": point["id"], "action": "new",
+                "source_key": None, "reason": "Mock模式不推断历史用例适用性"} for point in payload["test_points"]])
+        elif result_type is CaseAnalysisReport:
             result = CaseAnalysisReport(
                 summary="模拟评审完成", findings=[], limitations=["模拟模式不执行语义评审"]
             )

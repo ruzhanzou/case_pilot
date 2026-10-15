@@ -535,3 +535,9 @@ def test_bound_collection_still_detects_explicit_other_collection(content):
         FakeDb(), SimpleNamespace(space_id=uuid4()), content, explicit_only=True,
     )
     assert suggested == other.id
+
+
+def test_explicit_object_does_not_include_following_requirements():
+    from casepilot_api.conversations import _extract_explicit_test_object
+    for separator in ["。", "\n", "；"]:
+        assert _extract_explicit_test_object("测试对象：青禾图书借阅" + separator + "生成3个测试点，需求如下：借阅上限5本") == "青禾图书借阅"

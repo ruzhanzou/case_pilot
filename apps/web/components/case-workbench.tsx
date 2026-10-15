@@ -15,6 +15,7 @@ import { CaseTaskArtifacts } from "@/components/case-task-artifacts";
 import { ConversationTaskFlow } from "@/components/conversation-task-flow";
 import { CaseTaskWorkspace } from "@/components/case-task-workspace";
 import { candidatesForTask, workspaceTasks, workspaceIsRunning, shouldResumePendingTask, taskScopeChanged, nextWorkspaceOperation, type WorkspaceTask } from "@/lib/workspace-tasks";
+import { consumptionSummary } from "@/lib/planning-consumption";
 import { TestPlanningMap } from "@/components/test-planning-map";
 import { CaseMindMap } from "@/components/case-mind-map";
 import { CaseCollectionChanges } from "@/components/case-collection-changes";
@@ -31,6 +32,7 @@ import {
   confirmConversationIntent,
   confirmTestBrief,
   saveTestBrief,
+  savePlanningCaseLink,
   downloadTestBrief,
   getCaseChangeSet,
   getConversation,
@@ -156,6 +158,11 @@ const phaseLabels: Record<string, string> = {
 };
 
 const workflowStageLabels: Record<string, string> = {
+  "knowledge.searching": "正在搜索知识库…",
+  "documents.reading": "正在阅读参考资料…",
+  "cases.searching": "正在查询用例资产…",
+  "reuse.comparing": "正在分析变更与可复用用例…",
+  "reuse.compared": "复用分析已完成",
   queued: "任务已排队",
   "context.prepared": "检索并整理上下文",
   "requirement.analyzed": "分析测试需求",
@@ -207,6 +214,9 @@ const englishPhaseLabels: Record<string, string> = {
   maintenance: "Maintaining official test cases",
 };
 const englishWorkflowStageLabels: Record<string, string> = {
+  "knowledge.searching": "Searching knowledge…", "documents.reading": "Reading reference documents…",
+  "cases.searching": "Searching case assets…", "reuse.comparing": "Comparing changes and reusable cases…",
+  "reuse.compared": "Reuse analysis completed",
   queued: "Task queued", "context.prepared": "Preparing context",
   "requirement.analyzed": "Analyzing requirements",
   "generation.awaiting_input": "Waiting for more details",
@@ -353,6 +363,7 @@ export function CaseWorkbench({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [selectedBriefVersion, setSelectedBriefVersion] = useState(0);
+  const [planningFocusPointId, setPlanningFocusPointId] = useState("");
   const [artifactOpen, setArtifactOpen] = useState(false);
   const [briefView, setBriefView] = useState<"map" | "text">("map");
   const [chatWidth, setChatWidth] = useState(520);
@@ -502,6 +513,8 @@ export function CaseWorkbench({
   const conversationRunning = busy || queueRunning || workspaceIsRunning(workspace);
   const runningLabel = pendingMessage !== null
     ? pick("Thinking — understanding your request and selecting cases", "正在思考 · 理解需求并筛选用例")
+    : progress && ["knowledge.searching", "documents.reading", "cases.searching", "reuse.comparing", "reuse.compared"].includes(progress.name)
+      ? localizedWorkflowStageLabels[progress.name]
     : planningProgress?.phase === "requirements"
       ? pick(`Analyzing requirements · ${planningProgress.completed_batches ?? 0}/${planningProgress.total_batches} batches`, `分析测试需求 · 已完成 ${planningProgress.completed_batches ?? 0}/${planningProgress.total_batches} 批`)
     : planningProgress?.phase === "features"
@@ -1387,6 +1400,9 @@ export function CaseWorkbench({
     setNotice(pick("Generation requested. Starting the CasePilot workflow…", "已提交生成请求，正在启动 CasePilot 工作流…"));
     try {
       if (!activeBrief) throw new Error(pick("Generate a structured test brief first", "请先生成结构化测试说明"));
+      if (activeBrief.content.planning?.reuse && !consumptionSummary(activeBrief.content.planning, selectedPointIds).included) {
+        throw new Error("本次没有纳入的测试点，请至少保留一个测试点。");
+      }
       const turn = await confirmTestBrief(
         workspace.id,
         activeBrief.version,
@@ -2450,7 +2466,7 @@ export function CaseWorkbench({
                     type="button"
                     className="is-primary"
                     onClick={() => void confirmBriefAndGenerate()}
-                    disabled={busy || blockingQuestions.length > 0}
+                    disabled={busy || blockingQuestions.length > 0 || Boolean(activeBrief.content.planning?.reuse && !consumptionSummary(activeBrief.content.planning).included)}
                   >
                     {busy ? (
                       <LoaderCircle className="auth-spinner" size={16} />
@@ -2460,22 +2476,63 @@ export function CaseWorkbench({
                     {busy
                       ? pick("Starting generation…", "正在启动生成…")
                       : activeBrief.status === "confirmed"
-                        ? pick("Generate again", "重新生成用例")
-                        : pick("Confirm plan and generate", "确认规划并生成用例")}
+                        ? (activeBrief.content.planning?.reuse ? pick("Create candidates again", "按当前选择再次生成候选") : pick("Generate again", "重新生成用例"))
+                        : (activeBrief.content.planning?.reuse ? pick("Confirm choices and create candidates", "确认选择并生成候选") : pick("Confirm plan and generate", "确认规划并生成用例"))}
                   </button>
                 )}
             </header>
+            {notice && <p role="status" className="principle-brief-guidance">{notice}</p>}
+            {selectedBrief.content.planning?.reuse && <div className="principle-brief-guidance">
+              <strong>{pick("Generation strategy", "生成策略")} · {({fresh: pick("Fresh", "全新生成"), regression: pick("Regression", "回归补充"), change: pick("Change-based", "按变更生成")})[selectedBrief.content.planning.reuse.strategy]}</strong>
+              <p>{pick("Inspect each test point to review the original case and choose reuse, regeneration, or exclusion. Confirm after reviewing your choices.", "点击测试点的「查看依据与原文」，检查历史用例，选择使用建议、重新生成或不纳入本次，再确认生成候选。")}</p>
+            </div>}
             {(!selectedBrief.content.planning?.test_points?.length || briefView === "text") && <div className="principle-brief-guidance">
               {pick("This is a read-only Markdown artifact. Use the CasePilot conversation on the left to make changes.", "这是一份只读 Markdown 产物。如需调整，请在左侧与 CasePilot 对话。")}
             </div>}
             {briefView === "map" && !!selectedBrief.content.planning?.test_points?.length && <TestPlanningMap
-              key={workspace?.id}
+              key={`${workspace?.id}:${planningFocusPointId}`}
+              initialPointId={planningFocusPointId}
               planning={selectedBrief.content.planning}
+              caseLinks={(workspace?.planning_case_links ?? []).filter(link => link.brief_version === selectedBrief.version)}
+              existingCases={cases}
+              onOpenCase={(id) => { setArtifactOpen(false); setViewMode("list"); setSelectedCaseId(id); setCandidateDraft(null); setInspectorHidden(false); }}
+              onLinkCase={async (pointId, item, remove) => {
+                if (!workspace) return;
+                setBusy(true); setError(""); setNotice("");
+                try {
+                  await savePlanningCaseLink(workspace.id, { brief_version: selectedBrief.version, test_point_id: pointId,
+                    test_case_id: item.id, revision_id: item.current_revision_id, remove });
+                  await refreshWorkspace();
+                  setSelectedBriefVersion(selectedBrief.version); setArtifactOpen(true);
+                  setNotice(remove ? "关联已解除" : "用例已关联测试点");
+                } catch (caught) { setError(caught instanceof Error ? caught.message : "关联保存失败"); }
+                finally { setBusy(false); }
+              }}
               generatedPointIds={candidates.flatMap((candidate) => (candidate.snapshot.test_point_ids ?? []) as string[])}
-              title={selectedBrief.content.test_object}
+              title={selectedBrief.content.test_object.length > 120 ? selectedCollection.name : selectedBrief.content.test_object}
               busy={busy}
               editable={selectedBrief.version === activeBrief?.version && !conversationRunning && blockingQuestions.length === 0}
               onGenerate={(ids) => void confirmBriefAndGenerate(ids)}
+              onChooseReuse={async (pointId, choice) => {
+                if (!workspace || !selectedBrief.content.planning?.reuse) return;
+                setNotice("");
+                setBusy(true);
+                setError("");
+                try {
+                  const content = structuredClone(selectedBrief.content);
+                  const choices = { ...content.planning!.reuse!.user_choices };
+                  if (choice === "suggested") delete choices[pointId];
+                  else choices[pointId] = choice;
+                  content.planning!.reuse!.user_choices = choices;
+                  const saved = await saveTestBrief(workspace.id, content, selectedBrief.version);
+                  await refreshWorkspace();
+                  setSelectedBriefVersion(saved.version);
+                  setArtifactOpen(true);
+                  setNotice(pick("Selection saved", "处理方式已保存"));
+                } catch (caught) {
+                  setError(caught instanceof Error ? caught.message : "处理方式保存失败");
+                } finally { setBusy(false); }
+              }}
               onSavePoint={async (pointId, title, scenario) => {
                 if (!workspace || !selectedBrief.content.planning) return;
                 setBusy(true);
@@ -2912,6 +2969,17 @@ export function CaseWorkbench({
                   </button>
                 )}
               </header>
+              {!candidateDraft && <section className="case-point-links" aria-label="关联测试点">
+                <strong>关联测试点</strong>
+                {(workspace?.planning_case_links ?? []).filter(link => link.test_case_id === selectedCase.id).map(link => {
+                  const point = workspace?.test_briefs.find(brief => brief.version === link.brief_version)?.content.planning?.test_points.find(point => point.id === link.test_point_id);
+                  return <button key={`${link.brief_version}:${link.test_point_id}`} type="button" onClick={() => {
+                    setSelectedBriefVersion(link.brief_version); setPlanningFocusPointId(link.test_point_id);
+                    setBriefView("map"); setArtifactOpen(true); setInspectorHidden(true);
+                  }}>V{link.brief_version} · {point?.title ?? link.test_point_id}{link.stale ? " · 用例版本已变化" : ""}</button>;
+                })}
+                {!(workspace?.planning_case_links ?? []).some(link => link.test_case_id === selectedCase.id) && <p>尚未关联测试点，可在测试规划中关联此用例。</p>}
+              </section>}
               {candidateDraft ? (
                 <fieldset className="principle-candidate-editor" disabled={candidateSaving}>
                   <label>

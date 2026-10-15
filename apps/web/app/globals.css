@@ -13538,3 +13538,23 @@ fieldset.principle-candidate-editor { border: 0; padding: 0; margin: 0; min-widt
   .case-library > .case-library__divider { display: none; }
   .case-library__main { flex: 1; }
 }
+
+.planning-consumption-summary { margin: 0; padding: 8px 12px; font-size: 13px; border-bottom: 1px solid var(--border, #d7dce2); }
+.planning-reuse-detail { display: grid; gap: 8px; }
+.planning-reuse-detail select { max-width: 100%; padding: 6px 10px; border: 1px solid var(--border, #d7dce2); border-radius: 6px; }
+.planning-reuse-detail details { border: 1px solid var(--border, #d7dce2); border-radius: 8px; padding: 10px; }
+.planning-reuse-detail p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.test-planning-detail:has(.planning-reuse-detail) { max-height: 380px; flex-shrink: 0; }
+
+.test-planning-detail > button { display: block; margin-bottom: 10px; padding: 4px 8px; border: 1px solid var(--border, #d7dce2); border-radius: 6px; }
+
+.planning-point-edit { padding: 8px 14px; flex-shrink: 0; border-top: 1px solid var(--border, #d7dce2); }
+.planning-point-edit > summary { cursor: pointer; }
+.planning-case-links { padding: 10px 0; border-bottom: 1px solid var(--border, #d7dce2); margin-bottom: 10px; }
+.planning-case-links li, .planning-case-links form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+.planning-case-links select { max-width: 100%; padding: 6px; }
+.planning-case-links button { color: var(--primary, #2563eb); text-align: left; }
+.planning-case-links span { font-size: 12px; }
+.planning-node > button:first-child { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.case-point-links { display: grid; gap: 8px; padding: 12px; border-bottom: 1px solid var(--border, #d7dce2); }
+.case-point-links button { color: var(--primary, #2563eb); text-align: left; }

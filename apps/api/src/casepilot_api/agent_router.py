@@ -200,6 +200,18 @@ def _validate_model_plan(
     has_targets: bool,
     phase: str,
 ) -> IntentPlanDraft:
+    # Source lookup belongs to generation unless the user requests a separate result.
+    queries = [op for op in plan.operations if op.intent == "CASE_QUERY"]
+    generations = [op for op in plan.operations if op.intent == "CASE_GENERATE"]
+    if (len(plan.operations) == 2 and len(queries) == len(generations) == 1
+            and re.search(r"复用|参考历史|历史用例.*(?:生成|补充)|回归", content)
+            and re.search(r"历史|资产|参考", queries[0].instruction)
+            and not re.search(r"单独|独立|分别|列出|展示|显示|查询结果|先查.*再", content)):
+        generation = generations[0]
+        generation.instruction = content
+        generation.depends_on = None
+        generation.reason_codes.append("REUSE_LOOKUP_WITHIN_GENERATION")
+        plan.operations = [generation]
     # A user's own review is a delivery preference, not an additional agent task.
     remapped: dict[int, int | None] = {}
     kept = []
@@ -542,6 +554,9 @@ def sdk_plan(
             "instruction完整保留该操作的目标、修改内容和约束。不要将保留约束拆成操作。"
             "对多个用例执行相同修改时只输出一个CASE_MODIFY操作，target_text保留所有编号，不要按用例拆任务。"
             "生成前提供测试规划并等待确认属于同一个CASE_GENERATE任务，不要拆成两个生成操作。"
+            "用户要求参考历史用例或Excel，复用核心并补充回归，或针对相似需求生成一套新版用例，"
+            "整体属于一个CASE_GENERATE任务，历史用例是参考材料，按变更修改是生成策略，查询历史用例只是生成的准备步骤，不要额外拆成CASE_QUERY；只有用户明确要求独立查看查询结果时才拆分，"
+            "不要额外拆成CASE_MODIFY来覆盖原资产；只有明确另行要求修改正式原用例时才拆分。"
             "供我审阅、等我确认是用户自己确认结果的交付要求，绝不能拆成AI评审任务。"
             "明确请求修改且附带不要改其他字段时仍是修改。修改和重写会在对话区由用户确认后执行。"
             "对于只有优化一下、重写一下而未提供改动方向的请求，询问需要修改哪些内容或希望达到什么效果；"

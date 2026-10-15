@@ -34,6 +34,9 @@ class FakeStore:
     def load_completed_stage(self, *args, **kwargs):
         return None
 
+    def get_job_for_update(self, *args, **kwargs):
+        return {"status": "running"}
+
     def retrieve_context(self, *args, **kwargs):
         self.query_embedding = kwargs["query_embedding"]
         return []
@@ -84,7 +87,7 @@ def test_context_falls_back_to_lexical_retrieval_when_embedding_fails(
     assert output["warnings"][0]["code"] == "embedding_retrieval_degraded"
     assert store.query_embedding is None
     assert store.recorded_stage["status"] == "completed"
-    assert store.events[0]["retrieval_mode"] == "lexical"
+    assert store.events[-1]["retrieval_mode"] == "lexical"
 
 
 def test_context_skips_embedding_when_knowledge_retrieval_is_disabled(

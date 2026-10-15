@@ -546,7 +546,13 @@ export type ConversationMessageDto = {
   created_at: string;
 };
 
+export type PlanningCaseLinkDto = {
+  brief_version: number; test_point_id: string; test_case_id: string; revision_id: string;
+  case_key: string; title: string; origin: "manual" | "generated"; stale: boolean;
+};
+
 export type ConversationDto = {
+  planning_case_links?: PlanningCaseLinkDto[];
   id: string;
   space_id: string;
   collection_id: string | null;
@@ -604,6 +610,15 @@ export type ConversationHistoryPageDto = {
 };
 
 export type TestPlanningDto = {
+  reuse?: {
+    strategy: "fresh" | "regression" | "change";
+    source_count: number;
+    summary: Partial<Record<"new" | "reuse" | "modify", number>>;
+    note: string;
+    user_choices?: Record<string, "new" | "exclude">;
+    decisions: { point_id: string; action: "new" | "reuse" | "modify"; reason: string;
+      source?: { label: string; locator: string; snapshot: { title: string; preconditions: string[]; steps: { action: string; expected: string }[] } } }[];
+  };
   feature_points: { id: string; name: string; module: string; description: string; requirement_refs: string[] }[];
   test_points: { id: string; title: string; scenario?: string; objective: string; feature_point_ids: string[]; source_refs?: { label: string; locator: string; excerpt: string }[] }[];
   processed_batches?: number;
@@ -795,6 +810,10 @@ const publicErrors: Record<string, string> = {
   APIConnectionError: "模型连接暂时中断，请重试。",
   ConnectionError: "网络连接中断，请检查网络后重试。",
   test_brief_has_blocking_questions: "仍有阻塞待确认项，请先补充说明。",
+  case_link_revision_changed: "用例版本已更新，请刷新后重新确认关联。",
+  reuse_choices_invalid: "复用选择已失效，请刷新测试规划后重新选择。",
+  planning_has_no_test_points: "本次没有纳入的测试点，请至少保留一个测试点。",
+  reuse_plan_changed_reanalyze_required: "需求或测试规划已变化，请在对话区重新整理测试说明和复用建议后再确认。",
   test_brief_version_changed: "测试说明已更新，请确认最新版本。",
   workspace_generation_in_progress: "当前工作区已经在生成，请勿重复提交。",
   generation_job_already_terminal: "当前生成任务已经结束。",
@@ -997,6 +1016,8 @@ export function watchGeneration(
       });
     };
     [
+      "knowledge.searching", "documents.reading", "cases.searching",
+      "reuse.comparing", "reuse.compared",
       "context.prepared",
       "requirement.analyzed",
       "feature.generated",
@@ -1929,4 +1950,13 @@ export async function downloadKnowledgeDocument(documentId: string): Promise<Blo
     throw new Error(publicErrorMessage(payload?.detail ?? `api_request_failed_${response.status}`));
   }
   return response.blob();
+}
+
+
+export function savePlanningCaseLink(conversationId: string, payload: {
+  brief_version: number; test_point_id: string; test_case_id: string; revision_id: string; remove?: boolean;
+}): Promise<PlanningCaseLinkDto[]> {
+  return apiRequest(`/api/v1/workspaces/${conversationId}/test-point-links`, {
+    method: "PUT", body: JSON.stringify(payload),
+  });
 }

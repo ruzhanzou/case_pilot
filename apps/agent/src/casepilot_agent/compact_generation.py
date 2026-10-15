@@ -27,6 +27,7 @@ from casepilot_agent.contracts import (
     TestStep,
 )
 from casepilot_agent.planning import planned_module
+from casepilot_agent.reuse import reuse_ref
 
 CONTRACT = "case_batch_v2"
 BATCH_SIZE = 5
@@ -242,8 +243,33 @@ def run_compact(request, provider, execute_stage, on_batch, count):
     generated_by_slot = {}
     unresolved = {}
     repair_rounds = 0
-    pending = [(list(range(offset + 1, min(offset + BATCH_SIZE, total) + 1)), 0, {})
-               for offset in range(0, total, BATCH_SIZE)]
+    decisions = {d["point_id"]: d for d in plan.get("reuse", {}).get("decisions", [])}
+    if plan.get("reuse", {}).get("strategy") == "fresh":
+        decisions = {}
+    remaining = []
+    reused = {}
+    for slot, point in enumerate(points, 1):
+        decision = decisions.get(point.id)
+        if decision and decision.get("point_snapshot") != point.model_dump(mode="json"):
+            raise StageContractError("reuse_plan_changed_reanalyze_required")
+        if not decision or decision["action"] != "reuse":
+            remaining.append(slot)
+            continue
+        source = decision["source"]
+        if source["key"] in reused:
+            generated_by_slot[reused[source["key"]]].test_point_ids.append(point.id)
+            continue
+        snapshot = source["snapshot"]
+        candidate = TestCaseDraft.model_validate({**snapshot, "id": f"TC-{point.id}-1",
+            "module": snapshot.get("module") or planned_module(point, features),
+            "test_point_ids": [point.id],
+            "source_refs": [reuse_ref(decision).model_dump()]})
+        validate_case_content(candidate)
+        generated_by_slot[slot] = candidate
+        reused[source["key"]] = slot
+    if generated_by_slot and on_batch:
+        on_batch([generated_by_slot[i] for i in sorted(generated_by_slot)], total)
+    pending = [(remaining[offset:offset + BATCH_SIZE], 0, {}) for offset in range(0, len(remaining), BATCH_SIZE)]
     retryable = (ModelBehaviorError, ValidationError, StageContractError,
                  APIConnectionError, APITimeoutError, RateLimitError, InternalServerError)
 
@@ -256,6 +282,7 @@ def run_compact(request, provider, execute_stage, on_batch, count):
         evidence = [item for item in plan.get("evidence", []) if item.get("chunk_id") in source_ids]
         if not evidence:
             evidence = list(plan.get("evidence", []))
+        evidence = [{k: v for k, v in item.items() if k != "reference_cases"} for item in evidence]
         payload = {
             "output_contract": CONTRACT, "validation_mode": "human_review_basic",
             "batch_start_index": slots[0], "batch_slots": slots,
@@ -264,6 +291,10 @@ def run_compact(request, provider, execute_stage, on_batch, count):
             "prompt": request.prompt, "confirmed_brief": request.markdown_content,
             "user_requirements": [m for m in request.conversation_memory if m.get("role") == "user"],
             "evidence": evidence,
+            "reuse_modifications": [{"slot": slot, "original": decisions[point.id]["source"]["snapshot"],
+                                      "change_reason": decisions[point.id]["reason"]}
+                                     for slot, point in zip(slots, group, strict=True)
+                                     if point.id in decisions and decisions[point.id]["action"] == "modify"],
             "global_scenario_index": [{"id": p.id, "title": p.title, "scenario": p.scenario} for p in points],
             "features": [f.model_dump(exclude={"source_refs"}) for f in selected],
             "points": [{"slot": slot, "point": point.model_dump(exclude={"source_refs"})}
@@ -273,6 +304,7 @@ def run_compact(request, provider, execute_stage, on_batch, count):
             batch = execute_stage(
                 "test_case.generated",
                 GENERATION_GROUNDING_INSTRUCTION + CASE_DESIGN_INSTRUCTION +
+                "若有reuse_modifications，基于original仅修改受当前需求影响的内容，保留未变部分；旧规则与新需求冲突时新需求优先。"
                 "仅为本批每个slot生成一条用例，slot必须原样保留且恰好覆盖全部slot。"
                 "只输出title、preconditions、steps及slot；不输出来源、编号、模块、优先级等系统字段。"
                 "每条用例一个明确目标，分别列出1至4项操作和整条用例的可观察校验点，不要求逐步配对；"
@@ -322,6 +354,8 @@ def run_compact(request, provider, execute_stage, on_batch, count):
                     # A dangling source identity is a plan error, never an excuse
                     # to fabricate provenance or silently use an unrelated source.
                     raise StageContractError("invalid_source_reference")
+            if point.id in decisions and decisions[point.id]["action"] == "modify":
+                hydrated.append(reuse_ref(decisions[point.id]))
             valid[slot] = TestCaseDraft(
                 **case.model_dump(exclude={"slot"}), id=f"TC-{point.id}-1",
                 module=planned_module(point, features), case_type=point.category,

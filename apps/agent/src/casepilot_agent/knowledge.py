@@ -18,6 +18,7 @@ from openpyxl.utils import get_column_letter
 from PIL import Image
 
 from casepilot_agent.contracts import EmbeddingProvider
+from casepilot_agent.reuse import excel_case, excel_header
 
 
 @dataclass
@@ -109,6 +110,8 @@ def _excel_blocks(sheet: str, rows: Iterable[tuple[int, list[Any]]]) -> list[Par
     converter = HtmlConverter()
     blocks: list[ParsedBlock] = []
     batch: list[tuple[int, list[str]]] = []
+    header_mapping = None
+    reference_cases = []
 
     def flush() -> None:
         if not batch:
@@ -137,10 +140,12 @@ def _excel_blocks(sheet: str, rows: Iterable[tuple[int, list[Any]]]) -> list[Par
                 content=markdown,
                 section_path=sheet,
                 locator=f"Sheet {sheet}，行 {start}-{end}",
-                metadata={"sheet": sheet, "row_start": start, "row_end": end},
+                metadata={"sheet": sheet, "row_start": start, "row_end": end,
+                          **({"reference_cases": list(reference_cases)} if reference_cases else {})},
             )
         )
         batch.clear()
+        reference_cases.clear()
 
     for number, row in rows:
         values = ["" if value is None else str(value) for value in row]
@@ -148,6 +153,13 @@ def _excel_blocks(sheet: str, rows: Iterable[tuple[int, list[Any]]]) -> list[Par
             values.pop()
         if not values:
             continue
+        detected_header = excel_header(values)
+        if detected_header:
+            header_mapping = detected_header
+        elif header_mapping:
+            parsed_case = excel_case(values, header_mapping, number)
+            if parsed_case:
+                reference_cases.append(parsed_case)
         batch.append((number, values))
         if len(batch) >= 40:
             flush()

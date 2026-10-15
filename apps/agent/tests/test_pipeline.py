@@ -629,3 +629,9 @@ def test_single_semantic_rewrite_rejects_changed_system_fields(field, value):
     provider.rewrite.return_value = candidate
     with pytest.raises(ValueError, match="改写不能改变系统字段"):
         GenerationPipeline(provider).rewrite(request)
+
+
+def test_explicit_object_does_not_include_following_requirements():
+    from casepilot_agent.pipeline import extract_explicit_test_object
+    for separator in ["。", "\n", "；"]:
+        assert extract_explicit_test_object("测试对象：青禾图书借阅" + separator + "生成3个测试点，需求如下：借阅上限5本") == "青禾图书借阅"

@@ -1,0 +1,336 @@
+{
+  "version": 1,
+  "samples": [
+    {
+      "id": "E01",
+      "name": "青禾图书借阅",
+      "strategy": "fresh",
+      "requirements": [
+        {
+          "id": "E01-R1",
+          "text": "普通读者当前借阅数量为0且目标书可借时，借阅成功；",
+          "expected_result_pattern": "借阅成功"
+        },
+        {
+          "id": "E01-R2",
+          "text": "普通读者已有5本未归还图书时，再借第6本被拒绝，提示借阅数量已达上限；",
+          "expected_result_pattern": "上限|不能借阅|无法借阅"
+        },
+        {
+          "id": "E01-R3",
+          "text": "目标图书库存为0时，借阅被拒绝，提示暂无可借图书。",
+          "expected_result_pattern": "暂无可借|库存不足"
+        }
+      ],
+      "assets": [],
+      "excel": [],
+      "expected_counts": {
+        "new": 3,
+        "reuse": 0,
+        "modify": 0
+      },
+      "forbidden_in_modified": []
+    },
+    {
+      "id": "E02",
+      "name": "云杉购物车回归",
+      "strategy": "regression",
+      "requirements": [
+        {
+          "id": "E02-R1",
+          "text": "已登录用户将有库存商品加入购物车，商品出现在购物车中；规则不变，直接复用核心用例。",
+          "expected_result_pattern": "购物车"
+        },
+        {
+          "id": "E02-R2",
+          "text": "购物车已有1件商品，用户删除该商品后购物车为空；规则不变，直接复用核心用例。",
+          "expected_result_pattern": "为空|空购物车"
+        },
+        {
+          "id": "E02-R3",
+          "text": "新增：同款商品购物车数量最多10件，从10件增加到11件被拒绝，提示已达数量上限。",
+          "expected_result_pattern": "上限|最多10|不允许.*11"
+        }
+      ],
+      "assets": [
+        {
+          "title": "云杉购物车回归：加入有库存商品",
+          "module": "云杉购物车回归",
+          "priority": "P1",
+          "case_type": "功能",
+          "preconditions": [
+            "用户已登录，目标商品有库存，购物车为空"
+          ],
+          "steps": [
+            {
+              "action": "将该商品加入购物车",
+              "expected": "该商品出现在购物车中"
+            }
+          ]
+        },
+        {
+          "title": "云杉购物车回归：删除唯一商品",
+          "module": "云杉购物车回归",
+          "priority": "P1",
+          "case_type": "功能",
+          "preconditions": [
+            "用户已登录，购物车已有1件商品"
+          ],
+          "steps": [
+            {
+              "action": "删除该商品",
+              "expected": "购物车为空"
+            }
+          ]
+        }
+      ],
+      "excel": [],
+      "expected_counts": {
+        "reuse": 2,
+        "modify": 0,
+        "new": 1
+      },
+      "forbidden_in_modified": []
+    },
+    {
+      "id": "E03",
+      "name": "星桥验证码改版",
+      "strategy": "change",
+      "requirements": [
+        {
+          "id": "E03-R1",
+          "text": "已注册手机号输入刚发送、未使用的正确验证码，登录成功；规则不变，直接复用。",
+          "expected_result_pattern": "登录成功"
+        },
+        {
+          "id": "E03-R2",
+          "text": "验证码有效期从5分钟改为2分钟；超过2分钟提交登录失败，提示验证码已过期。修改历史用例。",
+          "expected_result_pattern": "过期"
+        },
+        {
+          "id": "E03-R3",
+          "text": "新增同一手机号发送后60秒内不能重复发送，提示稍后重试。",
+          "expected_result_pattern": "稍后重试"
+        }
+      ],
+      "assets": [
+        {
+          "title": "星桥验证码改版：有效验证码登录",
+          "module": "星桥验证码改版",
+          "priority": "P1",
+          "case_type": "功能",
+          "preconditions": [
+            "手机号已注册，持有刚发送且未使用的正确验证码"
+          ],
+          "steps": [
+            {
+              "action": "输入手机号与正确验证码提交登录",
+              "expected": "登录成功"
+            }
+          ]
+        },
+        {
+          "title": "星桥验证码改版：验证码5分钟过期",
+          "module": "星桥验证码改版",
+          "priority": "P1",
+          "case_type": "功能",
+          "preconditions": [
+            "手机号已注册，验证码已发送超过5分钟"
+          ],
+          "steps": [
+            {
+              "action": "输入该手机号和超过5分钟的验证码提交登录",
+              "expected": "登录失败，提示验证码已过期"
+            }
+          ]
+        }
+      ],
+      "excel": [],
+      "expected_counts": {
+        "reuse": 1,
+        "modify": 1,
+        "new": 1
+      },
+      "forbidden_in_modified": [
+        "5分钟"
+      ]
+    },
+    {
+      "id": "E04",
+      "name": "远山报销审批",
+      "strategy": "change",
+      "requirements": [
+        {
+          "id": "E04-R1",
+          "text": "员工提交完整票据且金额为100元的报销单，提交成功并进入待审批；规则不变，直接复用。",
+          "expected_result_pattern": "待审批"
+        },
+        {
+          "id": "E04-R2",
+          "text": "主管直接审批金额上限由1000元改为500元，提交600元报销单必须转财务审批。修改历史审批用例。",
+          "expected_result_pattern": "财务"
+        },
+        {
+          "id": "E04-R3",
+          "text": "新增：缺少票据时拒绝提交，提示请上传票据。",
+          "expected_result_pattern": "请上传票据"
+        }
+      ],
+      "assets": [],
+      "excel": [
+        {
+          "title": "远山报销审批：完整票据提交",
+          "module": "远山报销审批",
+          "priority": "P1",
+          "case_type": "功能",
+          "preconditions": [
+            "员工已登录，具有完整票据，报销金额100元"
+          ],
+          "steps": [
+            {
+              "action": "提交报销单",
+              "expected": "提交成功，状态为待审批"
+            }
+          ]
+        },
+        {
+          "title": "远山报销审批：主管审批600元",
+          "module": "远山报销审批",
+          "priority": "P1",
+          "case_type": "功能",
+          "preconditions": [
+            "报销金额600元且票据完整，主管直接审批上限1000元"
+          ],
+          "steps": [
+            {
+              "action": "主管批准该报销单",
+              "expected": "报销单审批通过"
+            }
+          ]
+        }
+      ],
+      "expected_counts": {
+        "reuse": 1,
+        "modify": 1,
+        "new": 1
+      },
+      "forbidden_in_modified": [
+        "1000元"
+      ]
+    },
+    {
+      "id": "E05",
+      "name": "北辰会员积分",
+      "strategy": "change",
+      "requirements": [
+        {
+          "id": "E05-R1",
+          "text": "普通会员成功支付100元订单后获得100积分；规则不变，直接复用资产中的用例。",
+          "expected_result_pattern": "100积分"
+        },
+        {
+          "id": "E05-R2",
+          "text": "积分兑换规则由100积分抵1元改成200积分抵1元，使用200积分抵扣后应抵扣1元。修改Excel历史用例。",
+          "expected_result_pattern": "1元"
+        },
+        {
+          "id": "E05-R3",
+          "text": "新增：会员积分余额不足200时，申请抵扣1元被拒绝，提示积分不足。",
+          "expected_result_pattern": "积分不足"
+        }
+      ],
+      "assets": [
+        {
+          "title": "北辰会员积分：支付获得积分",
+          "module": "北辰会员积分",
+          "priority": "P1",
+          "case_type": "功能",
+          "preconditions": [
+            "普通会员已登录，积分余额为0，有待支付100元订单"
+          ],
+          "steps": [
+            {
+              "action": "成功支付该100元订单",
+              "expected": "获得100积分，余额为100积分"
+            }
+          ]
+        }
+      ],
+      "excel": [
+        {
+          "title": "北辰会员积分：积分抵扣",
+          "module": "北辰会员积分",
+          "priority": "P1",
+          "case_type": "功能",
+          "preconditions": [
+            "会员余额为200积分，兑换规则100积分抵1元"
+          ],
+          "steps": [
+            {
+              "action": "使用200积分抵扣订单金额",
+              "expected": "抵扣2元，积分余额为0"
+            }
+          ]
+        }
+      ],
+      "expected_counts": {
+        "reuse": 1,
+        "modify": 1,
+        "new": 1
+      },
+      "forbidden_in_modified": [
+        "抵扣2元",
+        "100积分抵1元"
+      ]
+    },
+    {
+      "id": "E06",
+      "name": "海岚优惠券规则辨别",
+      "strategy": "change",
+      "requirements": [
+        {
+          "id": "E06-R1",
+          "text": "满减门槛从满500元改为满800元减50元，订单金额600元时使用此券应被拒绝，提示未达门槛。历史用例同名但预期已经失效，必须修改，不能直接复用。",
+          "expected_result_pattern": "未达.*门槛|不满足.*门槛"
+        },
+        {
+          "id": "E06-R2",
+          "text": "订单金额恰好800元时使用此券，应减免50元，实付750元。",
+          "expected_result_pattern": "750"
+        },
+        {
+          "id": "E06-R3",
+          "text": "优惠券已过期时，即使金额800元也不可使用，提示优惠券已过期。",
+          "expected_result_pattern": "已过期"
+        }
+      ],
+      "assets": [
+        {
+          "title": "海岚优惠券规则辨别：600元订单使用满减券",
+          "module": "海岚优惠券规则辨别",
+          "priority": "P1",
+          "case_type": "功能",
+          "preconditions": [
+            "优惠券有效，旧规则满500元减50元，订单金额600元"
+          ],
+          "steps": [
+            {
+              "action": "提交订单并使用该优惠券",
+              "expected": "优惠券使用成功，实付550元"
+            }
+          ]
+        }
+      ],
+      "excel": [],
+      "expected_counts": {
+        "reuse": 0,
+        "modify": 1,
+        "new": 2
+      },
+      "forbidden_in_modified": [
+        "实付550元",
+        "使用成功"
+      ]
+    }
+  ]
+}

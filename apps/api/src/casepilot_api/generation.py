@@ -94,6 +94,8 @@ def ensure_job_access(db: Session, account: Account, job_id: UUID) -> Generation
 
 
 STAGE_PROGRESS = {
+    "knowledge.searching": 3, "documents.reading": 5, "cases.searching": 23,
+    "reuse.comparing": 95, "reuse.compared": 95,
     "queued": 0,
     "context.prepared": 10,
     "requirement.analyzed": 22,

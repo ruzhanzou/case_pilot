@@ -21,6 +21,7 @@ from casepilot_agent.contracts import (
     TestPoint,
     TestPointPlan,
 )
+from casepilot_agent.reuse import ReuseAnalysis
 
 
 def evidence_batches(context: dict[str, Any], budget: int = 18000) -> list[dict[str, Any]]:
@@ -29,6 +30,7 @@ def evidence_batches(context: dict[str, Any], budget: int = 18000) -> list[dict[
     current: list[dict[str, Any]] = []
     size = 0
     for item in context.get("evidence", []):
+        item = {k: v for k, v in item.items() if k not in {"reference_cases", "sheet"}}
         text = str(item.get("excerpt", ""))
         for start in range(0, max(1, len(text)), budget):
             piece = {**item, "excerpt": text[start : start + budget]}
@@ -123,7 +125,8 @@ POINTS_PER_BATCH = 12
 MAX_CONSOLIDATED_EVIDENCE_CHARS = 180000
 
 
-class PlanningAnalysis(RequirementAnalysis):
+
+class PlanningAnalysis(ReuseAnalysis):
     """Extract requirements and their features in one pass over large documents."""
 
     feature_points: list[FeaturePoint] = Field(default_factory=list)
@@ -200,6 +203,8 @@ def build_planning(
                         if feature_plans and feature_plans[index].feature_points else complete(
             "feature.generated",
             CASE_DESIGN_INSTRUCTION + "按本批资料规划全部相关功能，保留具体规则和来源。不生成用例。"
+            "若context包含historical_cases，回归模式包含仍适用的核心场景，变更模式区分旧规则与本次新需求。"
+            "历史用例仅作覆盖参考，不得把与新需求冲突的旧预期当成当前规则。"
             "module 为业务模块路径，name 为功能名；不得为凑数量合并不同功能。"
             "当前只是完整资料的一个分片，其他模块由其他批次处理。"
             "仅为本批有明确证据的规则生成功能；不得为全局数量补位、生成占位功能或推测其他模块规则。"

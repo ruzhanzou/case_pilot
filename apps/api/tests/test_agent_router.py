@@ -815,3 +815,19 @@ def test_text_followup_does_not_require_literal_asset_scope(content, target):
     assert operation.action == "ANSWER_QUESTION"
     assert not operation.clarification_questions
     assert not operation.requires_confirmation
+
+
+@pytest.mark.parametrize("separate", [False, True])
+def test_reuse_lookup_is_part_of_generation_unless_separate_results_requested(separate):
+    content = "查询历史用例资产，复用核心用例并生成新版用例"
+    if separate:
+        content += "，单独展示查询结果"
+    plan = IntentPlanDraft.model_validate({"operations": [
+        {"intent": "CASE_QUERY", "instruction": "查询历史用例资产", "action_evidence": "查询历史用例资产", "confidence": 0.99},
+        {"intent": "CASE_GENERATE", "instruction": "生成新版用例", "action_evidence": "生成新版用例", "confidence": 0.99, "depends_on": 0},
+    ]})
+    result = agent_router._validate_model_plan(content, plan, has_targets=False, phase="idle")
+    assert [op.intent for op in result.operations] == (["CASE_QUERY", "CASE_GENERATE"] if separate else ["CASE_GENERATE"])
+    if not separate:
+        assert result.operations[0].instruction == content
+        assert result.operations[0].depends_on is None

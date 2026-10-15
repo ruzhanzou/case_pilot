@@ -74,3 +74,31 @@ def test_planning_snapshot_and_progress_survive_polling_and_failure():
         assert not view.test_cases
     job.status = job.stage = "completed"
     assert job_view(db, job).progress == 100
+
+
+def test_reuse_confirmation_rejects_changed_rules_features_and_points():
+    from copy import deepcopy
+
+    import pytest
+    from fastapi import HTTPException
+
+    from casepilot_api.conversations import validate_reuse_confirmation
+
+    feature = {"id": "F1", "description": "验证码2分钟过期"}
+    point = {"id": "P1", "title": "验证码过期"}
+    content = {"business_rules": ["有效期2分钟"]}
+    planning = {"feature_points": [feature], "test_points": [point], "reuse": {
+        "strategy": "change", "brief_snapshot": deepcopy(content),
+        "feature_snapshots": [deepcopy(feature)],
+        "decisions": [{"point_id": "P1", "point_snapshot": deepcopy(point)}],
+    }}
+    validate_reuse_confirmation(content, planning)
+    for changed_content, changed_plan in [
+        ({"business_rules": ["有效期5分钟"]}, planning),
+        (content, {**planning, "feature_points": [{"id": "F1", "description": "验证码5分钟过期"}]}),
+        (content, {**planning, "test_points": [{"id": "P1", "title": "验证码重发"}]}),
+    ]:
+        with pytest.raises(HTTPException) as error:
+            validate_reuse_confirmation(changed_content, changed_plan)
+        assert error.value.status_code == 409
+        assert error.value.detail == "reuse_plan_changed_reanalyze_required"

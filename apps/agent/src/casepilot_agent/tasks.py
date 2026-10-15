@@ -51,6 +51,7 @@ from casepilot_agent.planning import (
     rewrite_evidence,
 )
 from casepilot_agent.providers import create_embedding_provider, create_provider
+from casepilot_agent.reuse import ReuseAnalysis, normalize_sources, plan_reuse, shortlist
 from casepilot_agent.store import (
     JobStore,
     callback_deliveries,
@@ -208,6 +209,8 @@ def dispatch_task_outbox() -> dict[str, int]:
 
 
 STAGE_PROGRESS = {
+    "knowledge.searching": 3, "documents.reading": 5, "cases.searching": 23,
+    "reuse.comparing": 95, "reuse.compared": 95,
     "context.prepared": 10,
     "requirement.analyzed": 22,
     "generation.awaiting_input": 25,
@@ -319,6 +322,20 @@ def fail_job(store: JobStore, job_id: UUID, event_name: str, error: Exception) -
     )
 
 
+def publish_work(store, job, stage, progress):
+    output = {}
+    with store.connection() as connection:
+        current = store.get_job_for_update(connection, job["id"])
+        if str(getattr(current["status"], "value", current["status"])) == "cancelled":
+            raise GenerationCancelled("generation_cancelled")
+        previous = dict(current.get("output_payload") or {})
+        if previous.get("planning_progress"):
+            output = {"planning_progress": {**previous["planning_progress"], "progress": progress}}
+        store.update_job(connection, job["id"], status="running", stage=stage,
+                         **({"output_payload": output} if output else {}))
+    store.publish(job["id"], {"event": stage, "job_id": str(job["id"]), "progress": progress, **output})
+
+
 def _context_payload(
     store: JobStore,
     job: dict[str, Any],
@@ -358,6 +375,8 @@ def _context_payload(
         or payload.get("knowledge_source_ids")
         or payload.get("document_ids")
     )
+    if should_retrieve:
+        publish_work(store, job, "knowledge.searching", 3)
     query_embedding: list[float] | None = None
     embedding_error: str | None = None
     if should_retrieve and embedding_provider is not None:
@@ -369,6 +388,8 @@ def _context_payload(
             embedding_error = error.__class__.__name__
     elif should_retrieve:
         embedding_error = "EmbeddingProviderDisabled"
+    if payload.get("document_ids") and full_documents:
+        publish_work(store, job, "documents.reading", 5)
     with store.connection() as connection:
         rows = (
             store.retrieve_context(
@@ -398,6 +419,9 @@ def _context_payload(
                 "label": row["document_name"],
                 "locator": row["locator"],
                 "excerpt": row["content"] if row.get("task_document") else row["content"][:800],
+                "reference_cases": (row.get("metadata") or {}).get("reference_cases", []) if row.get("task_document") else [],
+                "sheet": (row.get("metadata") or {}).get("sheet", ""),
+                "material_role": "historical_cases" if (row.get("metadata") or {}).get("reference_cases") else "reference",
                 "rank": rank,
                 "scores": {
                     "rrf": float(row["rrf"]),
@@ -436,6 +460,7 @@ def _context_payload(
             "retrieval_mode": retrieval_mode,
             "warnings": warnings,
         }
+        lock_active_job(store, connection, job["id"])
         store.persist_evidence(
             connection,
             job["id"],
@@ -639,7 +664,11 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
         }
         instruction = (
             "你是 CasePilot。只整理结构化测试说明，不生成测试点或测试用例。"
-            "若提供existing_cases，先分析模块已有覆盖，仅规划用户要求的新增缺口，保留目标模块路径。"
+            "先判断generation_strategy：全新生成fresh，核心复用并补充回归regression，相似需求变更change。"
+            "提供case_search_terms用于查询相关用例资产。明确重新生成时选fresh，不能因有附件自动复用。"
+            "历史用例只能提供覆盖参考，当前用户需求优先；不得把旧用例规则当成新的业务要求。"
+            "回归与变更模式规划完整目标覆盖（含可复用的核心场景），后续逐点判断复用/修改/新增。"
+            "若用户仅要求补充缺口，则仅规划缺口。保留目标模块路径。"
             "existing_case_count 是精确数量；若提及已有用例数，必须使用该值。"
             "target_module_path 是已解析的工作区模块路径；新增用例须放在该路径或其子模块。"
             "若用户在修改已有说明，应完整合并其修改并保留未被推翻的信息。"
@@ -657,7 +686,7 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
         )
         model_id = str(payload.get("model_id", "auto"))
         batches = evidence_batches(context)
-        analysis_type = PlanningAnalysis if len(batches) > 1 else RequirementAnalysis
+        analysis_type = PlanningAnalysis if len(batches) > 1 else ReuseAnalysis
         if analysis_type is PlanningAnalysis:
             instruction += (
                 "同时在feature_points提取本批全部明确功能，省去再次阅读原文。"
@@ -685,12 +714,13 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
             return None
 
         def complete_batch(index, batch):
-            return provider.complete(
+            result, batch_usage = provider.complete(
                 stage="requirement.extracted" if analysis_type is PlanningAnalysis
                 else "requirement.analyzed", instruction=instruction,
                 payload={**stage_input, "context": batch}, result_type=analysis_type,
                 model_id=model_id,
             )
+            return analysis_type.model_validate(result.model_dump(mode="json")), batch_usage
 
         def save_batch(index, batch, result):
             analysis, batch_usage = result
@@ -782,6 +812,21 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                       "progress": 22, "planning_preview": content,
                       "planning_progress": {"progress": 22}, "started_at": started_at})
         if requirement.test_object_specified:
+            strategies = [getattr(item, "generation_strategy", "fresh") for item in analyses]
+            strategy = "change" if "change" in strategies else "regression" if "regression" in strategies else "fresh"
+            sources = []
+            if strategy != "fresh":
+                case_context = list(payload.get("case_context", []))
+                publish_work(store, job, "documents.reading" if case_context else "cases.searching", 23)
+                # An explicit scope is authoritative. Never widen it to the whole space.
+                if not case_context:
+                    terms = list(dict.fromkeys(t for item in analyses for t in item.case_search_terms))[:6]
+                    terms = terms or [requirement.test_object]
+                    with store.connection() as connection:
+                        case_context = store.search_reuse_cases(connection, space_id=job["space_id"], terms=terms)
+                sources = normalize_sources(case_context, context.get("evidence", []))
+                context = {**context, "generation_strategy": strategy,
+                           "historical_cases": shortlist(sources, [{"title": requirement.test_object}])}
             def complete_plan(stage, instruction, inputs, result_type):
                 ensure_not_cancelled(store, parsed_job_id)
                 plan_payload = {**inputs, "prompt": (
@@ -833,7 +878,8 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                         status="completed", model=plan_usage.model,
                         latency_ms=plan_usage.latency_ms, token_usage=plan_usage.token_usage,
                     )
-                    store.update_job(connection, parsed_job_id, status="running", stage=stage)
+                    store.update_job(connection, parsed_job_id, status="running",
+                                     stage="reuse.comparing" if stage == "reuse.compared" else stage)
                 return result
 
             def publish_features(done, total, active):
@@ -872,6 +918,15 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                 if all(isinstance(item, PlanningAnalysis) for item in analyses) else None,
                 check_cancelled=lambda: ensure_not_cancelled(store, parsed_job_id),
             )
+            content["planning"]["reuse"] = plan_reuse(
+                content["planning"], strategy, sources, complete_plan, str(payload["prompt"]),
+                progress=lambda: publish_work(store, job, "reuse.comparing", 95),
+                check_cancelled=lambda: ensure_not_cancelled(store, parsed_job_id),
+            )
+            content["planning"]["reuse"]["brief_snapshot"] = {
+                k: v for k, v in content.items() if k != "planning"
+            }
+            content["planning"]["reuse"]["feature_snapshots"] = content["planning"]["feature_points"]
         with store.connection() as connection:
             locked_job = store.get_job_for_update(connection, parsed_job_id)
             if str(getattr(locked_job["status"], "value", locked_job["status"])) == "cancelled":

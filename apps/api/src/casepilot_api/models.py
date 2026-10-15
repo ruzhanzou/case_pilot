@@ -1091,3 +1091,16 @@ class AuditEvent(TimestampMixin, Base):
     resource_type: Mapped[str] = mapped_column(String(120), nullable=False)
     resource_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
     payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+class WorkspaceCaseLink(TimestampMixin, Base):
+    __tablename__ = "workspace_case_links"
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC), nullable=False)
+    __table_args__ = (UniqueConstraint("brief_id", "test_point_id", "test_case_id", name="uq_workspace_point_case"),)
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    brief_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("workspace_test_briefs.id", ondelete="CASCADE"), index=True)
+    test_point_id: Mapped[str] = mapped_column(String(200))
+    test_case_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("test_cases.id", ondelete="CASCADE"), index=True)
+    revision_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("test_case_revisions.id", ondelete="CASCADE"))
+    origin: Mapped[str] = mapped_column(String(20), default="manual")
