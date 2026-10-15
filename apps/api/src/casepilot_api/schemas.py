@@ -632,7 +632,7 @@ class WorkspaceStateUpdate(BaseModel):
     )
     selected_case_id: str | None = Field(default=None, max_length=160)
     selected_targets: list[dict] | None = Field(default=None, max_length=100)
-    active_view: str | None = Field(default=None, pattern=r"^(list|map|plan)$")
+    active_view: str | None = Field(default=None, pattern=r"^(list|map|plan|files)$")
     search_query: str | None = Field(default=None, max_length=500)
     filters: dict | None = None
     chat_width: int | None = Field(default=None, ge=280, le=520)

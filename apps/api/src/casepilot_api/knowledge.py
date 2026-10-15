@@ -7,11 +7,12 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.responses import FileResponse
 
 from casepilot_api.auth import CurrentAccount, require_space_membership
 from casepilot_api.config import get_settings
 from casepilot_api.database import get_db_session
-from casepilot_api.models import KnowledgeDocument, KnowledgeSource
+from casepilot_api.models import KnowledgeChunk, KnowledgeDocument, KnowledgeSource
 from casepilot_api.schemas import (
     KnowledgeDocumentView,
     KnowledgeSourceView,
@@ -295,3 +296,44 @@ def delete_knowledge_source(
         task_id=f"knowledge-cleanup:{source.id}",
     )
     db.commit()
+
+
+def _get_document(db: Session, account_id: UUID, document_id: UUID) -> KnowledgeDocument:
+    document = db.get(KnowledgeDocument, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="knowledge_document_not_found")
+    _get_source(db, account_id, document.source_id)
+    if document.expires_at and document.expires_at <= datetime.now(UTC):
+        raise HTTPException(status_code=410, detail="knowledge_document_expired")
+    return document
+
+
+@router.get("/knowledge-documents/{document_id}/download")
+def download_knowledge_document(document_id: UUID, account: CurrentAccount, db: DbSession):
+    document = _get_document(db, account.id, document_id)
+    root = Path(settings.knowledge_storage_path).resolve()
+    path = (root / document.storage_key).resolve()
+    if not path.is_relative_to(root) or not path.is_file():
+        raise HTTPException(status_code=404, detail="knowledge_document_not_found")
+    return FileResponse(
+        path,
+        filename=document.original_name,
+        media_type="application/octet-stream",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@router.get("/knowledge-documents/{document_id}/preview")
+def preview_knowledge_document(document_id: UUID, account: CurrentAccount, db: DbSession):
+    document = _get_document(db, account.id, document_id)
+    chunks = db.scalars(
+        select(KnowledgeChunk.content)
+        .where(
+            KnowledgeChunk.document_id == document.id,
+            KnowledgeChunk.chunk_type == "parent",
+        )
+        .order_by(KnowledgeChunk.ordinal)
+        .limit(101)
+    ).all()
+    content = "\n\n".join(chunks[:100])
+    return {"content": content[:100_000], "truncated": len(chunks) > 100 or len(content) > 100_000}

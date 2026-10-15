@@ -781,6 +781,9 @@ export type ExecutionRunSummaryDto = Omit<
 };
 
 const publicErrors: Record<string, string> = {
+  knowledge_source_not_found: "文件不存在或已被删除。",
+  knowledge_document_not_found: "文件不存在或已被删除。",
+  knowledge_document_expired: "文件已过期，请重新上传。",
   conversation_attachment_type_not_supported: "对话附件支持 PDF、TXT、Excel（.xlsx、.xls）。",
   attachment_not_ready_or_expired: "所选附件尚未解析完成、解析失败或已失效，请等待解析完成或移除后重新上传。",
   provider_temporarily_unavailable: "模型服务暂时不可用，请稍后重试。",
@@ -1177,7 +1180,7 @@ export function updateWorkspaceState(
     model_id?: AgentModelId;
     selected_case_id?: string | null;
     selected_targets?: { label: string; target: ConversationTarget }[];
-    active_view?: "list" | "map" | "plan";
+    active_view?: "list" | "map" | "plan" | "files";
     search_query?: string;
     filters?: Record<string, unknown>;
     chat_width?: number;
@@ -1911,4 +1914,19 @@ export function saveTaskReview(operationId: string, decisions: TaskReviewDecisio
   return apiRequest(`/api/v1/conversation-operations/${operationId}/review`, {
     method: "PATCH", body: JSON.stringify(decisions),
   });
+}
+
+export function previewKnowledgeDocument(documentId: string, signal?: AbortSignal): Promise<{ content: string; truncated: boolean }> {
+  return apiRequest(`/api/v1/knowledge-documents/${documentId}/preview`, { signal });
+}
+
+export async function downloadKnowledgeDocument(documentId: string): Promise<Blob> {
+  const response = await fetch(`${apiBaseUrl}/api/v1/knowledge-documents/${documentId}/download`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { detail?: unknown } | null;
+    throw new Error(publicErrorMessage(payload?.detail ?? `api_request_failed_${response.status}`));
+  }
+  return response.blob();
 }

@@ -1,0 +1,16 @@
+.layout { display: grid; grid-template-columns: minmax(180px, 28%) minmax(0, 1fr); min-height: 340px; }
+.list { padding: 12px; border-right: 1px solid #dbe4ef; }
+.list button { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 12px; text-align: left; border: 1px solid transparent; border-radius: 8px; background: transparent; cursor: pointer; color: inherit; }
+.list button[aria-pressed="true"] { background: #eff6ff; border-color: #bfdbfe; }
+.list button:hover { background: #f1f5f9; }
+.list span { min-width: 0; }
+.list svg { flex-shrink: 0; }
+.list strong { display: block; overflow-wrap: anywhere; font-size: 13px; }
+.list small { display: block; margin-top: 6px; color: #64748b; }
+.preview { min-width: 0; padding: 20px; }
+.preview header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; overflow-wrap: anywhere; }
+.preview header button { border: 0; background: transparent; cursor: pointer; padding: 4px; display: inline-flex; align-items: center; gap: 6px; color: #2563eb; font-size: 13px; }
+.preview pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; line-height: 1.8; }
+.hint { color: #64748b; font-size: 12px; }
+.empty { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 300px; gap: 12px; color: #64748b; padding: 24px; text-align: center; }
+@media (max-width: 700px) { .layout { grid-template-columns: 1fr; } .list { border-right: 0; border-bottom: 1px solid #dbe4ef; max-height: 220px; overflow: auto; } }

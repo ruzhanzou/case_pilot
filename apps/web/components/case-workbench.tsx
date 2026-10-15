@@ -3,6 +3,7 @@
 // UI identifiers must also work on HTTP origins without crypto.randomUUID.
 import { nanoid } from "nanoid/non-secure";
 
+import { WorkspaceFiles } from "@/components/workspace-files";
 import { ConversationAttachments } from "@/components/conversation-attachments";
 import { planningModuleAliases } from "@/lib/case-module-tree";
 import { matchesRewriteScope, toggleRewriteSelection } from "@/lib/rewrite-selection";
@@ -317,13 +318,14 @@ export function CaseWorkbench({
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const [modelId, setModelId] = useState<AgentModelId>("auto");
   const [models, setModels] = useState<{ id: string; label: string }[]>([]);
-  const [viewMode, setViewMode] = useState<"list" | "map" | "plan">("plan");
+  const [viewMode, setViewMode] = useState<"list" | "map" | "plan" | "files">("plan");
   // Mount the graph on first use, then retain layout, zoom and measured nodes.
   // Activity pauses its effects while another result view is visible.
   const [mapVisited, setMapVisited] = useState(false);
   if (viewMode === "map" && !mapVisited) setMapVisited(true);
   const restoredViewCollectionIdRef = useRef("");
   const viewTouchedRef = useRef(false);
+  const viewSaveRef = useRef<Promise<unknown>>(Promise.resolve());
   const [selectedCaseId, setSelectedCaseId] = useState("");
   const [mapFocusVersion, setMapFocusVersion] = useState(0);
   const [resumeTaskId, setResumeTaskId] = useState("");
@@ -472,6 +474,24 @@ export function CaseWorkbench({
         message.content.trim() || workflowByMessageId.has(message.id) ||
         (Array.isArray(message.metadata.attachments) && message.metadata.attachments.length > 0),
     ) ?? [];
+  const hasProcessingFiles = [
+    ...messages.flatMap(message => Array.isArray(message.metadata.attachments) ? message.metadata.attachments : []),
+    ...(Array.isArray(workspace?.context.pending_attachments) ? workspace.context.pending_attachments : []),
+  ].some(file => ["uploaded", "processing", "parsing", "indexing"].includes(file.status));
+  const fileWorkspaceId = workspace?.id;
+  useEffect(() => {
+    if (viewMode !== "files" || uploading || !hasProcessingFiles || !fileWorkspaceId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const refreshFiles = async () => {
+      const result = await getConversation(fileWorkspaceId).catch(() => null);
+      if (cancelled) return;
+      if (result) setWorkspace(current => current?.id === fileWorkspaceId ? result : current);
+      timer = setTimeout(() => { void refreshFiles(); }, 2000);
+    };
+    timer = setTimeout(() => { void refreshFiles(); }, 2000);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [fileWorkspaceId, hasProcessingFiles, uploading, viewMode]);
   const tasks = useMemo(() => workspaceTasks(workspace), [workspace]);
   const activeMutationTask = tasks.find(task => task.id === String(workspace?.context.active_mutation_task_id ?? ""));
   const resultTasks = tasks.filter((task) => !["KNOWLEDGE_QA", "UNRESOLVED"].includes(task.message.intent ?? ""));
@@ -536,6 +556,16 @@ export function CaseWorkbench({
   const changedSinceReview = selectedScopeChanged || Boolean(activePlanMessage && messages.slice(messages.findIndex((item) => item.id === activePlanMessage.id) + 1).some(
     (message) => ["applied", "candidates_committed"].includes(String(message.metadata.action)),
   ));
+  const persistActiveView = (activeView: "list" | "map" | "plan" | "files") => {
+    if (!workspace) return;
+    const workspaceId = workspace.id;
+    // Keep rapid tab changes in click order even when an earlier request is slow.
+    viewSaveRef.current = viewSaveRef.current
+      .then(() => updateWorkspaceState(workspaceId, { active_view: activeView }))
+      .catch(caught => {
+        setError(caught instanceof Error ? caught.message : pick("Failed to save view", "视图保存失败"));
+      });
+  };
   const openReviewPlan = (messageId?: string) => {
     if (messageId) {
       setPlanMessageId(messageId);
@@ -544,7 +574,7 @@ export function CaseWorkbench({
     viewTouchedRef.current = true;
     setArtifactOpen(false);
     setViewMode("plan");
-    if (workspace) void updateWorkspaceState(workspace.id, { active_view: "plan" });
+    persistActiveView("plan");
   };
   const openPendingCandidateReview = () => {
     const pending = [activeChangeSet, historicalChangeSet].find(change =>
@@ -572,7 +602,7 @@ export function CaseWorkbench({
   const latestMessage = messages.at(-1);
   const inspectorCollapsed =
     inspectorHidden ||
-    (viewMode === "plan" && !editingCaseId) ||
+    ((viewMode === "plan" || viewMode === "files") && !editingCaseId) ||
     artifactOpen ||
     !visibleCases.length;
 
@@ -637,7 +667,7 @@ export function CaseWorkbench({
     if (restoredModelId) setModelId(restoredModelId);
     if (!viewTouchedRef.current && restoredViewCollectionIdRef.current !== selectedCollectionId) {
       restoredViewCollectionIdRef.current = selectedCollectionId;
-      setViewMode(result.context.active_view === "map" ? "map" : result.context.active_view === "list" ? "list" : "plan");
+      setViewMode(result.context.active_view === "files" ? "files" : result.context.active_view === "map" ? "map" : result.context.active_view === "list" ? "list" : "plan");
     }
     const restoredBriefVersion = Number(
       result.context.selected_brief_version ??
@@ -990,6 +1020,9 @@ export function CaseWorkbench({
       setNotice(pick("Attachment saved to the current workspace", "附件已自动保存到当前工作区"));
     } catch (caught) {
       update({ status: "failed" });
+      // Parsing can fail after a successful upload; refresh persisted document statuses too.
+      const refreshed = await getConversation(workspace.id).catch(() => null);
+      if (refreshed) setWorkspace(refreshed);
       setError(caught instanceof Error ? caught.message : pick("Failed to save attachment", "附件保存失败"));
     } finally {
       setUploading(false);
@@ -2474,7 +2507,7 @@ export function CaseWorkbench({
                 </div>
               )}
           </section>
-        ) : visibleCases.length || activeChangeSet || viewMode === "plan" || tasks.length ? (
+        ) : workspace ? (
           <section className="principle-case-area">
             <div className="principle-viewbar">
               <div>
@@ -2484,11 +2517,7 @@ export function CaseWorkbench({
                   onClick={() => {
                     viewTouchedRef.current = true;
                     setViewMode("map");
-                    if (workspace) {
-                      void updateWorkspaceState(workspace.id, {
-                        active_view: "map",
-                      });
-                    }
+                    persistActiveView("map");
                   }}
                 >
                   <GitFork size={17} /> {pick("Mind map", "用例脑图")}
@@ -2499,11 +2528,7 @@ export function CaseWorkbench({
                   onClick={() => {
                     viewTouchedRef.current = true;
                     setViewMode("list");
-                    if (workspace) {
-                      void updateWorkspaceState(workspace.id, {
-                        active_view: "list",
-                      });
-                    }
+                    persistActiveView("list");
                   }}
                 >
                   <List size={17} /> {pick("Test case list", "用例列表")}
@@ -2514,6 +2539,18 @@ export function CaseWorkbench({
                     onClick={() => openReviewPlan()}
                   >
                     <Sparkles size={17} /> {pick("Case workspace", "用例工作区")}
+                </button>
+                <button
+                  type="button"
+                  className={viewMode === "files" ? "is-active" : ""}
+                  aria-pressed={viewMode === "files"}
+                  onClick={() => {
+                    viewTouchedRef.current = true;
+                    setViewMode("files");
+                    persistActiveView("files");
+                  }}
+                >
+                  <Paperclip size={17} /> {pick("Uploaded files", "上传文件")}
                 </button>
                 {selectedBrief && (
                   <button type="button" disabled={Boolean(editingCaseId)} onClick={() => setArtifactOpen(true)}>
@@ -2663,6 +2700,7 @@ export function CaseWorkbench({
               />
             )}
             </CaseTaskWorkspace></div>
+            {viewMode === "files" && workspace && <WorkspaceFiles key={workspace.id} workspace={workspace} />}
             {mapVisited && <Activity mode={viewMode === "map" ? "visible" : "hidden"}>
               <CaseMindMap
                 key={`${selectedCollection.id}:${phase === "candidate_review" ? "candidates" : "official"}`}
