@@ -2456,14 +2456,13 @@ export function CaseWorkbench({
                 <button type="button" aria-pressed={briefView === "map"} onClick={() => setBriefView("map")}>{pick("Planning map", "规划脑图")}</button>
                 <button type="button" aria-pressed={briefView === "text"} onClick={() => setBriefView("text")}>{pick("Test brief", "测试说明")}</button>
               </>}
-              <button type="button" onClick={() => void copyBrief()}>
-                <Copy size={16} />
-                {pick("Copy", "复制")}
-              </button>
-              <button type="button" onClick={() => void saveBriefFile()}>
-                <Download size={16} />
-                {pick("Download .md", "下载 .md")}
-              </button>
+              <details className="principle-brief-more">
+                <summary>{pick("More", "更多")}</summary>
+                <div>
+                  <button type="button" onClick={() => void copyBrief()}><Copy size={16} />{pick("Copy", "复制")}</button>
+                  <button type="button" onClick={() => void saveBriefFile()}><Download size={16} />{pick("Download .md", "下载 .md")}</button>
+                </div>
+              </details>
               {visibleCases.length > 0 && (
                 <button type="button" onClick={() => setArtifactOpen(false)}>
                   {pick("Back to test cases", "返回用例")}
@@ -2492,10 +2491,10 @@ export function CaseWorkbench({
                 )}
             </header>
             {notice && <p role="status" className="principle-brief-guidance">{notice}</p>}
-            {selectedBrief.content.planning?.reuse && <div className="principle-brief-guidance">
-              <strong>{pick("Generation strategy", "生成策略")} · {({fresh: pick("Fresh", "全新生成"), regression: pick("Regression", "回归补充"), change: pick("Change-based", "按变更生成")})[selectedBrief.content.planning.reuse.strategy]}</strong>
+            {selectedBrief.content.planning?.reuse && <details className="principle-brief-guidance principle-brief-strategy">
+              <summary>{pick("Generation strategy", "生成策略")} · {({fresh: pick("Fresh", "全新生成"), regression: pick("Regression", "回归补充"), change: pick("Change-based", "按变更生成")})[selectedBrief.content.planning.reuse.strategy]}</summary>
               <p>{pick("Inspect each test point to review the original case and choose reuse, regeneration, or exclusion. Confirm after reviewing your choices.", "点击测试点的「查看依据与原文」，检查历史用例，选择使用建议、重新生成或不纳入本次，再确认生成候选。")}</p>
-            </div>}
+            </details>}
             {(!selectedBrief.content.planning?.test_points?.length || briefView === "text") && <div className="principle-brief-guidance">
               {pick("This is a read-only Markdown artifact. Use the CasePilot conversation on the left to make changes.", "这是一份只读 Markdown 产物。如需调整，请在左侧与 CasePilot 对话。")}
             </div>}

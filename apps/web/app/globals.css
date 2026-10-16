@@ -13558,3 +13558,72 @@ fieldset.principle-candidate-editor { border: 0; padding: 0; margin: 0; min-widt
 .planning-node > button:first-child { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 .case-point-links { display: grid; gap: 8px; padding: 12px; border-bottom: 1px solid var(--border, #d7dce2); }
 .case-point-links button { color: var(--primary, #2563eb); text-align: left; }
+
+/* Keep planning controls compact even inside a narrow workstation pane.
+   Override the older generic header rules, which made every action primary. */
+.principle-brief > .principle-brief-toolbar {
+  justify-content: flex-start;
+  gap: 6px 8px;
+  margin-bottom: 0;
+  padding: 8px 12px;
+  min-height: 48px;
+}
+.principle-brief > .principle-brief-toolbar button,
+.principle-brief > .principle-brief-toolbar select,
+.principle-brief-more > summary {
+  min-height: 32px;
+  padding: 5px 9px;
+  border: 1px solid #dbe4ef;
+  border-radius: 6px;
+  background: #fff;
+  color: #475569;
+  font-size: 12px;
+  line-height: 20px;
+}
+.principle-brief > .principle-brief-toolbar button[aria-pressed="true"] {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+.principle-brief > .principle-brief-toolbar button.is-primary {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+  white-space: normal;
+}
+.principle-brief-more { position: relative; }
+.principle-brief-more > summary { cursor: pointer; white-space: nowrap; }
+.principle-brief-more > div {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  gap: 4px;
+  min-width: 140px;
+  padding: 6px;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 6px 20px #0f172a1a;
+}
+.principle-brief-strategy { margin: 6px 12px 0; padding: 6px 10px; }
+.principle-brief-strategy > summary { cursor: pointer; font-weight: 600; }
+.principle-brief-strategy > p { margin: 6px 0 0; }
+.principle-brief > .test-planning { margin: 8px 12px 12px; }
+@media (max-width: 1280px), (max-height: 800px) {
+  .principle-brief-identity strong { font-size: 13px; }
+  .principle-brief-identity > svg { display: none; }
+  .principle-brief-toolbar label { gap: 4px; }
+  .principle-brief-toolbar label > span { display: none; }
+  .principle-brief > .principle-brief-toolbar { padding: 6px 8px; }
+  .principle-brief-strategy { margin: 4px 8px 0; }
+  .principle-brief > .test-planning { margin: 6px 8px 8px; }
+}
+@media (max-width: 1280px), (max-height: 800px) {
+  .test-planning-toolbar { gap: 6px; padding: 8px; font-size: 12px; }
+  .test-planning-toolbar > strong { flex-basis: 100%; font-size: 12px; font-weight: 500; }
+  .test-planning-toolbar button, .test-planning-toolbar select { padding: 4px 7px; font-size: 12px; }
+  .test-planning-toolbar > input { width: 148px; min-width: 0; }
+  .planning-consumption-summary { padding: 6px 8px; font-size: 12px; line-height: 1.5; }
+}
