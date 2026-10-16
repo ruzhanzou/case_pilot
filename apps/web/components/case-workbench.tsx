@@ -1341,11 +1341,15 @@ export function CaseWorkbench({
       const operation = workspace?.operation_plan?.operations.find(item => item.id === operationId);
       const targets = selectedTargets.map(item => item.target);
       const content = prompt.trim();
-      const changed = content || !matchesRewriteScope(targets, operation?.target ?? {});
+      const confirmedInstruction = (operation?.payload.modification_confirmation as { instruction?: string } | undefined)?.instruction?.trim();
+      // A lost response can leave the already-submitted instruction in the
+      // composer. Only genuinely new content needs another preview.
+      const newContent = content === confirmedInstruction ? "" : content;
+      const changed = newContent || !matchesRewriteScope(targets, operation?.target ?? {});
       // Changed scope or unsent requirements need a new preview, not execution
       // of the confirmation text that was rendered before those edits.
       const turn = await resumeConversationOperation(operationId, changed
-        ? { targets, content: content || undefined }
+        ? { targets, content: newContent || undefined }
         : { confirmModification: true });
       if (content) editPrompt("");
       if (turn.action.job_id) {
@@ -1515,11 +1519,11 @@ export function CaseWorkbench({
     }
   };
 
-  const commitCandidates = async () => {
-    if (!workspace) return;
+  const commitCandidates = async (candidateIds?: string[]) => {
+    if (!workspace || candidateIds?.length === 0) return;
     setBusy(true);
     try {
-      const committed = await commitWorkspaceCandidates(workspace.id);
+      const committed = await commitWorkspaceCandidates(workspace.id, candidateIds);
       await onCasesChanged();
       setSelectedCaseId(committed[0]?.id ?? "");
       setSelectedTargets([]);
@@ -1528,7 +1532,7 @@ export function CaseWorkbench({
         selected_case_id: committed[0]?.id ?? "",
         selected_targets: [],
       });
-      setNotice(pick(`${committed.length} cases added to the official collection`, `已纳入 ${committed.length} 条正式用例`));
+      setNotice(pick(`${committed.length} candidates adopted as existing or new cases`, `已采纳 ${committed.length} 条候选（复用已有或新建正式用例）`));
       setArtifactOpen(false);
       const refreshed = await refreshWorkspace();
       setViewMode(refreshed?.context.active_mutation_task_id ? "plan" : "list");
@@ -2542,6 +2546,28 @@ export function CaseWorkbench({
                   setError(caught instanceof Error ? caught.message : "处理方式保存失败");
                 } finally { setBusy(false); }
               }}
+              onChooseMany={async (pointIds, choice) => {
+                if (!workspace || !selectedBrief.content.planning?.reuse) return;
+                setNotice("");
+                setBusy(true);
+                setError("");
+                try {
+                  const content = structuredClone(selectedBrief.content);
+                  const choices = { ...content.planning!.reuse!.user_choices };
+                  for (const pointId of pointIds) {
+                    if (choice === "suggested") delete choices[pointId];
+                    else choices[pointId] = choice;
+                  }
+                  content.planning!.reuse!.user_choices = choices;
+                  const saved = await saveTestBrief(workspace.id, content, selectedBrief.version);
+                  await refreshWorkspace();
+                  setSelectedBriefVersion(saved.version);
+                  setArtifactOpen(true);
+                  setNotice(pick("Selection saved", "处理方式已保存"));
+                } catch (caught) {
+                  setError(caught instanceof Error ? caught.message : "处理方式保存失败");
+                } finally { setBusy(false); }
+              }}
               onSavePoint={async (pointId, title, scenario) => {
                 if (!workspace || !selectedBrief.content.planning) return;
                 setBusy(true);
@@ -2733,7 +2759,7 @@ export function CaseWorkbench({
                 setViewMode("list");
                 setInspectorHidden(false);
               }}
-              onCommit={() => void commitCandidates()} onBrief={selectBriefVersion} onGenerate={() => void confirmBriefAndGenerate()}
+              onCommit={(candidateIds) => void commitCandidates(candidateIds)} onBrief={selectBriefVersion} onGenerate={() => void confirmBriefAndGenerate()}
             />}
             {activePlanReport && !["running", "queued"].includes(selectedTask?.status ?? "") && (
               <CaseReviewPlan

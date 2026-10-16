@@ -95,16 +95,28 @@ def link_committed_candidate(db, conversation, candidate, case, cache):
     if brief is None:
         return
     allowed = {p["id"] for p in (brief.content.get("planning") or {}).get("test_points", [])}
-    for point_id in set(candidate.snapshot.get("test_point_ids") or []) & allowed:
-        db.add(
-            WorkspaceCaseLink(
-                brief_id=brief.id,
-                test_point_id=point_id,
-                test_case_id=case.id,
-                revision_id=case.current_revision_id,
-                origin="generated",
+    existing_key = ("links", brief.id)
+    if existing_key not in cache:
+        cache[existing_key] = {
+            (link.test_point_id, link.test_case_id): link
+            for link in db.scalars(
+                select(WorkspaceCaseLink).where(WorkspaceCaseLink.brief_id == brief.id)
             )
+        }
+    for point_id in set(candidate.snapshot.get("test_point_ids") or []) & allowed:
+        key = (point_id, case.id)
+        if key in cache[existing_key]:
+            cache[existing_key][key].revision_id = case.current_revision_id
+            continue
+        link = WorkspaceCaseLink(
+            brief_id=brief.id,
+            test_point_id=point_id,
+            test_case_id=case.id,
+            revision_id=case.current_revision_id,
+            origin="generated",
         )
+        db.add(link)
+        cache[existing_key][key] = link
 
 
 def _candidate_brief(db, conversation, candidate):
@@ -150,3 +162,64 @@ def inherit_unchanged_links(db, previous, current):
                 origin=link.origin,
             )
         )
+
+
+def reusable_current_case(db, conversation, candidate, cache):
+    """Link only an unchanged candidate to its pinned, live, same-collection asset."""
+    from uuid import UUID
+
+    from casepilot_api.models import GenerationJob
+
+    job_id = candidate.generation_job_id
+    if not job_id or not candidate.snapshot.get("test_point_ids"):
+        return None
+    if job_id not in cache:
+        cache[job_id] = db.get(GenerationJob, job_id)
+    job = cache[job_id]
+    if job is None:
+        return None
+    reuse = (job.input_payload.get("confirmed_plan") or {}).get("reuse") or {}
+    decisions = {item["point_id"]: item for item in reuse.get("decisions", [])}
+    points = candidate.snapshot["test_point_ids"]
+    selected = [decisions.get(point) for point in points]
+    if any(not item or item.get("action") != "reuse" for item in selected):
+        return None
+    if any(reuse.get("user_choices", {}).get(point) == "copy" for point in points):
+        return None
+    sources = [item.get("source") or {} for item in selected]
+    source = sources[0]
+    if source.get("kind") != "formal" or any(s.get("key") != source.get("key") for s in sources):
+        return None
+    try:
+        case_id, revision_id = UUID(source["case_id"]), UUID(str(source["revision"]))
+    except (ValueError, KeyError, TypeError):
+        return None
+    case = db.scalar(
+        select(TestCase)
+        .join(CollectionCaseMembership, CollectionCaseMembership.test_case_id == TestCase.id)
+        .where(
+            TestCase.id == case_id,
+            TestCase.space_id == conversation.space_id,
+            TestCase.deleted_at.is_(None),
+            CollectionCaseMembership.collection_id == conversation.collection_id,
+        )
+        .with_for_update(of=TestCase)
+    )
+    if case is None:
+        return None
+    if case.current_revision_id != revision_id:
+        raise HTTPException(409, "case_link_revision_changed")
+    revision = db.get(TestCaseRevision, revision_id)
+    fields = ("title", "module", "priority", "case_type", "preconditions")
+    if any(candidate.snapshot.get(field) != getattr(revision, field) for field in fields):
+        return None
+    steps = [
+        {"action": s.get("action", ""), "expected": s.get("expected", "")}
+        for s in candidate.snapshot.get("steps", [])
+    ]
+    original = [
+        {"action": s.get("action", ""), "expected": s.get("expected", "")} for s in revision.steps
+    ]
+    if steps != original or candidate.snapshot.get("tags", []) != revision.tags:
+        return None
+    return case

@@ -68,6 +68,8 @@ HEADERS = {
     },
     "id": {"用例编号", "用例id", "编号", "id", "caseid", "testcaseid"},
     "module": {"模块", "所属模块", "功能模块", "module"},
+    "priority": {"优先级", "priority", "level"},
+    "case_type": {"用例类型", "测试类型", "casetype", "type"},
 }
 
 
@@ -87,16 +89,38 @@ def excel_case(values, mapping, row):
 
     if not all(value(k) for k in ("title", "steps", "expected")):
         return None  # Incomplete/multi-row layouts remain reference text, never silently reused.
-    return {
+    priority = value("priority").upper() or "P1"
+    if priority not in {"P0", "P1", "P2"}:
+        return None
+    actions = [line.strip() for line in value("steps").splitlines() if line.strip()]
+    expected = [line.strip() for line in value("expected").splitlines() if line.strip()]
+    parsed = {
         "row": row,
         "original_id": value("id"),
         "title": value("title"),
         "module": value("module"),
-        "preconditions": [value("preconditions") or "无特殊前置条件"],
-        "steps": [{"action": value("steps"), "expected": value("expected")}],
-        "priority": "P1",
-        "case_type": "functional",
+        "preconditions": [
+            line.strip() for line in value("preconditions").splitlines() if line.strip()
+        ]
+        or ["无特殊前置条件"],
+        "steps": [
+            {
+                "action": actions[i] if i < len(actions) else "",
+                "expected": expected[i] if i < len(expected) else "",
+            }
+            for i in range(max(len(actions), len(expected)))
+        ]
+        if max(len(actions), len(expected)) <= 4
+        else [{"action": value("steps"), "expected": value("expected")}],
+        "priority": priority,
+        "case_type": value("case_type") or "functional",
+        "default_fields": [key for key in ("priority", "case_type") if not value(key)],
     }
+    try:
+        TestCaseDraft.model_validate({**parsed, "id": f"excel-row-{row}", "test_point_ids": []})
+    except ValueError:
+        return None
+    return parsed
 
 
 def normalize_sources(case_context, evidence):
@@ -125,8 +149,10 @@ def normalize_sources(case_context, evidence):
                 "source_id": source.get("source_id"),
                 "chunk_id": source.get("chunk_id"),
                 "label": source["label"],
-                "locator": (f"Sheet {source.get('sheet', '')}，行 {case['row']}；"
-                            f"{case.get('original_id', '')}"),
+                "locator": (
+                    f"Sheet {source.get('sheet', '')}，行 {case['row']}；"
+                    f"{case.get('original_id', '')}"
+                ),
             }
     valid = []
     for source in sources.values():
@@ -268,7 +294,17 @@ def plan_reuse(
     )
     decisions = [row for group in results for row in group]
     used = {d["source_key"] for d in decisions if d.get("source_key")}
+    imports = {}
+    for evidence in plan.get("evidence", []):
+        for row in evidence.get("case_import_rows", []):
+            key = (evidence.get("document_id"), evidence.get("sheet"), row["row"])
+            imports[key] = {
+                **row,
+                "label": evidence.get("label", ""),
+                "sheet": evidence.get("sheet", ""),
+            }
     return {
+        "import_report": list(imports.values()),
         "strategy": strategy,
         "decisions": decisions,
         "source_count": len(sources),

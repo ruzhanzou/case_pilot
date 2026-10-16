@@ -51,7 +51,7 @@ from casepilot_agent.planning import (
     rewrite_evidence,
 )
 from casepilot_agent.providers import create_embedding_provider, create_provider
-from casepilot_agent.reuse import ReuseAnalysis, normalize_sources, plan_reuse, shortlist
+from casepilot_agent.reuse import normalize_sources, plan_reuse, shortlist
 from casepilot_agent.store import (
     JobStore,
     callback_deliveries,
@@ -421,6 +421,7 @@ def _context_payload(
                 "excerpt": row["content"] if row.get("task_document") else row["content"][:800],
                 "reference_cases": (row.get("metadata") or {}).get("reference_cases", []) if row.get("task_document") else [],
                 "sheet": (row.get("metadata") or {}).get("sheet", ""),
+                "case_import_rows": (row.get("metadata") or {}).get("case_import_rows", []),
                 "material_role": "historical_cases" if (row.get("metadata") or {}).get("reference_cases") else "reference",
                 "rank": rank,
                 "scores": {
@@ -686,10 +687,10 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
         )
         model_id = str(payload.get("model_id", "auto"))
         batches = evidence_batches(context)
-        analysis_type = PlanningAnalysis if len(batches) > 1 else ReuseAnalysis
+        analysis_type = PlanningAnalysis
         if analysis_type is PlanningAnalysis:
             instruction += (
-                "同时在feature_points提取本批全部明确功能，省去再次阅读原文。"
+                "同时在feature_points提取本批全部明确功能，省去再次阅读原文；每个功能保留对应来源引用。"
                 "每条独立规则对应一个功能；重复样例不新增功能，不为用户全局数量补位。"
                 "name保留原始规则编号和名称，module沿用原文章节，description保留数值、例外和条件。"
                 "requirement_refs引用原始规则编号；无编号则使用准确规则名称。"
@@ -699,7 +700,7 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
 
         def batch_input(index, batch):
             return {**stage_input, "context": batch, "model_id": model_id,
-                    "instruction": instruction, "analysis_version": 3, "batch_index": index}
+                    "instruction": instruction, "analysis_version": 4, "batch_index": index}
 
         def load_batch(index, batch):
             with store.connection() as connection:
@@ -715,7 +716,7 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
 
         def complete_batch(index, batch):
             result, batch_usage = provider.complete(
-                stage="requirement.extracted" if analysis_type is PlanningAnalysis
+                stage="requirement.extracted" if len(batches) > 1
                 else "requirement.analyzed", instruction=instruction,
                 payload={**stage_input, "context": batch}, result_type=analysis_type,
                 model_id=model_id,

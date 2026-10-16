@@ -6,7 +6,8 @@ import "@xyflow/react/dist/style.css";
 import { consumptionSummary, planningActionLabels, pointAction, type PlanningAction } from "@/lib/planning-consumption";
 import type { TestPlanningDto, TestCaseDto, PlanningCaseLinkDto } from "@/lib/casepilot-api";
 
-export function TestPlanningMap({ planning, title, busy, editable, onGenerate, onSavePoint, generatedPointIds, onChooseReuse, caseLinks = [], existingCases = [], onLinkCase, onOpenCase, initialPointId }: {
+export function TestPlanningMap({ planning, title, busy, editable, onGenerate, onSavePoint, generatedPointIds, onChooseReuse, onChooseMany, caseLinks = [], existingCases = [], onLinkCase, onOpenCase, initialPointId }: {
+  onChooseMany?: (ids: string[], choice: "suggested" | "new" | "exclude" | "copy") => Promise<void>;
   initialPointId?: string;
   caseLinks?: PlanningCaseLinkDto[];
   existingCases?: TestCaseDto[];
@@ -14,7 +15,7 @@ export function TestPlanningMap({ planning, title, busy, editable, onGenerate, o
   onOpenCase?: (id: string) => void;
   planning: TestPlanningDto;
   generatedPointIds: string[];
-  onChooseReuse?: (id: string, choice: "suggested" | "new" | "exclude") => Promise<void>;
+  onChooseReuse?: (id: string, choice: "suggested" | "new" | "exclude" | "copy") => Promise<void>;
   title: string;
   busy: boolean;
   editable: boolean;
@@ -131,9 +132,19 @@ export function TestPlanningMap({ planning, title, busy, editable, onGenerate, o
       {editable && <button type="button" disabled={busy || !selected.length || !summary.included} onClick={() => onGenerate(selected)}>生成选中范围（{selected.length}）</button>}
     </div>
     {(search.trim() || focused || actionFilter !== "all") && <p>筛选和聚焦不会取消已有选择；生成时包含所有已选测试点，可先清除选择再选取当前范围。</p>}
+    {editable && planning.reuse && onChooseMany && selected.length > 0 && <div className="test-planning-toolbar" aria-label="批量处理测试点">
+      <span>批量调整已选 {selected.length} 个测试点</span>
+      {([['new', '重新生成'], ['exclude', '不纳入本次'], ['suggested', '恢复建议']] as const).map(([choice, label]) =>
+        <button key={choice} type="button" disabled={busy || !selected.length} onClick={() => void onChooseMany(selected, choice)}>{label}</button>)}
+    </div>}
+    {planning.reuse && <details className="planning-retrieval-report"><summary>复用检索与附件解析结果</summary>
+      <p>已载入 {planning.reuse.source_count} 条完整历史用例。资产检索最多返回100条，每批最多比较30条，不代表已检查全部资产。</p>
+      {planning.reuse.import_report?.length ? <><p>Excel：识别 {planning.reuse.import_report.filter(row => row.valid).length} 行，跳过 {planning.reuse.import_report.filter(row => !row.valid).length} 行；{planning.reuse.import_report.filter(row => row.default_fields.length).length} 行使用默认字段。</p>
+      <ul>{planning.reuse.import_report.filter(row => !row.valid || row.default_fields.length).slice(0, 50).map(row => <li key={`${row.label}:${row.sheet}:${row.row}`}>{row.label} / {row.sheet} 第{row.row}行：{row.valid ? `默认字段：${row.default_fields.map(field => field === 'priority' ? '优先级P1' : '功能类型').join('、')}` : row.reason}</li>)}</ul></> : null}
+    </details>}
     {planning.reuse && <p className="planning-consumption-summary" role="status">
-      {selected.length ? "选中范围" : "全部范围"}：纳入 {summary.included} 个测试点（直接复用 {summary.reuse} · 修改 {summary.modify} · 新增 {summary.new}），排除 {summary.exclude} 个。
-      复用会加入本次候选供审阅，不会覆盖原资产。
+      {selected.length ? "选中范围" : "全部范围"}：纳入 {summary.included} 个测试点（直接复用 {summary.reuse} · 修改 {summary.modify} · 新增 {summary.new} · 复制 {summary.copy}），排除 {summary.exclude} 个。
+      当前集合中版本有效且正文未变的复用候选，采纳时关联原用例；其他候选新建用例，不覆盖原资产。
     </p>}
     <div className="test-planning-canvas" ref={canvas}>
       <ReactFlow key={`${focused}:${depth}:${search}:${actionFilter}`} nodes={nodes} edges={edges} onInit={(instance) => { flow.current = instance; }} fitView fitViewOptions={{ minZoom: 0.15, maxZoom: 1, padding: 0.12 }} minZoom={0.15} maxZoom={1.5} nodesDraggable={false} nodesConnectable={false}>
@@ -161,10 +172,11 @@ export function TestPlanningMap({ planning, title, busy, editable, onGenerate, o
         <p><strong>建议：{planningActionLabels[decision?.action ?? "new"]}</strong> · {decision?.reason ?? "没有匹配的历史用例"}</p>
         {onChooseReuse && <label>本次处理方式 <select aria-label="本次处理方式" disabled={busy || !editable}
           value={planning.reuse.user_choices?.[detail.id] ?? "suggested"}
-          onChange={event => void onChooseReuse(detail.id, event.target.value as "suggested" | "new" | "exclude")}>
+          onChange={event => void onChooseReuse(detail.id, event.target.value as "suggested" | "new" | "exclude" | "copy")}>
           <option value="suggested">使用建议：{planningActionLabels[decision?.action ?? "new"]}</option>
-          <option value="new">重新生成，不复用正文</option><option value="exclude">不纳入本次</option>
+          {decision?.action === "reuse" && decision.source?.kind === "formal" && <option value="copy">复制原文为新用例</option>}<option value="new">重新生成，不复用正文</option><option value="exclude">不纳入本次</option>
         </select></label>}
+        <p>本批比较 {decision?.compared_source_count ?? 0} 条，另有 {decision?.omitted_source_count ?? 0} 条未进入本批比较。</p>
         <p>当前选择：{planningActionLabels[pointAction(planning, detail.id)]}。修改选择会保存为新的规划版本。</p>
         {decision?.source && <details open><summary>历史用例原文 · {decision.source.label} / {decision.source.locator}</summary>
           <p><strong>{decision.source.snapshot?.title}</strong></p>

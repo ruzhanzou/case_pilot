@@ -171,3 +171,27 @@ def test_invalid_point_checkpoint_is_regenerated_without_repeating_valid_batches
     tasks.draft_test_brief(str(store.job['id']))
     assert calls == [('test_point.generated', 1)]
     assert len(store.briefs[-1]['planning']['test_points']) == 12
+
+
+def test_single_batch_extracts_features_without_another_model_pass(monkeypatch):
+    from casepilot_agent.planning import PlanningAnalysis
+    store = Store()
+    calls = []
+    class Provider:
+        def complete(self, *, stage, payload, **kwargs):
+            calls.append(stage)
+            if stage == "requirement.analyzed":
+                result = PlanningAnalysis(summary="登录", test_object="登录", test_object_specified=True,
+                                          feature_points=features(6).feature_points)
+            else:
+                assert stage == "test_point.generated"
+                result = points(payload, fill_budget=True)
+            return result, UsageMetadata(model="mock")
+    monkeypatch.setattr(tasks, "JobStore", lambda *args: store)
+    monkeypatch.setattr(tasks, "create_provider", lambda *args: Provider())
+    monkeypatch.setattr(tasks, "create_embedding_provider", lambda: None)
+    monkeypatch.setattr(tasks, "_context_payload", lambda *args, **kwargs: {"evidence": []})
+    tasks.draft_test_brief(str(store.job["id"]))
+    assert store.job["status"] == "completed"
+    assert "feature.generated" not in calls
+    assert len(store.briefs[0]["planning"]["test_points"]) == 12

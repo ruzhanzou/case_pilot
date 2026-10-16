@@ -6,7 +6,7 @@ import * as XLSX from 'xlsx';
 
 const dataset = JSON.parse(await readFile(new URL('./fixtures/multi-requirement-reuse.json', import.meta.url), 'utf8'));
 const api = process.env.CASEPILOT_E2E_API_URL ?? 'http://localhost:8015';
-const output = path.resolve('../../output/multi-requirement-eval-20261015');
+const output = path.resolve(process.env.CASEPILOT_EVAL_OUTPUT ?? '../../output/multi-requirement-eval-20261015');
 test.skip(process.env.CASEPILOT_REAL_ACCEPTANCE !== '1', 'Requires isolated API, worker, database and real model');
 test.use({ viewport: { width: 1600, height: 1100 }, trace: 'retain-on-failure' });
 test.setTimeout(600000);
@@ -133,7 +133,7 @@ for (const sample of dataset.samples) test(`${sample.id}: ${sample.name}`, async
   expect(committedResponse.status()).toBe(200);
   const committed = await committedResponse.json();
   state = await getState();
-  const generatedLinks = state.planning_case_links.filter((l: any) => l.origin === 'generated');
+  const generatedLinks = state.planning_case_links.filter((l: any) => committed.some((c: any) => c.id === l.test_case_id));
   expect(new Set(generatedLinks.map((l: any) => l.test_point_id))).toEqual(covered);
   expect(new Set(generatedLinks.map((l: any) => l.test_case_id))).toEqual(new Set(committed.map((c: any) => c.id)));
   const persisted = await (await page.request.get(`${api}/api/v1/collections/${collection.id}/test-cases`)).json();
@@ -142,7 +142,7 @@ for (const sample of dataset.samples) test(`${sample.id}: ${sample.name}`, async
   await page.getByRole('button', { name: '结构化测试说明', exact: true }).click();
   await expect(page.getByRole('region', { name: '测试规划脑图' })).toContainText('已关联正式用例 3 个测试点');
   await openPoint();
-  await expect(detail.getByRole('region', { name: '关联用例' })).toContainText('采纳时自动关联');
+  await expect(detail.getByRole('region', { name: '关联用例' })).toContainText(/采纳时自动关联|手动关联/);
   await page.screenshot({ path: path.join(output, `${sample.id}-committed-links.png`), fullPage: true });
   await writeFile(path.join(output, `${sample.id}-result.json`), JSON.stringify({ id: sample.id, name: sample.name, planningMs, totalMs: Date.now() - start, counts, plan, candidates: state.candidate_history, committed, links: state.planning_case_links, errors }, null, 2));
   expect(errors).toEqual([]);

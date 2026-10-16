@@ -148,6 +148,21 @@ test('NL-REC-08 lost submit response is discoverable after reload',async({page})
  expect((await s.read()).find((x:any)=>x.id===a.id).revision_number).toBe(a.revision_number+1);
 });
 test('NL-PER-08 twenty refresh cycles keep a single task and bounded streams',async({page})=>{
+ await page.addInitScript(() => {
+  const NativeEventSource = window.EventSource;
+  const key = 'casepilot-acceptance-streams';
+  const update = (delta: number) => {
+   const stats = JSON.parse(sessionStorage.getItem(key) ?? '{"active":0,"peak":0,"opened":0,"closed":0}');
+   stats.active += delta; stats.peak = Math.max(stats.peak, stats.active);
+   if (delta > 0) stats.opened++; else stats.closed++;
+   sessionStorage.setItem(key, JSON.stringify(stats));
+  };
+  window.EventSource = class extends NativeEventSource {
+   private counted = true;
+   constructor(url: string | URL, options?: EventSourceInit) { super(url, options); update(1); }
+   close() { super.close(); if (this.counted) { this.counted = false; update(-1); } }
+  };
+ });
  await setup(page);const extra=Array.from({length:96},(_,i)=>({case_key:`EXTRA-${i}`,title:`登录${i}`,module:'登录',priority:'P1',steps:[{action:'提交',expected:'会话建立'}]}));
  expect((await page.request.post(`${api}/collections/${journal.collection.id}/test-cases/batch`,{data:{cases:extra}})).ok()).toBeTruthy();
  await page.reload();const turn=await send(page,'给当前集合全部100条用例最后一步预期补充“审计记录可查询”，其他不变。');
@@ -155,10 +170,27 @@ test('NL-PER-08 twenty refresh cycles keep a single task and bounded streams',as
  page.on('request',r=>{if(r.url().includes('/events')){streams.add(r);active++;peak=Math.max(peak,active);}});
  const done=(r:any)=>{if(streams.delete(r))active--;};page.on('requestfinished',done);page.on('requestfailed',done);
  journal.refresh=[];
+ try {
  for(let i=0;i<20;i++) {
   const start=Date.now();await page.reload();await expect(page.locator('.principle-composer textarea')).toBeVisible({timeout:60000});
   journal.refresh.push({index:i,ms:Date.now()-start,active,peak,heap:await page.evaluate(()=>(performance as any).memory?.usedJSHeapSize??null)});
  }
  const state=await get(page,`/conversations/${turn.conversation_id}`);journal.afterCycles=state;
- expect(state.workflow_runs.filter((x:any)=>x.operation==='conversation_modify')).toHaveLength(1);expect(active).toBeLessThanOrEqual(2);expect(peak).toBeLessThanOrEqual(3);
+ expect(state.workflow_runs.filter((x:any)=>x.operation==='conversation_modify')).toHaveLength(1);
+ // Cross-navigation Playwright request events can omit disposal events. Count
+ // actual EventSource construction/close calls across documents as well.
+ journal.networkStreamEvents = { active, peak };
+ journal.streamLifecycle = await page.evaluate(() => JSON.parse(sessionStorage.getItem('casepilot-acceptance-streams') ?? '{}'));
+ expect(journal.streamLifecycle.opened).toBeGreaterThan(1);
+ expect(journal.streamLifecycle.active).toBeLessThanOrEqual(2);
+ expect(journal.streamLifecycle.peak).toBeLessThanOrEqual(3);
+ } finally {
+  // This test verifies restoration, not the contents of a hundred-case rewrite.
+  // Do not leave its model work occupying the shared acceptance worker.
+  const job = await get(page, `/generation-jobs/${turn.action.job_id}`);
+  if (['queued', 'running'].includes(job.status)) {
+   const cancelled = await page.request.post(`${api}/generation-jobs/${turn.action.job_id}/cancel`);
+   expect(cancelled.ok()).toBeTruthy();
+  }
+ }
 });

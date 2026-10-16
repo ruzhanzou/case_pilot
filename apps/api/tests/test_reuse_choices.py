@@ -40,3 +40,22 @@ def test_restoring_suggestion_preserves_original_source_and_action():
     result = apply_reviewer_choices(current)
     assert result["reuse"]["decisions"][0]["action"] == "reuse"
     assert result["reuse"]["decisions"][0]["source_key"] == "asset:1"
+
+
+@pytest.mark.parametrize("action,kind,allowed", [
+    ("reuse", "formal", True), ("modify", "formal", False),
+    ("reuse", "excel", False), ("new", "formal", False),
+])
+def test_copy_choice_requires_reusable_formal_case(action, kind, allowed):
+    current = plan()
+    current["reuse"]["user_choices"] = {"one": "copy"}
+    current["reuse"]["decisions"][0].update(action=action)
+    current["reuse"]["decisions"][0]["source"]["kind"] = kind
+    if allowed:
+        result = apply_reviewer_choices(current)
+        assert result["reuse"]["user_choices"] == {"one": "copy"}
+        assert result["reuse"]["decisions"][0]["source_key"] == "asset:1"
+    else:
+        with pytest.raises(HTTPException) as error:
+            reviewer_choices(current)
+        assert error.value.status_code == 422

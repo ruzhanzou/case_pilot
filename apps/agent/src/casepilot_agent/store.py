@@ -1011,20 +1011,57 @@ class JobStore:
         terms = [str(t).strip()[:100] for t in terms if str(t).strip()][:6]
         if not terms:
             return []
-        predicates = [or_(test_case_revisions.c.title.contains(term, autoescape=True),
-                          test_case_revisions.c.module.contains(term, autoescape=True)) for term in terms]
+        searchable = (
+            test_case_revisions.c.title
+            + " "
+            + test_case_revisions.c.module
+            + " "
+            + test_case_revisions.c.preconditions.cast(Text)
+            + " "
+            + test_case_revisions.c.steps.cast(Text)
+        )
+        predicates = [
+            or_(searchable.contains(term, autoescape=True), test_cases.c.case_key == term)
+            for term in terms
+        ]
         score = sum(case((predicate, 1), else_=0) for predicate in predicates)
         rows = connection.execute(
             select(test_cases.c.id.label("asset_id"), test_cases.c.case_key, test_case_revisions)
             .join(test_case_revisions, test_case_revisions.c.id == test_cases.c.current_revision_id)
-            .where(test_cases.c.space_id == space_id, test_cases.c.deleted_at.is_(None), or_(*predicates))
-            .order_by(score.desc(), test_cases.c.id).limit(min(limit, 100))
+            .where(
+                test_cases.c.space_id == space_id,
+                test_cases.c.deleted_at.is_(None),
+                or_(*predicates),
+            )
+            .order_by(score.desc(), test_cases.c.id)
+            .limit(min(limit, 100))
         ).mappings()
-        return [{"ref": str(row["asset_id"]), "target_type": "formal", "snapshot": {
-            "id": row["case_key"], "case_key": row["case_key"],
-            "current_revision_id": str(row["id"]), "revision_number": row["revision_number"],
-            **{key: row[key] for key in ("title", "module", "priority", "case_type", "preconditions", "steps", "source_refs")},
-        }} for row in rows]
+        return [
+            {
+                "ref": str(row["asset_id"]),
+                "target_type": "formal",
+                "snapshot": {
+                    "id": row["case_key"],
+                    "case_key": row["case_key"],
+                    "current_revision_id": str(row["id"]),
+                    "revision_number": row["revision_number"],
+                    **{
+                        key: row[key]
+                        for key in (
+                            "title",
+                            "module",
+                            "priority",
+                            "case_type",
+                            "tags",
+                            "preconditions",
+                            "steps",
+                            "source_refs",
+                        )
+                    },
+                },
+            }
+            for row in rows
+        ]
 
     def load_existing_case_titles(
         self,
@@ -1198,27 +1235,64 @@ class JobStore:
         """Upsert validated batch previews without making them adoptable."""
         conversation_id = UUID(str(job["input_payload"]["conversation_id"]))
         now = datetime.now(UTC)
+        existing = {
+            row["ref"]: row
+            for row in connection.execute(
+                select(workspace_candidates)
+                .where(
+                    workspace_candidates.c.generation_job_id == job["id"],
+                    workspace_candidates.c.status == "generating",
+                )
+                .with_for_update()
+            ).mappings()
+        }
+        new_refs = {str(draft["id"]) for draft in drafts} - existing.keys()
+        versions = (
+            dict(
+                connection.execute(
+                    select(workspace_candidates.c.ref, func.max(workspace_candidates.c.version))
+                    .where(
+                        workspace_candidates.c.conversation_id == conversation_id,
+                        workspace_candidates.c.ref.in_(new_refs),
+                    )
+                    .group_by(workspace_candidates.c.ref)
+                ).all()
+            )
+            if new_refs
+            else {}
+        )
+        additions = []
         for position, draft in enumerate(drafts):
-            existing = connection.scalar(select(workspace_candidates.c.id).where(
-                workspace_candidates.c.generation_job_id == job["id"],
-                workspace_candidates.c.ref == str(draft["id"]),
-                workspace_candidates.c.status == "generating",
-            ))
-            if existing:
-                connection.execute(update(workspace_candidates).where(
-                    workspace_candidates.c.id == existing,
-                ).values(snapshot=draft, position=position, updated_at=now))
-                continue
-            version = (connection.scalar(select(func.max(workspace_candidates.c.version)).where(
-                workspace_candidates.c.conversation_id == conversation_id,
-                workspace_candidates.c.ref == str(draft["id"]),
-            )) or 0) + 1
-            connection.execute(insert(workspace_candidates).values(
-                id=uuid4(), conversation_id=conversation_id, generation_job_id=job["id"],
-                ref=str(draft["id"]), version=version, position=position, snapshot=draft,
-                included=False, status="generating", created_by=job["account_id"],
-                created_at=now, updated_at=now,
-            ))
+            ref = str(draft["id"])
+            row = existing.get(ref)
+            if row:
+                if row["snapshot"] != draft or row["position"] != position:
+                    connection.execute(
+                        update(workspace_candidates)
+                        .where(
+                            workspace_candidates.c.id == row["id"],
+                        )
+                        .values(snapshot=draft, position=position, updated_at=now)
+                    )
+            else:
+                additions.append(
+                    dict(
+                        id=uuid4(),
+                        conversation_id=conversation_id,
+                        generation_job_id=job["id"],
+                        ref=ref,
+                        version=versions.get(ref, 0) + 1,
+                        position=position,
+                        snapshot=draft,
+                        included=False,
+                        status="generating",
+                        created_by=job["account_id"],
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+        if additions:
+            connection.execute(insert(workspace_candidates), additions)
 
     def persist_workspace_candidates(
         self,
@@ -1236,17 +1310,46 @@ class JobStore:
             workspace_candidates.c.status == "candidate",
         ]
         if planning:
+            # Replace only coverage actually produced. A failed slot must not
+            # erase its previous candidate, nor a sibling point sharing a case.
             selected = {point["id"] for point in planning.get("test_points", [])}
+            replaced = selected & {
+                point for draft in drafts for point in draft.get("test_point_ids", [])
+            }
             previous = connection.execute(
-                select(workspace_candidates.c.id, workspace_candidates.c.snapshot).where(
-                    *archive_filter
-                )
+                select(workspace_candidates).where(*archive_filter).with_for_update()
             ).mappings()
-            replace_ids = [
-                item["id"]
-                for item in previous
-                if selected.intersection(item["snapshot"].get("test_point_ids", []))
-            ]
+            replace_ids = []
+            incoming_refs = {str(draft["id"]) for draft in drafts}
+            for item in previous:
+                refs = item["snapshot"].get("test_point_ids", [])
+                if not replaced.intersection(refs):
+                    continue
+                remaining = [ref for ref in refs if ref not in replaced]
+                if remaining:
+                    retained_ref = (
+                        f"TC-retained-{item['id'].hex}"
+                        if item["ref"] in incoming_refs
+                        else item["ref"]
+                    )
+                    connection.execute(
+                        update(workspace_candidates)
+                        .where(
+                            workspace_candidates.c.id == item["id"],
+                        )
+                        .values(
+                            ref=retained_ref,
+                            snapshot={
+                                **item["snapshot"],
+                                "id": retained_ref,
+                                "test_point_ids": remaining,
+                            },
+                            version=item["version"] + 1,
+                            updated_at=datetime.now(UTC),
+                        )
+                    )
+                else:
+                    replace_ids.append(item["id"])
             archive_filter.append(workspace_candidates.c.id.in_(replace_ids))
         connection.execute(
             update(workspace_candidates)
@@ -1257,15 +1360,27 @@ class JobStore:
         candidate_ids: list[str] = []
         for position, draft in enumerate(drafts):
             ref = str(draft["id"])
-            preview_id = connection.scalar(select(workspace_candidates.c.id).where(
-                workspace_candidates.c.generation_job_id == job["id"],
-                workspace_candidates.c.ref == ref,
-                workspace_candidates.c.status == "generating",
-            ))
+            preview_id = connection.scalar(
+                select(workspace_candidates.c.id).where(
+                    workspace_candidates.c.generation_job_id == job["id"],
+                    workspace_candidates.c.ref == ref,
+                    workspace_candidates.c.status == "generating",
+                )
+            )
             if preview_id:
-                connection.execute(update(workspace_candidates).where(
-                    workspace_candidates.c.id == preview_id,
-                ).values(snapshot=draft, position=position, included=True, status="candidate", updated_at=now))
+                connection.execute(
+                    update(workspace_candidates)
+                    .where(
+                        workspace_candidates.c.id == preview_id,
+                    )
+                    .values(
+                        snapshot=draft,
+                        position=position,
+                        included=True,
+                        status="candidate",
+                        updated_at=now,
+                    )
+                )
                 candidate_ids.append(str(preview_id))
                 continue
             version = (

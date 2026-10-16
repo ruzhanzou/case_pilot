@@ -433,3 +433,19 @@ def test_rewrite_sources_are_restored_from_server_catalog(index, valid):
         assert not candidate.quality.passed
         assert candidate.proposed == original
         assert candidate.diff == []
+
+
+@pytest.mark.parametrize("original_setup,allowed", [([], True), (["账号已注册"], False)])
+def test_rewrite_allows_existing_empty_setup_but_rejects_losing_required_setup(original_setup, allowed):
+    from casepilot_agent.contracts import RewriteCaseDraft
+    from casepilot_agent.pipeline import RewriteContentError, validate_rewrite_candidate
+
+    original = RewriteCaseDraft.model_validate({**case().model_dump(), "preconditions": original_setup})
+    proposed = original.model_copy(update={"title": "修改后的标题", "preconditions": []})
+    candidate = RewriteCandidate(proposed=proposed, diff=[], reason="仅改标题", quality={"passed": True, "score": 100})
+    request = RewriteRequest(test_case=original, instruction="仅修改标题")
+    if allowed:
+        assert validate_rewrite_candidate(request, candidate).proposed.preconditions == []
+    else:
+        with pytest.raises(RewriteContentError, match="前置条件"):
+            validate_rewrite_candidate(request, candidate)

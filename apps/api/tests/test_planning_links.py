@@ -50,6 +50,7 @@ def test_only_choice_edits_inherit_versioned_links(change):
 
 def test_commit_links_only_valid_points_and_reuses_brief_lookup_per_job():
     db = Mock()
+    db.scalars.return_value = []
     db.get.return_value = SimpleNamespace(input_payload={"confirmed_test_brief_version": 2})
     db.scalar.return_value = brief()
     conversation = SimpleNamespace(id=uuid4())

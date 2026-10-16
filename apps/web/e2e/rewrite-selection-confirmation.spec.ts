@@ -8,7 +8,7 @@ async function setup(page: Page, count = 2, previousTask = false, unresolvedCurr
   const ids = cases.map(item => item.id);
   const selections = Array.from({ length: Math.ceil(count / 100) }, (_, index) => ({ label: 'Cases', target: { kind: 'case', case_ids: ids.slice(index * 100, index * 100 + 100), candidate_refs: [] } }));
   let context = { phase: 'maintenance', active_view: 'list', selected_targets: selections };
-  const operation = { id: 'operation', source_message_id: 'user', sequence: 0, intent: 'CASE_MODIFY', status: 'awaiting_target', target: { resolved: !unresolvedCurrent, case_ids: ids, candidate_refs: [] }, payload: { instruction: '步骤更清晰' }, result: {} };
+  const operation = { id: 'operation', source_message_id: 'user', sequence: 0, intent: 'CASE_MODIFY', status: 'awaiting_target', target: { resolved: !unresolvedCurrent, case_ids: ids, candidate_refs: [] }, payload: { instruction: '步骤更清晰', modification_confirmation: { instruction: '步骤更清晰' } }, result: {} };
   const operations = previousTask ? [{ ...operation, id: 'previous', intent: 'CASE_QUERY', status: 'completed', target: { resolved: true, case_ids: ['case0'], candidate_refs: [] } }, operation] : [operation];
   const user = { id: 'user', role: 'user', intent: 'CASE_MODIFY', status: 'completed', content: '步骤更清晰', metadata: {}, target_case_ids: [], citations: [] };
   const assistant = { ...user, id: 'answer', role: 'assistant', status: 'awaiting_clarification', content: '请确认本轮修改', metadata: { operation_id: 'operation', modification_confirmation: true } };
@@ -64,6 +64,15 @@ test('unchanged scope still confirms without an extra preview', async ({ page })
   const s = await setup(page); await s.confirm.click();
   await expect.poll(() => s.calls.length).toBe(1);
   expect(s.calls[0].confirm_modification).toBe(true);
+});
+
+test('an already submitted instruction left in the composer confirms without another preview', async ({ page }) => {
+  const s = await setup(page);
+  await page.locator('.principle-composer textarea').fill('步骤更清晰');
+  await s.confirm.click();
+  await expect.poll(() => s.calls.length).toBe(1);
+  expect(s.calls[0].confirm_modification).toBe(true);
+  expect(s.calls[0].content).toBeUndefined();
 });
 
 test('more than one selection batch survives a clarification reply and reload', async ({ page }) => {

@@ -13,8 +13,8 @@ const planning = {
 
 test('display reflects persisted reviewer choices rather than original model totals', () => {
   assert.equal(pointAction(planning, 'a'), 'new');
-  assert.deepEqual(consumptionSummary(planning), { new: 1, reuse: 0, modify: 1, exclude: 1, included: 2 });
-  assert.deepEqual(consumptionSummary(planning, ['c']), { new: 0, reuse: 0, modify: 0, exclude: 1, included: 0 });
+  assert.deepEqual(consumptionSummary(planning), { copy: 0, new: 1, reuse: 0, modify: 1, exclude: 1, included: 2 });
+  assert.deepEqual(consumptionSummary(planning, ['c']), { copy: 0, new: 0, reuse: 0, modify: 0, exclude: 1, included: 0 });
 });
 
 test('restoring a suggestion reveals the original action', () => {

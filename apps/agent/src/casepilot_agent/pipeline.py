@@ -63,7 +63,10 @@ def validate_rewrite_candidate(request, candidate):
     for field in ("id", "automated", "status", "test_point_ids"):
         if getattr(original, field) != getattr(proposed, field):
             raise ValueError(f"改写不能改变系统字段：{field}")
-    if not proposed.title.strip() or not any(p.strip() for p in proposed.preconditions):
+    if not proposed.title.strip() or (
+        any(p.strip() for p in original.preconditions)
+        and not any(p.strip() for p in proposed.preconditions)
+    ):
         raise RewriteContentError("改写必须保留标题和前置条件")
     # Separate operation/check rows are valid; empty cases are not.
     if not any(s.action.strip() for s in proposed.steps) or not any(

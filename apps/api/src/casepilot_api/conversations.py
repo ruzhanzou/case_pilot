@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse
 
-from casepilot_api.planning_links import links_view, link_existing_case, link_committed_candidate, inherit_unchanged_links
+from casepilot_api.planning_links import links_view, link_existing_case, link_committed_candidate, inherit_unchanged_links, reusable_current_case
 from casepilot_api.schemas import PlanningCaseLinkRequest
 from casepilot_api.reuse_choices import apply_reviewer_choices, reviewer_choices
 from pydantic import ValidationError
@@ -3576,15 +3576,17 @@ def commit_workspace_candidates(
         validated_candidates.append(validated)
     created: list[TestCase] = []
     link_context: dict = {}
+    reuse_context: dict = {}
+    linked_count = 0
     for index, (candidate, validated) in enumerate(zip(candidates, validated_candidates, strict=True)):
-        test_case = create_test_case_record(
-            db,
-            collection=collection,
-            payload=validated,
-            account=account,
-            case_key=f"CP-{uuid4().hex[:8].upper()}",
-            position=position + index,
-        )
+        test_case = reusable_current_case(db, conversation, candidate, reuse_context)
+        if test_case is not None:
+            linked_count += 1
+        else:
+            test_case = create_test_case_record(
+                db, collection=collection, payload=validated, account=account,
+                case_key=f"CP-{uuid4().hex[:8].upper()}", position=position + index,
+            )
         link_committed_candidate(db, conversation, candidate, test_case, link_context)
         candidate.status = "incorporated"
         created.append(test_case)
@@ -3624,7 +3626,7 @@ def commit_workspace_candidates(
         ConversationMessage(
             conversation_id=conversation.id,
             role="assistant",
-            content=f"已采纳 {len(created)} 条候选用例，剩余 {len(remaining)} 条待审阅。" + ("当前任务继续，您可以继续修改或放弃剩余建议。" if remaining else "当前任务已结束，可以发起新任务。"),
+            content=f"已采纳 {len(created)} 条候选用例（关联已有 {linked_count} 条，新建 {len(created) - linked_count} 条），剩余 {len(remaining)} 条待审阅。" + ("当前任务继续，您可以继续修改或放弃剩余建议。" if remaining else "当前任务已结束，可以发起新任务。"),
             intent="CASE_GENERATE",
             intent_confidence=1.0,
             status="completed",

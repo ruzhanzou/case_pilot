@@ -614,10 +614,12 @@ export type TestPlanningDto = {
     strategy: "fresh" | "regression" | "change";
     source_count: number;
     summary: Partial<Record<"new" | "reuse" | "modify", number>>;
+    import_report?: { row: number; valid: boolean; default_fields: string[]; reason: string; label: string; sheet: string }[];
     note: string;
-    user_choices?: Record<string, "new" | "exclude">;
+    user_choices?: Record<string, "new" | "exclude" | "copy">;
     decisions: { point_id: string; action: "new" | "reuse" | "modify"; reason: string;
-      source?: { label: string; locator: string; snapshot: { title: string; preconditions: string[]; steps: { action: string; expected: string }[] } } }[];
+      compared_source_count?: number; omitted_source_count?: number;
+      source?: { kind?: string; case_id?: string; label: string; locator: string; snapshot: { title: string; preconditions: string[]; steps: { action: string; expected: string }[] } } }[];
   };
   feature_points: { id: string; name: string; module: string; description: string; requirement_refs: string[] }[];
   test_points: { id: string; title: string; scenario?: string; objective: string; feature_point_ids: string[]; source_refs?: { label: string; locator: string; excerpt: string }[] }[];
@@ -989,7 +991,12 @@ export function watchGeneration(
       window.clearTimeout(timeout);
       window.clearInterval(poll);
       source.close();
+      window.removeEventListener("pagehide", onPageHide);
     };
+    const onPageHide = (event: PageTransitionEvent) => {
+      if (!event.persisted) close();
+    };
+    window.addEventListener("pagehide", onPageHide);
     const finish = (callback: () => void) => {
       if (settled) return;
       settled = true;
@@ -1451,7 +1458,12 @@ export async function waitForConversationJob(
       window.clearTimeout(timeout);
       window.clearInterval(poll);
       source.close();
+      window.removeEventListener("pagehide", onPageHide);
     };
+    const onPageHide = (event: PageTransitionEvent) => {
+      if (!event.persisted) close();
+    };
+    window.addEventListener("pagehide", onPageHide);
     const finish = (callback: () => void) => {
       if (settled) return;
       settled = true;

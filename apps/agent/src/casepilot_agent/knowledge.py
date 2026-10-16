@@ -112,6 +112,7 @@ def _excel_blocks(sheet: str, rows: Iterable[tuple[int, list[Any]]]) -> list[Par
     batch: list[tuple[int, list[str]]] = []
     header_mapping = None
     reference_cases = []
+    row_diagnostics = []
 
     def flush() -> None:
         if not batch:
@@ -140,12 +141,18 @@ def _excel_blocks(sheet: str, rows: Iterable[tuple[int, list[Any]]]) -> list[Par
                 content=markdown,
                 section_path=sheet,
                 locator=f"Sheet {sheet}，行 {start}-{end}",
-                metadata={"sheet": sheet, "row_start": start, "row_end": end,
-                          **({"reference_cases": list(reference_cases)} if reference_cases else {})},
+                metadata={
+                    "sheet": sheet,
+                    "row_start": start,
+                    "row_end": end,
+                    **({"case_import_rows": list(row_diagnostics)} if row_diagnostics else {}),
+                    **({"reference_cases": list(reference_cases)} if reference_cases else {}),
+                },
             )
         )
         batch.clear()
         reference_cases.clear()
+        row_diagnostics.clear()
 
     for number, row in rows:
         values = ["" if value is None else str(value) for value in row]
@@ -160,6 +167,16 @@ def _excel_blocks(sheet: str, rows: Iterable[tuple[int, list[Any]]]) -> list[Par
             parsed_case = excel_case(values, header_mapping, number)
             if parsed_case:
                 reference_cases.append(parsed_case)
+            row_diagnostics.append(
+                {
+                    "row": number,
+                    "valid": parsed_case is not None,
+                    "default_fields": parsed_case.get("default_fields", []) if parsed_case else [],
+                    "reason": ""
+                    if parsed_case
+                    else "名称、步骤、预期缺失或超长，或优先级无效（仅支持P0/P1/P2）",
+                }
+            )
         batch.append((number, values))
         if len(batch) >= 40:
             flush()

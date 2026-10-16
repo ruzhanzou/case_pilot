@@ -14,7 +14,7 @@ type Props = {
   cases: TestCaseDto[];
   onLocate: (id: string) => void;
   onToggleCandidate: (candidate: WorkspaceCandidateDto) => void;
-  onCommit: () => void;
+  onCommit: (candidateIds: string[]) => void;
   onBrief: (version: number) => void;
   onGenerate: () => void;
   onRefine?: () => void;
@@ -62,7 +62,7 @@ export function CaseTaskArtifacts({ task, conversation, busy, cases, onLocate, o
         <h4>{pick(`${candidates.filter(item => item.status !== "archived").length} candidate cases`, `${candidates.filter(item => item.status !== "archived").length} 条候选用例`)}</h4>
         {canEdit && <div className="task-candidate-actions">
           {onRefine && <button type="button" disabled={busy} onClick={onRefine}>{pick("Edit cases", "修改用例")}</button>}
-          <button type="button" className="is-primary" disabled={busy || !canCommit} onClick={onCommit}>
+          <button type="button" className="is-primary" disabled={busy || !canCommit} onClick={() => onCommit(candidates.filter(item => item.status === "candidate" && item.included).map(item => item.id))}>
             {pick(`Accept selected (${candidates.filter(item => item.status === "candidate" && item.included).length})`, `采纳已选（${candidates.filter(item => item.status === "candidate" && item.included).length}）`)}
           </button>
         </div>}

@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -169,6 +170,9 @@ class TestCase(TimestampMixin, Base):
 class TestCaseRevision(TimestampMixin, Base):
     __tablename__ = "test_case_revisions"
     __table_args__ = (
+        Index("ix_case_revision_reuse_search",
+              text("(title || ' ' || module || ' ' || preconditions::text || ' ' || steps::text) gin_trgm_ops"),
+              postgresql_using="gin"),
         UniqueConstraint(
             "test_case_id",
             "revision_number",

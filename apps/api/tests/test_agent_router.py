@@ -831,3 +831,25 @@ def test_reuse_lookup_is_part_of_generation_unless_separate_results_requested(se
     if not separate:
         assert result.operations[0].instruction == content
         assert result.operations[0].depends_on is None
+
+
+@pytest.mark.parametrize("content,expected", [
+    ("重写登录模块用例", "CASE_MODIFY"),
+    ("请改写登录模块用例", "CASE_MODIFY"),
+    ("重写登录模块用例，步骤写得更清楚", "CASE_MODIFY"),
+    ("重写登录模块用例并生成一套新版", "CASE_GENERATE"),
+    ("如何重写登录模块用例？", "KNOWLEDGE_QA"),
+    ("不要重写登录模块用例", "KNOWLEDGE_QA"),
+])
+def test_model_cannot_treat_existing_case_rewrite_as_new_generation(content, expected):
+    plan = IntentPlanDraft.model_validate({"operations": [{
+        "intent": "CASE_GENERATE", "instruction": content, "confidence": 0.9,
+        "action_evidence": content, "target_kind": "module", "target_text": "登录模块用例",
+        "clarification_questions": ["请说明改动方向"],
+    }]})
+    result = agent_router._validate_model_plan(content, plan, has_targets=True, phase="maintenance")
+    assert result.operations[0].intent == expected
+    if expected == "CASE_MODIFY":
+        assert result.operations[0].requires_confirmation
+        assert result.operations[0].clarification_questions == ["请说明改动方向"]
+        assert result.operations[0].action != "BRIEF_CREATE"

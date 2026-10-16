@@ -126,7 +126,7 @@ SEQUENCE_SPLIT = re.compile(
 NEGATED_DELETE = re.compile(r"(?:不要|无需|不用|别|禁止).{0,8}(?:删除|移除|作废)")
 NEGATED_WRITE = re.compile(
     r"(?:不要|无需|不用|别|禁止|暂不|先别).{0,12}"
-    r"(?:生成|创建|新增|补充|修改|改写|调整|替换|删除|移除|作废)|"
+    r"(?:生成|创建|新增|补充|修改|改写|重写|调整|替换|删除|移除|作废)|"
     r"\b(?:do\s+not|don't|never|without)\s+"
     r"(?:generate|create|write|draft|design|modify|edit|update|rewrite|"
     r"revise|delete|remove|archive)\b",
@@ -281,6 +281,15 @@ def _validate_model_plan(
             elif not operation.action_evidence and not WRITE_SIGNAL.search(content):
                 operation.intent = "UNRESOLVED"
                 operation.reason_codes.append("WRITE_ACTION_NOT_EXPLICIT")
+        if (
+            operation.intent == "CASE_GENERATE"
+            and evidence_valid
+            and re.search(r"^(?:(?:请|帮我|麻烦)\s*)*(?:重写|改写)", primary.strip())
+            and re.search(r"用例|候选", primary)
+            and not re.search(r"重新生成|生成.{0,8}(?:新|一套)|全新|新版|新用例", primary)
+        ):
+            operation.intent = "CASE_MODIFY"
+            operation.reason_codes.append("EXPLICIT_CASE_REWRITE")
         # A scope can quote several non-adjacent literal spans (for example a
         # module and a preservation clause). Keep every span, including exclusions.
         if operation.target_text and operation.target_text not in content:
@@ -559,6 +568,8 @@ def sdk_plan(
             "不要额外拆成CASE_MODIFY来覆盖原资产；只有明确另行要求修改正式原用例时才拆分。"
             "供我审阅、等我确认是用户自己确认结果的交付要求，绝不能拆成AI评审任务。"
             "明确请求修改且附带不要改其他字段时仍是修改。修改和重写会在对话区由用户确认后执行。"
+            "重写登录模块用例、改写已有候选属于CASE_MODIFY，不是CASE_GENERATE；"
+            "没有改动方向时保留CASE_MODIFY并追问方向，不能启动新用例生成。"
             "对于只有优化一下、重写一下而未提供改动方向的请求，询问需要修改哪些内容或希望达到什么效果；"
             "已有明确修改要求时不重复提问，把修改目标与保留要求分别写入changes和constraints。"
             "selected_targets只是可用上下文，只有当前消息明确指向选中/当前用例时才引用，不能继承旧目标。"

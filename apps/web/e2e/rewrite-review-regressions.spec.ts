@@ -15,7 +15,7 @@ async function get<T>(page: Page, path: string): Promise<T> {
 }
 async function setup(page: Page, long = false) {
   await page.addInitScript(() => localStorage.setItem('casepilot.locale.v1', 'zh-CN'));
-  const login = await page.request.post(`${api}/auth/login`, { data: { email: 'demo@casepilot.local', password: 'CasePilot123!' } });
+  const login = await page.request.post(`${api}/auth/register`, { data: { email: `rewrite-review-${Date.now()}-${Math.random().toString(36).slice(2)}@casepilot.test`, display_name: '对话修改回归', password: 'CasePilot123!' } });
   expect(login.ok()).toBeTruthy();
   const account = await login.json();
   const stamp = Date.now();

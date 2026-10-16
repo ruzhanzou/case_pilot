@@ -30,7 +30,7 @@ def evidence_batches(context: dict[str, Any], budget: int = 18000) -> list[dict[
     current: list[dict[str, Any]] = []
     size = 0
     for item in context.get("evidence", []):
-        item = {k: v for k, v in item.items() if k not in {"reference_cases", "sheet"}}
+        item = {k: v for k, v in item.items() if k not in {"reference_cases", "sheet", "case_import_rows"}}
         text = str(item.get("excerpt", ""))
         for start in range(0, max(1, len(text)), budget):
             piece = {**item, "excerpt": text[start : start + budget]}

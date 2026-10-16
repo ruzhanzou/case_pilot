@@ -204,7 +204,7 @@ def test_draft_workflow_queries_assets_only_for_reuse_and_persists_decisions(mon
 
     class Provider:
         def complete(self, *, stage, payload, result_type, **kwargs):
-            if stage == "requirement.analyzed":
+            if stage in {"requirement.analyzed", "requirement.extracted"}:
                 result = ReuseAnalysis(
                     summary="登录",
                     test_object="登录",
@@ -308,3 +308,29 @@ def test_cancelled_reuse_does_not_start_model_work():
         plan_reuse(request(12).confirmed_plan, "change", [source()], complete, "改版",
                    check_cancelled=cancelled)
     complete.assert_not_called()
+
+
+def test_excel_preserves_priority_type_and_independent_multiline_checks(tmp_path):
+    path = tmp_path / '格式验证.xlsx'
+    book = Workbook()
+    book.active.append(['用例名称', '测试步骤', '预期结果', '优先级', '用例类型'])
+    book.active.append(['校验登录', '输入账号\n提交登录', '出现首页', 'P0', '安全'])
+    book.active.append(['缺省字段', '登录', '成功', None, None])
+    book.active.append(['无效优先级', '登录', '成功', 'P9', None])
+    book.active.append(['缺少预期', '登录', None, 'P1', None])
+    book.save(path)
+    blocks = parse_document(path, '')
+    rows = [row for block in blocks for row in block.metadata.get('reference_cases', [])]
+    report = [row for block in blocks for row in block.metadata.get('case_import_rows', [])]
+    assert len(rows) == 2
+    assert rows[0]['priority'] == 'P0' and rows[0]['case_type'] == '安全'
+    assert rows[0]['steps'] == [{'action': '输入账号', 'expected': '出现首页'}, {'action': '提交登录', 'expected': ''}]
+    assert rows[1]['default_fields'] == ['priority', 'case_type']
+    assert [row['row'] for row in report if not row['valid']] == [4, 5]
+
+
+def test_import_report_deduplicates_rows_from_split_evidence():
+    plan = {'test_points': [], 'evidence': [{'document_id': 'd', 'sheet': 's', 'label': 'old.xlsx',
+        'case_import_rows': [{'row': 2, 'valid': False, 'default_fields': [], 'reason': '缺少预期'}]}] * 2}
+    result = plan_reuse(plan, 'fresh', [], Mock(), '')
+    assert len(result['import_report']) == 1
