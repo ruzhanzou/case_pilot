@@ -92,15 +92,16 @@ export function TestPlanningMap({ planning, title, busy, editable, onGenerate, o
         : row++ * 105);
     }
     for (const [id, entry] of visible) {
-      const checked = entry.ids.every((ref) => selectedIds.has(ref));
+      const selectableIds = entry.ids.filter(ref => (!query || matched.has(ref)) && (!focused || entries.get(focused)?.ids.includes(ref)));
+      const checked = selectableIds.length > 0 && selectableIds.every((ref) => selectedIds.has(ref));
       nodes.push({ id, position: { x: entry.level * 255, y: positions.get(id) ?? 0 },
         sourcePosition: Position.Right, targetPosition: Position.Left, style: { width: 225 }, data: { label: (
           <div className="planning-node">
-            <button type="button" title={entry.label} aria-pressed={checked} disabled={busy}
-              onClick={() => { setSelected(checked ? selected.filter((ref) => !entry.ids.includes(ref)) : [...new Set([...selected, ...entry.ids])]); if (id.startsWith("point:")) setDetailId(entry.ids[0]); }}>
+            <button type="button" title={entry.label} aria-pressed={checked} disabled={busy || !selectableIds.length}
+              onClick={() => { setSelected(checked ? selected.filter((ref) => !selectableIds.includes(ref)) : [...new Set([...selected, ...selectableIds])]); if (id.startsWith("point:")) setDetailId(entry.ids[0]); }}>
               {entry.label}
             </button>
-            <small>{id.startsWith("point:") ? (formalPoints.has(entry.ids[0]) ? "测试点 · 已关联正式用例" : generatedPointIds.includes(entry.ids[0]) ? "测试点 · 已加入候选" : planning.reuse ? `测试点 · ${planningActionLabels[actionFor(entry.ids[0])]}` : "测试点 · 待生成") : `${entry.ids.length} 个测试点`}</small>
+            <small>{id.startsWith("point:") ? (formalPoints.has(entry.ids[0]) ? "测试点 · 已关联正式用例" : generatedPointIds.includes(entry.ids[0]) ? "测试点 · 已加入候选" : planning.reuse ? `测试点 · ${planningActionLabels[actionFor(entry.ids[0])]}` : "测试点 · 待生成") : `${selectableIds.length} 个测试点`}</small>
             {id.startsWith("point:") && <button type="button" aria-label={`查看复用依据：${entry.label}`} onClick={() => setDetailId(entry.ids[0])}>{planning.reuse ? "查看依据与原文" : "查看测试点与关联"}</button>}
             {!id.startsWith("point:") && id !== "root" && <button type="button" onClick={() => { setFocused(id); setDepth(20); }}>聚焦分支</button>}
           </div>
@@ -129,6 +130,7 @@ export function TestPlanningMap({ planning, title, busy, editable, onGenerate, o
       <button type="button" onClick={() => { if (document.fullscreenElement) void document.exitFullscreen(); else void surface.current?.requestFullscreen(); }}>切换全屏</button>
       {editable && <button type="button" disabled={busy || !selected.length || !summary.included} onClick={() => onGenerate(selected)}>生成选中范围（{selected.length}）</button>}
     </div>
+    {(search.trim() || focused || actionFilter !== "all") && <p>筛选和聚焦不会取消已有选择；生成时包含所有已选测试点，可先清除选择再选取当前范围。</p>}
     {planning.reuse && <p className="planning-consumption-summary" role="status">
       {selected.length ? "选中范围" : "全部范围"}：纳入 {summary.included} 个测试点（直接复用 {summary.reuse} · 修改 {summary.modify} · 新增 {summary.new}），排除 {summary.exclude} 个。
       复用会加入本次候选供审阅，不会覆盖原资产。

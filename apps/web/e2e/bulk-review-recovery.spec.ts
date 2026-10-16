@@ -39,7 +39,7 @@ for (const status of ['ready'] as string[]) {
     await expect(review.getByRole('status')).toHaveText('Selected 0 of 100 cases · 0 changes');
     const search=review.getByRole('textbox', {name:'Find changes by case or module'});
     await search.fill('TC-99');
-    await expect(review.locator('details')).toHaveCount(1);
+    await expect(review.locator('.collection-changes__items > details')).toHaveCount(1);
     await review.getByRole('button',{name:'Select matching changes',exact:true}).focus();
     await page.keyboard.press('Enter');
     await expect(review.getByRole('status')).toHaveText('Selected 1 of 100 cases · 2 changes');
@@ -52,7 +52,7 @@ for (const status of ['ready'] as string[]) {
     await expect(review).toContainText('No matching changes');
     await expect(review.getByRole('status')).toHaveText('Selected 1 of 100 cases · 2 changes');
     await search.fill('TC-99');
-    await review.locator('summary').click();
+    await review.locator('.collection-changes__items > details > summary').click();
     await page.screenshot({path:info.outputPath('100-filtered.png'),fullPage:true});
     const apply=review.getByRole('button',{name:'Apply selected changes',exact:true});
     await apply.click();

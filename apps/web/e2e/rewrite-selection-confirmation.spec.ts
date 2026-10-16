@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
 test.use({ viewport: { width: 1600, height: 1000 } });
-async function setup(page: Page, count = 2, previousTask = false, unresolvedCurrent = false) {
+async function setup(page: Page, count = 2, previousTask = false, unresolvedCurrent = false, failSelectionSave = false) {
   const calls: Record<string, unknown>[] = [];
   const collection = { id: 'alpha', space_id: 'space', name: 'Confirmation selection', lifecycle_status: 'maintenance', case_count: count, mind_map_notes: [] };
   const cases = Array.from({ length: count }, (_, i) => `Case ${i}`).map((title, i) => ({ id: `case${i}`, case_key: `TC-${i}`, title, module: 'Login', priority: 'P1', case_type: '功能', tags: [], preconditions: [], steps: [{ action: 'Login', expected: 'Success' }], current_revision_id: `rev${i}`, revision_number: 1 }));
@@ -24,6 +24,7 @@ async function setup(page: Page, count = 2, previousTask = false, unresolvedCurr
       calls.push(route.request().postDataJSON());
       data = { conversation_id: 'workspace', user_message: user, assistant_message: assistant, intent: 'CASE_MODIFY', action: { type: 'clarification' }, operation_plan: { operations } };
     } else if (path.includes('/conversations/') || path.includes('/workspaces/') || path.endsWith('/workspace')) {
+      if (route.request().method() === 'PATCH' && failSelectionSave) { failSelectionSave = false; await route.fulfill({ status: 503, json: { detail: 'selection_save_unavailable' } }); return; }
       if (route.request().method() === 'PATCH') context = { ...context, ...route.request().postDataJSON() };
       data = workspace();
     }
@@ -95,4 +96,15 @@ test('an unresolved task does not inherit the earlier completed operation scope'
   await page.reload();
   await page.getByRole('button', { name: 'Test case list', exact: true }).click();
   await expect(page.locator('.principle-case-row input:checked')).toHaveCount(2);
+});
+
+ test('confirmation retries a failed scope save after the connection recovers', async ({ page }) => {
+  const s = await setup(page, 2, false, false, true);
+  const failed = page.waitForResponse(r => r.request().method() === 'PATCH' && r.status() === 503);
+  await s.checks.nth(0).uncheck();
+  await failed;
+  await s.confirm.click();
+  await expect.poll(() => s.calls.length).toBe(1);
+  expect(s.calls[0].confirm_modification).toBe(false);
+  expect(s.calls[0].targets).toEqual([{ kind: 'case', case_ids: ['case1'], candidate_refs: [] }]);
 });

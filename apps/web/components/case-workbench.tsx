@@ -641,6 +641,16 @@ export function CaseWorkbench({
     );
   }, [workspace, pick]);
 
+  const ensureTargetSelectionSaved = async () => {
+    if (!workspace) return;
+    // Retry a failed persistence request with the current selection. A rejected
+    // promise must not permanently block sending or confirming the same scope.
+    selectionSave.current = selectionSave.current.catch(() => updateWorkspaceState(workspace.id, {
+      selected_targets: selectedTargets.map(({ label, target }) => ({ label, target })),
+    }));
+    await selectionSave.current;
+  };
+
   const toggleTarget = useCallback(
     (target: ConversationTarget, label: string) => {
       const next = toggleRewriteSelection(selectedTargets, target, label,
@@ -1210,7 +1220,7 @@ export function CaseWorkbench({
     setError("");
     setNotice("");
     try {
-      await selectionSave.current;
+      await ensureTargetSelectionSaved();
       const turn = effectivePendingOperationId
         ? await resumeConversationOperation(effectivePendingOperationId, {
             targets: structuredTargets,
@@ -1327,7 +1337,7 @@ export function CaseWorkbench({
     setBusy(true);
     setError("");
     try {
-      await selectionSave.current;
+      await ensureTargetSelectionSaved();
       const operation = workspace?.operation_plan?.operations.find(item => item.id === operationId);
       const targets = selectedTargets.map(item => item.target);
       const content = prompt.trim();
