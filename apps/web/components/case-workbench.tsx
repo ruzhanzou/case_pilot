@@ -1,4 +1,6 @@
 "use client";
+import { candidateBrief } from "@/lib/candidate-planning";
+import { CandidatePointLinks } from "@/components/candidate-point-links";
 
 // UI identifiers must also work on HTTP origins without crypto.randomUUID.
 import { nanoid } from "nanoid/non-secure";
@@ -2497,13 +2499,13 @@ export function CaseWorkbench({
             {notice && <p role="status" className="principle-brief-guidance">{notice}</p>}
             {selectedBrief.content.planning?.reuse && <details className="principle-brief-guidance principle-brief-strategy">
               <summary>{pick("Generation strategy", "生成策略")} · {({fresh: pick("Fresh", "全新生成"), regression: pick("Regression", "回归补充"), change: pick("Change-based", "按变更生成")})[selectedBrief.content.planning.reuse.strategy]}</summary>
-              <p>{pick("Inspect each test point to review the original case and choose reuse, regeneration, or exclusion. Confirm after reviewing your choices.", "点击测试点的「查看依据与原文」，检查历史用例，选择使用建议、重新生成或不纳入本次，再确认生成候选。")}</p>
+              <p>{pick("Inspect each test point to review the original case and choose reuse, regeneration, or exclusion. Confirm after reviewing your choices.", "点击测试点的「查看关联与复用依据」，检查历史用例，选择使用建议、重新生成或不纳入本次，再确认生成候选。")}</p>
             </details>}
             {(!selectedBrief.content.planning?.test_points?.length || briefView === "text") && <div className="principle-brief-guidance">
               {pick("This is a read-only Markdown artifact. Use the CasePilot conversation on the left to make changes.", "这是一份只读 Markdown 产物。如需调整，请在左侧与 CasePilot 对话。")}
             </div>}
             {briefView === "map" && !!selectedBrief.content.planning?.test_points?.length && <TestPlanningMap
-              key={`${workspace?.id}:${planningFocusPointId}`}
+              key={`${workspace?.id}:${selectedBrief.version}:${planningFocusPointId}`}
               initialPointId={planningFocusPointId}
               planning={selectedBrief.content.planning}
               caseLinks={(workspace?.planning_case_links ?? []).filter(link => link.brief_version === selectedBrief.version)}
@@ -2521,7 +2523,9 @@ export function CaseWorkbench({
                 } catch (caught) { setError(caught instanceof Error ? caught.message : "关联保存失败"); }
                 finally { setBusy(false); }
               }}
-              generatedPointIds={candidates.flatMap((candidate) => (candidate.snapshot.test_point_ids ?? []) as string[])}
+              generatedPointIds={candidates.filter(candidate => workspace && candidateBrief(workspace, candidate)?.version === selectedBrief.version).flatMap(candidate => candidate.snapshot.test_point_ids ?? [])}
+              candidates={candidates.filter(candidate => workspace && candidateBrief(workspace, candidate)?.version === selectedBrief.version)}
+              onOpenCandidate={(id) => { const candidate = candidates.find(item => item.id === id); if (!candidate) return; setArtifactOpen(false); setViewMode("list"); setSelectedCaseId(id); setCandidateDraft(structuredClone(candidate)); setInspectorHidden(false); }}
               title={selectedBrief.content.test_object.length > 120 ? selectedCollection.name : selectedBrief.content.test_object}
               busy={busy}
               editable={selectedBrief.version === activeBrief?.version && !conversationRunning && blockingQuestions.length === 0}
@@ -2759,6 +2763,7 @@ export function CaseWorkbench({
                 setViewMode("list");
                 setInspectorHidden(false);
               }}
+              onPoint={(version, pointId) => { setPlanningFocusPointId(pointId); selectBriefVersion(version); setBriefView("map"); }}
               onCommit={(candidateIds) => void commitCandidates(candidateIds)} onBrief={selectBriefVersion} onGenerate={() => void confirmBriefAndGenerate()}
             />}
             {activePlanReport && !["running", "queued"].includes(selectedTask?.status ?? "") && (
@@ -2888,6 +2893,14 @@ export function CaseWorkbench({
                           {testCase.priority}
                         </i>
                       </button>
+                      {candidate && workspace && <CandidatePointLinks candidate={candidate} conversation={workspace} onOpen={(version, pointId) => { setPlanningFocusPointId(pointId); selectBriefVersion(version); setBriefView("map"); }} />}
+                      {!candidate && <div className="case-row-point-links" aria-label="用例关联测试点"><span className="point-links-label">测试点</span>
+                        {(workspace?.planning_case_links ?? []).filter(link => link.test_case_id === testCase.id).map(link => {
+                          const point = workspace?.test_briefs.find(brief => brief.version === link.brief_version)?.content.planning?.test_points.find(point => point.id === link.test_point_id);
+                          return <button type="button" title={point?.title ?? link.test_point_id} key={`${link.brief_version}:${link.test_point_id}`} onClick={() => { setPlanningFocusPointId(link.test_point_id); selectBriefVersion(link.brief_version); setBriefView("map"); }}>V{link.brief_version} · {point?.title ?? link.test_point_id}{link.stale ? " · 需重新确认" : ""}</button>;
+                        })}
+                        {!(workspace?.planning_case_links ?? []).some(link => link.test_case_id === testCase.id) && <small title="当前对话暂无关联测试点">未关联</small>}
+                      </div>}
                       {candidate && (
                         <label>
                           <input
@@ -3004,6 +3017,7 @@ export function CaseWorkbench({
                   </button>
                 )}
               </header>
+              {candidateDraft && workspace && <CandidatePointLinks candidate={candidateDraft} conversation={workspace} onOpen={(version, pointId) => { setPlanningFocusPointId(pointId); selectBriefVersion(version); setBriefView("map"); setInspectorHidden(true); }} />}
               {!candidateDraft && <section className="case-point-links" aria-label="关联测试点">
                 <strong>关联测试点</strong>
                 {(workspace?.planning_case_links ?? []).filter(link => link.test_case_id === selectedCase.id).map(link => {

@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from copy import deepcopy
 from time import sleep
 from typing import Any, Literal
 from uuid import NAMESPACE_URL, uuid5
@@ -130,6 +131,64 @@ class PlanningAnalysis(ReuseAnalysis):
     """Extract requirements and their features in one pass over large documents."""
 
     feature_points: list[FeaturePoint] = Field(default_factory=list)
+    planning_update_mode: Literal["merge", "replace"] = "merge"
+    superseded_feature_ids: list[str] = Field(default_factory=list)
+    superseded_test_point_ids: list[str] = Field(default_factory=list)
+
+
+def requested_point_count(prompt: str) -> int | None:
+    match = re.search(
+        r"(?:生成|编写|设计|创建|新增|增加|补充|替换为|修改为|恰好)[^。；;\n]{0,24}?"
+        r"(?<!\d)([1-9]\d{0,3})\s*(?:个|条)\s*[^，。；;\n\d]{0,12}?测试点",
+        prompt,
+    )
+    if not match:
+        return None
+    count = int(match.group(1))
+    if count > 500:
+        raise ValueError("单次规划最多支持500个测试点，请缩小范围后重试")
+    return count
+
+
+def reconcile_planning(previous, incoming, analyses):
+    """Apply an explicit revision; omission in an incremental response is not deletion."""
+    if not previous or any(item.planning_update_mode == "replace" for item in analyses):
+        return deepcopy(incoming)
+    removed_features = {ref for item in analyses for ref in item.superseded_feature_ids}
+    removed_points = {ref for item in analyses for ref in item.superseded_test_point_ids}
+    known_features = {item["id"] for item in previous.get("feature_points", [])}
+    known_points = {item["id"] for item in previous.get("test_points", [])}
+    if not removed_features <= known_features or not removed_points <= known_points:
+        raise ValueError("Planning revision references unknown prior IDs")
+    result = deepcopy(incoming)
+    features = {item["id"]: deepcopy(item) for item in previous.get("feature_points", [])
+                if item["id"] not in removed_features}
+    features.update({item["id"]: deepcopy(item) for item in incoming.get("feature_points", [])})
+    points = {}
+    for item in previous.get("test_points", []):
+        if item["id"] in removed_points:
+            continue
+        refs = [ref for ref in item.get("feature_point_ids", []) if ref not in removed_features]
+        if not refs:
+            continue
+        points[item["id"]] = {**deepcopy(item), "feature_point_ids": refs}
+    points.update({item["id"]: deepcopy(item) for item in incoming.get("test_points", [])})
+    if any(
+        ref not in features
+        for point in points.values()
+        for ref in point.get("feature_point_ids", [])
+    ):
+        raise ValueError("Planning revision has dangling feature references")
+    result["feature_points"] = list(features.values())
+    result["test_points"] = list(points.values())
+    for field in ("evidence", "warnings"):
+        result[field] = deepcopy(previous.get(field, []))
+        for item in incoming.get(field, []):
+            if item not in result[field]:
+                result[field].append(deepcopy(item))
+    # Coverage is derived from the current plan; never retain stale matrix rows.
+    result["coverage_matrix"] = []
+    return result
 
 
 def compact_planning_context(common, features):
@@ -189,6 +248,7 @@ def build_planning(
     on_progress=None,
     on_feature_progress=None,
     feature_plans=None,
+    allow_empty=False,
     check_cancelled=lambda: None,
 ):
     """Plan disjoint feature groups concurrently; publish validated, stable snapshots."""
@@ -200,7 +260,7 @@ def build_planning(
         common = {"requirement": local.model_dump(mode="json", exclude={"feature_points"}),
                   "context": batch}
         feature_plan = (feature_plans[index].model_copy(deep=True)
-                        if feature_plans and feature_plans[index].feature_points else complete(
+                        if feature_plans and (feature_plans[index].feature_points or allow_empty) else complete(
             "feature.generated",
             CASE_DESIGN_INSTRUCTION + "按本批资料规划全部相关功能，保留具体规则和来源。不生成用例。"
             "若context包含historical_cases，回归模式包含仍适用的核心场景，变更模式区分旧规则与本次新需求。"
@@ -248,6 +308,12 @@ def build_planning(
             groups.append((compact_planning_context(common, group), group))
 
     if not features:
+        if allow_empty:
+            result = merge_planning([], [], context, len(batches))
+            if on_progress:
+                on_progress(result, {"completed_batches": 0, "total_batches": 0,
+                                     "active_batches": [], "test_point_count": 0})
+            return result
         raise ValueError("planning_has_no_features")
 
     features, groups = consolidate_feature_groups(features, groups, context)

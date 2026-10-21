@@ -4,9 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Background, Controls, Position, ReactFlow, type Node, type Edge, type ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { consumptionSummary, planningActionLabels, pointAction, type PlanningAction } from "@/lib/planning-consumption";
-import type { TestPlanningDto, TestCaseDto, PlanningCaseLinkDto } from "@/lib/casepilot-api";
+import type { TestPlanningDto, TestCaseDto, PlanningCaseLinkDto, WorkspaceCandidateDto } from "@/lib/casepilot-api";
 
-export function TestPlanningMap({ planning, title, busy, editable, onGenerate, onSavePoint, generatedPointIds, onChooseReuse, onChooseMany, caseLinks = [], existingCases = [], onLinkCase, onOpenCase, initialPointId }: {
+export function TestPlanningMap({ planning, title, busy, editable, onGenerate, onSavePoint, generatedPointIds, onChooseReuse, onChooseMany, caseLinks = [], candidates = [], onOpenCandidate, existingCases = [], onLinkCase, onOpenCase, initialPointId }: {
+  candidates?: WorkspaceCandidateDto[];
+  onOpenCandidate?: (id: string) => void;
   onChooseMany?: (ids: string[], choice: "suggested" | "new" | "exclude" | "copy") => Promise<void>;
   initialPointId?: string;
   caseLinks?: PlanningCaseLinkDto[];
@@ -103,7 +105,7 @@ export function TestPlanningMap({ planning, title, busy, editable, onGenerate, o
               {entry.label}
             </button>
             <small>{id.startsWith("point:") ? (formalPoints.has(entry.ids[0]) ? "测试点 · 已关联正式用例" : generatedPointIds.includes(entry.ids[0]) ? "测试点 · 已加入候选" : planning.reuse ? `测试点 · ${planningActionLabels[actionFor(entry.ids[0])]}` : "测试点 · 待生成") : `${selectableIds.length} 个测试点`}</small>
-            {id.startsWith("point:") && <button type="button" aria-label={`查看复用依据：${entry.label}`} onClick={() => setDetailId(entry.ids[0])}>{planning.reuse ? "查看依据与原文" : "查看测试点与关联"}</button>}
+            {id.startsWith("point:") && <button type="button" aria-label={`查看复用依据：${entry.label}`} onClick={() => setDetailId(entry.ids[0])}>{"查看关联与复用依据"}</button>}
             {!id.startsWith("point:") && id !== "root" && <button type="button" onClick={() => { setFocused(id); setDepth(20); }}>聚焦分支</button>}
           </div>
         ) } });
@@ -114,6 +116,11 @@ export function TestPlanningMap({ planning, title, busy, editable, onGenerate, o
   const detail = planning.test_points.find((point) => point.id === detailId);
   const summary = consumptionSummary(planning, selected);
   const detailLinks = caseLinks.filter(link => link.test_point_id === detailId);
+  const activeCandidates = candidates.filter(candidate => ["candidate", "generating"].includes(candidate.status));
+  const detailCandidates = activeCandidates.filter(candidate => candidate.snapshot.test_point_ids?.includes(detailId ?? ""));
+  const formalIds = new Set(caseLinks.filter(link => !link.stale).map(link => link.test_point_id));
+  const pendingIds = new Set(activeCandidates.filter(candidate => candidate.included).flatMap(candidate => candidate.snapshot.test_point_ids ?? []));
+  const uncovered = planning.test_points.filter(point => pointAction(planning, point.id) !== "exclude" && !formalIds.has(point.id) && !pendingIds.has(point.id));
   const decision = planning.reuse?.decisions.find(item => item.point_id === detailId);
   return <section ref={surface} className="test-planning" aria-label="测试规划脑图">
     <div className="test-planning-toolbar">
@@ -146,13 +153,17 @@ export function TestPlanningMap({ planning, title, busy, editable, onGenerate, o
       {selected.length ? "选中范围" : "全部范围"}：纳入 {summary.included} 个测试点（直接复用 {summary.reuse} · 修改 {summary.modify} · 新增 {summary.new} · 复制 {summary.copy}），排除 {summary.exclude} 个。
       当前集合中版本有效且正文未变的复用候选，采纳时关联原用例；其他候选新建用例，不覆盖原资产。
     </p>}
-    <div className="test-planning-canvas" ref={canvas}>
-      <ReactFlow key={`${focused}:${depth}:${search}:${actionFilter}`} nodes={nodes} edges={edges} onInit={(instance) => { flow.current = instance; }} fitView fitViewOptions={{ minZoom: 0.15, maxZoom: 1, padding: 0.12 }} minZoom={0.15} maxZoom={1.5} nodesDraggable={false} nodesConnectable={false}>
-        <Background /><Controls showInteractive={false} />
-      </ReactFlow>
+    <div className="planning-coverage-summary" aria-label="测试点覆盖概览">
+      <strong>正式用例已关联 {formalIds.size} 个测试点 · 候选待审阅 {pendingIds.size} 个测试点 · 待补齐 {uncovered.length} 个测试点</strong>
+      <small>候选待审阅不代表已覆盖；同一测试点可同时有关联用例和待审阅候选。</small>
+      {uncovered.length > 0 && <details><summary>查看待补齐测试点</summary>{uncovered.map(point => <button type="button" key={point.id} onClick={() => setDetailId(point.id)}>{point.title}</button>)}</details>}
     </div>
-    {detail && editable && <details className="planning-point-edit"><summary>编辑测试点</summary><PlanningPointEditor key={detail.id} point={detail} busy={busy} onSave={onSavePoint} /></details>}
     {detail && <aside className="test-planning-detail" aria-label="测试点详情"><button type="button" onClick={() => setDetailId(null)} aria-label="关闭测试点详情">关闭详情</button><strong>{detail.title}</strong>{!planning.reuse && <p>{planning.feature_points.find((feature) => detail.feature_point_ids.includes(feature.id))?.module} / {planning.feature_points.find((feature) => detail.feature_point_ids.includes(feature.id))?.name} / {detail.scenario} / {detail.title}</p>}<p>{detail.objective}</p>
+      <section className="planning-case-links" aria-label="关联候选用例">
+        <strong>候选用例（{detailCandidates.length}）</strong>
+        {!detailCandidates.length && <p>此规划版本暂无待审阅候选。</p>}
+        <ul>{detailCandidates.map(candidate => <li key={candidate.id}><button type="button" onClick={() => onOpenCandidate?.(candidate.id)} disabled={!onOpenCandidate}>{candidate.ref} · {candidate.snapshot.title}</button><span>{candidate.status === "generating" ? "生成中" : candidate.included ? "待审阅 · 已勾选" : "待审阅 · 未勾选"}</span></li>)}</ul>
+      </section>
       <section className="planning-case-links" aria-label="关联用例">
         <strong>关联用例（{detailLinks.length}）</strong>
         <p>关联用于追溯，不会修改用例正文，也不会自动排除生成。已有用例足够覆盖时，可选择“不纳入本次”。</p>
@@ -188,6 +199,13 @@ export function TestPlanningMap({ planning, title, busy, editable, onGenerate, o
       </div>}
       {detail.source_refs?.map((ref, index) => <p key={index}>{ref.label} {ref.locator}：{ref.excerpt}</p>)}
     </aside>}
+    <div className="test-planning-canvas" ref={canvas}>
+      <ReactFlow key={`${focused}:${depth}:${search}:${actionFilter}`} nodes={nodes} edges={edges} onInit={(instance) => { flow.current = instance; }} fitView fitViewOptions={{ minZoom: 0.15, maxZoom: 1, padding: 0.12 }} minZoom={0.15} maxZoom={1.5} nodesDraggable={false} nodesConnectable={false}>
+        <Background /><Controls showInteractive={false} />
+      </ReactFlow>
+    </div>
+    {detail && editable && <details className="planning-point-edit"><summary>编辑测试点</summary><PlanningPointEditor key={detail.id} point={detail} busy={busy} onSave={onSavePoint} /></details>}
+
   </section>;
 }
 

@@ -1228,6 +1228,7 @@ class JobStore:
             phase="brief_review",
             active_job_id=None,
             confirmed_brief_version=None,
+            selected_brief_version=version,
         )
         return version
 

@@ -3108,6 +3108,7 @@ def create_test_brief(
         **dict(conversation.context),
         "phase": "brief_review",
         "confirmed_brief_version": None,
+        "selected_brief_version": brief.version,
         "active_job_id": None,
     }
     conversation.updated_at = datetime.now(UTC)

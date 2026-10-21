@@ -48,6 +48,8 @@ from casepilot_agent.planning import (
     analyze_batches,
     build_planning,
     evidence_batches,
+    reconcile_planning,
+    requested_point_count,
     rewrite_evidence,
 )
 from casepilot_agent.providers import create_embedding_provider, create_provider
@@ -673,6 +675,12 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
             "existing_case_count 是精确数量；若提及已有用例数，必须使用该值。"
             "target_module_path 是已解析的工作区模块路径；新增用例须放在该路径或其子模块。"
             "若用户在修改已有说明，应完整合并其修改并保留未被推翻的信息。"
+            "planning_update_mode默认merge：增加、补充、修改均为增量，未提及的旧测试点由系统保留。"
+            "只有用户明确要求放弃原规划、替换全部范围或从头重新规划时才选择replace。"
+            "增量模式feature_points仅输出本次新增或修改的功能，不重复输出未改动的旧功能。"
+            "若明确修改或删除旧功能，在superseded_feature_ids列出current_test_brief.planning中"
+            "被替代的精确功能ID；仅修改或删除个别测试点时用superseded_test_point_ids，"
+            "并在feature_points描述替代场景。未涉及删除或替代时两列表必须为空，不能因本轮未提及而删除。"
             "先判断用户是否明确指定测试对象，写入 test_object 和 "
             "test_object_specified。若缺少测试对象，只提出一个测试对象澄清项；"
             "角色、流程、规则、约束、风险等其他内容均由你结合上下文分析，"
@@ -700,7 +708,7 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
 
         def batch_input(index, batch):
             return {**stage_input, "context": batch, "model_id": model_id,
-                    "instruction": instruction, "analysis_version": 4, "batch_index": index}
+                    "instruction": instruction, "analysis_version": 5, "batch_index": index}
 
         def load_batch(index, batch):
             with store.connection() as connection:
@@ -897,7 +905,10 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                 store.publish(parsed_job_id, {"event": "feature.generated", "job_id": job_id,
                               "progress": metadata["progress"], **output})
 
+            previous_planning = (payload.get("current_test_brief") or {}).get("planning") or {}
+
             def publish_planning(planning, metadata):
+                planning = reconcile_planning(previous_planning, planning, analyses)
                 progress = 35 + int(60 * metadata["completed_batches"] / max(1, metadata["total_batches"]))
                 metadata = {**metadata, "phase": "test_points", "progress": progress}
                 preview = {**content, "planning": planning}
@@ -909,16 +920,20 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                 store.publish(parsed_job_id, {"event": "test_point.generated", "job_id": job_id,
                               "progress": progress, **output})
 
-            count = requested_case_count(GenerationRequest(
+            count = requested_point_count(str(payload["prompt"])) or requested_case_count(GenerationRequest(
                 prompt=str(payload["prompt"]), markdown_content=requirement.summary))
             content["planning"] = build_planning(
                 requirement, context, complete_plan, analyses, target_count=count,
                 on_progress=publish_planning,
+                allow_empty=bool(previous_planning) and all(
+                    item.planning_update_mode == "merge" for item in analyses
+                ),
                 on_feature_progress=publish_features,
                 feature_plans=[FeaturePlan(feature_points=item.feature_points) for item in analyses]
                 if all(isinstance(item, PlanningAnalysis) for item in analyses) else None,
                 check_cancelled=lambda: ensure_not_cancelled(store, parsed_job_id),
             )
+            content["planning"] = reconcile_planning(previous_planning, content["planning"], analyses)
             content["planning"]["reuse"] = plan_reuse(
                 content["planning"], strategy, sources, complete_plan, str(payload["prompt"]),
                 progress=lambda: publish_work(store, job, "reuse.comparing", 95),
@@ -1555,6 +1570,24 @@ def _candidate_snapshot_to_draft(
     return RewriteCaseDraft.model_validate(normalized)
 
 
+def _rewrite_review_payload(base, candidate, previous):
+    """A failed follow-up retains the last reviewable draft and its cumulative diff."""
+    retained = (
+        not candidate.quality.passed and previous
+        and previous.get("status") not in {"applied", "rejected"}
+        and previous.get("field_diff")
+    )
+    if retained:
+        candidate = candidate.model_copy(update={
+            "proposed": _candidate_snapshot_to_draft(base.id, previous["proposed_snapshot"]),
+            "reason": "本轮改写未通过校验，已保留上一轮待审阅修改。" + candidate.reason,
+        })
+    result = rebase_rewrite_candidate(base, candidate).model_dump(mode="json")
+    if not candidate.quality.passed and not retained:
+        result["diff"] = []
+    return result
+
+
 @celery_app.task(name="casepilot.agent.rewrite_batch")
 def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
     parsed_job_id = UUID(job_id)
@@ -1601,13 +1634,13 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
             for ref, candidate in completed.items():
                 base, kind, extra = preview_bases[ref]
                 original = _candidate_snapshot_to_draft(ref, base)
-                rebased = rebase_rewrite_candidate(original, candidate).model_dump(mode="json")
                 previous = previous_proposals.get(ref)
+                rebased = _rewrite_review_payload(original, candidate, previous)
                 preview_items.append({
                     "ref": ref, "target_type": kind, **extra, "base_snapshot": base,
                     "previous_snapshot": requests[ref].test_case.model_dump(mode="json") if previous else None,
                     "candidate_revision_id": None, "proposed_snapshot": rebased["proposed"],
-                    "field_diff": rebased["diff"] if candidate.quality.passed else [], "reason": rebased["reason"], "quality": rebased["quality"],
+                    "field_diff": rebased["diff"], "reason": rebased["reason"], "quality": rebased["quality"],
                     "status": "ready", "proposal_version": int(payload.get("task_revision") or 1),
                 })
             with store.connection() as connection:
@@ -1644,10 +1677,9 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
                 previous = None
             working = previous["proposed_snapshot"] if previous else snapshot
             candidate = rewritten[str(case_id)]
-            candidate = rebase_rewrite_candidate(
-                RewriteCaseDraft.model_validate(snapshot), candidate
+            candidate_payload = _rewrite_review_payload(
+                RewriteCaseDraft.model_validate(snapshot), candidate, previous
             )
-            candidate_payload = candidate.model_dump(mode="json")
             items.append(
                 {
                     "ref": str(case_id),
@@ -1662,7 +1694,7 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
                     ),
                     "previous_change_set_id": payload.get("previous_change_set_id"),
                     "proposed_snapshot": candidate_payload["proposed"],
-                    "field_diff": candidate_payload["diff"] if candidate.quality.passed else [],
+                    "field_diff": candidate_payload["diff"],
                     "reason": candidate_payload["reason"],
                     "quality": candidate_payload["quality"],
                     "status": "ready",
@@ -1680,8 +1712,7 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
                 if previous else draft
             )
             candidate = rewritten[ref]
-            candidate = rebase_rewrite_candidate(draft, candidate)
-            candidate_payload = candidate.model_dump(mode="json")
+            candidate_payload = _rewrite_review_payload(draft, candidate, previous)
             items.append(
                 {
                     "ref": ref,
@@ -1694,7 +1725,7 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
                     ),
                     "previous_change_set_id": payload.get("previous_change_set_id"),
                     "proposed_snapshot": candidate_payload["proposed"],
-                    "field_diff": candidate_payload["diff"] if candidate.quality.passed else [],
+                    "field_diff": candidate_payload["diff"],
                     "reason": candidate_payload["reason"],
                     "quality": candidate_payload["quality"],
                     "status": "ready",

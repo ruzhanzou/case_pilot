@@ -4,7 +4,13 @@ from collections.abc import Callable
 from typing import Annotated, Any
 
 from agents.exceptions import ModelBehaviorError
-from openai import APIConnectionError, APITimeoutError, BadRequestError, InternalServerError, RateLimitError
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    BadRequestError,
+    InternalServerError,
+    RateLimitError,
+)
 from pydantic import Field, ValidationError, create_model
 
 from casepilot_agent.contracts import (
@@ -24,9 +30,9 @@ from casepilot_agent.contracts import (
     RequirementAnalysis,
     RewriteCandidate,
     RewriteCaseDraft,
+    RewriteFields,
     RewritePatchBatch,
     RewritePatchItem,
-    RewriteFields,
     RewriteRequest,
     SourceRef,
     StructuredResultT,
@@ -54,6 +60,9 @@ UNKNOWN_TEST_OBJECT_TERMS = (
 )
 
 
+from casepilot_agent.rewrite_guards import preservation_error, preserves
+
+
 class RewriteContentError(ValueError):
     """Repairable local content error; identity and scope errors remain fatal."""
 
@@ -73,25 +82,9 @@ def validate_rewrite_candidate(request, candidate):
         s.expected.strip() for s in proposed.steps
     ):
         raise RewriteContentError("改写必须保留有效操作和可观察的预期结果")
-    instruction = request.instruction
-    protected = {
-        "title": "标题",
-        "module": "模块",
-        "priority": "优先级",
-        "preconditions": "前置条件",
-        "tags": "标签",
-    }
-    for field, label in protected.items():
-        if re.search(
-            rf"(?:保留|保持|不修改|不改变|不改动)[^，。；;\n]{{0,12}}{label}", instruction
-        ) and getattr(original, field) != getattr(proposed, field):
-            raise ValueError(f"改写违反保留{label}的要求")
-    if re.search(
-        r"(?:保留|保持|不修改|不改变|不改动)[^，。；;\n]{0,12}(?:操作|执行)?步骤", instruction
-    ) and [s.action for s in original.steps if s.action.strip()] != [
-        s.action for s in proposed.steps if s.action.strip()
-    ]:
-        raise ValueError("改写违反保留操作步骤的要求")
+    error = preservation_error(request, proposed)
+    if error:
+        raise RewriteContentError(error)
     evidence = request.context.get("evidence", []) or request.context.get("sources", [])
     originals = [ref.model_dump() for ref in original.source_refs]
     for ref in proposed.source_refs:
@@ -996,6 +989,7 @@ class GenerationPipeline:
         explicit = _explicit_rewrite_candidate(request)
         if explicit is not None:
             return explicit
+        validation_request = request
         if request.context:
             request = request.model_copy(update={"instruction": request.instruction +
                 "\n结合context中的任务资料，只修改当前用例受影响的字段。"
@@ -1005,7 +999,7 @@ class GenerationPipeline:
         for field in ("id", "automated", "status"):
             if getattr(candidate.proposed, field) != getattr(request.test_case, field):
                 raise ValueError(f"改写不能改变系统字段：{field}")
-        return rebase_rewrite_candidate(request.test_case, validate_rewrite_candidate(request, candidate))
+        return rebase_rewrite_candidate(request.test_case, validate_rewrite_candidate(validation_request, candidate))
 
     def rewrite_many(self, requests: dict[str, RewriteRequest], before_batch=None, on_batch=None, on_usage=None) -> dict[str, RewriteCandidate]:
         results = {}
@@ -1032,8 +1026,8 @@ class GenerationPipeline:
                 source_index = Annotated[int, Field(ge=0, lt=len(batch_payload["source_references"]))]
                 fields_type = create_model("BoundedRewriteFields", __base__=RewriteFields,
                     source_ref_indexes=(list[source_index] | None, None))
-                if all(re.search(r"(?:保留|保持|不修改|不改变|不改动)[^，。；;\n]{0,12}(?:操作|执行)?步骤",
-                                 request.instruction) for _, request in group):
+                if all(preserves(request.instruction, r"(?:操作|执行)?步骤")
+                       for _, request in group):
                     fields_type = create_model("PreservedActionsRewriteFields", __base__=fields_type,
                                                steps=(type(None), None))
                 item_type = create_model("BoundedRewriteItem", __base__=RewritePatchItem,
@@ -1051,10 +1045,15 @@ class GenerationPipeline:
                         "禁止输出source_refs或抄写来源正文、文档ID；服务器按索引恢复原始来源。"
                         "ref是服务端目标标识，必须逐字保留。"
                         "每条changes只包含instruction要求且实际变化的字段及其新值；未修改字段必须省略。"
-                        "允许字段：title,module,priority,case_type,tags,preconditions,steps,expected_updates,source_ref_indexes。"
+                        "允许字段：title,module,priority,case_type,tags,preconditions,steps,expected_updates,step_updates,append_steps,source_ref_indexes。"
                         "仅修改预期时使用expected_updates，每项含从0开始的step_index及新expected；不返回steps。"
                         "保留操作步骤时禁止返回steps，必须用expected_updates逐项修正预期；服务器保留全部action。"
-                        "数组变化时返回完整新数组；禁止返回id、before、diff或完整用例。"
+                        "新增步骤优先用append_steps，仅返回要追加的步骤；系统自动保留全部旧步骤。"
+                        "修改现有步骤优先用step_updates，每项含step_index和要改的action或expected；未改字段省略。"
+                        "step_updates和expected_updates不能修改同一步骤，不能与完整steps同时返回。"
+                        "要求预期结果保持不变时，禁止修改任何旧expected；拆分步骤也须完整保留原校验点。"
+                        "只有明确要求删除、合并或精简时才可减少步骤，否则保留所有旧步骤。"
+                        "其他数组变化时返回完整新数组；禁止返回id、before、diff或完整用例。"
                         "保留已有步骤数量和未要求修改的步骤内容，不能套用新生成用例的步骤数限制。"
                         "保留操作步骤仅约束action；用户要求核对或修正预期时，应逐项修改expected，不能因保留操作而跳过预期核对。"
                         "原文未规定的提示文案、状态、响应字段或额外副作用必须从预期中删除，即使符合常见实现。"
@@ -1074,7 +1073,8 @@ class GenerationPipeline:
                 invalid.update({ref: "缺少改写结果" for ref in expected if ref not in refs})
                 batch_results = {}
                 allowed = {"title", "module", "priority", "case_type", "tags",
-                           "preconditions", "steps", "expected_updates", "source_refs"}
+                           "preconditions", "steps", "expected_updates", "step_updates",
+                           "append_steps", "source_refs"}
                 for raw in batch.items:
                     ref = raw.get("ref") if isinstance(raw, dict) else raw.ref
                     try:
@@ -1095,15 +1095,22 @@ class GenerationPipeline:
                         raise ValueError("批量改写包含不允许修改的字段")
                     original = expected[item.ref].test_case
                     expected_updates = changes.pop("expected_updates", None)
-                    if expected_updates is not None:
-                        if "steps" in changes or len({u["step_index"] for u in expected_updates}) != len(expected_updates):
-                            raise ValueError("预期改写不能重复索引或同时覆盖步骤")
+                    step_updates = changes.pop("step_updates", None)
+                    append_steps = changes.pop("append_steps", None)
+                    if any(value is not None for value in (expected_updates, step_updates, append_steps)):
+                        updates = (expected_updates or []) + (step_updates or [])
+                        if "steps" in changes or len({u["step_index"] for u in updates}) != len(updates):
+                            invalid[item.ref] = "步骤增量不能重复索引或同时覆盖完整steps"
+                            continue
                         steps = [step.model_dump(mode="json") for step in original.steps]
-                        for update in expected_updates:
-                            if update["step_index"] >= len(steps):
-                                raise ValueError("预期改写步骤索引越界")
-                            steps[update["step_index"]]["expected"] = update["expected"]
-                        changes["steps"] = steps
+                        if any(u["step_index"] >= len(steps) for u in updates):
+                            invalid[item.ref] = "步骤改写索引越界"
+                            continue
+                        for update in updates:
+                            for field in ("action", "expected"):
+                                if field in update and update[field] is not None:
+                                    steps[update["step_index"]][field] = update[field]
+                        changes["steps"] = steps + (append_steps or [])
                     try:
                         proposed = RewriteCaseDraft.model_validate({
                             **original.model_dump(mode="json"), **changes,

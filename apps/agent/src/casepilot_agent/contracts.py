@@ -318,6 +318,13 @@ class ExpectedUpdate(BaseModel):
     expected: str
 
 
+class StepUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    step_index: int = Field(ge=0)
+    action: str | None = None
+    expected: str | None = None
+
+
 class RewriteFields(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str | None = None
@@ -328,6 +335,8 @@ class RewriteFields(BaseModel):
     preconditions: list[str] | None = None
     steps: list[TestStep] | None = None
     expected_updates: list[ExpectedUpdate] | None = None
+    step_updates: list[StepUpdate] | None = None
+    append_steps: list[TestStep] | None = None
     source_ref_indexes: list[int] | None = None
 
 
