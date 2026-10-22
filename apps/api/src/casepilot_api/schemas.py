@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import (
     field_validator,
@@ -429,6 +429,8 @@ class ConversationTarget(BaseModel):
 
 
 class ConversationMessageCreate(BaseModel):
+    generation_strategy: Literal["select", "generate", "select_and_generate"] | None = None
+    source_collection_ids: list[UUID] = Field(default_factory=list, max_length=100)
     target_scope: str = Field(default="inferred", pattern=r"^(inferred|selected)$")
     content: str = Field(min_length=1, max_length=8000)
     model_id: str = Field(
@@ -528,6 +530,8 @@ class ConversationOperationPlanView(BaseModel):
 
 
 class TestBriefContent(BaseModel):
+    asset_selection: dict = Field(default_factory=dict)
+    generation_strategy: Literal["select", "generate", "select_and_generate"] | None = None
     planning: dict = Field(default_factory=dict)
     test_object: str = Field(default="", max_length=1000)
     test_objective: str = Field(default="", max_length=8000)
@@ -566,6 +570,10 @@ class TestBriefContent(BaseModel):
             ):
                 raise ValueError("planning_ids_invalid")
             for feature in features:
+                # Older/model-produced plans may omit a module label. Match the
+                # generator's grouping fallback without inventing a new domain.
+                if isinstance(feature.get("module"), str) and not feature["module"].strip():
+                    feature["module"] = feature.get("name", "")
                 if not all(
                     isinstance(feature.get(key), str) and feature[key].strip()
                     for key in ("id", "name", "module")
@@ -646,6 +654,7 @@ class TestBriefCreate(BaseModel):
 
 
 class TestBriefConfirmRequest(BaseModel):
+    reuse_confirmation: Literal["reuse", "fresh"] | None = None
     selected_test_point_ids: list[str] = Field(default_factory=list, max_length=1000)
     version: int = Field(ge=1)
     model_id: str = Field(
@@ -934,3 +943,9 @@ class TaskReviewDecisionUpdate(BaseModel):
     selected: list[int] = Field(default_factory=list, max_length=1000)
     ignored: list[int] = Field(default_factory=list, max_length=1000)
     keep_by_finding: dict[int, str] = Field(default_factory=dict)
+
+
+class GenerationAssetConfirmRequest(BaseModel):
+    test_point_ids: list[str] | None = Field(default=None, max_length=1000)
+    version: int = Field(ge=1)
+    case_ids: list[str] = Field(default_factory=list, max_length=500)

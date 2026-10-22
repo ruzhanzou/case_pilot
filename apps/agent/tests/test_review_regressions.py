@@ -449,3 +449,40 @@ def test_rewrite_allows_existing_empty_setup_but_rejects_losing_required_setup(o
     else:
         with pytest.raises(RewriteContentError, match="前置条件"):
             validate_rewrite_candidate(request, candidate)
+
+
+def test_confirmed_assets_reach_rewrite_when_space_knowledge_disabled(monkeypatch):
+    from casepilot_agent import tasks
+    source = {'key': 'asset:one', 'kind': 'formal', 'label': '源用例',
+              'locator': 'v1', 'revision': 'revision-1',
+              'snapshot': {'case_key': 'CASE-1'}, 'collections': []}
+    context = {'evidence': []}
+    monkeypatch.setattr(tasks, '_context_payload', Mock(return_value=context))
+    def extract(store, job, pipeline, supplied, selected):
+        assert supplied['approved_reference_assets'] == [source]
+        assert len(selected['selected_cases']) == 1
+        return supplied
+    monkeypatch.setattr(tasks, '_rewrite_reference_context', extract)
+    original = case()
+    prepared = tasks._prepare_rewrite_requests(Mock(), {'input_payload': {
+        'use_space_knowledge': False, 'asset_reference_sources': [source]}}, Mock(),
+        {'one': RewriteRequest(test_case=original, instruction='参考原用例改写登录步骤')})
+    assert prepared['one'].context['approved_reference_assets'] == [source]
+    assert any('asset:one' in ref.excerpt for ref in prepared['one'].test_case.source_refs)
+    assert all('asset:one' not in ref.excerpt for ref in original.source_refs)
+
+
+def test_confirmed_excel_rows_replace_full_workbook_before_model_request():
+    from casepilot_agent.tasks import _scope_confirmed_asset_evidence
+    source = {'kind': 'excel', 'document_id': 'book', 'chunk_id': 'sheet',
+              'label': '历史.xlsx', 'locator': '行2', 'snapshot': {'original_id': 'OLD-001', 'steps': [{'action': '等待420秒', 'expected': 'E731'}]}}
+    requirement = {'document_id': 'req', 'excerpt': '当前有效期300秒'}
+    context = {'evidence': [requirement, {'document_id': 'book', 'excerpt': 'OLD-001 OLD-002 OTHER-PAY', 'reference_cases': ['unselected']},
+                            {'document_id': 'other', 'material_role': 'historical_cases', 'excerpt': 'OTHER-SECRET'}]}
+    result = _scope_confirmed_asset_evidence(context, [source])
+    import json
+    payload = json.dumps(result, ensure_ascii=False)
+    assert 'OLD-001' in payload and '420' in payload and '300' in payload
+    assert 'OLD-002' not in payload and 'OTHER-PAY' not in payload and 'OTHER-SECRET' not in payload
+    assert result['evidence'][0] == requirement
+    assert len(context['evidence']) == 3

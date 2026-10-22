@@ -149,6 +149,22 @@ class MockProvider:
         model_id: str,
     ) -> tuple[StructuredResultT, UsageMetadata]:
         del instruction
+        if stage == "reuse.objects_matched":
+            test_object = str(payload.get("test_object", "")).strip().casefold()
+            result = result_type.model_validate({"matches": [{
+                "source_key": source["key"],
+                "test_object_match": "same" if test_object and test_object == str(
+                    source["snapshot"].get("test_object") or source["snapshot"].get("module", "")
+                ).strip().casefold() else "unknown",
+                "reason": "模拟模式仅接受明确测试对象或模块完全一致，其余需真实模型核对",
+            } for source in payload.get("sources", [])]})
+            return result, UsageMetadata(model="mock", latency_ms=0)
+        if stage == "reuse.compared":
+            result = result_type.model_validate({"decisions": [{
+                "point_id": point["id"], "action": "new", "source_key": None,
+                "test_object_match": "unknown", "reason": "模拟模式不推断历史规则仍然适用",
+            } for point in payload.get("test_points", [])]})
+            return result, UsageMetadata(model="mock", latency_ms=0)
         if payload.get("output_contract") == "case_batch_v2" and stage == "test_case.generated":
             result = result_type.model_validate({"test_cases": [
                 {"slot": item["slot"], "title": item["point"]["title"],

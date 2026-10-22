@@ -256,6 +256,9 @@ class UsageMetadata(BaseModel):
 
 
 class GenerationRequest(BaseModel):
+    test_object: str = Field(default="", max_length=1000)
+    batch_size: int | None = Field(default=None, ge=1, le=10)
+    batch_concurrency: int | None = Field(default=None, ge=1, le=4)
     output_contract: str = "legacy"
     confirmed_plan: dict[str, Any] = Field(default_factory=dict)
     prompt: str = Field(min_length=1, max_length=8000)

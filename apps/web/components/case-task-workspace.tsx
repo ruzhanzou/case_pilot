@@ -10,6 +10,7 @@ type Task = ReturnType<typeof workspaceTasks>[number];
 type Props = {
   tasks: Task[];
   selectedId: string;
+  displayedVersion?: Task;
   onSelect: (id: string) => void;
   labels: Record<ConversationIntent, string>;
   statusLabels: Record<string, string>;
@@ -22,13 +23,21 @@ type Props = {
   children?: ReactNode;
 };
 
-export function CaseTaskWorkspace({ tasks, selectedId, onSelect, labels, statusLabels, running, hasLiveResults, onConversation, onArtifact, onDiscard, activeTaskId, children }: Props) {
-  const { pick, locale } = useI18n();
+export function CaseTaskWorkspace({ tasks, selectedId, displayedVersion, onSelect, labels, statusLabels, running, hasLiveResults, onConversation, onArtifact, onDiscard, activeTaskId, children }: Props) {
+  const { pick } = useI18n();
   const [historyOpen, setHistoryOpen] = useState(false);
   const task = tasks.find((item) => item.id === selectedId) ?? tasks[0];
+  const displayedTask = displayedVersion ?? task;
+  const historical = Boolean(task && displayedTask?.operation?.id !== task.operation?.id);
+  const versionNumber = task?.versions ? task.versions.findIndex(item => item.operation?.id === displayedTask?.operation?.id) + 1 : 0;
   const isRunning = task && !task.waitingOn && ["queued", "running"].includes(task.status);
   const needsDetails = task && ["awaiting_target", "awaiting_clarification"].includes(task.status);
-  const taskLabel = (item: Task) => item.message.metadata.action === "module_created" ? pick("Create module", "创建模块") : labels[(item.operation?.payload.task_intent ?? item.message.intent) as ConversationIntent];
+  const taskLabel = (item: Task) => item.message.metadata.action === "module_created" ? pick("Create module", "创建模块") : labels[(item.operation?.intent ?? item.message.intent) as ConversationIntent];
+  const resultTitle = displayedTask?.message.metadata.change_set_id
+    ? pick("Review changes", "修改审阅")
+    : displayedTask?.message.intent === "CASE_QUERY" ? pick("Query results", "查询结果")
+    : displayedTask?.message.intent === "CASE_GENERATE" ? pick("Generation results", "生成结果")
+    : displayedTask ? taskLabel(displayedTask) : "";
   const sourceTask = tasks.find((item) => item.id === task?.sourceTaskId);
   const statusLabel = (status: string) => statusLabels[status] ?? ({
     superseded: pick("Superseded", "已被新方案替代"),
@@ -46,7 +55,7 @@ export function CaseTaskWorkspace({ tasks, selectedId, onSelect, labels, statusL
     <section className="case-task-workspace" aria-label={pick("Case workstation", "用例工作区")}>
       {!task ? <div className="case-task-empty"><MessageSquare size={30} /><h3>{pick("Case results appear here", "在这里查看用例结果")}</h3><p>{pick("Ask to generate, modify, query or review cases. Results will be saved here.", "在左侧描述生成、修改、查询或评审用例的需求，生成、查询和修改结果将保留在这里。")}</p><button type="button" disabled={running} onClick={() => onConversation()}>{pick("Go to conversation", "前往对话区")}</button>{children}</div> : (
         <div className="case-task-layout" data-history-open={historyOpen}>
-          <nav hidden={!historyOpen} id="case-task-history" className="case-task-history" aria-label={pick("Task history", "历史任务")}>
+          <nav hidden={!historyOpen} id="case-task-history" onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); setHistoryOpen(false); document.querySelector<HTMLElement>('[aria-controls="case-task-history"]')?.focus(); } }} className="case-task-history" aria-label={pick("Task history", "历史任务")}>
             <h3><History size={15} />{pick("Case results", "用例结果")}</h3>
             {tasks.map((item, index) => <button type="button" key={item.id} aria-pressed={item.id === task.id} onClick={() => { onSelect(item.id); setHistoryOpen(false); }}>
               <span className="case-task-history__title"><strong>{taskLabel(item)}</strong><small>#{tasks.length - index}</small></span>
@@ -54,18 +63,17 @@ export function CaseTaskWorkspace({ tasks, selectedId, onSelect, labels, statusL
               <span className="case-task-status" data-status={item.status}>{icon(item.status)}{item.waitingOn ? pick("Waiting for previous task", "等待前置任务") : statusLabel(item.status)}</span>
             </button>)}
           </nav>
-          <div className="case-task-detail" key={task.id}>
-            <header><div><h3>{taskLabel(task)}{task.versions && <small> · V{task.versions.length}</small>}</h3>{task.message.created_at && <time dateTime={task.message.created_at}>{new Date(task.message.created_at).toLocaleString(locale === "en" ? "en-US" : "zh-CN")}</time>}</div><div className="case-task-detail__actions"><span className="case-task-status" data-status={task.status}>{icon(task.status)}{statusLabel(task.status)}</span><button type="button" aria-expanded={historyOpen} aria-controls="case-task-history" onClick={() => setHistoryOpen(!historyOpen)}><History size={15} />{pick("Result history", "历史结果")} · {tasks.length}</button></div></header>
-            {!hasLiveResults && (task.waitingOn || isRunning || task.status.startsWith("awaiting_") && task.status !== "awaiting_confirmation" || ["failed", "cancelled"].includes(task.status)) && <div className="case-task-running" role="status"><p>{needsDetails
-              ? task.message.content || pick("Select the cases to modify or describe the changes in the conversation.", "请在对话区选择要修改的用例或补充修改要求。")
+          <div className="case-task-detail" key={task.id} tabIndex={-1} role="region" aria-label={pick("Current task result", "当前任务结果")}>
+            <header><div><h3>{resultTitle}{versionNumber > 0 && <small> · V{versionNumber}</small>}</h3></div><div className="case-task-detail__actions"><span className="case-task-status" data-status={historical ? "superseded" : task.status}>{historical ? pick("Historical · read only", "历史版本 · 只读") : displayedTask.message.metadata.change_set_id && task.status === "awaiting_confirmation" ? pick("Awaiting review", "待审阅") : statusLabel(task.status)}</span><button type="button" onClick={() => onConversation(displayedTask.request?.id ?? displayedTask.messageIds.at(-1))}><MessageSquare size={14} />{pick("View request in conversation", "在对话区查看需求")}</button><button type="button" aria-expanded={historyOpen} aria-controls="case-task-history" onClick={() => { setHistoryOpen(!historyOpen); if (!historyOpen) requestAnimationFrame(() => document.querySelector<HTMLElement>('#case-task-history button[aria-pressed="true"]')?.focus()); }}><History size={15} />{pick("Result history", "历史结果")} · {tasks.length}</button></div></header>
+            {!historical && !hasLiveResults && (task.waitingOn || isRunning || task.status.startsWith("awaiting_") && task.status !== "awaiting_confirmation" || ["failed", "cancelled"].includes(task.status)) && <div className="case-task-running" role="status"><p>{needsDetails
+              ? pick("Confirm the affected cases and requirements in the conversation. Suggestions will appear here.", "请在对话区确认影响范围和修改要求，变更建议将在这里展示。")
               : pick("Results will appear here. Follow progress or provide details in the conversation.", "结果将在这里展示，请在对话区查看进度或补充信息。")}</p><button type="button" onClick={() => onConversation(task.messageIds.at(-1))}>{needsDetails ? pick("Provide details", "补充信息") : pick("View conversation", "查看对话")}</button></div>}
             {task.message.metadata.action === "module_created" && <button type="button" onClick={() => onArtifact(task)}>{pick("View module", "查看模块")}</button>}
-            {onDiscard && task.operation && (task.id === activeTaskId || task.message.intent === "CASE_GENERATE" && task.status === "awaiting_confirmation") && <button type="button" disabled={running} onClick={() => onDiscard(task)}>{pick("Abandon this task", "放弃当前任务")}</button>}
             {children}
-            <div className="case-task-context">
-              <button type="button" onClick={() => onConversation(task.request?.id ?? task.messageIds.at(-1))}><MessageSquare size={14} />{pick("View request in conversation", "在对话区查看需求")}</button>
-              {sourceTask && <button type="button" className="task-source-link" onClick={() => onSelect(sourceTask.id)}>{pick("Source result", "来源结果")} · {taskLabel(sourceTask)}</button>}
-            </div>
+            {(onDiscard || sourceTask) && <details className="case-task-context"><summary>{pick("Task actions", "任务操作")}</summary>
+            {!historical && onDiscard && task.operation && (task.id === activeTaskId || task.message.intent === "CASE_GENERATE" && task.status === "awaiting_confirmation") && <button type="button" disabled={running} onClick={() => onDiscard(task)}>{pick("Abandon this task", "放弃当前任务")}</button>}
+              {sourceTask && <button type="button" onClick={() => onSelect(sourceTask.id)}>{pick("Source result", "来源结果")} · {taskLabel(sourceTask)}</button>}
+            </details>}
           </div>
         </div>
       )}

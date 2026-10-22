@@ -10,6 +10,10 @@ class AgentSettings(BaseSettings):
         extra="ignore",
     )
 
+    asset_match_concurrency: int = Field(
+        default=4, ge=1, le=4,
+        validation_alias="CASEPILOT_ASSET_MATCH_CONCURRENCY",
+    )
     provider: str = Field(default="mock", validation_alias="CASEPILOT_AGENT_PROVIDER")
     base_url: str = Field(
         default="https://ark.cn-beijing.volces.com/api/coding/v3",

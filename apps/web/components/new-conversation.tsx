@@ -9,6 +9,7 @@ import {
   confirmConversationOperationCollection,
   listGenerationModels,
   type AgentModelId,
+  type GenerationStrategy,
   type CaseCollectionDto,
   type ConversationDto,
   type ConversationIntent,
@@ -19,6 +20,7 @@ import { useI18n, type TranslationKey } from "@/lib/i18n";
 import {
   ArrowUp,
   BookOpen,
+  ChevronDown,
   Bot,
   History,
   Library,
@@ -46,6 +48,8 @@ type NewConversationProps = {
   onSend: (input: {
     content: string;
     modelId: AgentModelId;
+    generationStrategy: GenerationStrategy;
+    sourceCollectionIds: string[];
   }) => Promise<void>;
   onRemoveAttachment: (id: string) => Promise<void>;
   onUploadFiles: (files: File[], onProgress?: (percent: number) => void) => Promise<void>;
@@ -113,6 +117,8 @@ export function NewConversation({
 }: NewConversationProps) {
   const { t, pick } = useI18n();
   const [prompt, setPrompt] = useState("");
+  const [generationStrategy, setGenerationStrategy] = useState<GenerationStrategy>("generate");
+  const [sourceCollectionIds, setSourceCollectionIds] = useState<string[]>([]);
   const [modelId, setModelId] = useState<AgentModelId>("auto");
   const [models, setModels] = useState([
     { id: "auto" as AgentModelId, label: t("model.auto") },
@@ -148,7 +154,7 @@ export function NewConversation({
   );
   const effectiveCollectionChoice = newCollectionName
     ? ""
-    : collectionChoice || suggestedCollectionId;
+    : collectionPrompt?.metadata.require_new_collection ? "" : collectionChoice || suggestedCollectionId;
 
   useEffect(() => {
     void listGenerationModels()
@@ -198,7 +204,7 @@ export function NewConversation({
     const content = prompt.trim();
     if (!content || saving) return;
     setPrompt("");
-    void onSend({ content, modelId }).catch(() => {
+    void onSend({ content, modelId, generationStrategy, sourceCollectionIds: generationStrategy === "generate" ? [] : sourceCollectionIds }).catch(() => {
       setPrompt(content);
     });
   };
@@ -300,6 +306,18 @@ export function NewConversation({
           )}
           {uploading ? pick("Preparing attachment…", "正在准备附件…") : saving ? t("conversation.processing") : t("conversation.autoIntent")}
         </span>
+        <label className="new-conversation__strategy-picker">
+        <select aria-label={pick("Generation strategy", "用例生成策略")} value={generationStrategy} disabled={saving} onChange={event => {
+          const strategy = event.target.value as GenerationStrategy;
+          setGenerationStrategy(strategy);
+          setPrompt(current => `策略：${strategy}\n${current.replace(/^策略：[a-z_]+\n/, "")}`);
+        }}>
+          <option value="generate">{pick("Generate new cases", "直接生成")}</option>
+          <option value="select">{pick("Select existing assets", "选择现有资产组成新集合")}</option>
+          <option value="select_and_generate">{pick("Reuse, then generate missing coverage", "先复用，再补充生成")}</option>
+        </select>
+          <span aria-hidden="true">{generationStrategy === "generate" ? pick("Generate", "直接生成") : generationStrategy === "select" ? pick("Select assets", "选用资产") : pick("Reuse + generate", "复用并生成")}<ChevronDown size={14} /></span>
+        </label>
         <label className="new-conversation__model">
           <span className="sr-only">{t("conversation.model")}</span>
           <select
@@ -329,6 +347,17 @@ export function NewConversation({
           )}
         </button>
       </footer>
+      {generationStrategy !== "generate" && <fieldset className="new-conversation__sources" disabled={saving}>
+        <legend>{pick("Source collections (multiple)", "来源用例集（可多选）")}</legend>
+        {generationStrategy === "select_and_generate" && <p>{pick("Leave empty to search by test object across the space.", "不选集合时，按测试对象检索空间内的用例资产。")}</p>}
+        <div className="new-conversation__source-list">
+        {collections.map(collection => <label key={collection.id}>
+          <input type="checkbox" checked={sourceCollectionIds.includes(collection.id)} onChange={event => setSourceCollectionIds(current => event.target.checked ? [...current, collection.id] : current.filter(id => id !== collection.id))} />
+          <span>{collection.name}<small>{pick(`${collection.case_count} cases`, `${collection.case_count} 条用例`)}</small></span>
+        </label>)}
+        </div>
+        {generationStrategy === "select" && !sourceCollectionIds.length && <p>{pick("Choose multiple source collections, or leave empty to search by test object.", "可选择多个来源集合；不选择时按测试对象检索。")}</p>}
+      </fieldset>}
       {!hasConversation && (
         <div className="new-conversation__context">
           <span>
@@ -405,7 +434,7 @@ export function NewConversation({
               <p>{t("conversation.collectionLocked")}</p>
               <select
                 value={effectiveCollectionChoice}
-                disabled={saving || confirmingCollection}
+                disabled={saving || confirmingCollection || Boolean(collectionPrompt?.metadata.require_new_collection)}
                 onChange={(event) => {
                   setCollectionChoice(event.target.value);
                   setNewCollectionName("");

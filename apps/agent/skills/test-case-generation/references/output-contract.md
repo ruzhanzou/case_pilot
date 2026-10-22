@@ -1,22 +1,12 @@
 # Output contract
 
-Generation proceeds through requirement analysis, feature points, test points, test cases, then quality validation.
+Complete only the current stage using its supplied JSON Schema.
 
-- Every feature point references a requirement.
-- Every test point references at least one feature point.
-- Every test case references at least one test point.
-- Every case has a stable candidate id plus the required content fields `title`,
-  `test_setup`, `test_procedure`, and `test_validation`. Module, priority, type,
-  tags, test-point references, and evidence references remain traceability metadata.
-- `title` states one test objective and expected scenario; it does not contain
-  execution steps.
-- `test_setup` lists the environment, state, identity, permission, and test-data
-  prerequisites. Use an explicit "无特殊前置条件" item when no setup is needed.
-- `test_procedure` is an ordered list of independently executable operations.
-  Each item contains an action only and does not mix in an expected result.
-- `test_validation` is an ordered list of observable assertions. It has the same
-  item count and index correspondence as `test_procedure`.
-- Runtime persistence maps `test_setup` to `preconditions`, and pairs
-  `test_procedure[n]` with `test_validation[n]` as the stored step. This is a
-  compatibility adapter, not a different generation contract.
-- Preserve evidence references with source label and locator when evidence is used.
+- Requirement, feature, test point and candidate identities stay traceable. Only emit identity fields included in the current schema; the server assigns the others.
+- For `case_batch_v2`, return `test_cases` containing exactly the requested slots. Each entry contains only `slot`, `title`, `preconditions`, and `steps`.
+- `title` states one objective and scenario, without execution steps.
+- `preconditions` describe the required state, identity and test data. Use an explicit no-special-setup item when appropriate.
+- Each `steps` entry contains `action` and `expected`. Actions are executable operations; expectations are observable assertions. One may be empty when operations and checkpoints do not correspond one-to-one, but every case must contain both an operation and an assertion.
+- Do not emit `test_setup`, `test_procedure`, or `test_validation` unless the current schema explicitly requests those fields.
+- In compact generation the server derives module, priority, test-point links, source identity and provenance from the reviewed plan. Do not fabricate or duplicate them in model output.
+- In other stages preserve source identifiers exactly as supplied, within the current schema.

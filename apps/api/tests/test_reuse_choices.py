@@ -3,7 +3,7 @@ from copy import deepcopy
 import pytest
 from fastapi import HTTPException
 
-from casepilot_api.reuse_choices import apply_reviewer_choices, reviewer_choices
+from casepilot_api.reuse_choices import apply_reviewer_choices, confirm_asset_reuse, reviewer_choices
 
 
 def plan():
@@ -59,3 +59,44 @@ def test_copy_choice_requires_reusable_formal_case(action, kind, allowed):
         with pytest.raises(HTTPException) as error:
             reviewer_choices(current)
         assert error.value.status_code == 422
+
+
+@pytest.mark.parametrize("action", ["reuse", "modify"])
+def test_asset_reuse_requires_explicit_confirmation(action):
+    current = plan()
+    row = current["reuse"]["decisions"][0]
+    row.update(action=action, test_object_match="same", source={"kind": "formal"})
+    with pytest.raises(HTTPException) as error:
+        confirm_asset_reuse(current, None)
+    assert error.value.detail == "reuse_confirmation_required"
+    assert confirm_asset_reuse(current, "reuse")["reuse"]["asset_confirmation"] == "reuse"
+
+
+@pytest.mark.parametrize("match", ["different", "unknown", None])
+def test_confirmation_cannot_override_test_object_mismatch(match):
+    current = plan()
+    current["reuse"]["decisions"][0].update(test_object_match=match, source={"kind": "formal"})
+    with pytest.raises(HTTPException) as error:
+        confirm_asset_reuse(current, "reuse")
+    assert error.value.detail == "reuse_test_object_mismatch"
+
+
+def test_declining_asset_reuse_removes_sources_without_mutating_draft():
+    current = plan()
+    current["reuse"]["decisions"][0]["source"]["kind"] = "formal"
+    original = deepcopy(current)
+    result = confirm_asset_reuse(current, "fresh")
+    assert current == original
+    assert result["reuse"]["summary"] == {"new": 1}
+    assert "source" not in result["reuse"]["decisions"][0]
+
+
+def test_draft_cannot_claim_prior_confirmation_without_server_keys():
+    current = plan()
+    row = current["reuse"]["decisions"][0]
+    row.update(test_object_match="same", source={"kind": "formal"})
+    current["reuse"].update(asset_confirmation="reuse", confirmed_asset_keys=[row["source_key"]])
+    with pytest.raises(HTTPException) as error:
+        confirm_asset_reuse(current, None)
+    assert error.value.detail == "reuse_confirmation_required"
+    assert confirm_asset_reuse(current, None, confirmed_keys=[row["source_key"]])["reuse"]["asset_confirmation"] == "reuse"

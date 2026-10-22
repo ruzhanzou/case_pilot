@@ -14,8 +14,9 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse
 
 from casepilot_api.planning_links import links_view, link_existing_case, link_committed_candidate, inherit_unchanged_links, reusable_current_case
-from casepilot_api.schemas import PlanningCaseLinkRequest
-from casepilot_api.reuse_choices import apply_reviewer_choices, reviewer_choices
+from casepilot_api.schemas import PlanningCaseLinkRequest, GenerationAssetConfirmRequest
+from casepilot_api.generation_strategy import asset_choice_from_text, generation_strategy_from_text, is_strategy_question
+from casepilot_api.reuse_choices import apply_reviewer_choices, confirm_asset_reuse, reviewer_choices
 from pydantic import ValidationError
 from redis import Redis
 from sqlalchemy import func, or_, select, update
@@ -1039,13 +1040,22 @@ def _conversation_view(db: Session, conversation: Conversation) -> ConversationV
         issues = quality_by_job.get(view.related_job_id)
         if issues:
             view.metadata = {**view.metadata, "generation_quality_issues": issues}
+    provenance = {}
+    if conversation.collection_id:
+        for source_context in db.scalars(select(Conversation.context["selected_asset_provenance"]).where(
+            Conversation.collection_id == conversation.collection_id,
+            Conversation.context.op("?")("selected_asset_provenance"),
+        ).order_by(Conversation.created_at)):
+            provenance.update(dict(source_context or {}))
+    provenance.update(dict(conversation.context).get("selected_asset_provenance", {}))
     return ConversationView(
         id=conversation.id,
         space_id=conversation.space_id,
         collection_id=conversation.collection_id,
         title=conversation.title,
         status=conversation.status,
-        context={**dict(conversation.context), "pending_attachments": pending_attachments},
+        context={**dict(conversation.context), "pending_attachments": pending_attachments,
+                 "selected_asset_provenance": provenance},
         planning_case_links=links_view(db, conversation),
         messages=message_views,
         test_briefs=[
@@ -1317,6 +1327,7 @@ def _collection_gate(
                     str(mentioned_collection_id) if mentioned_collection_id else None
                 ),
                 "allow_create_collection": intent == "CASE_GENERATE",
+                "require_new_collection": payload.generation_strategy in {"select", "select_and_generate"},
                 "operation_id": str(operation_id) if operation_id else None,
             },
         )
@@ -1333,7 +1344,8 @@ def _collection_gate(
             },
             None,
         )
-    if mentioned_collection_id and mentioned_collection_id != conversation.collection_id:
+    if (mentioned_collection_id and mentioned_collection_id != conversation.collection_id
+            and payload.generation_strategy not in {"select", "select_and_generate"}):
         requested = next(
             item for item in candidates if item["id"] == str(mentioned_collection_id)
         )
@@ -1468,6 +1480,10 @@ def _link_rewrite_round(db, conversation, operation, payload, original_instructi
             else operation.intent,
             "task_revision": int(dict(source.payload).get("task_revision", 1)) + 1 if source else 1,
             "source_operation_id": str(source.id) if source else None,
+            "asset_reference_sources": dict(operation.payload).get("asset_reference_sources",
+                dict(source.payload).get("asset_reference_sources", []) if source else []),
+            "asset_reference_target_scope": dict(operation.payload).get("asset_reference_target_scope",
+                dict(source.payload).get("asset_reference_target_scope") if source else None),
         }
         if source is None and payload.source_operation_id:
             evidence = db.get(ConversationOperation, payload.source_operation_id)
@@ -1575,7 +1591,11 @@ def _resolve_model_scope(db, conversation, payload, intent):
         }), None
     allowed = {str(case["id"]) for case in catalog}
     ref_ids = {str(case.get("case_key", "")): str(case["id"]) for case in catalog}
-    selected = _expand_conversation_targets(db, conversation, payload)
+    # The expansion helper defaults to the collection for legacy callers. That
+    # default is not a user selection and must not bias semantic scope routing.
+    selected = (_expand_conversation_targets(db, conversation, payload)
+                if payload.targets or payload.target_case_ids or payload.target_candidate_snapshots
+                else payload)
     selected_order = list(dict.fromkeys(
         [str(ref) for ref in selected.target_case_ids]
         + [ref_ids[item.ref] for item in selected.target_candidate_snapshots if item.ref in ref_ids]
@@ -1960,6 +1980,19 @@ def _start_action(
     confirmed_targets: bool = False,
     confirm_modification: bool = False,
 ) -> tuple[ConversationMessage, dict[str, Any], str | None]:
+    asset_rewrite = (
+        intent == "CASE_GENERATE" and payload.generation_strategy == "select_and_generate"
+        and bool(re.search(r"改写|修改|重写", user_message.content))
+        and not re.search(r"测试点|重新规划", user_message.content)
+        and bool(payload.targets or payload.target_case_ids or payload.target_candidate_snapshots
+            or (conversation.collection_id and db.scalar(select(CollectionCaseMembership.test_case_id).where(
+                CollectionCaseMembership.collection_id == conversation.collection_id).limit(1)))
+            or db.scalar(select(WorkspaceCandidate.id).where(WorkspaceCandidate.conversation_id == conversation.id,
+                WorkspaceCandidate.status == "candidate").limit(1)))
+    )
+    if intent == "CASE_GENERATE":
+        strategy = generation_strategy_from_text(user_message.content)
+        payload = payload.model_copy(update={"generation_strategy": strategy})
     collection_gate = _collection_gate(
         db,
         conversation,
@@ -1970,6 +2003,16 @@ def _start_action(
     )
     if collection_gate is not None:
         return collection_gate
+    if (intent == "CASE_GENERATE" and payload.generation_strategy in {"select", "select_and_generate"}
+            and not asset_rewrite
+            and not dict(conversation.context).get("generation_output_collection_created")
+            and not (payload.generation_strategy == "select_and_generate" and db.scalar(
+                select(GenerationJob.id).where(
+                    GenerationJob.input_payload["conversation_id"].astext == str(conversation.id),
+                    GenerationJob.operation.in_(["draft_brief", "generate"]),
+                ).limit(1)))
+            and not db.scalar(select(WorkspaceTestBrief.id).where(WorkspaceTestBrief.conversation_id == conversation.id).limit(1))):
+        raise HTTPException(422, "generation_new_collection_required")
     if intent == "UNRESOLVED":
         assistant = _new_assistant_message(
             conversation.id,
@@ -2089,7 +2132,9 @@ def _start_action(
             db, conversation,
             payload.model_copy(update={"content": payload.content.rsplit("\n补充说明：", 1)[-1]})
             if settings.agent_provider == "mock" and "\n补充说明：" in payload.content else payload,
-            intent, scope_text or None
+            # Asset discovery is transported as generation, but its eventual
+            # rewrite must bind a mutation scope before the asset review.
+            "CASE_MODIFY" if asset_rewrite else intent, scope_text or None
         )
         if operation:
             payload = payload.model_copy(update={
@@ -2370,6 +2415,14 @@ def _start_action(
         db.flush()
         return assistant, {"type": "clarification"}, None
     if intent == "CASE_MODIFY" and operation is not None:
+        if operation.payload.get("asset_reference_sources"):
+            for source in operation.payload["asset_reference_sources"]:
+                _validate_reuse_source(db, conversation, account, source)
+            scope = sorted(item["ref"] for item in case_context)
+            confirmed_scope = operation.payload.get("asset_reference_target_scope")
+            if confirmed_scope is not None and scope != confirmed_scope:
+                raise HTTPException(409, "asset_target_scope_changed")
+            operation.payload = {**dict(operation.payload), "asset_reference_target_scope": scope or None}
         operation.requires_confirmation = True
         # Confirmation is bound to exact resolved assets and their current contents.
         # A supplement or a changed asset always needs a fresh preview.
@@ -2409,6 +2462,10 @@ def _start_action(
         operation.payload = {
             **dict(operation.payload), "modification_confirmation": None,
         }
+    asset_references = dict(operation.payload).get("asset_reference_sources", []) if operation else []
+    if intent == "CASE_MODIFY":
+        for source in asset_references:
+            _validate_reuse_source(db, conversation, account, source)
     conversation_memory = _agent_conversation_memory(db, conversation.id)
     provided_test_object = _test_object_from_memory(conversation_memory)
     input_payload = {
@@ -2425,6 +2482,7 @@ def _start_action(
         "conversation_id": str(conversation.id),
         "user_message_id": str(user_message.id),
         "case_context": case_context,
+        "asset_reference_sources": asset_references if intent == "CASE_MODIFY" else [],
         "analysis_kind": intent if intent in ANALYSIS_INTENTS else None,
         "conversation_memory": conversation_memory,
         "conversation_operation_id": str(operation_id) if operation_id else None,
@@ -2463,6 +2521,35 @@ def _start_action(
             input_payload["previous_change_set_id"] = str(previous.id)
             input_payload["previous_proposals"] = previous_items
     if intent == "CASE_GENERATE":
+        input_payload["generation_strategy"] = payload.generation_strategy
+        input_payload["predecessor_job_id"] = dict(conversation.context).get("pending_predecessor_job_id")
+        if asset_rewrite:
+            input_payload["asset_followup_intent"] = "CASE_MODIFY"
+            input_payload["asset_target_request"] = payload.model_dump(mode="json")
+            input_payload["case_context"] = []
+        if payload.generation_strategy in {"generate", "select_and_generate"}:
+            input_payload["case_context"] = []
+        if payload.source_collection_ids and payload.generation_strategy != "generate":
+            source_ids = set(payload.source_collection_ids)
+            for source_id in source_ids:
+                source_collection = ensure_collection(db, account, source_id)
+                if source_collection.space_id != conversation.space_id:
+                    raise HTTPException(422, "collection_space_mismatch")
+            rows = db.execute(select(TestCase, TestCaseRevision)
+                .join(TestCaseRevision, TestCaseRevision.id == TestCase.current_revision_id)
+                .join(CollectionCaseMembership, CollectionCaseMembership.test_case_id == TestCase.id)
+                .where(CollectionCaseMembership.collection_id.in_(source_ids),
+                       TestCase.space_id == conversation.space_id, TestCase.deleted_at.is_(None))
+                .distinct().limit(501)).all()
+            if len(rows) > 500:
+                raise HTTPException(422, "source_cases_limit_exceeded")
+            input_payload["case_context"] = [{"ref": str(case.id), "target_type": "formal",
+                "snapshot": {"id": case.case_key, "case_key": case.case_key,
+                    "current_revision_id": str(revision.id),
+                    **{key: getattr(revision, key) for key in (
+                        "title", "module", "priority", "case_type", "tags", "preconditions", "steps", "source_refs")}}}
+                for case, revision in rows]
+            input_payload["source_collection_ids"] = [str(value) for value in source_ids]
         input_payload["target_module_path"] = requested_new_module(
             payload.content
         ) or requested_new_module(user_message.content) or common_module_path(
@@ -2553,14 +2640,15 @@ def _start_action(
                 ConversationOperation.sequence > previous.sequence,
                 ConversationOperation.status == "queued",
             ).values(status="cancelled", completed_at=datetime.now(UTC)))
-        db.execute(
-            update(WorkspaceCandidate)
-            .where(
-                WorkspaceCandidate.conversation_id == conversation.id,
-                WorkspaceCandidate.status == "candidate",
+        if payload.generation_strategy == "generate":
+            db.execute(
+                update(WorkspaceCandidate)
+                .where(
+                    WorkspaceCandidate.conversation_id == conversation.id,
+                    WorkspaceCandidate.status == "candidate",
+                )
+                .values(status="archived")
             )
-            .values(status="archived")
-        )
         assistant = _new_assistant_message(
             conversation.id,
             content="",
@@ -2670,6 +2758,9 @@ def _start_action(
         context_update["active_operation_id"] = str(operation_id) if operation_id else None
     if intent == "CASE_GENERATE":
         context_update["generation_target_module_path"] = input_payload["target_module_path"]
+        context_update.pop("pending_predecessor_job_id", None)
+        context_update["generation_strategy"] = payload.generation_strategy
+        context_update["generation_source_collection_ids"] = [str(value) for value in payload.source_collection_ids]
     conversation.context = context_update
     conversation.updated_at = datetime.now(UTC)
     db.flush()
@@ -3214,6 +3305,8 @@ def confirm_test_brief(
     if brief.version != latest_version or brief.status not in {"draft", "confirmed"}:
         raise HTTPException(status_code=409, detail="test_brief_version_changed")
     brief_content = dict(brief.content)
+    if brief_content.get("asset_selection", {}).get("status") == "awaiting_confirmation":
+        raise HTTPException(409, "generation_asset_confirmation_required")
     planning = dict(brief_content.get("planning") or {})
     if planning:
         points = planning.get("test_points", [])
@@ -3245,8 +3338,11 @@ def confirm_test_brief(
         }
     elif payload.selected_test_point_ids:
         raise HTTPException(status_code=422, detail="planning_selection_invalid")
-    validate_reuse_confirmation(brief_content, planning)
     planning = apply_reviewer_choices(planning)
+    planning = confirm_asset_reuse(planning, payload.reuse_confirmation,
+        confirmed_keys=(dict(conversation.context).get("confirmed_asset_keys", [])
+            if brief_content.get("test_object") == dict(conversation.context).get("confirmed_asset_test_object") else []))
+    validate_reuse_confirmation(brief_content, planning)
     resolved_test_object = str(brief_content.get("test_object") or "").strip()
     if not resolved_test_object:
         resolved_test_object = _test_object_from_memory(
@@ -4044,6 +4140,17 @@ def send_message(
     db: DbSession,
 ) -> ConversationTurnView:
     conversation = _ensure_conversation(db, account.id, conversation_id)
+    # Explicit asset redirection stops the prior job before accepting a new scope.
+    if generation_strategy_from_text(payload.content) != "generate":
+        active_id = dict(conversation.context).get("active_job_id")
+        if active_id:
+            from casepilot_api.generation import cancel_generation
+            active = db.get(GenerationJob, UUID(str(active_id)))
+            if active and active.status in {"queued", "running", "awaiting_input"}:
+                cancel_generation(active.id, account, db)
+                db.refresh(conversation)
+                conversation.context = {**dict(conversation.context), "pending_predecessor_job_id": str(active.id)}
+                db.flush()
     _require_idle_conversation(db, conversation)
     retry_turn = _retry_generation_from_text(db, account, conversation, payload)
     if retry_turn is not None:
@@ -4054,6 +4161,10 @@ def send_message(
             raise HTTPException(status_code=422, detail="previous_result_not_found")
         if source_operation.status not in {"completed", "awaiting_confirmation"}:
             raise HTTPException(status_code=409, detail="source_task_not_ready")
+    strategy = generation_strategy_from_text(payload.content)
+    payload = payload.model_copy(update={"generation_strategy": strategy,
+        **({"intent_override": "CASE_GENERATE"} if strategy != "generate" else
+           {"intent_override": "KNOWLEDGE_QA"} if is_strategy_question(payload.content) else {})})
     payload = _resolve_turn_attachments(db, conversation, payload)
     if not settings.is_agent_model_allowed(payload.model_id):
         raise HTTPException(status_code=422, detail="generation_model_not_configured")
@@ -4062,6 +4173,15 @@ def send_message(
         "model_id": payload.model_id,
     }
     phase = str(dict(conversation.context).get("phase", "idle"))
+    if phase == "brief_review":
+        pending_brief = db.scalar(select(WorkspaceTestBrief).where(
+            WorkspaceTestBrief.conversation_id == conversation.id).order_by(WorkspaceTestBrief.version.desc()))
+        pending_selection = (pending_brief.content.get("asset_selection") or {}) if pending_brief else {}
+        if pending_selection.get("status") == "awaiting_confirmation" and not pending_selection.get("target_points"):
+            chosen = asset_choice_from_text(payload.content, [source["case_id"] for source in pending_selection.get("sources", [])])
+            if chosen is not None:
+                return confirm_generation_assets(conversation_id,
+                    GenerationAssetConfirmRequest(version=pending_brief.version, case_ids=chosen), account, db)
     if phase == "brief_review" and _looks_like_brief_confirmation(payload.content):
         latest_brief = db.scalar(
             select(WorkspaceTestBrief)
@@ -4219,6 +4339,7 @@ def send_message(
                 "action": str(draft.get("action") or ""),
                 "reason_codes": list(draft.get("reason_codes") or []),
                 "depends_on": draft.get("depends_on"),
+                "predecessor_job_id": dict(conversation.context).get("pending_predecessor_job_id"),
                 "source_operation_id": str(payload.source_operation_id)
                 if payload.source_operation_id
                 else None,
@@ -4394,6 +4515,10 @@ def confirm_conversation_operation_collection(
             status_code=409,
             detail="conversation_operation_predecessor_pending",
         )
+    original_message = db.get(ConversationMessage, operation.message_id)
+    request = dict(original_message.message_metadata).get("request", {}) if original_message else {}
+    if payload.collection_id is not None and request.get("generation_strategy") in {"select", "select_and_generate"}:
+        raise HTTPException(422, "generation_new_collection_required")
     if payload.collection_id is not None:
         collection = ensure_collection(db, account, payload.collection_id)
         if collection.space_id != conversation.space_id:
@@ -4429,6 +4554,7 @@ def confirm_conversation_operation_collection(
         **dict(conversation.context),
         "phase": "maintenance",
         "bound_collection_confirmed": True,
+        "generation_output_collection_created": payload.collection_id is None,
     }
     operation.status = "queued"
     operation.result = {
@@ -5635,3 +5761,181 @@ def save_planning_case_link(conversation_id: UUID, payload: PlanningCaseLinkRequ
                        payload.test_case_id, payload.revision_id, payload.remove)
     db.commit()
     return links_view(db, conversation)
+
+
+def _validate_reuse_source(db, conversation, account, source):
+    if source.get("test_object_match") != "same":
+        raise HTTPException(409, "generation_asset_changed")
+    if source.get("kind") == "excel":
+        try:
+            document_id = UUID(str(source.get("document_id", "")))
+        except ValueError as exc:
+            raise HTTPException(409, "generation_asset_changed") from exc
+        row = db.execute(select(KnowledgeDocument, KnowledgeSource)
+            .join(KnowledgeSource, KnowledgeSource.id == KnowledgeDocument.source_id)
+            .where(KnowledgeDocument.id == document_id,
+                   KnowledgeDocument.space_id == conversation.space_id,
+                   KnowledgeSource.space_id == conversation.space_id,
+                   KnowledgeSource.deleted_at.is_(None)).with_for_update()).first()
+        if row is None:
+            raise HTTPException(409, "generation_asset_changed")
+        document, origin = row
+        if (document.status != "ready" or origin.status != "ready"
+                or document.version != source.get("document_version")
+                or document.checksum != source.get("document_checksum")
+                or (document.expires_at and document.expires_at <= datetime.now(UTC))
+                or (origin.persistence == "temporary" and origin.account_id != account.id)):
+            raise HTTPException(409, "generation_asset_changed")
+        return
+    try:
+        case_id = UUID(str(source.get("case_id", "")))
+    except ValueError as exc:
+        raise HTTPException(409, "generation_asset_changed") from exc
+    case = db.scalar(select(TestCase).where(TestCase.id == case_id).with_for_update())
+    if (case is None or case.deleted_at is not None or case.space_id != conversation.space_id
+            or str(case.current_revision_id) != str(source["snapshot"].get("current_revision_id"))):
+        raise HTTPException(409, "generation_asset_changed")
+
+
+@router.post("/workspaces/{conversation_id}/generation-assets/confirm", response_model=ConversationTurnView)
+def confirm_generation_assets(
+    conversation_id: UUID, payload: GenerationAssetConfirmRequest,
+    account: CurrentAccount, db: DbSession,
+) -> ConversationTurnView:
+    conversation = _ensure_conversation(db, account.id, conversation_id)
+    db.scalar(select(Conversation).where(Conversation.id == conversation.id).with_for_update())
+    _require_idle_conversation(db, conversation)
+    brief = db.scalar(select(WorkspaceTestBrief).where(
+        WorkspaceTestBrief.conversation_id == conversation.id
+    ).order_by(WorkspaceTestBrief.version.desc()).limit(1))
+    if brief is None or brief.version != payload.version or brief.status != "draft":
+        raise HTTPException(409, "test_brief_version_changed")
+    selection = dict(brief.content).get("asset_selection") or {}
+    if selection.get("status") != "awaiting_confirmation":
+        raise HTTPException(409, "generation_asset_selection_not_pending")
+    try:
+        source_job_id = UUID(str(selection.get("job_id", "")))
+    except ValueError as exc:
+        raise HTTPException(422, "generation_asset_selection_invalid") from exc
+    original = db.get(GenerationJob, source_job_id)
+    if (original is None or original.account_id != account.id
+            or str(original.input_payload.get("conversation_id")) != str(conversation.id)
+            or original.output_payload.get("test_brief", {}).get("asset_selection") != selection
+            or brief.content.get("test_object") != selection.get("test_object")
+            or (brief.content.get("asset_base_planning") or {}) != (original.output_payload.get("test_brief", {}).get("asset_base_planning") or {})):
+        raise HTTPException(409, "reuse_plan_changed_reanalyze_required")
+    allowed = {source["case_id"]: source for source in selection["sources"]}
+    chosen = list(dict.fromkeys(str(value) for value in payload.case_ids))
+    if set(chosen) - allowed.keys():
+        raise HTTPException(422, "generation_asset_selection_invalid")
+    if selection["strategy"] == "select" and not chosen:
+        raise HTTPException(422, "generation_assets_required")
+    sources = [allowed[key] for key in chosen]
+    formal_sources = [source for source in sources if source.get("kind") != "excel"]
+    formal_ids = [source["case_id"] for source in formal_sources]
+    if selection["strategy"] == "select" and len(formal_sources) != len(sources):
+        raise HTTPException(422, "generation_asset_selection_invalid")
+    base_plan = dict(brief.content.get("asset_base_planning") or {})
+    allowed_points = {p["id"] for p in base_plan.get("test_points", [])}
+    if original.input_payload.get("asset_followup_intent") == "CASE_MODIFY":
+        allowed_points = set()
+        base_plan = {}
+    if allowed_points and (not payload.test_point_ids or set(payload.test_point_ids) - allowed_points):
+        raise HTTPException(422, "asset_target_scope_required")
+    if payload.test_point_ids and not allowed_points:
+        raise HTTPException(422, "asset_target_scope_invalid")
+    if allowed_points:
+        base_plan = {**base_plan, "test_points": [p for p in base_plan["test_points"] if p["id"] in payload.test_point_ids]}
+        feature_ids = {key for point in base_plan["test_points"] for key in point["feature_point_ids"]}
+        base_plan["feature_points"] = [f for f in base_plan["feature_points"] if f["id"] in feature_ids]
+        base_plan.pop("reuse", None)
+    for source in sources:
+        _validate_reuse_source(db, conversation, account, source)
+    operation = db.get(ConversationOperation, brief.source_operation_id) if brief.source_operation_id else None
+    user_message = ConversationMessage(conversation_id=conversation.id, role="user",
+        content=f"确认选用 {len(sources)} 条现有用例资产。", intent="CASE_GENERATE",
+        intent_confidence=1.0, status="completed", target_case_ids=formal_ids, citations=[],
+        message_metadata={"generation_asset_confirmation": True, "brief_version": brief.version})
+    db.add(user_message)
+    brief.status = "confirmed"
+    brief.confirmed_by = account.id
+    brief.confirmed_at = datetime.now(UTC)
+    collection = ensure_collection(db, account, conversation.collection_id)
+    existing = set(db.scalars(select(CollectionCaseMembership.test_case_id).where(
+        CollectionCaseMembership.collection_id == collection.id)))
+    for index, source in enumerate(sources if selection["strategy"] == "select" else []):
+        case_id = UUID(source["case_id"])
+        if case_id not in existing:
+            db.add(CollectionCaseMembership(collection_id=collection.id,
+                test_case_id=case_id, position=len(existing) + index))
+    write_audit(db, space_id=conversation.space_id, actor_id=account.id,
+        action="collection.assets_selected", resource_type="case_collection", resource_id=collection.id)
+    conversation.context = {**dict(conversation.context),
+        "confirmed_asset_keys": [source["key"] for source in sources],
+        "confirmed_asset_test_object": selection["test_object"],
+        "selected_asset_provenance": {**dict(conversation.context).get("selected_asset_provenance", {}),
+            **{source["case_id"]: {"case_key": source["snapshot"].get("case_key", ""),
+                "revision": source["snapshot"].get("current_revision_id", ""),
+                "collections": source.get("collections", []), "kind": "selected"}
+               for source in formal_sources}}}
+    if original.input_payload.get("asset_followup_intent") == "CASE_MODIFY":
+        if operation is None:
+            raise HTTPException(409, "asset_target_operation_missing")
+        operation.intent = "CASE_MODIFY"
+        operation.payload = {**dict(operation.payload), "task_intent": "CASE_MODIFY",
+            "asset_reference_sources": sources,
+            "instruction": original.input_payload["asset_target_request"]["content"]}
+        request_data = {**original.input_payload["asset_target_request"], "generation_strategy": "generate"}
+        user_message.message_metadata = {**dict(user_message.message_metadata), "request": request_data}
+        request = ConversationMessageCreate.model_validate(request_data)
+        assistant, action, task_name = _start_action(db, account, conversation, user_message,
+            request, "CASE_MODIFY", 1.0, operation.id)
+        _operation_runtime_status(operation, assistant, action)
+        conversation.context = {**dict(conversation.context), "phase": "maintenance",
+            "active_job_id": None, "active_operation_id": str(operation.id)}
+        db.add(assistant)
+        db.commit()
+        return ConversationTurnView(conversation_id=conversation.id,
+            user_message=_message_view(user_message), assistant_message=_message_view(assistant),
+            intent="CASE_MODIFY", intent_confidence=1.0, action=action)
+    if selection["strategy"] == "select":
+        assistant = _new_assistant_message(conversation.id,
+            content=f"已将 {len(sources)} 条现有用例选入新集合，可在工作区查看。未生成新用例。",
+            intent="CASE_GENERATE", confidence=1.0, status="completed", target_case_ids=chosen)
+        conversation.context = {**dict(conversation.context), "phase": "maintenance", "active_job_id": None}
+        if operation:
+            operation.status = "completed"
+        action = {"type": "assets_selected", "case_count": len(sources)}
+    else:
+        job = GenerationJob(space_id=conversation.space_id, account_id=account.id,
+            collection_id=conversation.collection_id, operation="draft_brief", status="queued",
+            stage="queued", input_payload={**dict(original.input_payload),
+                "asset_selection_confirmed": True, "confirmed_asset_sources": sources,
+                "provided_test_object": selection["test_object"],
+                "case_context": [{"ref": source["case_id"], "target_type": "formal", "snapshot": source["snapshot"]} for source in formal_sources],
+                "current_test_brief": {**dict(brief.content), "asset_selection": {}, "planning": base_plan},
+                "current_test_brief_version": brief.version,
+            }, output_payload={})
+        db.add(job)
+        db.flush()
+        assistant = _new_assistant_message(conversation.id,
+            content="已确认复用范围，正在规划测试点并识别剩余覆盖缺口。",
+            intent="CASE_GENERATE", confidence=1.0, status="running", target_case_ids=formal_ids,
+            metadata={"workflow": True})
+        db.add(assistant)
+        db.flush()
+        assistant.related_job_id = job.id
+        job.input_payload = {**dict(job.input_payload), "assistant_message_id": str(assistant.id)}
+        conversation.context = {**dict(conversation.context), "phase": "brief_drafting", "active_job_id": str(job.id)}
+        if operation:
+            operation.status = "running"
+            operation.related_job_id = job.id
+        enqueue_task(db, "casepilot.agent.draft_brief", [str(job.id)], task_id=job.id)
+        action = {"type": "test_brief", "job_id": str(job.id)}
+    db.add(assistant)
+    db.commit()
+    db.refresh(user_message)
+    db.refresh(assistant)
+    return ConversationTurnView(conversation_id=conversation.id,
+        user_message=_message_view(user_message), assistant_message=_message_view(assistant),
+        intent="CASE_GENERATE", intent_confidence=1.0, action=action)

@@ -202,3 +202,17 @@ def test_preserve_existing_steps_still_allows_explicit_append():
     assert result.quality.passed
     assert result.proposed.steps[:3] == original().steps
     assert len(result.proposed.steps) == 4
+
+
+def test_model_cannot_drop_confirmed_asset_provenance_when_reselecting_citations():
+    from casepilot_agent.contracts import SourceRef
+    import json
+    case = original()
+    source = SourceRef(label='修改参考 · 旧版用例.xlsx', locator='Sheet1 行2',
+                       excerpt=json.dumps({'source_key': 'excel:doc:Sheet1:2', 'action': 'modify',
+                                           'case_key': 'OLD-001', 'revision': 1}))
+    case.source_refs.append(source)
+    result = GenerationPipeline(Provider({'title': '登录成功校验', 'source_ref_indexes': []})).rewrite_many(
+        {'one': RewriteRequest(test_case=case, instruction='只将标题改为登录成功校验')})['one']
+    assert result.quality.passed
+    assert source in result.proposed.source_refs

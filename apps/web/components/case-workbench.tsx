@@ -1,4 +1,8 @@
 "use client";
+
+import { CaseSource, type AssetProvenance } from "@/components/workspace-case-sources";
+import { CompactModificationConfirmation } from "@/components/compact-modification-confirmation";
+import { GenerationAssets } from "@/components/generation-assets";
 import { candidateBrief } from "@/lib/candidate-planning";
 import { CandidatePointLinks } from "@/components/candidate-point-links";
 
@@ -33,6 +37,8 @@ import {
   commitWorkspaceCandidates,
   confirmConversationIntent,
   confirmTestBrief,
+  confirmGenerationAssets,
+  type GenerationAssetSelection,
   saveTestBrief,
   savePlanningCaseLink,
   downloadTestBrief,
@@ -162,7 +168,9 @@ const phaseLabels: Record<string, string> = {
 const workflowStageLabels: Record<string, string> = {
   "knowledge.searching": "正在搜索知识库…",
   "documents.reading": "正在阅读参考资料…",
-  "cases.searching": "正在查询用例资产…",
+  "cases.searching": "正在搜索用例资产…",
+  "reuse.objects_matching": "正在核对资产的测试对象…",
+  "reuse.objects_matched": "测试对象核对完成",
   "reuse.comparing": "正在分析变更与可复用用例…",
   "reuse.compared": "复用分析已完成",
   queued: "任务已排队",
@@ -217,7 +225,7 @@ const englishPhaseLabels: Record<string, string> = {
 };
 const englishWorkflowStageLabels: Record<string, string> = {
   "knowledge.searching": "Searching knowledge…", "documents.reading": "Reading reference documents…",
-  "cases.searching": "Searching case assets…", "reuse.comparing": "Comparing changes and reusable cases…",
+  "cases.searching": "Searching case assets…", "reuse.objects_matching": "Checking asset test objects…", "reuse.objects_matched": "Asset test objects checked", "reuse.comparing": "Comparing changes and reusable cases…",
   "reuse.compared": "Reuse analysis completed",
   queued: "Task queued", "context.prepared": "Preparing context",
   "requirement.analyzed": "Analyzing requirements",
@@ -245,7 +253,7 @@ function clampPanelWidth(
   panel: "chat" | "inspector",
   value: number,
 ): number {
-  const [minimum, maximum] = panel === "chat" ? [420, 720] : [280, 480];
+  const [minimum, maximum] = panel === "chat" ? [320, 720] : [280, 480];
   return Math.min(maximum, Math.max(minimum, Math.round(value)));
 }
 
@@ -324,6 +332,9 @@ export function CaseWorkbench({
   const pendingDraftEdit = useRef<{ workspaceId: string; text: string } | null>(null);
   const editPrompt = (text: string) => {
     pendingDraftEdit.current = workspace ? { workspaceId: workspace.id, text } : null;
+    if (workspace) {
+      try { sessionStorage.setItem(`casepilot.draft.v1:${workspace.id}`, text); } catch { /* Server autosave remains available when browser storage is disabled. */ }
+    }
     setPrompt(text);
   };
   const restoredDraftConversationRef = useRef("");
@@ -342,6 +353,7 @@ export function CaseWorkbench({
   const [mapFocusVersion, setMapFocusVersion] = useState(0);
   const [resumeTaskId, setResumeTaskId] = useState("");
   const [refineSourceId, setRefineSourceId] = useState("");
+  const [resultPane, setResultPane] = useState({ key: "", pane: "changes" });
   const [reviewVersion, setReviewVersion] = useState({ taskId: "", latestId: "", operationId: "" });
   const [historicalChangeSet, setHistoricalChangeSet] = useState<CaseChangeSetDto | null>(null);
   const [resultLoadError, setResultLoadError] = useState("");
@@ -368,7 +380,7 @@ export function CaseWorkbench({
   const [planningFocusPointId, setPlanningFocusPointId] = useState("");
   const [artifactOpen, setArtifactOpen] = useState(false);
   const [briefView, setBriefView] = useState<"map" | "text">("map");
-  const [chatWidth, setChatWidth] = useState(520);
+  const [chatWidth, setChatWidth] = useState(400);
   const [inspectorWidth, setInspectorWidth] = useState(300);
   const [inspectorHidden, setInspectorHidden] = useState(false);
   const [activeChangeSet, setActiveChangeSet] =
@@ -409,6 +421,20 @@ export function CaseWorkbench({
   const activeBrief =
     workspace?.test_briefs.find((item) => item.status === "draft") ??
     latestBrief;
+  const [pendingReuseSelection, setPendingReuseSelection] = useState<{ version: number; ids: string[] } | null>(null);
+  const [assetScope, setAssetScope] = useState<{ version: number; ids: string[] } | null>(null);
+  const [assetChoice, setAssetChoice] = useState<{ version: number; ids: string[] } | null>(null);
+  const assetSelection = activeBrief?.status === "draft" && activeBrief.content.asset_selection?.status === "awaiting_confirmation"
+    ? activeBrief.content.asset_selection as GenerationAssetSelection : null;
+  const selectedAssetIds = assetChoice?.version === activeBrief?.version ? assetChoice?.ids ?? [] : assetSelection?.sources.map(source => source.case_id) ?? [];
+  const selectedAssetScope = assetScope?.version === activeBrief?.version ? assetScope?.ids ?? [] : assetSelection?.target_points?.map(point => point.id) ?? [];
+  const assetReuseDecisions = activeBrief?.content.planning?.reuse?.asset_confirmation === "reuse" ? [] : activeBrief?.content.planning?.reuse?.decisions.filter(
+    (item) => item.action !== "new" && item.source?.kind === "formal"
+      && !["new", "exclude"].includes(activeBrief.content.planning?.reuse?.user_choices?.[item.point_id] ?? ""),
+  ) ?? [];
+  const reuseCollectionNames = [...new Set(assetReuseDecisions.flatMap(
+    (item) => item.source?.collections?.map((collection) => collection.name) ?? [],
+  ))];
   const selectedBrief =
     workspace?.test_briefs.find(
       (item) => item.version === selectedBriefVersion,
@@ -419,6 +445,7 @@ export function CaseWorkbench({
     () => workspace?.candidates ?? [],
     [workspace?.candidates],
   );
+  const sourceProvenance = useMemo(() => (workspace?.context.selected_asset_provenance ?? {}) as AssetProvenance, [workspace?.context.selected_asset_provenance]);
   const candidateCases = useMemo(
     () => candidates.map(candidateToCase),
     [candidates],
@@ -515,7 +542,7 @@ export function CaseWorkbench({
   const conversationRunning = busy || queueRunning || workspaceIsRunning(workspace);
   const runningLabel = pendingMessage !== null
     ? pick("Thinking — understanding your request and selecting cases", "正在思考 · 理解需求并筛选用例")
-    : progress && ["knowledge.searching", "documents.reading", "cases.searching", "reuse.comparing", "reuse.compared"].includes(progress.name)
+    : progress && ["knowledge.searching", "documents.reading", "cases.searching", "reuse.objects_matching", "reuse.objects_matched", "reuse.comparing", "reuse.compared"].includes(progress.name)
       ? localizedWorkflowStageLabels[progress.name]
     : planningProgress?.phase === "requirements"
       ? pick(`Analyzing requirements · ${planningProgress.completed_batches ?? 0}/${planningProgress.total_batches} batches`, `分析测试需求 · 已完成 ${planningProgress.completed_batches ?? 0}/${planningProgress.total_batches} 批`)
@@ -551,6 +578,8 @@ export function CaseWorkbench({
     : historicalChangeSet?.id === selectedChangeSetId ? historicalChangeSet : null;
   const selectedTaskChangeSet = loadedTaskChangeSet && historicalVersion && loadedTaskChangeSet.status === "ready"
     ? { ...loadedTaskChangeSet, status: "superseded" as const } : loadedTaskChangeSet;
+  const resultPaneKey = `${selectedTask?.id}:${selectedChangeSetId}`;
+  const showCandidatePane = !selectedChangeSetId || (resultPane.key === resultPaneKey && resultPane.pane === "candidates");
   const pendingCandidateRefs = [...new Set([activeChangeSet, historicalChangeSet].flatMap(change =>
     change?.status === "ready" && workspace?.operation_history?.some(op => op.related_change_set_id === change.id && op.status === "awaiting_confirmation")
       ? change.items.filter(item => item.target_type === "candidate" && !["applied", "rejected"].includes(item.status ?? "")).map(item => item.ref) : []))];
@@ -583,15 +612,41 @@ export function CaseWorkbench({
   };
   const openReviewPlan = (messageId?: string) => {
     if (messageId) {
-      setPlanMessageId(messageId);
-      setReviewVersion({ taskId: "", latestId: "", operationId: "" });
+      const task = resultTasks.find(item => item.id === messageId || item.messageIds.includes(messageId) || item.versions?.some(version => version.id === messageId));
+      const version = task?.versions?.find(item => item.id === messageId || item.messageIds.includes(messageId));
+      setPlanMessageId(task?.id ?? messageId);
+      setReviewVersion(version?.operation && task?.operation
+        ? { taskId: task.id, latestId: task.operation.id, operationId: version.operation.id }
+        : { taskId: "", latestId: "", operationId: "" });
     }
+    setResultPane({ key: "", pane: "changes" });
     viewTouchedRef.current = true;
     setArtifactOpen(false);
     setViewMode("plan");
     persistActiveView("plan");
   };
+  const focusWorkspace = () => requestAnimationFrame(() => {
+    const target = document.querySelector<HTMLElement>(".case-task-detail");
+    target?.focus({ preventScroll: true });
+    target?.closest(".principle-case-area")?.scrollTo({ top: 0, behavior: "instant" });
+  });
+  const navigateToReview = (id?: string) => { openReviewPlan(id); focusWorkspace(); };
+  const focusBrief = () => requestAnimationFrame(() => document.querySelector<HTMLElement>(".principle-brief")?.focus({ preventScroll: true }));
+  const focusCaseView = () => requestAnimationFrame(() => document.querySelector<HTMLElement>(".principle-viewbar button.is-active")?.focus({ preventScroll: true }));
+  const focusInspector = () => requestAnimationFrame(() => {
+    document.querySelector<HTMLElement>(".principle-inspector")?.focus({ preventScroll: true });
+  });
+  const closeInspector = () => {
+    setInspectorHidden(true);
+    requestAnimationFrame(() => {
+      const row = Array.from(document.querySelectorAll<HTMLElement>(".principle-case-row")).find(item => item.dataset.caseId === selectedCaseId);
+      const target = viewMode === "list" ? row?.querySelector<HTMLElement>("button") : document.querySelector<HTMLElement>(".react-flow__node.selected");
+      (target ?? document.querySelector<HTMLElement>("[data-details-toggle]"))?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+  };
   const openPendingCandidateReview = () => {
+    setResultPane({ key: "", pane: "changes" });
     const pending = [activeChangeSet, historicalChangeSet].find(change =>
       change?.status === "ready" && change.items.some(item =>
         item.target_type === "candidate" && pendingCandidateRefs.includes(item.ref)));
@@ -686,7 +741,11 @@ export function CaseWorkbench({
     setWorkspace(result);
     if (restoredDraftConversationRef.current !== result.id) {
       restoredDraftConversationRef.current = result.id;
-      setPrompt(String(result.context.draft_text ?? ""));
+      let localDraft: string | null = null;
+      try { localDraft = sessionStorage.getItem(`casepilot.draft.v1:${result.id}`); } catch { /* Fall back to the saved server draft. */ }
+      const draft = localDraft ?? String(result.context.draft_text ?? "");
+      if (localDraft !== null && draft !== String(result.context.draft_text ?? "")) pendingDraftEdit.current = { workspaceId: result.id, text: draft };
+      setPrompt(draft);
     }
     const restoredModelId = String(result.context.model_id ?? "");
     if (restoredModelId) setModelId(restoredModelId);
@@ -705,8 +764,8 @@ export function CaseWorkbench({
       lastWorkspacePhaseRef.current = workspacePhase;
       setArtifactOpen(result.context.phase === "brief_review");
     }
-    const savedChatWidth = Number(result.context.chat_width ?? 520);
-    setChatWidth(savedChatWidth < 420 ? 520 : clampPanelWidth("chat", savedChatWidth));
+    const savedChatWidth = Number(result.context.chat_width ?? 400);
+    setChatWidth(savedChatWidth < 320 || savedChatWidth === 520 ? 400 : clampPanelWidth("chat", savedChatWidth));
     setInspectorWidth(
       clampPanelWidth("inspector", Number(result.context.inspector_width ?? 300)),
     );
@@ -736,7 +795,7 @@ export function CaseWorkbench({
     setCandidateDraft(
       restoredCandidate ? structuredClone(restoredCandidate) : null,
     );
-  }, [selectedCollectionId, setCandidateDraft]);
+  }, [selectedCollectionId, setCandidateDraft, setSelectedBriefVersion, setArtifactOpen]);
   const refreshWorkspace = useCallback(async () => {
     if (!selectedCollectionId) return null;
     const result = conversationId
@@ -848,7 +907,7 @@ export function CaseWorkbench({
         setLiveStages([]);
       }
     },
-    [pick, refreshWorkspace, workspace],
+    [pick, refreshWorkspace, workspace, setArtifactOpen],
   );
 
   const retryFailedMessage = async (messageId: string) => {
@@ -995,6 +1054,7 @@ export function CaseWorkbench({
         (saved) => {
           if (pendingDraftEdit.current !== edit) return;
           pendingDraftEdit.current = null;
+          try { sessionStorage.removeItem(`casepilot.draft.v1:${saved.id}`); } catch { /* A stale local copy is still safe to restore. */ }
           setWorkspace((current) => current?.id === saved.id
             ? { ...current, context: { ...current.context, draft_text: saved.context.draft_text } }
             : current);
@@ -1078,7 +1138,7 @@ export function CaseWorkbench({
       queueFailureRef.current = attemptingId;
       throw caught;
     } finally { queueDispatchRef.current = false; setQueueRunning(false); }
-  }, [refreshWorkspace, waitAndRefresh]);
+  }, [refreshWorkspace, waitAndRefresh, setArtifactOpen]);
 
   useEffect(() => {
     const next = nextWorkspaceOperation(workspace);
@@ -1218,6 +1278,7 @@ export function CaseWorkbench({
     setCurrentJobId("");
     setProgress(null);
     pendingDraftEdit.current = null;
+    try { sessionStorage.removeItem(`casepilot.draft.v1:${workspace.id}`); } catch { /* Submission must work without browser storage. */ }
     setPrompt("");
     setError("");
     setNotice("");
@@ -1407,8 +1468,30 @@ export function CaseWorkbench({
     }
   };
 
-  const confirmBriefAndGenerate = async (selectedPointIds: string[] = []) => {
+  const confirmAssetSelection = async () => {
+    if (!workspace || !activeBrief || !assetSelection) return;
+    setBusy(true);
+    setError("");
+    try {
+      const turn = await confirmGenerationAssets(workspace.id, activeBrief.version, selectedAssetIds, selectedAssetScope);
+      await refreshWorkspace();
+      if (turn.action.job_id) await waitAndRefresh(turn.action.job_id);
+      await onCasesChanged();
+      if (assetSelection.strategy === "select") { setArtifactOpen(false); setViewMode("list"); }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : pick("Could not confirm assets", "资产确认失败"));
+    } finally { setBusy(false); }
+  };
+
+  const confirmBriefAndGenerate = async (selectedPointIds: string[] = [], reuseConfirmation?: "reuse" | "fresh") => {
     if (!workspace) return;
+    if (assetSelection) { setArtifactOpen(false); return; }
+    if (assetReuseDecisions.some((item) => !selectedPointIds.length || selectedPointIds.includes(item.point_id)) && !reuseConfirmation) {
+      setPendingReuseSelection({ version: activeBrief!.version, ids: selectedPointIds });
+      setNotice(pick("Confirm historical case reuse in the conversation first.", "请先在对话区确认是否复用历史用例。"));
+      setArtifactOpen(false);
+      return;
+    }
     setBusy(true);
     setProgress({ name: "queued", progress: 0 });
     setLiveStages([]);
@@ -1424,7 +1507,9 @@ export function CaseWorkbench({
         activeBrief.version,
         modelId,
         selectedPointIds,
+        reuseConfirmation,
       );
+      setPendingReuseSelection(null);
       await refreshWorkspace();
       if (turn.action.job_id) {
         await waitAndRefresh(turn.action.job_id);
@@ -1716,9 +1801,10 @@ export function CaseWorkbench({
     persistPanelWidth(panel, defaultWidth);
   };
 
-  const selectBriefVersion = (version: number) => {
+  const selectBriefVersion = (version: number, moveFocus = true) => {
     setSelectedBriefVersion(version);
     setArtifactOpen(true);
+    if (moveFocus) focusBrief();
     if (workspace) {
       void updateWorkspaceState(workspace.id, {
         selected_brief_version: version,
@@ -1797,7 +1883,7 @@ export function CaseWorkbench({
                 </div>
               </div>
             )}
-            <ConversationTaskFlow tasks={tasks} labels={localizedIntentLabels} statusLabels={localizedOperationStatusLabels} busy={conversationRunning} onResume={(task) => void resumeTask(task)} onResult={openReviewPlan} />
+            <ConversationTaskFlow tasks={tasks} labels={localizedIntentLabels} statusLabels={localizedOperationStatusLabels} busy={conversationRunning} onResume={(task) => void resumeTask(task)} onResult={navigateToReview} />
             {messages.map((message) => {
             const workflow = workflowByMessageId.get(message.id);
             const isLiveWorkflow = Boolean(currentJobId) &&
@@ -1825,7 +1911,9 @@ export function CaseWorkbench({
             const showAnalysisDetails = !hasAnalysisReport;
             const affectedCaseCount = report ? new Set(report.findings.flatMap((finding) => finding.case_refs)).size : 0;
             const highFindingCount = report?.findings.filter((finding) => finding.severity === "high").length ?? 0;
-            const isMutationSummary = message.role === "assistant" &&
+            const isModificationConfirmation = message.role === "assistant" && message.metadata.modification_confirmation === true;
+            const isHistoricalConfirmation = isModificationConfirmation && messages.findLast(item => item.metadata.modification_confirmation === true && item.metadata.operation_id === message.metadata.operation_id)?.id !== message.id;
+            const isMutationSummary = !isModificationConfirmation && message.role === "assistant" &&
               ["CASE_GENERATE", "CASE_MODIFY", "CASE_DELETE"].includes(message.intent ?? "") &&
               (Boolean(message.metadata.change_set_id) || artifactVersion > 0 || Boolean(workflow));
             const resolvedChange = message.metadata.change_set_id ? messages.findLast((item) =>
@@ -1851,6 +1939,7 @@ export function CaseWorkbench({
                 key={message.id}
                 id={`case-message-${message.id}`}
                 className={`principle-message is-${message.role}`}
+                tabIndex={-1}
               >
                 <span>
                   {messageLabel(
@@ -1872,7 +1961,7 @@ export function CaseWorkbench({
                         `已检查 ${analysisCount} 条用例，发现 ${report?.findings.length ?? 0} 组问题（高优先级 ${highFindingCount} 组），涉及 ${affectedCaseCount} 条用例引用。变更需审阅并确认。`,
                       )}</p>
                     </div>
-                    <button type="button" onClick={() => openReviewPlan(message.id)}>
+                    <button type="button" onClick={() => navigateToReview(message.id)}>
                       {pick("View plan in workspace", "在工作区查看计划")}
                       {(report?.findings.length ?? 0) > 3 && ` · ${report?.findings.length}`}
                     </button>
@@ -1903,9 +1992,10 @@ export function CaseWorkbench({
                 {isMutationSummary && !isLiveWorkflow && message.status !== "running" && (
                   <p className="principle-mutation-result">{mutationSummary}</p>
                 )}
-                {querySnapshots && <div className="principle-analysis-summary"><div><strong>{pick(`Found ${querySnapshots.length} cases`, `找到 ${querySnapshots.length} 条用例`)}</strong><p>{[...new Set(querySnapshots.map((item) => item.module))].join(" · ") || pick("No matching cases", "暂无匹配用例")}</p></div><button type="button" onClick={() => openReviewPlan(message.id)}>{pick("View table", "查看结果表格")}</button></div>}
+                {querySnapshots && <div className="principle-analysis-summary"><div><strong>{pick(`Found ${querySnapshots.length} cases`, `找到 ${querySnapshots.length} 条用例`)}</strong><p>{[...new Set(querySnapshots.map((item) => item.module))].join(" · ") || pick("No matching cases", "暂无匹配用例")}</p></div><button type="button" onClick={() => navigateToReview(message.id)}>{pick("View table", "查看结果表格")}</button></div>}
                 <ConversationAttachments metadata={message.metadata} />
-                {message.content && showAnalysisDetails && !isMutationSummary && !querySnapshots && (
+                {isModificationConfirmation && <CompactModificationConfirmation content={message.content} historical={isHistoricalConfirmation} />}
+                {message.content && showAnalysisDetails && !isMutationSummary && !querySnapshots && !isModificationConfirmation && (
                   <Streamdown
                     animated={{
                       animation: "fadeIn",
@@ -2066,12 +2156,12 @@ export function CaseWorkbench({
                     {pick("Structured test brief", "结构化测试说明")} V{artifactVersion}.md
                   </button>
                 )}
-                {conversationTask?.message.id === message.id && !["KNOWLEDGE_QA", "UNRESOLVED"].includes(message.intent ?? "") && !hasAnalysisReport && !isMutationSummary && !querySnapshots && (
-                  <button type="button" className="principle-artifact-link" onClick={() => openReviewPlan(message.id)}>
+                {conversationTask && message.role === "assistant" && !["KNOWLEDGE_QA", "UNRESOLVED"].includes(message.intent ?? "") && !hasAnalysisReport && !querySnapshots && message.metadata.artifact_type !== "test_brief" && !message.metadata.workstation_task_id && (
+                  <button type="button" className="principle-artifact-link" onClick={() => navigateToReview(message.id)}>
                     <Sparkles size={14} />{pick("View case result", "查看用例结果")}
                   </button>
                 )}
-                {Boolean(message.metadata.workstation_task_id) && <button type="button" className="principle-artifact-link" onClick={() => openReviewPlan(String(message.metadata.workstation_task_id))}>{pick("Go to workstation review", "前往工作区审阅")}</button>}
+                {Boolean(message.metadata.workstation_task_id) && <button type="button" className="principle-artifact-link" onClick={() => navigateToReview(String(message.metadata.workstation_task_id))}>{pick("Go to workstation review", "前往工作区审阅")}</button>}
                 {message.citations.length > 0 && (
                   <small>
                     {pick("Sources: ", "来源：")}
@@ -2081,6 +2171,23 @@ export function CaseWorkbench({
               </article>
             );
             })}
+            {assetSelection && activeBrief && <article className="principle-message is-assistant">
+              <GenerationAssets selection={assetSelection} scope={selectedAssetScope} onScopeChange={ids => setAssetScope({ version: activeBrief.version, ids })} selected={selectedAssetIds} busy={busy || conversationRunning}
+                onChange={ids => setAssetChoice({ version: activeBrief.version, ids })} onConfirm={() => void confirmAssetSelection()} />
+            </article>}
+                {activeBrief &&
+                  (activeBrief.status === "draft" || pendingReuseSelection?.version === activeBrief.version) && assetReuseDecisions.length > 0 && (
+                  <article className="principle-message is-assistant"><div className="conversation-intent-confirmation">
+                    <strong>{pick("Confirm case collection reuse", "确认复用用例集")}</strong>
+                    <p>{pick("Test object: ", "本次测试对象：")}{activeBrief.content.test_object}</p>
+                    <p>{reuseCollectionNames.length ? reuseCollectionNames.join("、") : pick("Historical cases from case management", "用例管理中的历史用例")}</p>
+                    <p>{pick("Only cases for the same test object may be reused. Confirm whether to use these suggestions before generating candidates.", "仅测试对象一致的用例可以复用。请确认是否使用这些复用建议，再生成候选用例。")}</p>
+                    <div>
+                      <button type="button" disabled={busy || conversationRunning || blockingQuestions.length > 0} onClick={() => void confirmBriefAndGenerate(pendingReuseSelection?.version === activeBrief.version ? pendingReuseSelection.ids : [], "reuse")}>{pick("Confirm reuse and generate", "确认复用并生成")}</button>
+                      <button type="button" disabled={busy || conversationRunning || blockingQuestions.length > 0} onClick={() => void confirmBriefAndGenerate(pendingReuseSelection?.version === activeBrief.version ? pendingReuseSelection.ids : [], "fresh")}>{pick("Generate without reuse", "不复用，生成新用例")}</button>
+                    </div>
+                  </div></article>
+                )}
             {pendingMessage !== null && (
               <article className="principle-message is-user" data-testid="pending-conversation-message">
                 <span>{pick("You", "你")}</span>
@@ -2100,12 +2207,12 @@ export function CaseWorkbench({
 
         {activeMutationTask && activeMutationTask.status !== "awaiting_target" && viewMode !== "plan" && !planningPreview && <div className="principle-change-set-link" role="status" data-testid="active-mutation-task-notice">
           <span>{pick("This task is still open. Further edits stay here until you accept or abandon it. Queries are separate tasks.", "当前任务尚未结束，后续修改将继续此任务；查询会单独建立任务。请在工作区完成采纳或放弃，之后才可开始新的生成或修改任务。")}</span>
-          <button type="button" onClick={() => openReviewPlan(activeMutationTask.id)}>{pick("Go to workstation review", "前往工作区审阅")}</button>
+          <button type="button" onClick={() => navigateToReview(activeMutationTask.id)}>{pick("Go to workstation review", "前往工作区审阅")}</button>
         </div>}
         {activeChangeSet && !activeMutationTask && (
           <div className="principle-change-set-link">
             <span>{pick(`${activeChangeSet.items.filter(item => !["applied", "rejected"].includes(item.status ?? "")).length} cases awaiting change review`, `${activeChangeSet.items.filter(item => !["applied", "rejected"].includes(item.status ?? "")).length} 条用例待审阅变更`)}</span>
-            <button type="button" onClick={() => openReviewPlan(tasks.find((task) => task.message.metadata.change_set_id === activeChangeSet.id)?.id)}>{pick("Review in workspace", "在工作区审阅")}</button>
+            <button type="button" onClick={() => navigateToReview(tasks.find((task) => task.message.metadata.change_set_id === activeChangeSet.id)?.id)}>{pick("Review in workspace", "在工作区审阅")}</button>
           </div>
         )}
 
@@ -2222,7 +2329,7 @@ export function CaseWorkbench({
             value={prompt}
             onChange={(event) => editPrompt(event.target.value)}
             placeholder={
-              conversationRunning ? pick("Task is running. Please wait for the result…", "任务正在执行，请等待结果…") : effectivePendingOperationId
+              conversationRunning ? pick("Describe an adjustment, then pause to continue…", "可输入调整要求，暂停当前任务后继续…") : effectivePendingOperationId
                 ? pick("Provide details or select cases to continue this task", "补充需求或选择用例后，继续执行当前任务")
                 : singleRewriteTarget
                   ? pick(`Describe how you want to modify “${displayedTargets[0].label}”…`, `描述你希望如何修改「${displayedTargets[0].label}」…`)
@@ -2232,7 +2339,7 @@ export function CaseWorkbench({
               ? pick("Modify selected case with natural language", "用自然语言修改选中用例")
               : pick("Conversation message", "对话消息")}
             rows={4}
-            disabled={conversationRunning || !workspace}
+            disabled={(conversationRunning && !currentJobId) || !workspace}
           />
           <div>
             <input
@@ -2283,7 +2390,7 @@ export function CaseWorkbench({
                 className="principle-stop"
                 onClick={() => void stopGeneration()}
               >
-                <Square size={16} /> {pick("End task", "结束任务")}
+                <Square size={16} /> {prompt.trim() ? pick("Pause to adjust", "暂停并调整") : pick("End task", "结束任务")}
               </button>
             ) : conversationRunning ? (
               <button type="button" disabled>
@@ -2316,7 +2423,7 @@ export function CaseWorkbench({
         role="separator"
         aria-label={pick("Resize conversation panel", "调整对话区域宽度")}
         aria-orientation="vertical"
-        aria-valuemin={420}
+        aria-valuemin={320}
         aria-valuemax={720}
         aria-valuenow={chatWidth}
         tabIndex={0}
@@ -2343,13 +2450,14 @@ export function CaseWorkbench({
             </p>
           </div>
           <div className="principle-canvas-actions">
-            {visibleCases.length > 0 && !artifactOpen && (
+            {visibleCases.length > 0 && !artifactOpen && (viewMode === "list" || viewMode === "map") && (
               <button
                 type="button"
                 aria-label={inspectorCollapsed ? pick("Show case details", "显示用例详情") : pick("Hide case details", "隐藏用例详情")}
                 title={inspectorCollapsed ? pick("Show case details", "显示用例详情") : pick("Hide case details", "隐藏用例详情")}
                 aria-pressed={!inspectorCollapsed}
-                onClick={() => setInspectorHidden((current) => !current)}
+                data-details-toggle
+                onClick={() => { if (inspectorCollapsed) { setInspectorHidden(false); focusInspector(); } else closeInspector(); }}
               >
                 <PanelRight size={17} />
                 <span>{inspectorCollapsed
@@ -2373,6 +2481,7 @@ export function CaseWorkbench({
             </button>
           </div>
         </header>
+
 
         {error && (
           <div className="principle-banner is-error" role="alert">
@@ -2419,7 +2528,7 @@ export function CaseWorkbench({
             </div>
           </section>
         ) : artifactOpen && selectedBrief ? (
-          <section className="principle-brief">
+          <section className="principle-brief" tabIndex={-1} aria-label={pick("Test planning workspace", "测试规划工作区")}>
             <header className="principle-brief-toolbar">
               <div className="principle-brief-identity">
                 <Sparkles size={19} />
@@ -2440,7 +2549,7 @@ export function CaseWorkbench({
                   aria-label={pick("Test brief version", "测试说明版本")}
                   value={selectedBrief.version}
                   onChange={(event) =>
-                    selectBriefVersion(Number(event.target.value))
+                    selectBriefVersion(Number(event.target.value), false)
                   }
                 >
                   {workspace?.test_briefs
@@ -2470,18 +2579,19 @@ export function CaseWorkbench({
                 </div>
               </details>
               {visibleCases.length > 0 && (
-                <button type="button" onClick={() => setArtifactOpen(false)}>
+                <button type="button" onClick={() => { setArtifactOpen(false); focusCaseView(); }}>
                   {pick("Back to test cases", "返回用例")}
                 </button>
               )}
               {selectedBrief.version === activeBrief?.version &&
+                activeBrief.content.generation_strategy !== "select" &&
                 ["draft", "confirmed"].includes(activeBrief.status) &&
                 ["brief_review", "candidate_review", "maintenance"].includes(phase) && (
                   <button
                     type="button"
                     className="is-primary"
                     onClick={() => void confirmBriefAndGenerate()}
-                    disabled={busy || blockingQuestions.length > 0 || Boolean(activeBrief.content.planning?.reuse && !consumptionSummary(activeBrief.content.planning).included)}
+                    disabled={busy || Boolean(assetSelection) || blockingQuestions.length > 0 || Boolean(activeBrief.content.planning?.reuse && !consumptionSummary(activeBrief.content.planning).included)}
                   >
                     {busy ? (
                       <LoaderCircle className="auth-spinner" size={16} />
@@ -2496,6 +2606,8 @@ export function CaseWorkbench({
                   </button>
                 )}
             </header>
+            {assetSelection && activeBrief && <GenerationAssets selection={assetSelection} scope={selectedAssetScope} onScopeChange={ids => setAssetScope({ version: activeBrief.version, ids })} selected={selectedAssetIds} busy={busy || conversationRunning} preview
+              onChange={ids => setAssetChoice({ version: activeBrief.version, ids })} onConfirm={() => void confirmAssetSelection()} />}
             {notice && <p role="status" className="principle-brief-guidance">{notice}</p>}
             {selectedBrief.content.planning?.reuse && <details className="principle-brief-guidance principle-brief-strategy">
               <summary>{pick("Generation strategy", "生成策略")} · {({fresh: pick("Fresh", "全新生成"), regression: pick("Regression", "回归补充"), change: pick("Change-based", "按变更生成")})[selectedBrief.content.planning.reuse.strategy]}</summary>
@@ -2510,7 +2622,7 @@ export function CaseWorkbench({
               planning={selectedBrief.content.planning}
               caseLinks={(workspace?.planning_case_links ?? []).filter(link => link.brief_version === selectedBrief.version)}
               existingCases={cases}
-              onOpenCase={(id) => { setArtifactOpen(false); setViewMode("list"); setSelectedCaseId(id); setCandidateDraft(null); setInspectorHidden(false); }}
+              onOpenCase={(id) => { setArtifactOpen(false); setViewMode("list"); setSelectedCaseId(id); setCandidateDraft(null); setInspectorHidden(false); focusInspector(); }}
               onLinkCase={async (pointId, item, remove) => {
                 if (!workspace) return;
                 setBusy(true); setError(""); setNotice("");
@@ -2525,7 +2637,7 @@ export function CaseWorkbench({
               }}
               generatedPointIds={candidates.filter(candidate => workspace && candidateBrief(workspace, candidate)?.version === selectedBrief.version).flatMap(candidate => candidate.snapshot.test_point_ids ?? [])}
               candidates={candidates.filter(candidate => workspace && candidateBrief(workspace, candidate)?.version === selectedBrief.version)}
-              onOpenCandidate={(id) => { const candidate = candidates.find(item => item.id === id); if (!candidate) return; setArtifactOpen(false); setViewMode("list"); setSelectedCaseId(id); setCandidateDraft(structuredClone(candidate)); setInspectorHidden(false); }}
+              onOpenCandidate={(id) => { const candidate = candidates.find(item => item.id === id); if (!candidate) return; setArtifactOpen(false); setViewMode("list"); setSelectedCaseId(id); setCandidateDraft(structuredClone(candidate)); setInspectorHidden(false); focusInspector(); }}
               title={selectedBrief.content.test_object.length > 120 ? selectedCollection.name : selectedBrief.content.test_object}
               busy={busy}
               editable={selectedBrief.version === activeBrief?.version && !conversationRunning && blockingQuestions.length === 0}
@@ -2632,7 +2744,7 @@ export function CaseWorkbench({
                 <button
                     type="button"
                     className={viewMode === "plan" ? "is-active" : ""}
-                    onClick={() => openReviewPlan()}
+                    onClick={() => navigateToReview()}
                   >
                     <Sparkles size={17} /> {pick("Case workspace", "用例工作区")}
                 </button>
@@ -2649,7 +2761,7 @@ export function CaseWorkbench({
                   <Paperclip size={17} /> {pick("Uploaded files", "上传文件")}
                 </button>
                 {selectedBrief && (
-                  <button type="button" disabled={Boolean(editingCaseId)} onClick={() => setArtifactOpen(true)}>
+                  <button type="button" disabled={Boolean(editingCaseId)} onClick={() => { setArtifactOpen(true); focusBrief(); }}>
                     <Sparkles size={17} /> {pick("Structured brief", "结构化测试说明")}
                   </button>
                 )}
@@ -2676,8 +2788,9 @@ export function CaseWorkbench({
             </button>}
             <div hidden={viewMode !== "plan"} style={viewMode !== "plan" ? { display: "none" } : undefined}><CaseTaskWorkspace
               tasks={resultTasks}
+              displayedVersion={resultVersion}
               selectedId={selectedTask?.id ?? ""}
-              onSelect={setPlanMessageId}
+              onSelect={navigateToReview}
               labels={localizedIntentLabels}
               statusLabels={localizedOperationStatusLabels}
               running={conversationRunning}
@@ -2685,7 +2798,11 @@ export function CaseWorkbench({
               onDiscard={(task) => void discardTask(task)}
               activeTaskId={activeMutationTask?.id}
               onConversation={(id) => {
-                if (id) document.getElementById(`case-message-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+                if (id) {
+                  const message = document.getElementById(`case-message-${id}`);
+                  message?.focus({ preventScroll: true });
+                  message?.scrollIntoView({ behavior: "smooth", block: "center" });
+                }
                 else promptRef.current?.focus();
               }}
               onArtifact={(task) => {
@@ -2696,16 +2813,21 @@ export function CaseWorkbench({
                 else setViewMode("list");
               }}
             >
-            {taskVersions.length > 1 && <div className="case-task-revisions" aria-label={pick("Revision history", "修改版本历史")}>
+            {selectedChangeSetId && candidatesForTask(resultVersion, workspace).length > 0 && <div className="task-result-switch" role="group" aria-label={pick("Result content", "结果内容")}>
+              <button type="button" aria-pressed={!showCandidatePane} onClick={() => { setResultPane({ key: resultPaneKey, pane: "changes" }); focusWorkspace(); }}>{pick("Review changes", "修改审阅")}</button>
+              <button type="button" aria-pressed={showCandidatePane} onClick={() => { setResultPane({ key: resultPaneKey, pane: "candidates" }); focusWorkspace(); }}>{pick("Candidate cases", "候选用例")} · {candidatesForTask(resultVersion, workspace).length}</button>
+            </div>}
+            {taskVersions.length > 1 && <details className="case-task-revisions" open={historicalVersion || generatingRevision} aria-label={pick("Revision history", "修改版本历史")}>
+              <summary>{pick("Revision history", "修改历史")} · {taskVersions.length}</summary>
               <label>{pick("Revision", "修改版本")} <select aria-label={pick("Review revision", "查看修改版本")} value={resultVersion?.operation?.id ?? ""} onChange={event => setReviewVersion({ taskId: selectedTask!.id, latestId: selectedTask!.operation!.id, operationId: event.target.value })}>
                 {taskVersions.map((version, index) => <option key={version.id} value={version.operation?.id}>V{index + 1}{index === taskVersions.length - 1 ? pick(" · Latest", " · 最新") : ""} · {String(version.operation?.payload.instruction ?? version.request?.content ?? "")}</option>)}
               </select></label>
-              {historicalVersion && <button type="button" onClick={() => setReviewVersion({ taskId: "", latestId: "", operationId: "" })}>{pick("Back to latest revision", "返回最新版本")}</button>}
+              {historicalVersion && <button type="button" onClick={() => { setReviewVersion({ taskId: "", latestId: "", operationId: "" }); focusWorkspace(); }}>{pick("Back to latest revision", "返回最新版本")}</button>}
               <p role="status">{generatingRevision ? pick("Updating this task. The previous proposal remains available while the new revision is prepared.", "正在更新本任务，生成期间可继续查看上一版方案。") : historicalVersion ? pick("Viewing a historical revision. Return to the latest revision to continue editing or accept changes.", "当前为历史版本，返回最新版本后可继续修改或采纳。") : selectedTask?.id === activeMutationTask?.id ? pick("All revisions belong to this task. Continue editing until you are satisfied, then accept the changes.", "这些版本属于同一任务，可继续修改，满意后再采纳。") : pick("This task has ended. Further changes start a new task; these revisions remain available for review.", "当前任务已结束，再次修改会新建任务；历史版本仍可在此审阅。")}</p>
-            </div>}
+            </details>}
             {selectedScopeChanged && <p className="task-version-notice">{pick("This result is based on earlier case versions. Review again before preparing changes.", "此结果基于历史用例版本，请重新检查后再生成变更。")}</p>}
             {selectedChangeSetId && !selectedTaskChangeSet && <p role="status">{resultLoadError || pick("Loading task result…", "正在加载任务结果…")}</p>}
-        {selectedTaskChangeSet && (
+        {selectedTaskChangeSet && !showCandidatePane && (
           <div id="collection-changes">
             <CaseCollectionChanges
               key={selectedTaskChangeSet.id}
@@ -2749,10 +2871,12 @@ export function CaseWorkbench({
             />
           </div>
         )}
-            {selectedTask && workspace && !historicalVersion && <CaseTaskArtifacts
-              generationProgress={selectedTask.operation?.related_job_id === currentJobId ? progress : null}
-              task={selectedTask} conversation={workspace} cases={cases} busy={conversationRunning} pendingCandidateRefs={pendingCandidateRefs} onReviewChanges={openPendingCandidateReview}
-              onLocate={(id) => { setSelectedCaseId(id); setCandidateDraft(candidates.find((item) => item.id === id) ?? null); setViewMode("list"); setInspectorHidden(false); }}
+            {resultVersion && workspace && showCandidatePane && <CaseTaskArtifacts
+              key={`${resultVersion.id}:${resultVersion.operation?.id}`}
+              readOnly={historicalVersion}
+              generationProgress={!historicalVersion && resultVersion.operation?.related_job_id === currentJobId ? progress : null}
+              task={resultVersion} conversation={workspace} cases={cases} busy={conversationRunning} pendingCandidateRefs={pendingCandidateRefs} onReviewChanges={openPendingCandidateReview}
+              onLocate={(id) => { setSelectedCaseId(id); setCandidateDraft(candidates.find((item) => item.id === id) ?? null); setViewMode("list"); setInspectorHidden(false); focusInspector(); }}
               onToggleCandidate={(candidate) => void toggleCandidate(candidate, !candidate.included)}
               onRefine={() => {
                 const candidate = candidates.find(item => item.included) ?? candidates[0];
@@ -2788,6 +2912,7 @@ export function CaseWorkbench({
                 busy={conversationRunning}
                 onLocate={(caseId) => {
                   setInspectorHidden(false);
+                  focusInspector();
                   setSelectedCaseId(caseId);
                   setMapFocusVersion((version) => version + 1);
                   setViewMode("map");
@@ -2809,6 +2934,7 @@ export function CaseWorkbench({
                 onSaveCase={phase === "maintenance" ? onSaveCase : undefined}
                 onSelectCase={(caseId) => {
                   setInspectorHidden(false);
+                  focusInspector();
                   setSelectedCaseId(caseId);
                   if (workspace) void updateWorkspaceState(workspace.id, { selected_case_id: caseId });
                   const candidate = candidates.find((item) => item.id === caseId);
@@ -2838,7 +2964,7 @@ export function CaseWorkbench({
               />
             </Activity>}
             {viewMode === "list" && (
-              <div className="principle-case-list">
+              <div className="principle-case-list" data-testid="workspace-case-sources">
                 {visibleCases.map((testCase) => {
                   const candidate = candidates.find(
                     (item) => item.id === testCase.id,
@@ -2869,6 +2995,7 @@ export function CaseWorkbench({
                         aria-pressed={selectedCaseId === testCase.id}
                         onClick={() => {
                           setInspectorHidden(false);
+                          focusInspector();
                           setSelectedCaseId(testCase.id);
                           setCandidateDraft(
                             candidate ? structuredClone(candidate) : null,
@@ -2893,6 +3020,7 @@ export function CaseWorkbench({
                           {testCase.priority}
                         </i>
                       </button>
+                      <CaseSource item={testCase} provenance={sourceProvenance[testCase.id]} />
                       {candidate && workspace && <CandidatePointLinks candidate={candidate} conversation={workspace} onOpen={(version, pointId) => { setPlanningFocusPointId(pointId); selectBriefVersion(version); setBriefView("map"); }} />}
                       {!candidate && <div className="case-row-point-links" aria-label="用例关联测试点"><span className="point-links-label">测试点</span>
                         {(workspace?.planning_case_links ?? []).filter(link => link.test_case_id === testCase.id).map(link => {
@@ -2984,7 +3112,7 @@ export function CaseWorkbench({
       )}
 
       {!inspectorCollapsed && (
-        <aside className="principle-inspector">
+        <aside className="principle-inspector" tabIndex={-1} aria-label={pick("Case details", "用例详情")} onKeyDown={(event) => { if (event.key === "Escape" && !editingCaseId && !polishOpen) { event.preventDefault(); event.stopPropagation(); closeInspector(); } }}>
           {editingCaseId ? (
             <CaseEditorDialog
               key={editingCaseId}
@@ -3010,13 +3138,14 @@ export function CaseWorkbench({
               <header>
                 <span>{pick("CASE DETAILS", "用例详情")}</span>
                 <button type="button" className="case-polish-trigger" disabled={!workspace || conversationRunning || candidateSaving} onClick={() => setPolishOpen(true)}><Sparkles size={15} /> {pick("AI polish", "AI 润色")}</button>
-                <button type="button" className="case-details-close" aria-label={pick("Close case details", "关闭用例详情")} title={pick("Close case details", "关闭用例详情")} onClick={() => setInspectorHidden(true)}><X size={16} /></button>
+                <button type="button" className="case-details-close" aria-label={pick("Close case details", "关闭用例详情")} title={pick("Close case details", "关闭用例详情")} onClick={closeInspector}><X size={16} /></button>
                 {phase === "maintenance" && (
                   <button type="button" onClick={() => openCaseEditor(selectedCase)}>
                     <Pencil size={15} /> {pick("Edit", "编辑")}
                   </button>
                 )}
               </header>
+              <CaseSource item={selectedCase} provenance={sourceProvenance[selectedCase.id]} />
               {candidateDraft && workspace && <CandidatePointLinks candidate={candidateDraft} conversation={workspace} onOpen={(version, pointId) => { setPlanningFocusPointId(pointId); selectBriefVersion(version); setBriefView("map"); setInspectorHidden(true); }} />}
               {!candidateDraft && <section className="case-point-links" aria-label="关联测试点">
                 <strong>关联测试点</strong>

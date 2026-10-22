@@ -134,6 +134,16 @@ export function PlaylistPicker({
   const [collapsedSelectedCollectionIds, setCollapsedSelectedCollectionIds] = useState<string[]>([]);
   const [collapsedSearchCollectionIds, setCollapsedSearchCollectionIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
+  const [searchCases, setSearchCases] = useState<TestCaseDto[]>([]);
+  const [searchOffset, setSearchOffset] = useState(0);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchFailed, setSearchFailed] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [searchRetry, setSearchRetry] = useState(0);
+  const [hasMoreCases, setHasMoreCases] = useState(false);
+  const rememberCases = (items: TestCaseDto[]) => setAllCases((current) =>
+    [...new Map([...current, ...items].map((item) => [item.id, item])).values()],
+  );
   const [deduplicatedCount, setDeduplicatedCount] = useState(0);
   const [creationDraft, setCreationDraft] = useState<{
     description: string;
@@ -182,28 +192,9 @@ export function PlaylistPicker({
     () => groupCasesByCollection(selectedCases, collectionMap, pick("Unassigned", "未归属集合")),
     [collectionMap, pick, selectedCases],
   );
-  const visibleCases = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    return allCases.filter((testCase) => {
-      if (!normalized) return true;
-      const collectionNames = testCase.collection_ids
-        .map((id) => collectionMap.get(id)?.name ?? "")
-        .join(" ");
-      return [
-        testCase.case_key,
-        testCase.title,
-        testCase.module,
-        testCase.tags.join(" "),
-        collectionNames,
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(normalized);
-    });
-  }, [allCases, collectionMap, query]);
   const caseGroups = useMemo(
-    () => groupCasesByCollection(visibleCases, collectionMap, pick("Unassigned", "未归属集合")),
-    [collectionMap, pick, visibleCases],
+    () => groupCasesByCollection(searchCases, collectionMap, pick("Unassigned", "未归属集合")),
+    [collectionMap, pick, searchCases],
   );
   const unavailableSelectedCaseIds = useMemo(() => {
     const availableIds = new Set(allCases.map((item) => item.id));
@@ -219,6 +210,9 @@ export function PlaylistPicker({
     setCollapsedSelectedCollectionIds([]);
     setCollapsedSearchCollectionIds([]);
     setQuery("");
+    setSearchOffset(0);
+    setSearchCases([]);
+    setHasMoreCases(false);
     setDeduplicatedCount(0);
   };
 
@@ -229,6 +223,7 @@ export function PlaylistPicker({
     onError("");
     try {
       const collectionCases = await listTestCases(collectionId);
+      rememberCases(collectionCases);
       setEditing(true);
       setEditingId(null);
       setName(collection.name);
@@ -245,17 +240,26 @@ export function PlaylistPicker({
 
   useEffect(() => {
     let ignored = false;
+    setLoading(true);
+    setAllCases([]);
+    setQuery("");
+    setSearchOffset(0);
+    setSearchCases([]);
     Promise.all([
       listPlaylists(spaceId),
-      searchSpaceTestCases(spaceId),
       creationSessionId
         ? getPlaylistCreationSession(creationSessionId)
         : Promise.resolve(null),
     ])
-      .then(([playlistItems, caseItems, creationSession]) => {
+      .then(async ([playlistItems, creationSession]) => {
+        const caseItems = creationSession ? (await Promise.all(
+          creationSession.case_collections.map((item) => listTestCases(item.collection_id)),
+        )).flat() : [];
         if (ignored) return;
         setPlaylists(playlistItems);
-        setAllCases(caseItems);
+        rememberCases([...caseItems, ...playlistItems.flatMap((item) =>
+          item.cases.flatMap((entry) => entry.test_case ? [entry.test_case] : []),
+        )]);
         resetDraft();
         if (creationSession) {
           if (creationSession.space_id !== spaceId) {
@@ -312,7 +316,35 @@ export function PlaylistPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [creationSessionId, requestId, spaceId]);
 
+  useEffect(() => {
+    if (!editing || loading) return;
+    let ignored = false;
+    setSearchLoading(true);
+    setSearchFailed(false);
+    setSearchError("");
+    const timer = window.setTimeout(() => {
+      searchSpaceTestCases(spaceId, query, searchOffset)
+        .then((items) => {
+          if (ignored) return;
+          setSearchCases((current) => searchOffset === 0 ? items :
+            [...new Map([...current, ...items].map((item) => [item.id, item])).values()]);
+          rememberCases(items);
+          setHasMoreCases(items.length === 100);
+        })
+        .catch((caught) => {
+          if (ignored) return;
+          setSearchFailed(true);
+          setSearchError(messageFromError(caught, pick("Search failed", "用例搜索失败")));
+        })
+        .finally(() => { if (!ignored) setSearchLoading(false); });
+    }, 250);
+    return () => { ignored = true; window.clearTimeout(timer); };
+    // Ignore responses from an older query, page, space or navigation request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, loading, spaceId, requestId, query, searchOffset, searchRetry]);
+
   const editPlaylist = (playlist: PlaylistDto) => {
+    rememberCases(playlist.cases.flatMap((item) => item.test_case ? [item.test_case] : []));
     setEditing(true);
     setEditingId(playlist.id);
     setName(playlist.name);
@@ -328,6 +360,7 @@ export function PlaylistPicker({
     onError("");
     try {
       const collectionCases = await listTestCases(collectionId);
+      rememberCases(collectionCases);
       const existing = new Set(selectedCaseIds);
       const duplicates = collectionCases.filter((item) => existing.has(item.id)).length;
       setDeduplicatedCount((count) => count + duplicates);
@@ -575,7 +608,12 @@ export function PlaylistPicker({
                 <Search size={16} />
                 <input
                   value={query}
-                  onChange={(event) => setQuery(event.target.value)}
+                  onChange={(event) => {
+                    setQuery(event.target.value);
+                    setSearchOffset(0);
+                    setSearchCases([]);
+                    setHasMoreCases(false);
+                  }}
                   placeholder={pick("Search collection, name, ID, module, or tag", "搜索用例集合、名称、编号、模块或标签")}
                   aria-label={pick("Search cases", "搜索用例")}
                 />
@@ -601,7 +639,7 @@ export function PlaylistPicker({
                         <Layers3 size={16} />
                         <span>
                           <strong>{group.collectionName}</strong>
-                          <small>{pick(`${group.cases.length} matches`, `${group.cases.length} 条匹配`)}{collectionCases.length ? pick(` · ${selectedCount} / ${collectionCases.length} selected`, ` · ${selectedCount} / ${collectionCases.length} 条已选`) : ""}</small>
+                          <small>{pick(`${group.cases.length} shown`, `已显示 ${group.cases.length} 条`)}{collectionCases.length ? pick(` · ${selectedCount} selected`, ` · 已选 ${selectedCount} 条`) : ""}</small>
                         </span>
                       </button>
                       {group.collectionId !== "unassigned" ? (
@@ -625,7 +663,11 @@ export function PlaylistPicker({
                   </article>
                 );
               })}
-              {!caseGroups.length && <p>{pick("No matching cases", "没有匹配的用例")}</p>}
+              {searchLoading && <p role="status">{pick("Searching cases…", "正在搜索用例…")}</p>}
+              {!searchLoading && !searchFailed && !caseGroups.length && <p>{pick("No matching cases", "没有匹配的用例")}</p>}
+              {searchError && <p role="alert">{searchError}</p>}
+              {searchFailed && <button type="button" onClick={() => setSearchRetry((value) => value + 1)}>{pick("Retry search", "重试搜索")}</button>}
+              {hasMoreCases && !searchFailed && <button type="button" disabled={searchLoading} onClick={() => setSearchOffset((value) => value + 100)}>{pick("Load more cases", "加载更多用例")}</button>}
             </div>
           </section>
           <footer>

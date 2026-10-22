@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 from pgvector.sqlalchemy import HALFVEC
 from sqlalchemy import (
     BigInteger,
+    Computed,
     DateTime,
     Enum,
     Float,
@@ -150,7 +151,17 @@ class CaseCollection(TimestampMixin, Base):
 
 class TestCase(TimestampMixin, Base):
     __tablename__ = "test_cases"
-    __table_args__ = (UniqueConstraint("space_id", "case_key", name="uq_test_case_space_key"),)
+    __table_args__ = (
+        UniqueConstraint("space_id", "case_key", name="uq_test_case_space_key"),
+        Index("ix_test_case_key_search", "case_key", postgresql_using="gin",
+              postgresql_ops={"case_key": "gin_trgm_ops"}),
+        Index("ix_test_case_live_page", "space_id", "created_at", "id",
+              postgresql_include=["current_revision_id"],
+              postgresql_where=text("deleted_at IS NULL")),
+        Index("ix_test_case_live_space_id", "space_id", "id",
+              postgresql_include=["current_revision_id"],
+              postgresql_where=text("deleted_at IS NULL")),
+    )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     space_id: Mapped[UUID] = mapped_column(
@@ -170,6 +181,10 @@ class TestCase(TimestampMixin, Base):
 class TestCaseRevision(TimestampMixin, Base):
     __tablename__ = "test_case_revisions"
     __table_args__ = (
+        Index("ix_case_revision_management_text", "management_search_text", postgresql_using="gin",
+              postgresql_ops={"management_search_text": "gin_trgm_ops"}),
+        Index("ix_case_revision_reuse_text", "reuse_search_text", postgresql_using="gin",
+              postgresql_ops={"reuse_search_text": "gin_trgm_ops"}),
         Index("ix_case_revision_reuse_search",
               text("(title || ' ' || module || ' ' || preconditions::text || ' ' || steps::text) gin_trgm_ops"),
               postgresql_using="gin"),
@@ -189,6 +204,10 @@ class TestCaseRevision(TimestampMixin, Base):
     )
     revision_number: Mapped[int] = mapped_column(nullable=False)
     title: Mapped[str] = mapped_column(String(300), nullable=False)
+    management_search_text: Mapped[str] = mapped_column(Text, Computed(
+        "title || ' ' || module || ' ' || case_type || ' ' || priority || ' ' || COALESCE(source_refs->0->>'label', '') || ' ' || tags::text || ' ' || test_domains::text", persisted=True))
+    reuse_search_text: Mapped[str] = mapped_column(Text, Computed(
+        "title || ' ' || module || ' ' || preconditions::text || ' ' || steps::text", persisted=True))
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     module: Mapped[str] = mapped_column(String(4000), default="", nullable=False)
     priority: Mapped[str] = mapped_column(String(8), default="P1", nullable=False)
@@ -1082,6 +1101,11 @@ class CandidateRevision(TimestampMixin, Base):
 
 class AuditEvent(TimestampMixin, Base):
     __tablename__ = "audit_events"
+    __table_args__ = (
+        Index("ix_audit_space_actor", "space_id", "actor_id", "action", "resource_type"),
+        Index("ix_audit_case_creator", "resource_type", "action", "resource_id", "created_at", "id",
+              postgresql_include=["actor_id"]),
+    )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     space_id: Mapped[UUID] = mapped_column(

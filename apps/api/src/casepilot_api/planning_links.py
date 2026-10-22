@@ -194,19 +194,29 @@ def reusable_current_case(db, conversation, candidate, cache):
         case_id, revision_id = UUID(source["case_id"]), UUID(str(source["revision"]))
     except (ValueError, KeyError, TypeError):
         return None
+    membership = db.scalar(
+        select(CollectionCaseMembership).where(
+            CollectionCaseMembership.collection_id == conversation.collection_id,
+            CollectionCaseMembership.test_case_id == case_id,
+        )
+    )
+    if membership is None and (
+        reuse.get("asset_confirmation") != "reuse"
+        or source.get("key") not in reuse.get("confirmed_asset_keys", [])
+        or any(item.get("test_object_match") != "same" for item in selected)
+    ):
+        return None
     case = db.scalar(
         select(TestCase)
-        .join(CollectionCaseMembership, CollectionCaseMembership.test_case_id == TestCase.id)
         .where(
             TestCase.id == case_id,
             TestCase.space_id == conversation.space_id,
             TestCase.deleted_at.is_(None),
-            CollectionCaseMembership.collection_id == conversation.collection_id,
         )
         .with_for_update(of=TestCase)
     )
     if case is None:
-        return None
+        raise HTTPException(409, "generation_asset_changed")
     if case.current_revision_id != revision_id:
         raise HTTPException(409, "case_link_revision_changed")
     revision = db.get(TestCaseRevision, revision_id)
@@ -222,4 +232,29 @@ def reusable_current_case(db, conversation, candidate, cache):
     ]
     if steps != original or candidate.snapshot.get("tags", []) != revision.tags:
         return None
+    if membership is None:
+        # A concurrent adoption may have linked this asset while we waited for its lock.
+        membership = db.scalar(
+            select(CollectionCaseMembership).where(
+                CollectionCaseMembership.collection_id == conversation.collection_id,
+                CollectionCaseMembership.test_case_id == case.id,
+            )
+        )
+    if membership is None:
+        from sqlalchemy import func
+
+        position = (
+            db.scalar(
+                select(func.coalesce(func.max(CollectionCaseMembership.position), -1)).where(
+                    CollectionCaseMembership.collection_id == conversation.collection_id
+                )
+            )
+            + 1
+        )
+        db.add(
+            CollectionCaseMembership(
+                collection_id=conversation.collection_id, test_case_id=case.id, position=position
+            )
+        )
+        db.flush()
     return case

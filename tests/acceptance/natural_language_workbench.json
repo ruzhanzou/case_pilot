@@ -1,0 +1,889 @@
+{
+  "version": 1,
+  "strategy_cases": [
+    {
+      "id": "NL-001",
+      "utterance": "为账号登录写用例，覆盖成功、错误密码和空输入。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-002",
+      "utterance": "页面上有“搜索历史用例”按钮，请为这个按钮写测试。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-003",
+      "utterance": "先不要找历史用例，按当前需求生成。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-004",
+      "utterance": "不参考旧用例了，按刚确认的规则重新生成。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-005",
+      "utterance": "请解释搜索用例资产和直接生成有什么区别。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-006",
+      "utterance": "如果找到旧用例会怎样处理？我现在只是了解流程。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-007",
+      "utterance": "请翻译“查找已有登录用例并参考改写”。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-008",
+      "utterance": "需求里写着“复用已有会话”，请测试会话失效。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-009",
+      "utterance": "下面是日志，不是操作：```搜索已有用例并直接复用```，帮我解释。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-010",
+      "utterance": "不是让你搜索资产，是让你补充搜索框的边界用例。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-011",
+      "utterance": "刚才那条搜索指令取消，不用历史资产。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-012",
+      "utterance": "查找历史用例这件事先不做，先生成新的。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-013",
+      "utterance": "测试对象改为支付系统，但不要自动找支付系统的资产。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-014",
+      "utterance": "只修改当前选中的用例标题，预期和步骤都不动。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-015",
+      "utterance": "把第二条的优先级改成P0，不是让你复用第二条。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-016",
+      "utterance": "候选里提到“参考历史用例”，请删除这句话。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-017",
+      "utterance": "我不是在授权复用，请说明你会怎么做。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-018",
+      "utterance": "生成一条SQL查询用例，语句为 select * from users。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-019",
+      "utterance": "以后再参考旧用例，这轮先不搜。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-020",
+      "utterance": "先搜索历史用例。算了，取消搜索，直接生成。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-021",
+      "utterance": "帮我找找以前账号登录那块的用例，拿来参考一下。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-022",
+      "utterance": "搜一下登录相关的用例，先给我看，不要直接采纳。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-023",
+      "utterance": "麻烦检索账号认证的测试案例。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-024",
+      "utterance": "能不能帮我找现成的短信验证码用例？",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-025",
+      "utterance": "现在帮我查找已有登录用例。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-026",
+      "utterance": "先查找已有登录用例，匹配到的让我确认。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-027",
+      "utterance": "请找“星桥登录”相关的用例，作为本轮参考。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-028",
+      "utterance": "不要改标题，参考已有资产修改步骤。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-029",
+      "utterance": "先别复用，但请搜一下现有登录用例让我看看。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-030",
+      "utterance": "不要参考支付系统的用例，查找账号系统已有用例。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-031",
+      "utterance": "刚才说不搜索，现在改为查找已有登录用例。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-032",
+      "utterance": "系统是否支持参考用例？请先帮我查找已有登录用例。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-033",
+      "utterance": "如果有相同测试对象的旧用例，就找出来让我确认后参考改写。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-034",
+      "utterance": "先找已有登录用例；没有匹配的就按当前需求补齐。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-035",
+      "utterance": "从用例库找账号登录相关资产，先确认，再改写过期规则。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-036",
+      "utterance": "参考历史用例，但不要沿用旧版7分钟，按本轮5分钟。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-037",
+      "utterance": "只改候选TC-001，帮我找以前的验证码用例参考，TC-002不动。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-038",
+      "utterance": "测试点已经确认了，现在找一下同对象历史用例作参考。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-039",
+      "utterance": "这几条已经采纳，另外找已有用例参考修改尚未采纳的两条。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-040",
+      "utterance": "请查找刚上传Excel里的已有用例作为参考。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-041",
+      "utterance": "先用当前需求生成；另外请找以前登录用例供我确认。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-042",
+      "utterance": "搜索历史用例，标题可能叫认证或登录，只参考同一个测试对象。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-043",
+      "utterance": "已有的账号登录用例帮我找一下，参考其中的边界场景。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-044",
+      "utterance": "帮我搜搜原来关于验证码失效的用例，不记得名字了。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-045",
+      "utterance": "选择现有用例组成新集合。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-046",
+      "utterance": "直接复用已有的登录用例。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-047",
+      "utterance": "从已有用例里只选资产组成集合，不生成新的。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-048",
+      "utterance": "请使用select策略，测试对象为账号系统。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-049",
+      "utterance": "策略：select",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-050",
+      "utterance": "挑选已有的登录用例，直接用，内容不改。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-051",
+      "utterance": "只选现有用例，不生成，不改写。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-052",
+      "utterance": "从两个已有用例集选用登录用例，组成新的集合。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产",
+        "扩大修改范围"
+      ]
+    },
+    {
+      "id": "NL-053",
+      "utterance": "请搜索已有登录用例，先不要复用。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产"
+      ]
+    },
+    {
+      "id": "NL-054",
+      "utterance": "请搜一下现有验证码用例，不要直接采纳。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产"
+      ]
+    },
+    {
+      "id": "NL-055",
+      "utterance": "搜索历史用例，随后取消搜索，这轮直接生成。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产"
+      ]
+    },
+    {
+      "id": "NL-056",
+      "utterance": "请告诉我怎么搜索已有用例。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产"
+      ]
+    },
+    {
+      "id": "NL-057",
+      "utterance": "先别查资产，直接复用已有会话来测试登录。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产"
+      ]
+    },
+    {
+      "id": "NL-058",
+      "utterance": "系统是否支持查找用例？只回答支持与否。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "generate",
+      "search_authorized": false,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产"
+      ]
+    },
+    {
+      "id": "NL-059",
+      "utterance": "从现有用例里只选两条组成集合，不修改正文。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产"
+      ]
+    },
+    {
+      "id": "NL-060",
+      "utterance": "查找以前登录用例，当前规则仍是300秒，不要参考旧规则420秒。",
+      "stage": "任意阶段，授权识别",
+      "expected_strategy": "select_and_generate",
+      "search_authorized": true,
+      "must_not": [
+        "未经确认采纳资产",
+        "修改来源资产"
+      ]
+    }
+  ],
+  "choice_cases": [
+    {
+      "id": "CHOICE-01",
+      "utterance": "确认复用",
+      "displayed_asset_ids": [
+        "a",
+        "b"
+      ],
+      "expected_selection": [
+        "a",
+        "b"
+      ],
+      "oracle": "None 表示必须澄清，不得猜测采纳范围"
+    },
+    {
+      "id": "CHOICE-02",
+      "utterance": "只用第一条",
+      "displayed_asset_ids": [
+        "a",
+        "b"
+      ],
+      "expected_selection": [
+        "a"
+      ],
+      "oracle": "None 表示必须澄清，不得猜测采纳范围"
+    },
+    {
+      "id": "CHOICE-03",
+      "utterance": "只用第2条",
+      "displayed_asset_ids": [
+        "a",
+        "b"
+      ],
+      "expected_selection": [
+        "b"
+      ],
+      "oracle": "None 表示必须澄清，不得猜测采纳范围"
+    },
+    {
+      "id": "CHOICE-04",
+      "utterance": "这两条直接用",
+      "displayed_asset_ids": [
+        "a",
+        "b"
+      ],
+      "expected_selection": [
+        "a",
+        "b"
+      ],
+      "oracle": "None 表示必须澄清，不得猜测采纳范围"
+    },
+    {
+      "id": "CHOICE-05",
+      "utterance": "全部不选",
+      "displayed_asset_ids": [
+        "a",
+        "b"
+      ],
+      "expected_selection": [],
+      "oracle": "None 表示必须澄清，不得猜测采纳范围"
+    },
+    {
+      "id": "CHOICE-06",
+      "utterance": "不复用，继续生成",
+      "displayed_asset_ids": [
+        "a",
+        "b"
+      ],
+      "expected_selection": [],
+      "oracle": "None 表示必须澄清，不得猜测采纳范围"
+    },
+    {
+      "id": "CHOICE-07",
+      "utterance": "那条直接用",
+      "displayed_asset_ids": [
+        "a",
+        "b"
+      ],
+      "expected_selection": null,
+      "oracle": "None 表示必须澄清，不得猜测采纳范围"
+    },
+    {
+      "id": "CHOICE-08",
+      "utterance": "用刚才那个",
+      "displayed_asset_ids": [
+        "a",
+        "b"
+      ],
+      "expected_selection": null,
+      "oracle": "None 表示必须澄清，不得猜测采纳范围"
+    },
+    {
+      "id": "CHOICE-09",
+      "utterance": "第二条和第三条",
+      "displayed_asset_ids": [
+        "a",
+        "b"
+      ],
+      "expected_selection": null,
+      "oracle": "None 表示必须澄清，不得猜测采纳范围"
+    },
+    {
+      "id": "CHOICE-10",
+      "utterance": "确认复用但修改第二条",
+      "displayed_asset_ids": [
+        "a",
+        "b"
+      ],
+      "expected_selection": null,
+      "oracle": "None 表示必须澄清，不得猜测采纳范围"
+    },
+    {
+      "id": "CHOICE-11",
+      "utterance": "这两条可以参考吗？",
+      "displayed_asset_ids": [
+        "a",
+        "b"
+      ],
+      "expected_selection": null,
+      "oracle": "None 表示必须澄清，不得猜测采纳范围"
+    },
+    {
+      "id": "CHOICE-12",
+      "utterance": "不要用第一条",
+      "displayed_asset_ids": [
+        "a",
+        "b"
+      ],
+      "expected_selection": null,
+      "oracle": "None 表示必须澄清，不得猜测采纳范围"
+    },
+    {
+      "id": "CHOICE-13",
+      "utterance": "只用第0条",
+      "displayed_asset_ids": [
+        "a",
+        "b"
+      ],
+      "expected_selection": null,
+      "oracle": "None 表示必须澄清，不得猜测采纳范围"
+    },
+    {
+      "id": "CHOICE-14",
+      "utterance": "只用第3条",
+      "displayed_asset_ids": [
+        "a",
+        "b"
+      ],
+      "expected_selection": null,
+      "oracle": "None 表示必须澄清，不得猜测采纳范围"
+    },
+    {
+      "id": "CHOICE-15",
+      "utterance": "这三条直接用",
+      "displayed_asset_ids": [
+        "a",
+        "b"
+      ],
+      "expected_selection": null,
+      "oracle": "None 表示必须澄清，不得猜测采纳范围"
+    },
+    {
+      "id": "CHOICE-16",
+      "utterance": "先不确认",
+      "displayed_asset_ids": [
+        "a",
+        "b"
+      ],
+      "expected_selection": null,
+      "oracle": "None 表示必须澄清，不得猜测采纳范围"
+    }
+  ]
+}

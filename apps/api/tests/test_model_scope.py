@@ -59,6 +59,18 @@ def test_model_receives_full_request_catalog_and_selection_context(scope, intent
     assert selector.call_args.args[2]["selected_ids"] == [cases[0]["id"]]
 
 
+def test_no_explicit_selection_does_not_expand_to_whole_collection(scope, monkeypatch):
+    db, conversation, cases, selector = scope
+    expand = Mock(side_effect=AssertionError("implicit collection selection"))
+    monkeypatch.setattr(conversations, "_expand_conversation_targets", expand)
+    result, error = conversations._resolve_model_scope(db, conversation,
+        ConversationMessageCreate(content="找登录用例参考，只改写QA-1，其他用例不变"), "CASE_MODIFY")
+    assert error is None
+    assert selector.call_args.args[2]["selected_ids"] == []
+    assert list(map(str, result.target_case_ids)) == [cases[1]["id"]]
+    expand.assert_not_called()
+
+
 def test_scope_uses_routing_model_with_shared_retry_budget(scope, monkeypatch):
     db, conversation, cases, selector = scope
     monkeypatch.setattr(conversations.settings, "agent_routing_model", "fast-parser")

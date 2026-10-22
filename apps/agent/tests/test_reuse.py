@@ -49,6 +49,20 @@ def with_decision(action="reuse", count=2):
     return req
 
 
+def test_adaptation_prompt_preserves_body_without_copying_system_metadata():
+    req = with_decision("modify", 1)
+    original = req.confirmed_plan["reuse"]["decisions"][0]["source"]["snapshot"]
+    original["steps"][0]["id"] = "source-step-id"
+    original["source_refs"] = [{"label": "source identity"}]
+    def tracked(stage, instruction, payload, result_type, model_id):
+        body = payload["reuse_modifications"][0]["original"]
+        assert set(body) == {"title", "preconditions", "steps"}
+        assert body["preconditions"] == original["preconditions"]
+        assert body["steps"] == [{"action": "输入正确凭据登录", "expected": "建立用户会话"}]
+        return execute(stage, instruction, payload, result_type, model_id)
+    assert len(run(req, tracked).test_cases) == 1
+
+
 def test_reuse_preserves_content_and_does_not_call_model_for_reused_slot():
     req, calls = with_decision(), []
 
@@ -78,7 +92,7 @@ def test_modified_case_receives_original_and_retains_source():
         return execute(*args)
 
     result = run(with_decision("modify", count=1), tracked)
-    assert calls[0][0]["original"] == source()["snapshot"]
+    assert calls[0][0]["original"] == {key: source()["snapshot"][key] for key in ("title", "preconditions", "steps")}
     assert any("修改参考" in ref.label for ref in result.test_cases[0].source_refs)
 
 
@@ -111,7 +125,7 @@ def test_one_reused_case_can_cover_two_points_without_duplicate_candidates():
 )
 def test_reuse_decisions_reject_invented_sources_and_incomplete_coverage(bad):
     req = request(1)
-    row = {"point_id": "P-0", "action": "reuse", "source_key": "asset:one", "reason": "未变"}
+    row = {"point_id": "P-0", "action": "reuse", "test_object_match": "same", "source_key": "asset:one", "reason": "未变"}
     rows = [row]
     if bad == "unknown_source":
         row["source_key"] = "asset:other-space"
@@ -182,8 +196,8 @@ def test_asset_search_is_bounded_scoped_and_escapes_wildcards():
     connection = Mock()
     connection.execute.return_value.mappings.return_value = []
     JobStore.__new__(JobStore).search_reuse_cases(connection, space_id=uuid4(), terms=["登录%_"])
-    statement = connection.execute.call_args.args[0]
-    sql = str(statement.compile(dialect=postgresql.dialect()))
+    sql = "\n".join(str(call.args[0].compile(dialect=postgresql.dialect()))
+                    for call in connection.execute.call_args_list)
     assert "space_id =" in sql and "deleted_at IS NULL" in sql
     assert "current_revision_id" in sql and "LIMIT" in sql and "ESCAPE" in sql
 
@@ -199,8 +213,10 @@ def test_draft_workflow_queries_assets_only_for_reuse_and_persists_decisions(mon
 
     store = Store()
     store.job["space_id"] = uuid4()
+    store.job["input_payload"].update(generation_strategy="generate" if strategy == "fresh" else "select_and_generate", asset_selection_confirmed=strategy != "fresh", confirmed_asset_sources=[source()])
     search = Mock(return_value=[{"ref": "one", "snapshot": source()["snapshot"]}])
     store.search_reuse_cases = search
+    store.attach_reuse_collections = lambda connection, items, **kwargs: items
 
     class Provider:
         def complete(self, *, stage, payload, result_type, **kwargs):
@@ -219,7 +235,7 @@ def test_draft_workflow_queries_assets_only_for_reuse_and_persists_decisions(mon
                     decisions=[
                         {
                             "point_id": p["id"],
-                            "action": "reuse",
+                            "action": "reuse", "test_object_match": "same",
                             "source_key": payload["sources"][0]["key"],
                             "reason": "登录规则未变",
                         }
@@ -236,11 +252,10 @@ def test_draft_workflow_queries_assets_only_for_reuse_and_persists_decisions(mon
     monkeypatch.setattr(tasks, "_context_payload", lambda *args, **kwargs: {"evidence": []})
     tasks.draft_test_brief(str(store.job["id"]))
     reuse = store.briefs[0]["planning"]["reuse"]
-    assert reuse["strategy"] == strategy
+    assert reuse["strategy"] == ("fresh" if strategy == "fresh" else "regression")
     assert reuse["summary"] == ({"new": 12} if strategy == "fresh" else {"reuse": 12})
-    assert search.call_count == (0 if strategy == "fresh" else 1)
+    assert search.call_count == 0
     if strategy != "fresh":
-        assert search.call_args.kwargs["space_id"] == store.job["space_id"]
         events = [event["event"] for event in store.events]
         assert events.index("cases.searching") < events.index("reuse.comparing")
         assert events[-1] == "brief.completed"
@@ -258,7 +273,7 @@ def test_reference_budget_never_causes_unverified_direct_reuse():
             decisions=[
                 {
                     "point_id": "P-0",
-                    "action": "reuse",
+                    "action": "reuse", "test_object_match": "same",
                     "source_key": "asset:one",
                     "reason": "未变化",
                 }
@@ -334,3 +349,64 @@ def test_import_report_deduplicates_rows_from_split_evidence():
         'case_import_rows': [{'row': 2, 'valid': False, 'default_fields': [], 'reason': '缺少预期'}]}] * 2}
     result = plan_reuse(plan, 'fresh', [], Mock(), '')
     assert len(result['import_report']) == 1
+
+
+@pytest.mark.parametrize("match", ["different", "unknown", None])
+@pytest.mark.parametrize("action", ["reuse", "modify"])
+def test_different_or_unverified_test_object_never_reuses(match, action):
+    row = {"point_id": "P-0", "action": action, "source_key": "asset:one", "reason": "similar"}
+    if match is not None:
+        row["test_object_match"] = match
+    result = plan_reuse(request(1).confirmed_plan, "change", [source()],
+                        lambda *args: ReuseDecisions(decisions=[row]), "login",
+                        test_object="other product")
+    decision = result["decisions"][0]
+    assert decision["action"] == "new"
+    assert decision["source_key"] is None
+    assert "source" not in decision
+
+
+def test_same_test_object_can_be_proposed_for_reuse():
+    def complete(stage, instruction, payload, result_type):
+        assert payload["test_object"] == "account system"
+        return result_type(decisions=[{"point_id": "P-0", "action": "reuse",
+            "source_key": "asset:one", "reason": "same product and object",
+            "test_object_match": "same"}])
+    result = plan_reuse(request(1).confirmed_plan, "change", [source()], complete,
+                        "login", test_object="account system")
+    assert result["decisions"][0]["action"] == "reuse"
+
+
+def test_reuse_collection_provenance_is_scoped_and_preserves_case_snapshot():
+    asset_id, collection_id = uuid4(), uuid4()
+    connection = Mock()
+    connection.execute.return_value.mappings.return_value = [
+        {"test_case_id": asset_id, "id": collection_id, "name": "Account regression"}
+    ]
+    items = [{"ref": str(asset_id), "target_type": "formal", "snapshot": source()["snapshot"]}]
+    result = JobStore.__new__(JobStore).attach_reuse_collections(
+        connection, items, space_id=uuid4()
+    )
+    assert result[0]["collections"] == [{"id": str(collection_id), "name": "Account regression"}]
+    assert "collections" not in items[0]
+    assert normalize_sources(result, [])[0]["collections"] == result[0]["collections"]
+    sql = str(connection.execute.call_args.args[0].compile(dialect=postgresql.dialect()))
+    assert "space_id =" in sql and "deleted_at IS NULL" in sql
+
+
+def test_excel_reference_preserves_original_identity_and_version():
+    import json
+    from casepilot_agent.reuse import reuse_ref
+
+    asset = {
+        "key": "excel:document:历史:2", "kind": "excel", "label": "历史用例.xlsx",
+        "locator": "历史!2", "document_version": 3, "document_checksum": "snapshot-hash",
+        "snapshot": {"original_id": "OLD-001"},
+    }
+    ref = reuse_ref({"source": asset, "action": "modify", "reason": "按当前时长改写"})
+    provenance = json.loads(ref.excerpt)
+    assert provenance["case_key"] == "OLD-001"
+    assert provenance["revision"] == 3
+    assert provenance["source_label"] == "历史用例.xlsx"
+    assert provenance["source_locator"] == "历史!2"
+    assert provenance["document_checksum"] == "snapshot-hash"

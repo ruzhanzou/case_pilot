@@ -73,3 +73,12 @@ def test_legacy_candidate_without_points_does_not_query_or_create_links():
     )
     db.get.assert_not_called()
     db.add.assert_not_called()
+
+
+def test_empty_model_module_does_not_break_workspace_recovery():
+    from casepilot_api.schemas import TestBriefContent
+    content = TestBriefContent(planning={
+        'feature_points': [{'id': 'F1', 'name': '验证码过期', 'module': ''}],
+        'test_points': [{'id': 'P1', 'title': '过期拒绝', 'feature_point_ids': ['F1']}],
+    })
+    assert content.planning['feature_points'][0]['module'] == '验证码过期'

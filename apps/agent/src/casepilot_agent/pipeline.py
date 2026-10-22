@@ -604,8 +604,8 @@ class GenerationPipeline:
         if not points:
             raise ValueError("planning_has_no_test_points")
         requirement = RequirementAnalysis(
-            test_object=request.prompt,
-            test_object_specified=True,
+            test_object=request.test_object,
+            test_object_specified=bool(request.test_object),
             summary=request.markdown_content or request.prompt,
         )
         generated = []
@@ -633,6 +633,7 @@ class GenerationPipeline:
                     "直接支持本用例的短句，每条不超过80字，禁止复述整段或整份文档。",
                     {
                         "prompt": request.prompt,
+                        "test_object": request.test_object,
                         "original_requirement": request.markdown_content or request.prompt,
                         "test_points": {"test_points": [point.model_dump(mode="json") for point in group]},
                         "feature_points": {"feature_points": [f.model_dump(mode="json") for f in selected_features]},
@@ -739,7 +740,9 @@ class GenerationPipeline:
         on_batch=None,
     ) -> GenerationResult:
         if request.confirmed_plan:
-            return self.run_planned(request, execute_stage, on_batch)
+            test_object = (request.test_object.strip()
+                           or str(answers.get(TEST_OBJECT_QUESTION_ID) or "").strip())
+            return self.run_planned(request.model_copy(update={"test_object": test_object}), execute_stage, on_batch)
         requested_count = requested_case_count(request)
         common = {
             "requested_case_count": requested_count,
@@ -1124,6 +1127,17 @@ class GenerationPipeline:
             validated = {}
             for ref, candidate in batch_results.items():
                 original = expected[ref].test_case
+                # Confirmed asset identities are server-owned provenance. The
+                # model may narrow evidence citations, but cannot erase them.
+                for source in original.source_refs:
+                    try:
+                        identity = json.loads(source.excerpt or "{}")
+                    except (TypeError, ValueError):
+                        continue
+                    if (isinstance(identity, dict) and identity.get("source_key")
+                            and identity.get("action") in {"reuse", "modify"}
+                            and source not in candidate.proposed.source_refs):
+                        candidate.proposed.source_refs.append(source)
                 if candidate.proposed.id != original.id:
                     raise ValueError("批量改写不能改变用例标识")
                 try:

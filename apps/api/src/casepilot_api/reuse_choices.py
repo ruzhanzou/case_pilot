@@ -56,3 +56,29 @@ def apply_reviewer_choices(planning):
     reuse["decisions"] = decisions
     reuse["summary"] = dict(Counter(d["action"] for d in decisions))
     return result
+
+
+def confirm_asset_reuse(planning, confirmation, *, confirmed_keys=()):
+    result = deepcopy(planning)
+    reuse = result.get("reuse") or {}
+    decisions = reuse.get("decisions", [])
+    inherited = [d for d in decisions if d.get("action") in {"reuse", "modify"}
+                 and (d.get("source") or {}).get("kind") == "formal"]
+    if not inherited:
+        return result
+    if confirmation is None and reuse.get("asset_confirmation") == "reuse":
+        confirmed_keys = set(confirmed_keys)
+        if all(d.get("source_key") in confirmed_keys for d in inherited):
+            confirmation = "reuse"
+    if confirmation is None:
+        raise HTTPException(status_code=409, detail="reuse_confirmation_required")
+    if confirmation == "reuse" and any(d.get("test_object_match") != "same" for d in inherited):
+        raise HTTPException(status_code=409, detail="reuse_test_object_mismatch")
+    if confirmation == "fresh":
+        for decision in inherited:
+            decision.update(action="new", source_key=None, reason="用户选择不复用用例管理中的用例")
+            decision.pop("source", None)
+            reuse.setdefault("user_choices", {})[decision["point_id"]] = "new"
+        reuse["summary"] = dict(Counter(d["action"] for d in decisions))
+    reuse["asset_confirmation"] = confirmation
+    return result

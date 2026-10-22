@@ -341,3 +341,157 @@ def test_invalid_plan_reference_is_not_downgraded_to_review_warning():
     req.confirmed_plan["test_points"][0]["feature_point_ids"] = ["missing"]
     with pytest.raises(StageContractError, match="invalid_feature_reference"):
         run(req)
+
+
+@pytest.mark.parametrize('size', [3, 5, 10])
+@pytest.mark.parametrize('concurrency', [1, 2, 4])
+@pytest.mark.parametrize('count', [1, 3, 5, 6, 10, 11, 100])
+def test_batch_configuration_preserves_coverage(size, concurrency, count):
+    req = request(count).model_copy(update={'batch_size': size, 'batch_concurrency': concurrency})
+    calls = []
+    def tracked(stage, instruction, payload, result_type, model_id):
+        calls.append(payload)
+        assert payload['prompt_version'] == 'case-batch-v10-extra-assertions'
+        assert payload['batch_count'] <= size
+        return execute(stage, instruction, payload, result_type, model_id)
+    result = run(req, tracked)
+    assert len(result.test_cases) == count
+    assert {p for case in result.test_cases for p in case.test_point_ids} == {f'P-{i}' for i in range(count)}
+    assert sorted(slot for call in calls for slot in call['batch_slots']) == list(range(1, count + 1))
+
+
+def test_prompt_removes_exact_repeats_but_preserves_latest_corrections():
+    req = request(1)
+    req.conversation_memory = [
+        {'role':'user','content':'保留预期'}, {'role':'user','content':'改为P0'},
+        {'role':'user','content':'保留预期'}, {'role':'user','content':'刚才说错了，改为P2'},
+        {'role':'user','content':req.prompt},
+    ]
+    req.confirmed_plan['feature_points'][0]['description'] = req.prompt
+    def tracked(stage, instruction, payload, result_type, model_id):
+        assert [m['content'] for m in payload['user_requirements']] == ['改为P0','保留预期','刚才说错了，改为P2']
+        assert 'description' not in payload['features'][0]
+        return execute(stage, instruction, payload, result_type, model_id)
+    assert len(run(req, tracked).test_cases) == 1
+
+
+def test_runtime_skill_uses_stage_schema_without_obsolete_four_field_contract():
+    from casepilot_agent.skills import load_test_case_generation_skill
+    load_test_case_generation_skill.cache_clear()
+    skill = load_test_case_generation_skill()
+    assert 'counts need not match' in skill
+    assert 'containing exactly the requested slots' in skill
+    assert 'their item counts must match' not in skill
+    assert 'Express every candidate with the four-section' not in skill
+
+
+@pytest.mark.parametrize('wrong_body', ['访问/report/91，返回200', '访问/report/90，返回成功'])
+def test_explicit_endpoint_or_status_mismatch_retries_only_affected_slot(wrong_body):
+    req = request(2)
+    req.confirmed_plan['test_points'][0].update(objective='访问/report/90返回报表90及状态200', scenario='管理员已登录')
+    calls = []
+    def executor(stage, instruction, payload, result_type, model_id):
+        calls.append(payload['batch_slots'])
+        assert 'global_scenario_index' not in payload
+        result = execute(stage, instruction, payload, result_type, model_id)
+        for index, item in enumerate(result.test_cases):
+            if item.slot == 1:
+                updated = item.model_dump()
+                updated.update(title='报表场景', preconditions=['管理员已登录'], steps=[{'action': wrong_body if payload['retry_attempt'] == 0 else '访问/report/90', 'expected': wrong_body if payload['retry_attempt'] == 0 else '返回报表90及状态200'}])
+                result.test_cases[index] = updated
+        return result
+    result = run(req, executor)
+    assert calls == [[1, 2], [1]]
+    assert len(result.test_cases) == 2
+    assert result.quality.repair_rounds == 1
+
+
+def test_rate_limit_retries_only_the_failed_batch_and_retains_successes():
+    import httpx
+    from openai import RateLimitError
+    calls = []
+    def limited(stage, instruction, payload, result_type, model_id):
+        calls.append(payload['batch_slots'])
+        if payload['batch_slots'] == [6] and payload['retry_attempt'] == 0:
+            raise RateLimitError('synthetic rate limit', response=httpx.Response(429,
+                request=httpx.Request('POST', 'https://example.test/model')), body=None)
+        return execute(stage, instruction, payload, result_type, model_id)
+    result = run(request(6), limited)
+    assert calls == [[1, 2, 3, 4, 5], [6], [6]]
+    assert len(result.test_cases) == 6
+    assert len({case.id for case in result.test_cases}) == 6
+
+
+@pytest.mark.parametrize("explicit,answer,expected", [
+    ("账号系统", "旧对象", "账号系统"), ("", "订单系统", "订单系统"), ("", "", ""),
+])
+def test_confirmed_object_survives_prompt_batches_and_artifact(explicit, answer, expected):
+    req = request(6).model_copy(update={"test_object": explicit})
+    calls = []
+    def tracked(*args):
+        calls.append(args[2]["test_object"])
+        return execute(*args)
+    result = GenerationPipeline(SimpleNamespace(name="real")).run(
+        req, context={}, answers={"Q-TEST-OBJECT": answer}, execute_stage=tracked)
+    assert calls == [expected, expected]
+    assert result.requirement.test_object == expected
+    assert result.requirement.test_object_specified is bool(expected)
+    assert result.model_dump(mode="json")["requirement"]["test_object"] == expected
+    assert result.requirement.test_object != req.prompt
+    from unittest.mock import Mock
+    from uuid import uuid4
+    from casepilot_agent.store import JobStore
+    connection = Mock()
+    connection.scalar.return_value = 0
+    job = {key: uuid4() for key in ("id", "collection_id", "space_id", "account_id")}
+    job["input_payload"] = {"persist_cases": False}
+    JobStore.__new__(JobStore).persist_generation(connection, job, result.model_dump(mode="json"))
+    persisted = connection.execute.call_args_list[0].args[0].compile().params
+    assert persisted["requirement_analysis"]["test_object"] == expected
+
+
+@pytest.mark.parametrize('duration', ['1140秒', '19分钟', '1.14e3秒'])
+def test_point_duration_is_executable_and_unit_equivalent(duration):
+    from casepilot_agent.compact_generation import validate_point_literals, StageContractError
+    point = SimpleNamespace(objective='第四次错误锁定1140秒', scenario='已有3次错误，再提交错误验证码')
+    case = CaseContent(slot=1, title='第四次错误锁定1140秒', preconditions=['已有3次错误'],
+                       steps=[{'action': '提交错误验证码', 'expected': '返回E419，锁定' + duration}])
+    if duration == '1.14e3秒':
+        with pytest.raises(StageContractError, match='duration_missing'):
+            validate_point_literals(case, point)
+    else:
+        validate_point_literals(case, point)
+    case.steps[0].expected = '返回E419，锁定时刻正确'
+    with pytest.raises(StageContractError, match='duration_missing'):
+        validate_point_literals(case, point)
+
+
+@pytest.mark.parametrize('audit_fails', [False, True])
+def test_unrequested_counter_effect_is_reviewed_without_regenerating_good_sibling(audit_fails):
+    from casepilot_agent.compact_generation import StageContractError
+    req = request(2)
+    req.prompt = '有效账号建立会话；停用账号返回E403，没有规定错误计数的变化。'
+    for p in req.confirmed_plan['test_points']:
+        p.update(title='账号状态', scenario='停用账号提交正确凭据', objective='返回E403')
+    calls = []
+    def complete(stage, instruction, payload, result_type, model_id):
+        calls.append((stage, payload.get('batch_slots')))
+        if stage == 'test_case.grounded':
+            assert [c['slot'] for c in payload['test_cases']] == [2]
+            if audit_fails:
+                raise StageContractError('audit_unavailable')
+            return BatchAudit(reviews=[{'slot':2,'verdict':'revise','reason':'计数副作用没有依据',
+                'replacement': {'slot':2,'title':'停用拒绝','preconditions':['账号停用'],
+                    'steps':[{'action':'提交正确凭据','expected':'返回E403'}]},
+                'assertions':[{'step':1,'source_index':0,'quote':'停用账号返回E403','explanation':'只保留明确错误码'}]}])
+        return result_type.model_validate({'test_cases':[{'slot':s,'title':f'账号状态{s}',
+            'preconditions':['账号停用'],'steps':[{'action':'提交正确凭据','expected':'返回E403'+('，错误次数不增加' if s==2 else '')}]}
+            for s in payload['batch_slots']]})
+    result = run(req, complete)
+    assert result.test_cases[0].id == 'TC-P-0-1'
+    assert [c for c in calls if c[0]=='test_case.generated'] == (
+        [('test_case.generated',[1,2]),('test_case.generated',[2])] if audit_fails else [('test_case.generated',[1,2])])
+    if audit_fails:
+        assert len(result.test_cases)==1
+    else:
+        assert result.test_cases[1].steps[0].expected=='返回E403'

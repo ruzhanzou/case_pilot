@@ -6,16 +6,16 @@ from uuid import UUID, uuid4
 import pytest
 from casepilot_agent.store import JobStore, workspace_candidates
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from casepilot_api import conversations
 from casepilot_api.database import get_session_factory
 from casepilot_api.main import app
-from casepilot_api.models import GenerationJob, WorkspaceCandidate, WorkspaceTestBrief
+from casepilot_api.models import CollectionCaseMembership, GenerationJob, WorkspaceCandidate, WorkspaceTestBrief
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("choice", ["suggested", "copy", "stale"])
+@pytest.mark.parametrize("choice", ["suggested", "copy", "stale", "external"])
 async def test_partial_generation_preserves_siblings_and_commit_reuses_only_live_assets(choice):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         registration = await client.post(
@@ -60,9 +60,11 @@ async def test_partial_generation_preserves_siblings_and_commit_reuses_only_live
             "test_points": points,
             "reuse": {
                 "strategy": "regression",
+                "asset_confirmation": "reuse",
+                "confirmed_asset_keys": [source["key"]],
                 "user_choices": {"P1": "copy"} if choice == "copy" else {},
                 "decisions": [
-                    {"point_id": p["id"], "action": "reuse", "source": source} for p in points
+                    {"point_id": p["id"], "action": "reuse", "test_object_match": "same", "source": source} for p in points
                 ],
             },
         }
@@ -155,6 +157,10 @@ async def test_partial_generation_preserves_siblings_and_commit_reuses_only_live
                 },
             )
             assert edited.status_code == 200, edited.text
+        if choice == "external":
+            with get_session_factory()() as db:
+                db.execute(delete(CollectionCaseMembership).where(CollectionCaseMembership.test_case_id == UUID(case["id"])))
+                db.commit()
         result = await client.post(
             f"/api/v1/workspaces/{cid}/candidates/commit", json={"candidate_ids": ids}
         )
@@ -162,9 +168,9 @@ async def test_partial_generation_preserves_siblings_and_commit_reuses_only_live
             assert result.status_code == 409, result.text
             return
         assert result.status_code == 200, result.text
-        assert (result.json()[0]["id"] == case["id"]) == (choice == "suggested")
+        assert (result.json()[0]["id"] == case["id"]) == (choice in {"suggested", "external"})
         after = (await client.get(f"/api/v1/collections/{collection['id']}/test-cases")).json()
-        assert len(after) == (1 if choice == "suggested" else 2)
+        assert len(after) == (1 if choice in {"suggested", "external"} else 2)
         original = next(item for item in after if item["id"] == case["id"])
         assert original["current_revision_id"] == case["current_revision_id"]
         state = (await client.get(f"/api/v1/conversations/{cid}")).json()

@@ -17,7 +17,7 @@ type Props = {
 export function ConversationTaskFlow({ tasks, labels, statusLabels, busy, onResume, onResult }: Props) {
   const { pick } = useI18n();
   if (!tasks.length) return null;
-  return <details className="conversation-task-flow" open>
+  return <details className="conversation-task-flow">
     <summary>{pick("Task flow", "任务流")} · {tasks.length}</summary>
     <ol>{tasks.slice().reverse().map((task) => {
       const steps = task.message.metadata.action === "module_created"

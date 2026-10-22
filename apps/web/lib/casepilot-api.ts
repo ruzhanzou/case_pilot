@@ -613,20 +613,36 @@ export type TestPlanningDto = {
   reuse?: {
     strategy: "fresh" | "regression" | "change";
     source_count: number;
+    asset_confirmation?: "reuse" | "fresh";
     summary: Partial<Record<"new" | "reuse" | "modify", number>>;
     import_report?: { row: number; valid: boolean; default_fields: string[]; reason: string; label: string; sheet: string }[];
     note: string;
     user_choices?: Record<string, "new" | "exclude" | "copy">;
     decisions: { point_id: string; action: "new" | "reuse" | "modify"; reason: string;
       compared_source_count?: number; omitted_source_count?: number;
-      source?: { kind?: string; case_id?: string; label: string; locator: string; snapshot: { title: string; preconditions: string[]; steps: { action: string; expected: string }[] } } }[];
+      source?: { collections?: { id: string; name: string }[]; kind?: string; case_id?: string; label: string; locator: string; snapshot: { title: string; preconditions: string[]; steps: { action: string; expected: string }[] } } }[];
   };
   feature_points: { id: string; name: string; module: string; description: string; requirement_refs: string[] }[];
   test_points: { id: string; title: string; scenario?: string; objective: string; feature_point_ids: string[]; source_refs?: { label: string; locator: string; excerpt: string }[] }[];
   processed_batches?: number;
 };
 
+export type GenerationStrategy = "select" | "generate" | "select_and_generate";
+export type GenerationAssetSelection = {
+  search?: { scope_collection_count?: number; returned_collection_count?: number; matched_case_count?: number; returned_case_count?: number; truncated?: boolean };
+  followup_intent?: "CASE_MODIFY" | null;
+  target_points?: { id: string; title: string }[];
+  status: "awaiting_confirmation";
+  strategy: "select" | "select_and_generate";
+  test_object: string;
+  sources: { key: string; case_id: string; label: string; locator?: string; kind?: string; match_reason: string;
+    collections: { id: string; name: string }[];
+    snapshot: { title: string; module: string; preconditions: string[]; steps: { action: string; expected: string }[] } }[];
+};
+
 export type TestBriefContentDto = {
+  generation_strategy?: GenerationStrategy | null;
+  asset_selection?: GenerationAssetSelection | Record<string, never>;
   planning?: TestPlanningDto;
   test_object: string;
   test_objective: string;
@@ -815,6 +831,19 @@ const publicErrors: Record<string, string> = {
   case_link_revision_changed: "用例版本已更新，请刷新后重新确认关联。",
   reuse_choices_invalid: "复用选择已失效，请刷新测试规划后重新选择。",
   planning_has_no_test_points: "本次没有纳入的测试点，请至少保留一个测试点。",
+  source_collections_required: "请选择至少一个来源用例集。",
+  source_cases_limit_exceeded: "来源用例超过500条，请缩小来源集合范围。",
+  generation_new_collection_required: "选用资产需创建新集合，请新建对话后继续。",
+  generation_asset_confirmation_required: "请先在对话区确认现有资产，再继续规划。",
+  generation_asset_selection_not_pending: "资产选择已处理，请刷新工作区。",
+  generation_asset_selection_invalid: "所选资产不在本次匹配范围内，请重新选择。",
+  generation_assets_required: "请至少选择一条用例资产。",
+  asset_target_scope_required: "请确认本轮影响的测试点，未选择的内容将保留。",
+  asset_target_scope_invalid: "测试点范围已失效，请刷新后重新选择。",
+  asset_target_scope_changed: "修改范围已变化，请重新搜索并确认可参考的资产。",
+  generation_asset_changed: "所选资产已变化或测试对象无法确认，请重新检索。",
+  reuse_confirmation_required: "请先在对话区确认是否复用用例管理中的用例。",
+  reuse_test_object_mismatch: "测试对象不一致或无法确认，请重新分析或选择不复用。",
   reuse_plan_changed_reanalyze_required: "需求或测试规划已变化，请在对话区重新整理测试说明和复用建议后再确认。",
   test_brief_version_changed: "测试说明已更新，请确认最新版本。",
   workspace_generation_in_progress: "当前工作区已经在生成，请勿重复提交。",
@@ -1259,12 +1288,13 @@ export function confirmTestBrief(
   version: number,
   modelId: AgentModelId,
   selectedTestPointIds: string[] = [],
+  reuseConfirmation?: "reuse" | "fresh",
 ): Promise<ConversationTurnDto> {
   return apiRequest(
     `/api/v1/workspaces/${conversationId}/test-briefs/confirm`,
     {
       method: "POST",
-      body: JSON.stringify({ version, model_id: modelId, selected_test_point_ids: selectedTestPointIds }),
+      body: JSON.stringify({ version, model_id: modelId, selected_test_point_ids: selectedTestPointIds, reuse_confirmation: reuseConfirmation }),
     },
   );
 }
@@ -1322,12 +1352,16 @@ export function sendConversationMessage(
     targetScope?: "inferred" | "selected";
     targets?: ConversationTarget[];
     sourceOperationId?: string;
+    generationStrategy?: GenerationStrategy;
+    sourceCollectionIds?: string[];
   },
 ): Promise<ConversationTurnDto> {
   return apiRequest(`/api/v1/conversations/${conversationId}/messages`, {
     method: "POST",
     body: JSON.stringify({
       content: input.content,
+      generation_strategy: input.generationStrategy,
+      source_collection_ids: input.sourceCollectionIds ?? [],
       source_operation_id: input.sourceOperationId,
       model_id: input.modelId,
       scope: input.scope,
@@ -1692,8 +1726,9 @@ export function listTestCases(collectionId: string): Promise<TestCaseDto[]> {
 export function searchSpaceTestCases(
   spaceId: string,
   query = "",
+  offset = 0,
 ): Promise<TestCaseDto[]> {
-  const params = new URLSearchParams();
+  const params = new URLSearchParams({ limit: "100", offset: String(offset) });
   if (query.trim()) params.set("q", query.trim());
   const suffix = params.size ? `?${params.toString()}` : "";
   return apiRequest(`/api/v1/spaces/${spaceId}/test-cases${suffix}`);
@@ -1970,5 +2005,12 @@ export function savePlanningCaseLink(conversationId: string, payload: {
 }): Promise<PlanningCaseLinkDto[]> {
   return apiRequest(`/api/v1/workspaces/${conversationId}/test-point-links`, {
     method: "PUT", body: JSON.stringify(payload),
+  });
+}
+
+
+export function confirmGenerationAssets(conversationId: string, version: number, caseIds: string[], testPointIds?: string[]): Promise<ConversationTurnDto> {
+  return apiRequest(`/api/v1/workspaces/${conversationId}/generation-assets/confirm`, {
+    method: "POST", body: JSON.stringify({ version, case_ids: caseIds, test_point_ids: testPointIds }),
   });
 }

@@ -2,8 +2,8 @@ from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import delete, func, select, update
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy import Text, cast, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -874,23 +874,93 @@ def search_space_test_cases(
     account: CurrentAccount,
     db: DbSession,
     q: str = "",
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[TestCaseView]:
     require_space_membership(db, account.id, space_id)
-    cases = list(
-        db.scalars(
-            select(TestCase)
-            .where(
-                TestCase.space_id == space_id,
-                TestCase.deleted_at.is_(None),
-                TestCase.current_revision_id.is_not(None),
-            )
-            .order_by(TestCase.created_at, TestCase.id)
-        )
+    statement = select(TestCase).join(
+        TestCaseRevision, TestCaseRevision.id == TestCase.current_revision_id,
+    ).where(
+        TestCase.space_id == space_id, TestCase.deleted_at.is_(None),
     )
-    views = cases_to_views(db, cases)
-    if not q.strip():
-        return views
-    return [item for item in views if matches_case_search(item, q)]
+    if q.strip():
+        # Keep metadata matching in SQL; hydrate only the requested page.
+        # Earliest audit creator, or earliest project owner, matches case_to_view.
+        audit_creator = select(AuditEvent.actor_id).where(
+            AuditEvent.resource_type == "test_case",
+            AuditEvent.resource_id == TestCase.id,
+            AuditEvent.action == "test_case.created",
+            AuditEvent.actor_id.is_not(None),
+        ).order_by(AuditEvent.created_at, AuditEvent.id).limit(1).correlate(TestCase).scalar_subquery()
+        project_creator = select(CaseProject.account_id).join(
+            CollectionCaseMembership,
+            CollectionCaseMembership.collection_id == CaseProject.collection_id,
+        ).where(CollectionCaseMembership.test_case_id == TestCase.id).order_by(
+            CaseProject.created_at, CaseProject.id,
+        ).limit(1).correlate(TestCase).scalar_subquery()
+        for term in q.strip().lower().split():
+            # Literal substring search: %, _ and backslash are not wildcards.
+            pattern = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            def contains(column):
+                return column.ilike(pattern, escape="\\")
+            def array_match(column):
+                values = func.jsonb_array_elements_text(column).table_valued("value")
+                return select(1).select_from(values).where(contains(values.c.value)).exists()
+            target_cases = select(CollectionCaseMembership.test_case_id).join(
+                CaseProject, CaseProject.collection_id == CollectionCaseMembership.collection_id,
+            ).join(CaseCollection, CaseCollection.id == CaseProject.collection_id).where(
+                CaseCollection.space_id == space_id,
+                or_(contains(func.concat_ws(" ", CaseProject.source_system,
+                    CaseProject.target_type, cast(CaseProject.target_id, Text),
+                    CaseProject.target_key, CaseProject.title)),
+                    array_match(CaseProject.linked_fr_ids), array_match(CaseProject.linked_qpm_ids)))
+            named_collection_cases = select(CollectionCaseMembership.test_case_id).join(
+                CaseCollection, CaseCollection.id == CollectionCaseMembership.collection_id,
+            ).where(CaseCollection.space_id == space_id, contains(CaseCollection.name))
+            creator_ids = list(db.scalars(select(Account.id).where(contains(func.concat_ws(" ",
+                cast(Account.id, Text), Account.display_name, Account.email)))))
+            revision_match = contains(TestCaseRevision.management_search_text)
+            if any(character in term for character in '[]"\\'):
+                # JSON punctuation is serialization, not a searchable tag.
+                revision_match = or_(contains(TestCaseRevision.title), contains(TestCaseRevision.module),
+                    contains(TestCaseRevision.case_type), contains(TestCaseRevision.priority),
+                    contains(TestCaseRevision.source_refs[0]["label"].astext),
+                    array_match(TestCaseRevision.tags), array_match(TestCaseRevision.test_domains))
+            # One round trip for independent existence checks. Broad searches
+            # must not pay a network round trip for each optional field.
+            revision_hit, key_hit, target_hit, collection_hit = db.execute(select(
+                select(TestCaseRevision.id).join(TestCase,
+                    TestCase.current_revision_id == TestCaseRevision.id).where(
+                    TestCase.space_id == space_id, TestCase.deleted_at.is_(None), revision_match).exists(),
+                select(TestCase.id).where(TestCase.space_id == space_id,
+                    TestCase.deleted_at.is_(None), contains(TestCase.case_key)).exists(),
+                target_cases.exists(), named_collection_cases.exists(),
+            )).one()
+            predicates = []
+            if revision_hit:
+                predicates.append(revision_match)
+            if key_hit:
+                predicates.append(contains(TestCase.case_key))
+            if target_hit:
+                predicates.append(TestCase.id.in_(target_cases))
+            if collection_hit:
+                predicates.append(TestCase.id.in_(named_collection_cases))
+            if creator_ids:
+                creator_candidates = select(AuditEvent.resource_id).where(
+                    AuditEvent.space_id == space_id, AuditEvent.resource_type == "test_case",
+                    AuditEvent.action == "test_case.created", AuditEvent.actor_id.in_(creator_ids),
+                ).union_all(select(CollectionCaseMembership.test_case_id).join(
+                    CaseProject, CaseProject.collection_id == CollectionCaseMembership.collection_id,
+                ).join(CaseCollection, CaseCollection.id == CaseProject.collection_id).where(
+                    CaseCollection.space_id == space_id, CaseProject.account_id.in_(creator_ids)))
+                if db.execute(creator_candidates.limit(1)).first():
+                    predicates.append(func.coalesce(audit_creator, project_creator).in_(creator_ids))
+            if not predicates:
+                return []
+            statement = statement.where(or_(*predicates))
+    cases = list(db.scalars(statement.order_by(TestCase.created_at, TestCase.id)
+                           .offset(offset).limit(limit)))
+    return cases_to_views(db, cases)
 
 
 def playlist_to_view(db: Session, playlist: Playlist) -> PlaylistView:

@@ -280,6 +280,8 @@ export function CaseManagementApp({
   const sendNewConversationMessage = async (input: {
     content: string;
     modelId: AgentModelId;
+    generationStrategy: "select" | "generate" | "select_and_generate";
+    sourceCollectionIds: string[];
   }) => {
     if (!space) return;
     setSaving(true);
@@ -297,6 +299,8 @@ export function CaseManagementApp({
       const turn = await sendConversationMessage(conversation.id, {
         content: input.content,
         modelId: input.modelId,
+        generationStrategy: input.generationStrategy,
+        sourceCollectionIds: input.sourceCollectionIds,
         scope: "current",
         useSpaceKnowledge: true,
       });

@@ -4,6 +4,7 @@ import { writeFileSync } from 'node:fs';
 
 test.skip(process.env.CASEPILOT_REAL_ACCEPTANCE !== '1', 'Requires real API, worker and model');
 test.use({ viewport: { width: 1600, height: 1000 }, trace: 'on' });
+test.use({ video: 'off' });
 test.setTimeout(900_000);
 const api = `${process.env.CASEPILOT_E2E_API_URL}/api/v1`;
 
@@ -44,7 +45,7 @@ test('new dialogue generates cases, regenerates one point, then modifies adopted
     await expect.poll(async () => {
       const current = await state();
       if (current.workflow_runs.some((r: any) => r.status === 'failed')) throw new Error(JSON.stringify(current.workflow_runs));
-      return current.test_briefs.at(-1)?.content.planning?.test_points.length;
+      return current.test_briefs.at(-1)?.content.planning?.test_points?.length;
     }, { timeout: 360_000 }).toBe(2);
     expect(await formal()).toHaveLength(0);
     const plan = (await state()).test_briefs.at(-1).content.planning;

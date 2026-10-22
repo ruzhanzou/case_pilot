@@ -23,10 +23,14 @@ export function CaseCollectionChanges({ cases, changeSet, acceptedFields, busy, 
   const { pick } = useI18n();
   const [comparePrevious, setComparePrevious] = useState(false);
   const [query, setQuery] = useState("");
-  const filteredItems = changeSet.items.filter((item) => [item.base_snapshot.case_key,
+  const [reviewFilter, setReviewFilter] = useState("all");
+  const filteredItems = changeSet.items.filter((item) => {
+    const reviewed = ["applied", "rejected"].includes(item.status ?? "");
+    return (reviewFilter === "all" || (reviewFilter === "pending" && !reviewed && item.field_diff.length > 0) || (reviewFilter === "unchanged" && !item.field_diff.length) || (reviewFilter === "reviewed" && reviewed)) && [item.base_snapshot.case_key,
     cases.find((testCase) => testCase.id === item.ref)?.case_key, item.ref,
     item.base_snapshot.title, item.proposed_snapshot.title, item.base_snapshot.module,
-    item.proposed_snapshot.module].some((value) => String(value ?? "").toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())));
+    item.proposed_snapshot.module].some((value) => String(value ?? "").toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  });
   const version = Math.max(1, ...changeSet.items.map((item) => item.proposal_version ?? 1));
   const hasPrevious = changeSet.items.some((item) => item.previous_snapshot);
   const readOnly = changeSet.status !== "ready";
@@ -40,7 +44,7 @@ export function CaseCollectionChanges({ cases, changeSet, acceptedFields, busy, 
     acceptedFields[item.ref]?.includes(diff.field)).length, 0);
 
   return (
-    <section className="collection-changes collection-changes--inline" aria-label={pick("Review pending case changes", "审阅待确认用例变更")}>
+    <section data-status={changeSet.status} className="collection-changes collection-changes--inline" aria-label={pick("Review pending case changes", "审阅待确认用例变更")}>
       <div className="collection-changes__heading"><strong>{readOnly ? pick("Change result", "变更结果") : pick("Pending changes", "待确认变更")}</strong><span className="collection-changes__badge">{changeSet.status === "generating" ? pick("Generating preview", "改写预览生成中") : changeSet.status === "superseded" ? pick("Superseded", "已有新版本") : changeSet.status === "no_changes" ? (needsCompletionCount ? pick("Needs attention", "待完善") : pick("No changes needed", "无需修改")) : changeSet.status === "applied" ? pick("Applied", "已应用") : changeSet.status === "rejected" ? pick("Discarded", "已丢弃") : changeSet.status === "conflict" ? pick("Version conflict", "版本冲突") : pick("Pending confirmation", "待确认")}</span></div>
       {!!needsCompletionCount && <p role="status">{pick(`${needsCompletionCount} cases need attention. Their original content is preserved; review the completed changes before accepting.`, `${needsCompletionCount} 条用例待完善，已保留原内容；其余修改请人工审阅后采纳。`)}</p>}
       {changeSet.status === "generating" && <p role="status" data-testid="rewrite-batch-preview">{pick("Completed batches appear here. Review and accept after all batches finish.", "已完成的批次会逐批展示；全部改写完成后，即可审阅并采纳。")}</p>}
@@ -48,11 +52,12 @@ export function CaseCollectionChanges({ cases, changeSet, acceptedFields, busy, 
       {changeSet && (
         <div className="collection-changes__review">
           <div><strong>{isDeleteChange ? pick("Deletion review", "删除审阅") : pick("Edit review", "修改审阅")}</strong><span>{pick(`${changeSet.items.length} affected cases`, `涉及 ${changeSet.items.length} 条用例`)}</span></div>
-          {!readOnly && <div className="collection-changes__actions collection-changes__toolbar">{!isDeleteChange && !comparePrevious && onAcceptAll && <button type="button" className="is-primary" disabled={busy || !pendingItems.length} onClick={() => void onAcceptAll()}>{pick(`Accept all remaining (${pendingItems.length})`, `一键采纳全部待审阅用例（${pendingItems.length} 条）`)}</button>}<button type="button" disabled={busy} onClick={() => void onReject()}>{pick("Cancel changes", "取消变更")}</button>{comparePrevious ? <button type="button" onClick={() => setComparePrevious(false)}>{pick("Review all changes before applying", "返回累计变化并确认")}</button> : <button type="button" className={isDeleteChange ? "is-danger" : "is-primary"} disabled={busy || !selectedItems.length} onClick={() => void onApply()}>{isDeleteChange ? pick("Apply selected deletions", "确认删除已选用例") : pick("Apply selected changes", "应用已选修改")}</button>}</div>}
+          {!readOnly && <div className="collection-changes__actions collection-changes__toolbar">{!isDeleteChange && !comparePrevious && onAcceptAll && <button type="button" disabled={busy || !pendingItems.length} onClick={() => void onAcceptAll()}>{pick(`Accept all remaining (${pendingItems.length})`, `一键采纳全部待审阅用例（${pendingItems.length} 条）`)}</button>}<button type="button" disabled={busy} onClick={() => void onReject()}>{pick("Cancel changes", "取消变更")}</button>{comparePrevious ? <button type="button" onClick={() => setComparePrevious(false)}>{pick("Review all changes before applying", "返回累计变化并确认")}</button> : <button type="button" className={isDeleteChange ? "is-danger" : "is-primary"} disabled={busy || !selectedItems.length} onClick={() => void onApply()}>{isDeleteChange ? pick("Apply selected deletions", "确认删除已选用例") : pick("Apply selected changes", "应用已选修改")}</button>}</div>}
           {!readOnly && <p role="status">{pick(`Selected ${selectedItems.length} of ${changeSet.items.length} cases · ${selectedCount} changes`, `已选 ${selectedItems.length}/${changeSet.items.length} 条用例 · ${selectedCount} 项变更`)}</p>}
           {hasPrevious && <div className="collection-changes__actions"><button type="button" aria-pressed={!comparePrevious} onClick={() => setComparePrevious(false)}>{pick("All pending changes", "累计待应用变化")}</button><button type="button" aria-pressed={comparePrevious} onClick={() => setComparePrevious(true)}>{pick("Changes since previous proposal", "相对上一版变化")}</button></div>}
           {reviewedCount > 0 && <p>{pick(`Accepted ${changeSet.items.filter(item => item.status === "applied").length} · Discarded ${changeSet.items.filter(item => item.status === "rejected").length} · Pending ${pendingItems.length}`, `已采纳 ${changeSet.items.filter(item => item.status === "applied").length} 条 · 已丢弃 ${changeSet.items.filter(item => item.status === "rejected").length} 条 · 待审阅 ${pendingItems.length} 条`)}</p>}
           {changeSet.items.length > 1 && <div className="collection-changes__actions">
+            <select aria-label={pick("Filter review status", "筛选审阅状态")} value={reviewFilter} onChange={event => setReviewFilter(event.target.value)}><option value="all">{pick("All cases", "全部用例")}</option><option value="pending">{pick("Pending changes", "待审阅修改")}</option><option value="unchanged">{pick("Unchanged", "无需修改")}</option><option value="reviewed">{pick("Reviewed", "已处理")}</option></select>
             <input aria-label={pick("Find changes by case or module", "按编号、标题或模块查找变更")} placeholder={pick("Case number, title or module", "编号、标题或模块")} value={query} onChange={(event) => setQuery(event.target.value)} />
             <span>{pick(`${filteredItems.length} results`, `${filteredItems.length} 条匹配`)}</span>
             {!readOnly && !comparePrevious && onSelectFields && <>
@@ -60,8 +65,8 @@ export function CaseCollectionChanges({ cases, changeSet, acceptedFields, busy, 
               <button type="button" disabled={busy || !filteredItems.length} onClick={() => onSelectFields(Object.fromEntries(filteredItems.filter(item => !["applied", "rejected"].includes(item.status ?? "")).map((item) => [item.ref, []])))}>{pick("Clear matching changes", "取消匹配项的全部变更")}</button>
             </>}
           </div>}
-          {query && <p>{pick("Filtering does not change selections outside these results. Applying includes all selected changes.", "筛选不会取消其他用例的选择；确认时将应用所有已选变更。")}</p>}
-          {!filteredItems.length && <p>{pick("No matching changes. Clear the search to see all cases.", "没有匹配的变更，清空搜索可查看全部用例。")}</p>}
+          {(query || reviewFilter !== "all") && <p>{pick("Filtering does not change selections outside these results. Applying includes all selected changes.", "筛选不会取消其他用例的选择；确认时将应用所有已选变更。")}</p>}
+          {!filteredItems.length && <p>{pick("No matching changes. Clear the search to see all cases.", "没有匹配的变更，请调整搜索或审阅状态。")}</p>}
           <div className="collection-changes__items">{filteredItems.map((item) => {
             const itemReadOnly = readOnly || ["applied", "rejected"].includes(item.status ?? "");
             const diffs = comparePrevious && item.previous_snapshot
@@ -69,7 +74,8 @@ export function CaseCollectionChanges({ cases, changeSet, acceptedFields, busy, 
               : item.field_diff;
             return (
             <details key={item.ref} open={isDeleteChange || changeSet.items.length === 1}>
-              <summary>{String(item.base_snapshot.case_key ?? cases.find((testCase) => testCase.id === item.ref)?.case_key ?? item.ref)} · {String(item.base_snapshot.title ?? "")}{item.status === "applied" ? pick(" · Accepted", " · 已采纳") : item.status === "rejected" ? pick(" · Discarded", " · 已丢弃") : ""}</summary>
+              <summary><span>{String(item.base_snapshot.title ?? item.ref)}</span><small className="change-item-count">{item.status === "applied" ? pick("Accepted", "已采纳") : item.status === "rejected" ? pick("Discarded", "已丢弃") : diffs.length ? pick(`${diffs.length} changes`, `${diffs.length} 项变更`) : pick("Unchanged", "无需修改")}</small></summary>
+              <p className="change-item-reference">{pick("Case ID", "用例编号")}：{String(item.base_snapshot.case_key ?? cases.find((testCase) => testCase.id === item.ref)?.case_key ?? item.ref)}</p>
               <p>{pick("Module", "所属模块")}：{String(item.base_snapshot.module ?? "—")} · {pick("Base version", "基准版本")} V{String(item.base_snapshot.revision_number ?? item.base_version ?? 1)}</p>
               {itemReadOnly && <p>{item.status === "applied" ? pick("Accepted — saved", "已采纳，已保存") : item.status === "rejected" || changeSet.status === "rejected" ? pick("Discarded — original kept", "已丢弃建议，原用例未改变") : changeSet.status === "generating" ? pick("Batch preview — not applied", "本批改写预览，尚未应用") : pick("Historical proposal — not applied", "历史方案，尚未应用")}</p>}
               {item.reason && <p>{item.reason}</p>}

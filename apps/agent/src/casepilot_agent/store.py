@@ -26,6 +26,7 @@ from sqlalchemy import (
     literal,
     or_,
     select,
+    union_all,
     update,
 )
 from sqlalchemy.dialects.postgresql import ENUM, JSONB
@@ -228,6 +229,7 @@ test_case_revisions = Table(
     Column("test_case_id", PGUUID(as_uuid=True)),
     Column("revision_number", Integer),
     Column("title", String),
+    Column("reuse_search_text", Text),
     Column("module", String),
     Column("priority", String),
     Column("case_type", String),
@@ -248,6 +250,13 @@ collection_items = Table(
     Column("test_case_id", PGUUID(as_uuid=True)),
     Column("position", Integer),
     Column("created_at", DateTime(timezone=True)),
+)
+case_collections = Table(
+    "case_collections", metadata,
+    Column("id", PGUUID(as_uuid=True), primary_key=True),
+    Column("space_id", PGUUID(as_uuid=True)),
+    Column("name", String),
+    Column("deleted_at", DateTime(timezone=True)),
 )
 case_projects = Table(
     "case_projects",
@@ -840,7 +849,9 @@ class JobStore:
         rows = list(
             connection.execute(
                 select(
-                    knowledge_chunks, knowledge_documents.c.original_name.label("document_name")
+                    knowledge_chunks, knowledge_documents.c.original_name.label("document_name"),
+                    knowledge_documents.c.version.label("document_version"),
+                    knowledge_documents.c.checksum.label("document_checksum"),
                 )
                 .join(
                     knowledge_documents,
@@ -1007,35 +1018,118 @@ class JobStore:
                 )
             )
 
-    def search_reuse_cases(self, connection, *, space_id, terms, limit=100):
+    def attach_reuse_collections(self, connection, items, *, space_id):
+        ids = [UUID(item["ref"]) for item in items if item.get("target_type") == "formal"]
+        if not ids:
+            return items
+        rows = connection.execute(
+            select(collection_items.c.test_case_id, case_collections.c.id, case_collections.c.name)
+            .join(case_collections, case_collections.c.id == collection_items.c.collection_id)
+            .where(collection_items.c.test_case_id.in_(ids),
+                   case_collections.c.space_id == space_id,
+                   case_collections.c.deleted_at.is_(None))
+        ).mappings()
+        collections = {}
+        for row in rows:
+            collections.setdefault(str(row["test_case_id"]), []).append(
+                {"id": str(row["id"]), "name": row["name"]}
+            )
+        return [{**item, "collections": collections.get(item["ref"], [])} for item in items]
+
+    def search_reuse_cases(self, connection, *, space_id, terms, limit=100, metrics=None):
+        if connection.dialect.name != "postgresql":
+            return self._search_reuse_cases(connection, space_id=space_id, terms=terms, limit=limit, metrics=metrics)
+        # Concurrent interactive searches must not each fan out into parallel
+        # hash workers and exhaust shared memory. Scope this setting to this
+        # read only; rollback to the savepoint also restores it on SQL errors.
+        with connection.begin_nested():
+            previous = connection.exec_driver_sql("SHOW max_parallel_workers_per_gather").scalar_one()
+            previous_memory = connection.exec_driver_sql("SHOW work_mem").scalar_one()
+            connection.exec_driver_sql("SET LOCAL max_parallel_workers_per_gather=0")
+            connection.exec_driver_sql("SET LOCAL work_mem='16MB'")
+            result = self._search_reuse_cases(connection, space_id=space_id, terms=terms, limit=limit, metrics=metrics)
+            connection.execute(select(func.set_config("work_mem", previous_memory, True)))
+            connection.exec_driver_sql(f"SET LOCAL max_parallel_workers_per_gather={int(previous)}")
+            return result
+
+    def _search_reuse_cases(self, connection, *, space_id, terms, limit=100, metrics=None):
         terms = [str(t).strip()[:100] for t in terms if str(t).strip()][:6]
         if not terms:
             return []
-        searchable = (
-            test_case_revisions.c.title
-            + " "
-            + test_case_revisions.c.module
-            + " "
-            + test_case_revisions.c.preconditions.cast(Text)
-            + " "
-            + test_case_revisions.c.steps.cast(Text)
-        )
-        predicates = [
-            or_(searchable.contains(term, autoescape=True), test_cases.c.case_key == term)
-            for term in terms
-        ]
+        searchable = test_case_revisions.c.reuse_search_text
+        predicates = [searchable.contains(term, autoescape=True) for term in terms]
         score = sum(case((predicate, 1), else_=0) for predicate in predicates)
-        rows = connection.execute(
-            select(test_cases.c.id.label("asset_id"), test_cases.c.case_key, test_case_revisions)
+        # Rank identifiers before loading full snapshots. Splitting the search
+        # branches lets PostgreSQL use the revision trigram index even when a
+        # case-key or collection-name match is also allowed.
+        scope = (test_cases.c.space_id == space_id, test_cases.c.deleted_at.is_(None))
+        body_hits = (select(test_cases.c.id.label("asset_id"), score.label("score"))
             .join(test_case_revisions, test_case_revisions.c.id == test_cases.c.current_revision_id)
-            .where(
-                test_cases.c.space_id == space_id,
-                test_cases.c.deleted_at.is_(None),
-                or_(*predicates),
-            )
-            .order_by(score.desc(), test_cases.c.id)
-            .limit(min(limit, 100))
-        ).mappings()
+            .where(*scope, or_(*predicates)))
+        names = [case_collections.c.name.contains(term, autoescape=True) for term in terms]
+        matching_collections = [row["id"] for row in connection.execute(
+            select(case_collections.c.id).where(case_collections.c.space_id == space_id,
+                case_collections.c.deleted_at.is_(None), or_(*names),
+                select(collection_items.c.id).where(
+                    collection_items.c.collection_id == case_collections.c.id).exists())).mappings()]
+        matching_keys = [row["id"] for row in connection.execute(select(test_cases.c.id).where(
+            *scope, test_cases.c.case_key.in_(terms))).mappings()]
+        collection_hits = (select(test_cases.c.id.label("asset_id"),
+                func.max(sum(case((p, 1), else_=0) for p in names)).label("score"))
+            .select_from(case_collections)
+            .join(collection_items, collection_items.c.collection_id == case_collections.c.id)
+            .join(test_cases, test_cases.c.id == collection_items.c.test_case_id)
+            .where(*scope, case_collections.c.space_id == space_id,
+                   case_collections.c.deleted_at.is_(None), case_collections.c.id.in_(matching_collections))
+            .group_by(test_cases.c.id))
+        key_hits = select(test_cases.c.id.label("asset_id"), literal(100).label("score")).where(
+            *scope, test_cases.c.case_key.in_(terms))
+        branches = [body_hits]
+        if matching_collections:
+            branches.append(collection_hits)
+        if matching_keys:
+            branches.append(key_hits)
+        # No duplicate IDs exist in the body branch. Avoid a space-sized hash
+        # aggregation when the other search branches have no matches.
+        if len(branches) == 1:
+            ranked = body_hits.subquery()
+        else:
+            hits = union_all(*branches).subquery()
+            ranked = (select(hits.c.asset_id, func.sum(hits.c.score).label("score"))
+                .group_by(hits.c.asset_id).subquery())
+        bounded_limit = max(0, min(limit, 100))
+        perfect = []
+        if len(branches) == 1 and bounded_limit:
+            # All-term hits have the maximum possible score. If this bucket
+            # fills the page, an index walk preserves the exact existing order
+            # without scoring/sorting every matching case in the space.
+            perfect = [row["asset_id"] for row in connection.execute(
+                select(test_cases.c.id.label("asset_id"))
+                .join(test_case_revisions, test_case_revisions.c.id == test_cases.c.current_revision_id)
+                .where(*scope, *predicates).order_by(test_cases.c.id).limit(bounded_limit)
+            ).mappings()]
+        top = (select(ranked.c.asset_id, ranked.c.score)
+            .order_by(ranked.c.score.desc(), ranked.c.asset_id)
+            .limit(bounded_limit).subquery())
+        all_hits_loaded = bool(bounded_limit and len(branches) == 1 and len(predicates) == 1 and len(perfect) < bounded_limit)
+        if bounded_limit and (len(perfect) == bounded_limit or all_hits_loaded):
+            top = select(test_cases.c.id.label("asset_id"), literal(len(predicates)).label("score")).where(
+                test_cases.c.id.in_(perfect)).subquery()
+        rows = list(connection.execute(
+            select(test_cases.c.id.label("asset_id"), test_cases.c.case_key,
+                   test_case_revisions)
+            .select_from(top).join(test_cases, test_cases.c.id == top.c.asset_id)
+            .join(test_case_revisions, test_case_revisions.c.id == test_cases.c.current_revision_id)
+            .where(*scope)
+            .order_by(top.c.score.desc(), top.c.asset_id)
+        ).mappings())
+        if metrics is not None:
+            total = len(perfect) if all_hits_loaded else connection.execute(select(func.count()).select_from(ranked)).scalar_one()
+            metrics.update(matched_case_count=total, returned_case_count=len(rows),
+                           candidate_limit=max(0, min(limit, 100)), truncated=total > len(rows))
+            metrics["scope_collection_count"] = connection.execute(select(func.count())
+                .select_from(case_collections).where(case_collections.c.space_id == space_id,
+                    case_collections.c.deleted_at.is_(None))).scalar_one()
         return [
             {
                 "ref": str(row["asset_id"]),
