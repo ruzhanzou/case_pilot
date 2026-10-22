@@ -149,6 +149,10 @@ class MockProvider:
         model_id: str,
     ) -> tuple[StructuredResultT, UsageMetadata]:
         del instruction
+        if stage == "attachment.cases_organized":
+            # Mock mode cannot infer unfamiliar layouts; preserve deterministic
+            # extraction and expose its fallback diagnostic instead of inventing cases.
+            raise ValueError("mock_spreadsheet_organization_unavailable")
         if stage == "reuse.objects_matched":
             test_object = str(payload.get("test_object", "")).strip().casefold()
             result = result_type.model_validate({"matches": [{

@@ -145,6 +145,12 @@ def _excel_blocks(sheet: str, rows: Iterable[tuple[int, list[Any]]]) -> list[Par
                     "sheet": sheet,
                     "row_start": start,
                     "row_end": end,
+                    "spreadsheet_rows": [
+                        {"row": number, "cells": {
+                            f"{get_column_letter(i + 1)}{number}": value
+                            for i, value in enumerate(values) if value.strip()
+                        }} for number, values in batch
+                    ],
                     **({"case_import_rows": list(row_diagnostics)} if row_diagnostics else {}),
                     **({"reference_cases": list(reference_cases)} if reference_cases else {}),
                 },

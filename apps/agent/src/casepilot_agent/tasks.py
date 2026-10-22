@@ -53,7 +53,15 @@ from casepilot_agent.planning import (
     rewrite_evidence,
 )
 from casepilot_agent.providers import create_embedding_provider, create_provider
-from casepilot_agent.reuse import ReuseAnalysis, match_asset_objects, normalize_sources, plan_reuse, reuse_ref, shortlist
+from casepilot_agent.reuse import (
+    ReuseAnalysis,
+    match_asset_objects,
+    normalize_sources,
+    plan_reuse,
+    reuse_ref,
+    shortlist,
+    spreadsheet_import_report,
+)
 from casepilot_agent.store import (
     JobStore,
     callback_deliveries,
@@ -959,27 +967,42 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                     check_cancelled=lambda: ensure_not_cancelled(store, parsed_job_id),
                 )
                 base_planning = (payload.get("current_test_brief") or {}).get("planning") or {}
-                content["asset_base_planning"] = base_planning
-                content["asset_selection"] = {
-                    "status": "awaiting_confirmation", "strategy": mode,
-                    "job_id": job_id, "test_object": requirement.test_object,
-                    "sources": candidates,
-                    "search": search_metrics,
-                    "target_points": [] if payload.get("asset_followup_intent") == "CASE_MODIFY" else [{"id": p["id"], "title": p["title"]} for p in base_planning.get("test_points", [])],
-                    "followup_intent": payload.get("asset_followup_intent"),
-                }
-                content["planning"] = {}
-                with store.connection() as connection:
-                    lock_active_job(store, connection, parsed_job_id)
-                    version = store.persist_test_brief(connection, job, content)
-                    output = {"test_brief": content, "version": version}
-                    store.update_job(connection, parsed_job_id, status="completed", stage="completed", output_payload=output)
-                    store.complete_job_message(connection, job,
-                        content=f"已按测试对象找到 {len(candidates)} 条可选资产。请确认选用范围，确认前不会规划测试点。",
-                        metadata_values={"brief_version": version, "artifact_type": "test_brief"})
-                store.publish(parsed_job_id, {"event": "brief.completed", "job_id": job_id,
-                    "status": "completed", **output})
-                return output
+                import_report = spreadsheet_import_report(context.get("evidence", []))
+                import_needs_review = any(
+                    not row["valid"] and not row.get("ignored") for row in import_report
+                )
+                if (not candidates and mode == "select_and_generate"
+                        and not base_planning.get("test_points")
+                        and not import_needs_review
+                        and payload.get("asset_followup_intent") != "CASE_MODIFY"):
+                    # A fresh reference-generation request can plan without sources.
+                    # Existing planning and maintenance requests still confirm scope.
+                    strategy = "fresh"
+                    sources = []
+                    content["asset_search_empty"] = True
+                else:
+                    content["asset_base_planning"] = base_planning
+                    content["asset_selection"] = {
+                        "status": "awaiting_confirmation", "strategy": mode,
+                        "job_id": job_id, "test_object": requirement.test_object,
+                        "sources": candidates,
+                        "search": search_metrics,
+                        "import_report": import_report,
+                        "target_points": [] if payload.get("asset_followup_intent") == "CASE_MODIFY" else [{"id": p["id"], "title": p["title"]} for p in base_planning.get("test_points", [])],
+                        "followup_intent": payload.get("asset_followup_intent"),
+                    }
+                    content["planning"] = {}
+                    with store.connection() as connection:
+                        lock_active_job(store, connection, parsed_job_id)
+                        version = store.persist_test_brief(connection, job, content)
+                        output = {"test_brief": content, "version": version}
+                        store.update_job(connection, parsed_job_id, status="completed", stage="completed", output_payload=output)
+                        store.complete_job_message(connection, job,
+                            content=f"已按测试对象找到 {len(candidates)} 条可选资产。请确认选用范围，确认前不会规划测试点。",
+                            metadata_values={"brief_version": version, "artifact_type": "test_brief"})
+                    store.publish(parsed_job_id, {"event": "brief.completed", "job_id": job_id,
+                        "status": "completed", **output})
+                    return output
 
             def publish_features(done, total, active):
                 metadata = {"phase": "features", "completed_batches": done,
@@ -1034,6 +1057,7 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
             content["planning"]["reuse"] = plan_reuse(
                 content["planning"], strategy, sources, complete_plan, str(payload["prompt"]),
                 test_object=requirement.test_object,
+                assets_confirmed=bool(payload.get("asset_selection_confirmed")),
                 progress=lambda: publish_work(store, job, "reuse.comparing", 95),
                 check_cancelled=lambda: ensure_not_cancelled(store, parsed_job_id),
             )
@@ -1063,7 +1087,8 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                 connection,
                 job,
                 content=(
-                    f"结构化测试说明 V{version} 已整理完成。"
+                    ("未找到测试对象一致的可用资产，已根据当前需求规划测试点。" if content.get("asset_search_empty") else "")
+                    + f"结构化测试说明 V{version} 已整理完成。"
                     + (
                         "尚未明确测试对象，请补充后再生成用例。"
                         if blocker_count
@@ -2196,6 +2221,12 @@ def index_knowledge_source(source_id: str) -> dict[str, Any]:
             blocks = parse_document(path, document["mime_type"])
             if not blocks or not any(block.content.strip() for block in blocks):
                 raise ValueError("document_contains_no_extractable_text")
+            if path.suffix.lower() in {".xlsx", ".xls"}:
+                from casepilot_agent.spreadsheet_cases import organize_spreadsheet_cases
+
+                blocks = organize_spreadsheet_cases(
+                    blocks, create_provider(settings.provider), model_id="auto",
+                )
             chunks = build_chunks(
                 title=document["original_name"],
                 blocks=blocks,

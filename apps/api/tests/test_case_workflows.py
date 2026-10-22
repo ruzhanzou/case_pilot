@@ -105,7 +105,7 @@ def test_empty_module_creates_a_persisted_module_without_starting_generation(mon
         db,
         SimpleNamespace(id=uuid4()),
         conversation,
-        SimpleNamespace(),
+        SimpleNamespace(content="只创建退款模块，不生成用例"),
         ConversationMessageCreate(content="只创建退款模块，不生成用例"),
         "CASE_GENERATE",
         1.0,

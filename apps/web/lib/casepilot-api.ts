@@ -629,6 +629,7 @@ export type TestPlanningDto = {
 
 export type GenerationStrategy = "select" | "generate" | "select_and_generate";
 export type GenerationAssetSelection = {
+  import_report?: { row: number; row_end?: number; valid: boolean; ignored?: boolean; method?: string; reason: string; label: string; sheet: string }[];
   search?: { scope_collection_count?: number; returned_collection_count?: number; matched_case_count?: number; returned_case_count?: number; truncated?: boolean };
   followup_intent?: "CASE_MODIFY" | null;
   target_points?: { id: string; title: string }[];
@@ -641,6 +642,7 @@ export type GenerationAssetSelection = {
 };
 
 export type TestBriefContentDto = {
+  asset_search_empty?: boolean;
   generation_strategy?: GenerationStrategy | null;
   asset_selection?: GenerationAssetSelection | Record<string, never>;
   planning?: TestPlanningDto;
@@ -1657,7 +1659,7 @@ export function deleteKnowledgeSource(sourceId: string): Promise<void> {
 export async function waitForKnowledgeSource(
   spaceId: string,
   sourceId: string,
-  timeoutMs = 120_000,
+  timeoutMs = 600_000,
 ): Promise<KnowledgeSourceDto> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {

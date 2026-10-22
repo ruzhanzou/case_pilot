@@ -243,7 +243,7 @@ export function NewConversation({
                   <FileUp size={20} aria-hidden="true" />
                   <div className="principle-attachment__body">
                     <strong title={file.name}>{file.name}</strong>
-                    <small role="status">{Math.max(1, Math.round(file.size / 1024))} KB · {file.status === "ready" ? pick("Ready", "已就绪") : file.status === "failed" ? pick("Failed · select file to retry", "失败 · 请重新选择文件") : file.status === "processing" ? pick("Uploaded · processing document", "已上传 · 正在解析资料") : pick(`Uploading ${file.percent}%`, `上传中 ${file.percent}%`)}</small>
+                    <small role="status">{Math.max(1, Math.round(file.size / 1024))} KB · {file.status === "ready" ? pick("Ready", "已就绪") : file.status === "failed" ? pick("Failed · select file to retry", "失败 · 请重新选择文件") : file.status === "processing" ? (/\.xlsx?$/i.test(file.name) ? pick("Uploaded · organizing Excel cases…", "已上传 · 正在识别整理 Excel 用例…") : pick("Uploaded · processing document", "已上传 · 正在解析资料")) : pick(`Uploading ${file.percent}%`, `上传中 ${file.percent}%`)}</small>
                     {file.status === "uploading" && <progress aria-label={pick(`Upload progress for ${file.name}`, `${file.name} 上传进度`)} value={file.percent} max={100} />}
                   </div>
                   {file.status === "ready" ? <CheckCircle2 size={16} aria-label={pick("Ready", "已就绪")} /> : file.status === "failed" ? <CircleAlert size={16} /> : <LoaderCircle size={16} className="auth-spinner" aria-hidden="true" />}

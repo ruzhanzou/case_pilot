@@ -28,6 +28,10 @@ for(const state of ['empty','scoped','formal','hundred'] as const)test(`asset co
   await page.keyboard.press('Space');await expect(button).toBeEnabled();
  }
  if(state==='hundred'){
+  await expect(page.getByRole('region',{name:'现有用例资产选择'})).toHaveCount(1);
+  const collectionChoice=card.getByRole('checkbox',{name:'选用集合 来源集合',exact:true});
+  await collectionChoice.uncheck();await expect(card).toContainText('已选：0 / 100');
+  await collectionChoice.check();
   const list=card.getByRole('group',{name:'可选资产',exact:true});
   expect(await list.evaluate(el=>el.scrollHeight>el.clientHeight&&el.clientHeight<=360)).toBe(true);
   await list.focus();await page.keyboard.press('End');

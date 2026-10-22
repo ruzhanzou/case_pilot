@@ -17,7 +17,10 @@ for (const mode of ["generation", "conversation"] as const) {
     }
     const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
     const previousSource = Object.getOwnPropertyDescriptor(globalThis, "EventSource");
+    const windowEvents = new EventTarget();
     Object.defineProperty(globalThis, "window", { configurable: true, value: {
+      addEventListener: windowEvents.addEventListener.bind(windowEvents),
+      removeEventListener: windowEvents.removeEventListener.bind(windowEvents),
       performance: globalThis.performance,
       setInterval(callback: () => void) { poll = callback; return 1; },
       clearInterval() { cleared = true; },

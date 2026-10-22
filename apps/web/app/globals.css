@@ -13860,3 +13860,15 @@ fieldset.principle-candidate-editor { border: 0; padding: 0; margin: 0; min-widt
 .task-candidate-filter span, .task-filter-note { font-size: 12px; color: #64748b; }
 .task-generation-notes > summary { cursor: pointer; font-size: 12px; color: #64748b; }
 .collection-changes__actions select { max-width: 100%; border: 1px solid #dce4f0; border-radius: 6px; background: #fff; padding: 7px; font: inherit; }
+.generation-assets__collection { min-width: 0; border: 1px solid #dce4f0; border-radius: 8px; padding: 10px; margin: 8px 0; }
+.generation-assets__collection > div { padding: 8px 0; border-top: 1px solid #eef2f7; }
+.reuse-decision-overview { padding: 12px; margin: 10px 0; border: 1px solid #dce4f0; border-radius: 10px; }
+.reuse-decision-overview p { color: #64748b; font-size: 12px; margin: 6px 0; }
+.reuse-decision-filters { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
+.reuse-decision-overview button { border: 1px solid #dce4f0; background: white; border-radius: 6px; padding: 6px 9px; color: #3563cd; cursor: pointer; }
+.reuse-decision-filters button[aria-pressed="true"] { background: #edf3ff; border-color: #94b4fb; }
+.reuse-decision-rows { max-height: 280px; overflow: auto; }
+.reuse-decision-rows article { padding: 10px 0; border-top: 1px solid #eef2f7; }
+.reuse-decision-rows article > div { display: flex; justify-content: space-between; gap: 12px; }
+.reuse-decision-rows article span { white-space: nowrap; color: #3563cd; font-size: 12px; }
+.reuse-decision-rows small { display: block; margin-bottom: 6px; overflow-wrap: anywhere; }

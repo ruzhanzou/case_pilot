@@ -39,7 +39,7 @@ test('bulk choices save one version and expose Excel parsing diagnostics', async
   await expect.poll(() => saves.length).toBe(1);
   expect(saves[0].planning.reuse.user_choices).toEqual({ P0: 'exclude', P1: 'exclude' });
   await expect(page.getByRole('combobox', { name: '测试说明版本' })).toHaveValue('2');
-  await expect(map.getByRole('button', { name: '生成选中范围（2）', exact: true })).toBeDisabled();
+  await expect(map.getByRole('button', { name: '生成选中范围（0）', exact: true })).toBeDisabled();
   await map.getByText('复用检索与附件解析结果', { exact: true }).click();
   await expect(map.getByText(/Excel：识别 1 行，跳过 1 行/)).toBeVisible();
   await expect(map.getByText(/第3行：缺少预期/)).toBeVisible();

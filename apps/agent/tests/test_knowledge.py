@@ -120,7 +120,12 @@ def test_excel_markdown_is_offline_and_preserves_cells_and_coordinates(tmp_path,
     workbook.save(path)
     blocks = parse_document(path, "application/octet-stream")
     assert len(blocks) == 3
-    assert blocks[0].metadata == {"sheet": "需求", "row_start": 1, "row_end": 41}
+    assert {
+        key: value for key, value in blocks[0].metadata.items() if key != "spreadsheet_rows"
+    } == {"sheet": "需求", "row_start": 1, "row_end": 41}
+    assert blocks[0].metadata["spreadsheet_rows"][1] == {
+        "row": 2, "cells": {"A2": "00123", "B2": "NA"},
+    }
     assert blocks[1].locator == "Sheet 需求，行 42-43"
     assert blocks[2].section_path == "其他"
     text = blocks[0].content

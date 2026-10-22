@@ -16,7 +16,7 @@ export function ConversationAttachments({ metadata, pending = false, onRemove, d
           <span>{Math.max(1, Math.ceil(file.size / 1024))} KB · {file.status === "ready"
             ? pick("Ready", "已就绪") : file.status === "failed"
               ? pick("Processing failed. Please upload again.", "解析失败，请重新上传")
-              : pick("Uploaded · Preparing…", "已上传 · 正在解析…")}</span>
+              : /\.xlsx?$/i.test(file.name) ? pick("Organizing Excel cases…", "正在识别整理 Excel 用例…") : pick("Uploaded · Preparing…", "已上传 · 正在解析…")}</span>
         </div>
         {file.status === "ready" ? <CheckCircle2 size={17} aria-hidden="true" />
           : file.status === "failed" ? <CircleAlert size={17} aria-hidden="true" />

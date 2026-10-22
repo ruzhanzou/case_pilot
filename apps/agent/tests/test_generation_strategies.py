@@ -12,6 +12,7 @@ from casepilot_agent.contracts import UsageMetadata
 from casepilot_agent.reuse import AssetObjectMatches, ReuseAnalysis, match_asset_objects
 
 
+@pytest.mark.parametrize("matched", [True, False])
 @pytest.mark.parametrize(
     "mode,resume",
     [
@@ -24,7 +25,7 @@ from casepilot_agent.reuse import AssetObjectMatches, ReuseAnalysis, match_asset
     ],
 )
 def test_strategy_pauses_before_planning_or_generates_without_asset_search(
-    monkeypatch, mode, resume
+    monkeypatch, mode, resume, matched
 ):
     store = Store()
     store.job["space_id"] = uuid4()
@@ -83,17 +84,17 @@ def test_strategy_pauses_before_planning_or_generates_without_asset_search(
                     matches=[
                         {
                             "source_key": item["key"],
-                            "test_object_match": "same",
+                            "test_object_match": "same" if matched else "different",
                             "reason": "same account system",
                         }
                         for item in payload["sources"]
                     ]
                 )
             elif stage == "feature.generated":
-                assert mode in {None, "generate"} or resume, "planning started before confirmation"
+                assert mode in {None, "generate"} or resume or (mode == "select_and_generate" and not matched), "planning started before confirmation"
                 result = features(6)
             else:
-                assert mode in {None, "generate"} or resume, "planning started before confirmation"
+                assert mode in {None, "generate"} or resume or (mode == "select_and_generate" and not matched), "planning started before confirmation"
                 result = points(payload, fill_budget=True)
             return result, UsageMetadata(model="mock")
 
@@ -103,10 +104,14 @@ def test_strategy_pauses_before_planning_or_generates_without_asset_search(
     monkeypatch.setattr(tasks, "_context_payload", lambda *args, **kwargs: {"evidence": []})
     tasks.draft_test_brief(str(store.job["id"]))
     content = store.briefs[0]
-    if mode in {None, "generate"} or resume:
+    if mode in {None, "generate"} or resume or (mode == "select_and_generate" and not matched):
         store.search_reuse_cases.assert_not_called()
         assert content["planning"]["reuse"]["strategy"] == ("regression" if resume else "fresh")
-        assert "reuse.objects_matched" not in stages
+        if mode == "select_and_generate" and not matched and not resume:
+            assert content["asset_search_empty"] is True
+            assert "asset_selection" not in content
+        else:
+            assert "reuse.objects_matched" not in stages
         if resume == "scoped":
             assert "feature.generated" not in stages and "test_point.generated" not in stages
             assert content["planning"]["test_points"] == preserved["test_points"]
@@ -115,7 +120,7 @@ def test_strategy_pauses_before_planning_or_generates_without_asset_search(
     else:
         assert content["planning"] == {}
         assert content["asset_selection"]["status"] == "awaiting_confirmation"
-        assert len(content["asset_selection"]["sources"]) == 1
+        assert len(content["asset_selection"]["sources"]) == (1 if matched else 0)
         assert "test_point.generated" not in stages
 
 

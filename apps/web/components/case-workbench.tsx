@@ -2,6 +2,7 @@
 
 import { CaseSource, type AssetProvenance } from "@/components/workspace-case-sources";
 import { CompactModificationConfirmation } from "@/components/compact-modification-confirmation";
+import { ReuseDecisionOverview } from "@/components/reuse-decision-overview";
 import { GenerationAssets } from "@/components/generation-assets";
 import { candidateBrief } from "@/lib/candidate-planning";
 import { CandidatePointLinks } from "@/components/candidate-point-links";
@@ -1926,7 +1927,7 @@ export function CaseWorkbench({
               : conversationTask?.operation?.result.no_changes || message.metadata.no_changes
                 ? pick("Review complete. No changes are needed; existing cases are unchanged.", "检查已完成，无需修改，现有用例保持不变。")
               : artifactVersion > 0 && message.metadata.artifact_type === "test_brief"
-                ? pick(`Test brief V${artifactVersion} is ready. Review it in the workspace.`, `测试说明 V${artifactVersion} 已准备好，请在工作区审阅。`)
+                ? (workspace?.test_briefs.find(brief => brief.version === artifactVersion)?.content.asset_search_empty ? pick("No matching assets were found. Test points were planned from your requirements. ", "未找到测试对象一致的可用资产，已按当前需求规划测试点。") : "") + pick(`Test brief V${artifactVersion} is ready. Review it in the workspace.`, `测试说明 V${artifactVersion} 已准备好，请在工作区审阅。`)
                 : message.status === "running"
                   ? pick("Processing your request. A summary will appear here; case results will appear in the workstation.", "正在处理请求。这里将展示结果摘要，用例结果将在工作区展示。")
                   : message.intent === "CASE_GENERATE"
@@ -2172,8 +2173,8 @@ export function CaseWorkbench({
             );
             })}
             {assetSelection && activeBrief && <article className="principle-message is-assistant">
-              <GenerationAssets selection={assetSelection} scope={selectedAssetScope} onScopeChange={ids => setAssetScope({ version: activeBrief.version, ids })} selected={selectedAssetIds} busy={busy || conversationRunning}
-                onChange={ids => setAssetChoice({ version: activeBrief.version, ids })} onConfirm={() => void confirmAssetSelection()} />
+              <p>{assetSelection.sources.length ? pick(`Found ${assetSelection.sources.length} same-object assets. Confirm the sources in the workspace before continuing.`, `找到 ${assetSelection.sources.length} 条同测试对象的可参考用例，请在工作区确认来源范围后继续。`) : pick("No eligible assets found. Open the workspace to choose the next step.", "未找到测试对象一致的可用资产，请在工作区查看下一步。")}</p>
+              <button type="button" onClick={() => selectBriefVersion(activeBrief.version)}>{pick("Review sources in workspace", "在工作区确认来源")}</button>
             </article>}
                 {activeBrief &&
                   (activeBrief.status === "draft" || pendingReuseSelection?.version === activeBrief.version) && assetReuseDecisions.length > 0 && (
@@ -2307,7 +2308,7 @@ export function CaseWorkbench({
                   <FileUp size={20} aria-hidden="true" />
                   <div className="principle-attachment__body">
                     <strong title={file.name}>{file.name}</strong>
-                    <small role="status">{Math.max(1, Math.round(file.size / 1024))} KB · {file.status === "ready" ? pick("Ready", "已就绪") : file.status === "failed" ? pick("Failed · select file to retry", "失败 · 请重新选择文件") : file.status === "processing" ? pick("Uploaded · processing document", "已上传 · 正在解析资料") : pick(`Uploading ${file.percent}%`, `上传中 ${file.percent}%`)}</small>
+                    <small role="status">{Math.max(1, Math.round(file.size / 1024))} KB · {file.status === "ready" ? pick("Ready", "已就绪") : file.status === "failed" ? pick("Failed · select file to retry", "失败 · 请重新选择文件") : file.status === "processing" ? (/\.xlsx?$/i.test(file.name) ? pick("Uploaded · organizing Excel cases…", "已上传 · 正在识别整理 Excel 用例…") : pick("Uploaded · processing document", "已上传 · 正在解析资料")) : pick(`Uploading ${file.percent}%`, `上传中 ${file.percent}%`)}</small>
                     {file.status === "uploading" && <progress aria-label={pick(`Upload progress for ${file.name}`, `${file.name} 上传进度`)} value={file.percent} max={100} />}
                   </div>
                   {file.status === "ready" ? <CheckCircle2 size={16} aria-label={pick("Ready", "已就绪")} /> : file.status === "failed" ? <CircleAlert size={16} /> : <LoaderCircle size={16} className="auth-spinner" aria-hidden="true" />}
@@ -2613,6 +2614,7 @@ export function CaseWorkbench({
               <summary>{pick("Generation strategy", "生成策略")} · {({fresh: pick("Fresh", "全新生成"), regression: pick("Regression", "回归补充"), change: pick("Change-based", "按变更生成")})[selectedBrief.content.planning.reuse.strategy]}</summary>
               <p>{pick("Inspect each test point to review the original case and choose reuse, regeneration, or exclusion. Confirm after reviewing your choices.", "点击测试点的「查看关联与复用依据」，检查历史用例，选择使用建议、重新生成或不纳入本次，再确认生成候选。")}</p>
             </details>}
+            {!!selectedBrief.content.planning?.test_points?.length && selectedBrief.content.planning.reuse && <ReuseDecisionOverview key={`${selectedBrief.version}`} planning={selectedBrief.content.planning} onInspect={id => { setPlanningFocusPointId(id); setBriefView("map"); requestAnimationFrame(() => document.querySelector<HTMLElement>(".test-planning-detail")?.scrollIntoView({ block: "nearest" })); }} />}
             {(!selectedBrief.content.planning?.test_points?.length || briefView === "text") && <div className="principle-brief-guidance">
               {pick("This is a read-only Markdown artifact. Use the CasePilot conversation on the left to make changes.", "这是一份只读 Markdown 产物。如需调整，请在左侧与 CasePilot 对话。")}
             </div>}
