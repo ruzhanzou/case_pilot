@@ -23,7 +23,8 @@ test('failed modification resumes through natural retry without applying or dupl
  await expect.poll(async()=>{state=await get(`/conversations/${cid}`);return state.workflow_runs.find((r:{job_id:string})=>r.job_id===launched.action.job_id)?.status;},{timeout:180000}).toBe('failed');
  if (token.startsWith('maturity-crash-')) {
   const failedJob=await get(`/generation-jobs/${launched.action.job_id}`);
-  expect(failedJob.error_code).toBe('WorkerInterrupted');
+  // The public API intentionally normalizes internal exception class names.
+  expect(failedJob.error_code).toBe('generation_failed');
   expect(state.messages.some((m:{status:string;content:string})=>m.status==='failed'&&m.content.includes('执行进程意外中断'))).toBe(true);
  }
  expect(await get(`/collections/${collection.id}/test-cases`)).toEqual([item]);
