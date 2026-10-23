@@ -255,9 +255,9 @@ export function NewConversation({
               ))}
             </div>
           )}
-          <ConversationAttachments pending disabled={saving} onRemove={id => { void onRemoveAttachment(id); }} metadata={{ attachments: (
+          {!pendingMessage && <ConversationAttachments pending disabled={saving} onRemove={id => { void onRemoveAttachment(id); }} metadata={{ attachments: (
             Array.isArray(conversation?.context.pending_attachments) ? conversation.context.pending_attachments : []
-          ).filter((file: { name: string }) => !attachments.some(local => local.name === file.name && local.status !== "failed")) }} />
+          ).filter((file: { name: string }) => !attachments.some(local => local.name === file.name && local.status !== "failed")) }} />}
       <textarea
         value={prompt}
         onChange={(event) => setPrompt(event.target.value)}
@@ -592,7 +592,10 @@ export function NewConversation({
             ))}
             {pendingMessage && (
               <article className="new-conversation__message new-conversation__message--user">
-                <div>{pendingMessage}</div>
+                <div>
+                  <ConversationAttachments metadata={{ attachments: conversation?.context.pending_attachments ?? [] }} />
+                  <p>{pendingMessage}</p>
+                </div>
               </article>
             )}
             {saving && !uploading && !hasRunningAssistant && (

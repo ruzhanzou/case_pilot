@@ -311,9 +311,13 @@ export function CaseManagementApp({
       messageAccepted = true;
       setPendingLandingMessage(null);
       setLandingConversation(current => current?.id === conversation.id
-        ? {...current, messages: [...current.messages.filter(message =>
+        ? {...current,
+          context: {...current.context, pending_attachments: []},
+          messages: [...current.messages.filter(message =>
             message.id !== turn.user_message.id && message.id !== turn.assistant_message?.id),
-          turn.user_message, ...(turn.assistant_message ? [turn.assistant_message] : [])]}
+          {...turn.user_message, metadata: {...turn.user_message.metadata,
+            attachments: current.context.pending_attachments ?? []}},
+          ...(turn.assistant_message ? [turn.assistant_message] : [])]}
         : current);
       let refreshedConversation = await getConversation(conversation.id);
       setLandingConversation(refreshedConversation);

@@ -2244,11 +2244,7 @@ export function CaseWorkbench({
         )}
 
         <form className="principle-composer" onSubmit={submitMessage}>
-          <button type="button" role="switch" aria-checked={useSpaceKnowledge}
-            disabled={conversationRunning} onClick={() => setUseSpaceKnowledge(value => !value)}
-            aria-label={pick("Search space knowledge", "搜索空间知识库")}>
-            {pick("Space knowledge", "空间知识库")}：{useSpaceKnowledge ? pick("On", "开") : pick("Off", "关")}
-          </button>
+
           {showOperationPlan && operationPlan && (
               <ol className="conversation-operation-plan" aria-label={pick("Multi-action progress", "多意图执行进度")}>
                 {pendingIntentOperations.map((operation) => (
@@ -2404,6 +2400,14 @@ export function CaseWorkbench({
               ) : (
                 <Paperclip size={18} />
               )}
+            </button>
+            <button type="button" role="switch" className="knowledge-search-toggle"
+              aria-checked={useSpaceKnowledge} disabled={conversationRunning}
+              onClick={() => setUseSpaceKnowledge(value => !value)}
+              aria-label={pick("Search space knowledge", "搜索空间知识库")}
+              title={pick("Search space knowledge", "搜索空间知识库")}>
+              <span>{pick("Search space knowledge", "搜索空间知识库")}</span>
+              <span className="knowledge-search-toggle__track" aria-hidden="true" />
             </button>
             <select
               aria-label={pick("Generation model", "生成模型")}
