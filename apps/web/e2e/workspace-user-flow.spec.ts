@@ -110,7 +110,7 @@ test("cancel leaves cases unchanged and retains a read-only review", async ({ pa
   const state = await setup(page, "delete");
   await page.getByRole("button", { name: "Case workspace", exact: true }).click();
   await page.getByRole("button", { name: "Cancel changes", exact: true }).click();
-  await expect(page.locator('.collection-changes__badge')).toHaveText('Not applied');
+  await expect(page.locator('.collection-changes__badge')).toHaveText('Discarded');
   await expect(page.getByRole('button', { name: 'Apply selected deletions', exact: true })).toHaveCount(0);
   expect(state.submitted()).toBeUndefined();
   expect(state.cases()).toHaveLength(2);
@@ -118,30 +118,30 @@ test("cancel leaves cases unchanged and retains a read-only review", async ({ pa
 
 test("candidate confirmation keeps the user in the collection workspace", async ({ page }) => {
   await setup(page, "candidate");
-  await page.getByRole("button", { name: "Add to official collection", exact: true }).click();
+  await page.getByRole("button", { name: "Accept selected", exact: true }).click();
   await expect(page).toHaveURL(/workbench\/collections\/alpha/);
   await expect(page.locator(".principle-case-row")).toHaveCount(2);
-  await expect(page.getByRole("button", { name: "Add to official collection", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Accept selected", exact: true })).toHaveCount(0);
 });
 
-test("manual edit stays in the case workspace and saves a new revision", async ({ page }) => {
+test("manual edit stays in the current view and saves a new revision", async ({ page }) => {
   const state = await setup(page, "review");
   await page.getByRole("button", { name: "Mind map", exact: true }).click();
-  await page.getByRole("button", { name: "Open the full editor for Login succeeds" }).first().click();
-  await expect(page.getByRole("button", { name: "Case workspace", exact: true })).toHaveClass(/is-active/);
+  await page.getByRole("button", { name: "Show case details", exact: true }).click();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Mind map", exact: true })).toHaveClass(/is-active/);
   const editor = page.getByRole("region", { name: "Edit structured test case" });
   await expect(editor).toBeVisible();
   await editor.getByRole("textbox", { name: "Test case name" }).fill("Login succeeds with MFA");
-  await page.getByRole("button", { name: "Mind map", exact: true }).click();
   await page.getByRole("button", { name: "Case workspace", exact: true }).click();
+  await page.getByRole("button", { name: "Mind map", exact: true }).click();
   await expect(editor.getByRole("textbox", { name: "Test case name" })).toHaveValue("Login succeeds with MFA");
   await editor.getByRole("button", { name: "Save as new revision" }).click();
   await expect(editor).toHaveCount(0);
   expect(state.cases()[0].title).toBe("Login succeeds with MFA");
   expect(state.cases()[0].revision_number).toBe(2);
-  await expect(page.getByRole("button", { name: "Case workspace", exact: true })).toHaveClass(/is-active/);
+  await expect(page.getByRole("button", { name: "Mind map", exact: true })).toHaveClass(/is-active/);
   await page.getByRole("button", { name: "Test case list", exact: true }).click();
-  await page.getByRole("button", { name: "Show case details", exact: true }).click();
   await expect(page.locator(".principle-inspector").getByRole("heading")).toHaveText("Login succeeds with MFA");
 });
 

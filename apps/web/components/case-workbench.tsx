@@ -22,6 +22,7 @@ import { CaseTaskArtifacts } from "@/components/case-task-artifacts";
 import { ConversationTaskFlow } from "@/components/conversation-task-flow";
 import { CaseTaskWorkspace } from "@/components/case-task-workspace";
 import { candidatesForTask, workspaceTasks, workspaceIsRunning, workspaceJobNeedsWatch, shouldResumePendingTask, taskScopeChanged, nextWorkspaceOperation, type WorkspaceTask } from "@/lib/workspace-tasks";
+import { operationStatusLabels } from "@/lib/operation-status";
 import { consumptionSummary } from "@/lib/planning-consumption";
 import { TestPlanningMap } from "@/components/test-planning-map";
 import { CaseMindMap } from "@/components/case-mind-map";
@@ -192,18 +193,6 @@ const workflowStageLabels: Record<string, string> = {
   cancelled: "已停止",
 };
 
-const operationStatusLabels: Record<string, string> = {
-  queued: "等待执行",
-  running: "正在执行",
-  awaiting_confirmation: "等待确认",
-  awaiting_intent: "等待选择操作",
-  awaiting_target: "待确认或补充",
-  completed: "已完成",
-  skipped: "已跳过",
-  failed: "执行失败",
-  cancelled: "已取消",
-};
-
 const englishIntentLabels: Record<ConversationIntent, string> = {
   CASE_GENERATE: "Generate test cases",
   CASE_MODIFY: "Modify test cases",
@@ -242,13 +231,6 @@ const englishWorkflowStageLabels: Record<string, string> = {
   "knowledge.answered": "Answering with workspace knowledge",
   completed: "Completed", failed: "Failed", cancelled: "Stopped",
 };
-const englishOperationStatusLabels: Record<string, string> = {
-  queued: "Queued", running: "Running", awaiting_confirmation: "Awaiting confirmation",
-  awaiting_target: "Confirm or clarify",
-  awaiting_intent: "Choose an action", completed: "Completed", skipped: "Skipped",
-  failed: "Failed", cancelled: "Cancelled",
-};
-
 const terminalWorkflowStatuses = new Set(["completed", "failed", "cancelled"]);
 function clampPanelWidth(
   panel: "chat" | "inspector",
@@ -326,7 +308,7 @@ export function CaseWorkbench({
     : intentActionLabels;
   const localizedPhaseLabels = locale === "en" ? englishPhaseLabels : phaseLabels;
   const localizedWorkflowStageLabels = locale === "en" ? englishWorkflowStageLabels : workflowStageLabels;
-  const localizedOperationStatusLabels = locale === "en" ? englishOperationStatusLabels : operationStatusLabels;
+  const localizedOperationStatusLabels = operationStatusLabels(locale);
   const changeAppliedNotice = pick("Changes applied and recorded in the audit log", "变更已应用并记录审计");
   const [workspace, setWorkspace] = useState<ConversationDto | null>(null);
   const [prompt, setPrompt] = useState("");

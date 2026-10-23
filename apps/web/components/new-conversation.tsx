@@ -18,6 +18,7 @@ import {
 } from "@/lib/casepilot-api";
 import { conversationExamples } from "@/content/conversation-examples";
 import { useI18n, type TranslationKey } from "@/lib/i18n";
+import { operationStatusLabel } from "@/lib/operation-status";
 import {
   ArrowUp,
   BookOpen,
@@ -119,7 +120,7 @@ export function NewConversation({
   onConfirmIntent,
   onConfirmOperation,
 }: NewConversationProps) {
-  const { t, pick } = useI18n();
+  const { t, pick, locale } = useI18n();
   const [useSpaceKnowledge, setUseSpaceKnowledge] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [generationStrategy, setGenerationStrategy] = useState<GenerationStrategy>("generate");
@@ -429,7 +430,7 @@ export function NewConversation({
                   <li key={operation.id} data-status={operation.status}>
                     <span>{operation.sequence + 1}</span>
                     <strong>{t(coreIntentLabelKeys[operation.intent])}</strong>
-                    <small>{operation.status}</small>
+                    <small>{operationStatusLabel(operation.status, locale)}</small>
                     {operation.status === "awaiting_intent" && (
                       <div className="conversation-operation-confirmation">
                         {coreIntents.map((intent) => (

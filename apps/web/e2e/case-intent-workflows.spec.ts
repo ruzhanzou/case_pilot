@@ -46,7 +46,9 @@ test("coverage finding starts a linked generation, streams completion, and retai
   await page.getByRole("checkbox", { name: "Select finding 1" }).check();
   await page.getByRole("button", { name: "Generate missing cases", exact: true }).click();
   const composer = page.getByRole("textbox", { name: "Conversation message", exact: true });
-  await expect(composer).toBeDisabled();
+  await expect(composer).toBeEnabled();
+  await expect(composer).toHaveAttribute("placeholder", /Describe an adjustment/);
+  await expect(page.getByRole("button", { name: "End task", exact: true })).toBeVisible();
   expect(submitted?.source_operation_id).toBe("review");
   expect(submitted?.intent_override).toBe("CASE_GENERATE");
   await expect.poll(() => Boolean(finishJob)).toBe(true);
@@ -54,13 +56,14 @@ test("coverage finding starts a linked generation, streams completion, and retai
   await expect(composer).toBeEnabled();
   await expect(page.getByRole("region", { name: "Candidate results" })).toContainText("Locked account is rejected");
   await expect(page.locator(".case-task-detail > header")).toContainText("Awaiting confirmation");
-  await page.getByRole("button", { name: "Add selected candidates", exact: true }).click();
+  await page.getByRole("button", { name: /Add selected to collection/ }).click();
   await page.getByRole("button", { name: "Case workspace", exact: true }).click();
   await expect(page.getByRole("region", { name: "Candidate results" })).toContainText("Added");
   await page.reload();
   await page.getByRole("button", { name: "Case workspace", exact: true }).click();
   await expect(page.locator(".case-task-history > button")).toHaveCount(2);
   await expect(page.getByRole("region", { name: "Candidate results" })).toContainText("Locked account is rejected");
+  await page.getByText("Task actions", { exact: true }).click();
   await page.getByRole("button", { name: "Source result · Analyze coverage" }).click();
   await expect(page.locator(".case-review-plan")).toContainText("Locked account cannot sign in");
   await page.screenshot({ path: "../../artifacts/case-intent-workflows.png", fullPage: true });
