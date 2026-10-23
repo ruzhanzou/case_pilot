@@ -603,7 +603,8 @@ def test_module_scope_accepts_literal_fragments_but_not_invented_scope(target, a
     }]})
     result = agent_router._validate_model_plan(content, plan, has_targets=False, phase="idle").operations[0]
     assert bool(result.clarification_questions) is not accepted
-    if accepted: assert "账号登录」模块的全部10条用例" in result.target_text
+    if accepted:
+        assert "「账号登录」模块的全部10条用例" in result.target_text
 
 
 def test_new_module_generation_uses_the_explicit_action_name():

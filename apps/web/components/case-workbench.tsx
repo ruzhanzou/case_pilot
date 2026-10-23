@@ -109,6 +109,13 @@ import {
 import { Streamdown } from "streamdown";
 import { useStickToBottom } from "use-stick-to-bottom";
 
+const defaultReviewFields = (changeSet: CaseChangeSetDto) => Object.fromEntries(
+  changeSet.items.map((item) => [
+    item.ref,
+    item.quality?.passed === false ? [] : item.field_diff.map((diff) => diff.field),
+  ]),
+);
+
 type CaseWorkbenchProps = {
   spaceId: string;
   spaceName: string;
@@ -580,7 +587,7 @@ export function CaseWorkbench({
       if (cancelled) return;
       setHistoricalChangeSet(result);
       setResultLoadError("");
-      if (result.status === "ready") setAcceptedFields(reviewSelections.current[result.id] ?? Object.fromEntries(result.items.map((item) => [item.ref, item.field_diff.map((diff) => diff.field)])));
+      if (result.status === "ready") setAcceptedFields(reviewSelections.current[result.id] ?? defaultReviewFields(result));
     }, () => { if (!cancelled) setResultLoadError(pick("Unable to load this task result. Select the task again to retry.", "任务结果加载失败，请切换任务后重试。")); });
     return () => { cancelled = true; };
   }, [selectedChangeSetId, selectedTask?.status, selectedTask?.operation?.status, pick]);
@@ -800,10 +807,7 @@ export function CaseWorkbench({
       const changeSet = await getCaseChangeSet(review.related_change_set_id);
       if (changeSet.status === "ready") {
         setActiveChangeSet(changeSet);
-        setAcceptedFields(reviewSelections.current[changeSet.id] ?? Object.fromEntries(changeSet.items.map((item) => [
-          item.ref,
-          item.field_diff.map((diff) => diff.field),
-        ])));
+        setAcceptedFields(reviewSelections.current[changeSet.id] ?? defaultReviewFields(changeSet));
       }
     }
     return result;
@@ -958,10 +962,7 @@ export function CaseWorkbench({
           const changeSet = await getCaseChangeSet(review.related_change_set_id);
           if (!ignored && changeSet.status === "ready") {
             setActiveChangeSet(changeSet);
-            setAcceptedFields(Object.fromEntries(changeSet.items.map((item) => [
-              item.ref,
-              item.field_diff.map((diff) => diff.field),
-            ])));
+            setAcceptedFields(defaultReviewFields(changeSet));
           }
         }
         setError("");
@@ -1378,14 +1379,7 @@ export function CaseWorkbench({
       if (turn.action.change_set_id) {
         const changeSet = await getCaseChangeSet(turn.action.change_set_id);
         setActiveChangeSet(changeSet);
-        setAcceptedFields(
-          Object.fromEntries(
-            changeSet.items.map((item) => [
-              item.ref,
-              item.field_diff.map((diff) => diff.field),
-            ]),
-          ),
-        );
+        setAcceptedFields(defaultReviewFields(changeSet));
       }
       if (effectivePendingOperationId) setResumeTaskId("");
       if (!turn.action.change_set_id) {
@@ -1559,14 +1553,7 @@ export function CaseWorkbench({
       if (turn.action.change_set_id) {
         const changeSet = await getCaseChangeSet(turn.action.change_set_id);
         setActiveChangeSet(changeSet);
-        setAcceptedFields(
-          Object.fromEntries(
-            changeSet.items.map((item) => [
-              item.ref,
-              item.field_diff.map((diff) => diff.field),
-            ]),
-          ),
-        );
+        setAcceptedFields(defaultReviewFields(changeSet));
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : pick("Failed to confirm action", "意图确认失败"));
@@ -1650,7 +1637,10 @@ export function CaseWorkbench({
     setBusy(true);
     setError("");
     try {
-      await applyCaseChangeSet(selectedTaskChangeSet.id, selection, reviewRefs);
+      const applied = await applyCaseChangeSet(selectedTaskChangeSet.id, selection, reviewRefs);
+      if (applied.change_set.status === "applied" && applied.candidate_snapshots.length) {
+        setResultPane({ key: resultPaneKey, pane: "candidates" });
+      }
       setHistoricalChangeSet(null);
       setActiveChangeSet(null);
       await onCasesChanged();
@@ -2905,15 +2895,31 @@ export function CaseWorkbench({
                 reviewSelections.current[selectedTaskChangeSet.id] = next;
                 setAcceptedFields(next);
               }}
-              onApply={applyChangeSet}
-              onAcceptAll={() => applyChangeSet(Object.fromEntries(selectedTaskChangeSet.items
-                .filter((item) => !["applied", "rejected"].includes(item.status ?? ""))
-                .map((item) => [item.ref, item.field_diff.map((diff) => diff.field)])))}
+              onApply={() => {
+                const refs = selectedTaskChangeSet.items.filter((item) =>
+                  !["applied", "rejected"].includes(item.status ?? "") && item.quality?.passed !== false,
+                ).map(item => item.ref);
+                return applyChangeSet(acceptedFields, refs);
+              }}
+              onAcceptAll={() => {
+                const items = selectedTaskChangeSet.items.filter((item) =>
+                  !["applied", "rejected"].includes(item.status ?? "") && item.quality?.passed !== false);
+                return applyChangeSet(Object.fromEntries(items.map((item) =>
+                  [item.ref, item.field_diff.map((diff) => diff.field)])), items.map(item => item.ref));
+              }}
               onReviewItem={(ref, accept) => {
                 const item = selectedTaskChangeSet.items.find((item) => item.ref === ref);
                 return applyChangeSet({ [ref]: accept ? item?.field_diff.map((diff) => diff.field) ?? [] : [] }, [ref]);
               }}
               onReject={rejectChangeSet}
+              onRetryIncomplete={historicalVersion ? undefined : (refs) => {
+                editPrompt(pick(
+                  `Retry the incomplete edit for ${refs.join(", ")}. Keep all accepted cases and other pending suggestions unchanged, and satisfy the previous instruction: ${selectedTaskChangeSet.instruction}`,
+                  `重试完善未完成的用例 ${refs.join("、")}。保留已采纳用例和其他待审阅建议不变，并完整满足上一轮要求：${selectedTaskChangeSet.instruction}`,
+                ));
+                if (selectedTask?.operation) setRefineSourceId(selectedTask.operation.id);
+                promptRef.current?.focus();
+              }}
             />
           </div>
         )}

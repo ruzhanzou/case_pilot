@@ -334,11 +334,16 @@ def _validate_model_plan(
             literal_parts = []
             for part in scope_parts:
                 significant = re.sub(r"[\s「」“”\"'‘’]", "", part)
-                pattern = r"[\s「」“”\"'‘’]*".join(re.escape(char) for char in significant)
+                quote_spacing = r"[\s「」“”\"'‘’]*"
+                pattern = (
+                    quote_spacing
+                    + quote_spacing.join(re.escape(char) for char in significant)
+                    + quote_spacing
+                )
                 match = re.search(pattern, content) if significant else None
                 if match is None:
                     break
-                literal_parts.append(match.group())
+                literal_parts.append(match.group().strip())
             if scope_parts and len(literal_parts) == len(scope_parts):
                 operation.target_text = "，".join(literal_parts)
         else:

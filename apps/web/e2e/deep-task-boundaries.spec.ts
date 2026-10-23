@@ -4,16 +4,17 @@ const evidence = '../../artifacts/deep-acceptance-2026-10-07/controlled';
 test.use({ viewport: { width: 1600, height: 1000 }, video: 'on', trace: 'on' });
 test.beforeAll(() => mkdirSync(evidence, { recursive: true }));
 
-async function setup(page: Page, kind: 'failed' | 'ambiguous' | 'no_changes' | 'history') {
+async function setup(page: Page, kind: 'failed' | 'ambiguous' | 'no_changes' | 'incomplete' | 'history') {
   const calls: string[] = [];
   const collection = { id: 'alpha', space_id: 'space', name: '任务边界验收 · 受控场景', lifecycle_status: 'maintenance', case_count: 1, mind_map_notes: [] };
   const snapshot = { title: '登录成功', module: '账号登录', priority: 'P1', case_type: '功能', tags: [], preconditions: [], steps: [{action: '提交凭据', expected: '进入首页'}] };
   let status = kind === 'failed' ? 'failed' : kind === 'ambiguous' ? 'awaiting_intent' : 'completed';
   let intent = kind === 'ambiguous' ? 'UNRESOLVED' : kind === 'history' ? 'CASE_QUERY' : 'CASE_MODIFY';
   let view = 'plan'; let created = false;
-  const operation = () => ({ id: 'operation', source_message_id: 'request', sequence: 0, intent, status, confidence: 1, target: {}, payload: {}, result: kind === 'no_changes' ? { no_changes: true } : {}, related_job_id: null, related_change_set_id: kind === 'no_changes' ? 'change' : null, created_at: '2026-10-07T01:00:00Z' });
+  const hasNoChanges = kind === 'no_changes' || kind === 'incomplete';
+  const operation = () => ({ id: 'operation', source_message_id: 'request', sequence: 0, intent, status, confidence: 1, target: {}, payload: {}, result: hasNoChanges ? { no_changes: true } : {}, related_job_id: null, related_change_set_id: hasNoChanges ? 'change' : null, created_at: '2026-10-07T01:00:00Z' });
   const workspace = () => ({ id: 'workspace', space_id: 'space', collection_id: 'alpha', context: { phase: 'maintenance', active_view: view }, candidates: [], test_briefs: [], workflow_runs: [],
-    messages: [{ id: 'request', role: 'user', content: '请处理这组用例', intent, status: 'completed', metadata: {}, citations: [], target_case_ids: [] }, { id: 'answer', role: 'assistant', content: status === 'failed' ? '任务处理失败，请重试' : status === 'awaiting_intent' ? '请确认你要执行的操作' : kind === 'no_changes' ? '无需修改，原用例已经满足要求' : '回答已完成', intent, status, metadata: { operation_id: 'operation', ...(kind === 'no_changes' ? { change_set_id: 'change' } : {}) }, citations: [], target_case_ids: [] }, ...(created ? [{ id: 'new-answer', role: 'assistant', content: '找到一条用例', intent: 'CASE_QUERY', status: 'completed', metadata: { operation_id: 'new-operation' }, citations: [], target_case_ids: [] }] : [])],
+    messages: [{ id: 'request', role: 'user', content: '请处理这组用例', intent, status: 'completed', metadata: {}, citations: [], target_case_ids: [] }, { id: 'answer', role: 'assistant', content: status === 'failed' ? '任务处理失败，请重试' : status === 'awaiting_intent' ? '请确认你要执行的操作' : kind === 'no_changes' ? '无需修改，原用例已经满足要求' : kind === 'incomplete' ? '本轮修改未完成' : '回答已完成', intent, status, metadata: { operation_id: 'operation', ...(hasNoChanges ? { change_set_id: 'change' } : {}) }, citations: [], target_case_ids: [] }, ...(created ? [{ id: 'new-answer', role: 'assistant', content: '找到一条用例', intent: 'CASE_QUERY', status: 'completed', metadata: { operation_id: 'new-operation' }, citations: [], target_case_ids: [] }] : [])],
     operation_history: [operation(), ...(created ? [{ ...operation(), id: 'new-operation', intent: 'CASE_QUERY', created_at: '2026-10-07T02:00:00Z' }] : [])], operation_plan: { operations: [operation()] },
   });
   await page.route('**/api/v1/**', async route => {
@@ -23,7 +24,7 @@ async function setup(page: Page, kind: 'failed' | 'ambiguous' | 'no_changes' | '
     else if (path.endsWith('/spaces/space/collections')) data = [collection];
     else if (path.endsWith('/collections/alpha')) data = collection;
     else if (path.endsWith('/collections/alpha/test-cases')) data = [{ ...snapshot, id: 'case', case_key: 'TC-1', current_revision_id: 'rev', revision_number: 1 }];
-    else if (path.endsWith('/case-change-sets/change')) data = { id: 'change', status: 'no_changes', items: [{ ref: 'case', target_type: 'formal', operation: 'modify', base_snapshot: snapshot, proposed_snapshot: snapshot, field_diff: [] }] };
+    else if (path.endsWith('/case-change-sets/change')) data = { id: 'change', instruction: '补充注销验证', status: 'no_changes', items: [{ ref: 'case', target_type: 'formal', operation: 'modify', base_snapshot: snapshot, proposed_snapshot: snapshot, field_diff: [], ...(kind === 'incomplete' ? { quality: { passed: false, issues: ['步骤不足'] } } : {}) }] };
     else if (path.endsWith('/resume') || path.endsWith('/confirm-intent')) { calls.push(path); status = 'completed'; intent = route.request().postDataJSON()?.intent ?? intent; data = { intent, action: {}, operation_plan: { operations: [operation()] } }; }
     else if (path.endsWith('/messages') && route.request().method() === 'POST') { created = true; data = { intent: 'CASE_QUERY', action: { type: 'case_query' }, operation_plan: { current_operation_id: 'new-operation', operations: [{ ...operation(), id: 'new-operation' }] } }; }
     else if (path.includes('/workspaces/') || path.includes('/conversations/') || path.endsWith('/workspace')) { if (route.request().method() === 'PATCH') view = route.request().postDataJSON().active_view ?? view; data = workspace(); }
@@ -59,6 +60,17 @@ test('no-change result is terminal without an apply action', async ({ page }) =>
   await page.screenshot({ path: `${evidence}/04-no-changes.png`, fullPage: true });
 });
 
+test('incomplete no-change result only offers retry or discard', async ({ page }) => {
+  await setup(page, 'incomplete'); const detail = page.locator('.case-task-detail');
+  await expect(detail).toContainText('cannot be accepted as this result');
+  await expect(detail.getByRole('button', { name: 'Accept current result' })).toHaveCount(0);
+  await expect(detail.getByRole('button', { name: 'Refine this result' })).toHaveCount(0);
+  await expect(detail.getByRole('button', { name: 'Prepare retry instruction' })).toBeVisible();
+  await expect(detail.getByRole('button', { name: 'Discard incomplete result' })).toBeVisible();
+  await detail.getByRole('button', { name: 'Prepare retry instruction' }).click();
+  await expect(page.locator('.principle-composer textarea')).toContainText('Retry the incomplete edit');
+});
+
 test('new task replaces selected historical detail and opens workspace', async ({ page }) => {
   await setup(page, 'history');
   await page.getByRole('button', { name: /Result history/ }).click();
@@ -66,7 +78,7 @@ test('new task replaces selected historical detail and opens workspace', async (
   await page.getByRole('button', { name: 'Test case list', exact: true }).click();
   await page.locator('.principle-composer textarea').fill('查询账号登录用例'); await page.locator('.principle-composer button[type="submit"]').click();
   await expect(page.getByRole('button', { name: 'Case workspace', exact: true })).toHaveClass(/is-active/);
-  await expect(page.locator('.case-task-detail > header')).toContainText('Query test cases');
+  await expect(page.locator('.case-task-detail > header')).toContainText('Query results');
   await expect(page.locator('.case-task-history > button')).toHaveCount(2);
   await page.screenshot({ path: `${evidence}/05-auto-focus.png`, fullPage: true });
 });

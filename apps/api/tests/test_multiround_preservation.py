@@ -57,7 +57,9 @@ class RewriteProvider:
 
 
 @pytest.mark.asyncio
-async def test_module_then_single_then_failed_round_and_rewrite_after_apply(workspace, monkeypatch):
+async def test_module_then_single_then_failed_round_and_rewrite_after_apply(
+    workspace, monkeypatch
+):
     client, collection, wid = workspace
     provider = RewriteProvider()
     monkeypatch.setattr(tasks, "create_provider", lambda *args: provider)
@@ -107,6 +109,27 @@ async def test_module_then_single_then_failed_round_and_rewrite_after_apply(work
         assert saved.status_code == 200, saved.text
         return saved.json()
 
+    failed_initial = await rewrite(
+        "把其他模块当前用例改为单步注销验证，其他内容不变",
+        [{"kind": "case", "case_ids": [cases[2]["id"]]}],
+        {"steps": [{"action": "注销", "expected": "会话失效"}]},
+    )
+    assert failed_initial["status"] == "no_changes"
+    assert failed_initial["items"][0]["quality"]["passed"] is False
+    assert failed_initial["items"][0]["field_diff"] == []
+    blocked = await client.post(
+        f"/api/v1/case-change-sets/{failed_initial['id']}/apply", json={}
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert blocked.json()["detail"] == "change_item_needs_completion"
+    rejected = await client.post(
+        f"/api/v1/case-change-sets/{failed_initial['id']}/reject"
+    )
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["status"] == "rejected"
+    unchanged = (await client.get(f"/api/v1/test-cases/{cases[2]['id']}")).json()
+    assert len(unchanged["steps"]) == 3
+
     first = await rewrite(
         "给登录模块用例补充断网重试验证，其他内容不变",
         [{"kind": "module", "module": "登录"}],
@@ -139,19 +162,22 @@ async def test_module_then_single_then_failed_round_and_rewrite_after_apply(work
         == second_items[cases[0]["id"]]["proposed_snapshot"]
     )
     applied = await client.post(f"/api/v1/case-change-sets/{third['id']}/apply", json={})
-    assert applied.status_code == 200, applied.text
+    assert applied.status_code == 409, applied.text
+    assert applied.json()["detail"] == "change_item_needs_completion"
     for case in cases:
         current = (await client.get(f"/api/v1/test-cases/{case['id']}")).json()
-        assert len(current["steps"]) == (3 if case == cases[2] else 4)
+        assert len(current["steps"]) == 3
         assert [s["expected"] for s in current["steps"][:3]] == [f"原校验{i}" for i in range(3)]
     fourth = await rewrite(
         "给当前用例增加注销验证，其他内容不变",
         [{"kind": "case", "case_ids": [cases[0]["id"]]}],
         {"append_steps": [{"action": "注销", "expected": "会话失效"}]},
     )
-    assert len(fourth["items"]) == 1
-    assert len(fourth["items"][0]["proposed_snapshot"]["steps"]) == 5
-    assert fourth["items"][0]["proposed_snapshot"]["steps"][1]["action"] == "输入验证码"
+    assert len(fourth["items"]) == 2
+    fourth_items = {item["ref"]: item for item in fourth["items"]}
+    assert len(fourth_items[cases[0]["id"]]["proposed_snapshot"]["steps"]) == 5
+    assert fourth_items[cases[0]["id"]]["proposed_snapshot"]["steps"][1]["action"] == "输入验证码"
+    assert fourth_items[cases[1]["id"]]["proposed_snapshot"] == second_items[cases[1]["id"]]["proposed_snapshot"]
     applied = await client.post(f"/api/v1/case-change-sets/{fourth['id']}/apply", json={})
     assert applied.status_code == 200, applied.text
     current = (await client.get(f"/api/v1/test-cases/{cases[0]['id']}")).json()

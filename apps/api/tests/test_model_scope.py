@@ -122,6 +122,58 @@ def test_invalid_model_scope_is_never_applied(scope, update):
     assert error
 
 
+def test_explicit_current_candidate_can_be_rewritten_after_discarded_proposal(scope, monkeypatch):
+    from casepilot_api.models import CaseChangeSet, ConversationOperation
+
+    db, conversation, _, selector = scope
+    candidate_id = uuid4()
+    candidate = SimpleNamespace(
+        id=candidate_id,
+        ref="TC-PENDING-9",
+        version=3,
+        snapshot={"title": "待改候选", "module": "登录", "steps": []},
+    )
+    conversation.context = {"phase": "candidate_review"}
+    source_id, change_id = uuid4(), uuid4()
+    source = SimpleNamespace(
+        id=source_id,
+        conversation_id=conversation.id,
+        related_change_set_id=change_id,
+        payload={},
+        result={},
+    )
+    discarded = SimpleNamespace(id=change_id, status="rejected", items=[])
+    db.scalars.return_value = [candidate]
+    db.scalar.return_value = None
+    db.get.side_effect = lambda model, key: (
+        source if model is ConversationOperation and key == source_id
+        else discarded if model is CaseChangeSet and key == change_id
+        else None
+    )
+    monkeypatch.setattr(conversations, "_load_scope_snapshots", lambda *args: [])
+    selector.return_value = CaseScopeDecision(
+        ids=[str(candidate_id)],
+        ambiguous=False,
+        clarification="",
+        reference="previous_proposal",
+        referenced_case_keys=[candidate.ref],
+        requested_count=None,
+    )
+
+    result, error = conversations._resolve_model_scope(
+        db,
+        conversation,
+        ConversationMessageCreate(
+            content=f"刚才那版不要，重新修改候选 {candidate.ref}",
+            source_operation_id=source_id,
+        ),
+        "CASE_MODIFY",
+    )
+
+    assert error is None
+    assert [item.ref for item in result.target_candidate_snapshots] == [candidate.ref]
+
+
 def test_relative_scope_receives_selection_in_display_order(scope):
     db, conversation, cases, selector = scope
     ordered_ids = sorted([case["id"] for case in cases], reverse=True)

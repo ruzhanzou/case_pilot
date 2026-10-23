@@ -810,6 +810,7 @@ const publicErrors: Record<string, string> = {
   candidate_changed: "该候选刚被其他成员更新，已停止覆盖，请刷新后重试。",
   invalid_workspace_candidate: "候选内容不完整，请检查名称、步骤和预期结果。",
   candidate_changes_need_review: "所选候选存在待审阅的 AI 修改，请先采纳或丢弃建议，再纳入正式集合。",
+  change_item_needs_completion: "这条建议未完成本轮修改，不能采纳。请重试完善，或丢弃建议并保留原内容。",
   no_included_workspace_candidates: "候选已被其他成员处理，请刷新工作区。",
   execution_run_has_no_cases: "空用例集合不能创建执行任务。",
   execution_run_assignees_required: "请至少选择一名执行人。",

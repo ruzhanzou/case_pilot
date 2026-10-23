@@ -1682,6 +1682,15 @@ def _resolve_model_scope(db, conversation, payload, intent):
     # Proposal refs are stored as asset IDs; both IDs and visible case keys are
     # legitimate references. Neither may resolve outside this catalog.
     known_keys = {key.casefold() for key in ref_ids} | {ref.casefold() for ref in allowed}
+    explicit_user_ids = set()
+    for case in catalog:
+        for key in {str(case["id"]), str(case.get("case_key", ""))}:
+            if key and re.search(
+                rf"(?<![A-Za-z0-9_-]){re.escape(key)}(?![A-Za-z0-9_-])",
+                payload.content,
+                re.I,
+            ):
+                explicit_user_ids.add(str(case["id"]))
     deadline = monotonic() + settings.routing_timeout_seconds
     try:
         # A malformed model reference is not evidence that the user's target is
@@ -1736,7 +1745,8 @@ def _resolve_model_scope(db, conversation, payload, intent):
         reference_ids = selected_ids & allowed
         if not reference_ids and context["current_case_id"] in allowed:
             reference_ids = {context["current_case_id"]}
-    if reference_ids is not None and not ids.issubset(reference_ids):
+    if (reference_ids is not None and not ids.issubset(reference_ids)
+            and not (ids and ids.issubset(explicit_user_ids))):
         return payload, "选择结果超出了引用范围，请确认需要处理的用例。"
     if decision.requested_count is not None and decision.requested_count != len(ids):
         return payload, f"当前匹配 {len(ids)} 条用例，与指定数量不一致，请确认范围。"
@@ -5690,7 +5700,15 @@ def apply_change_set(
     db.refresh(change_set, with_for_update=True)
     if change_set.status in {"applied", "rejected"}:
         return CaseChangeSetApplyView(change_set=_change_set_view(change_set))
+    pending_incomplete = [
+        item
+        for item in change_set.items
+        if item.get("status") not in {"applied", "rejected"}
+        and item.get("quality", {}).get("passed") is False
+    ]
     if change_set.status == "no_changes":
+        if pending_incomplete:
+            raise HTTPException(status_code=409, detail="change_item_needs_completion")
         operation = db.scalar(select(ConversationOperation).where(ConversationOperation.related_change_set_id == change_set.id))
         change_set.status = "applied"
         change_set.applied_at = datetime.now(UTC)
@@ -5716,6 +5734,20 @@ def apply_change_set(
                     and (payload.review_refs is None or item["ref"] in payload.review_refs)]
     if not review_items:
         return CaseChangeSetApplyView(change_set=_change_set_view(change_set))
+    incomplete_accepts = [
+        item["ref"]
+        for item in review_items
+        if item.get("quality", {}).get("passed") is False
+        and (
+            item["ref"] not in payload.accepted_fields
+            or bool(
+                set(payload.accepted_fields[item["ref"]])
+                & {diff["field"] for diff in item.get("field_diff", [])}
+            )
+        )
+    ]
+    if incomplete_accepts:
+        raise HTTPException(status_code=409, detail="change_item_needs_completion")
     reviewing = {item["ref"] for item in review_items}
     write_items = [
         item for item in review_items
@@ -6019,7 +6051,7 @@ def reject_change_set(
         return apply_change_set(change_set_id, ChangeSetApplyRequest(
             accepted_fields={ref: [] for ref in refs}, review_refs=refs,
         ), account, db).change_set
-    if change_set.status in {"generating", "ready"}:
+    if change_set.status in {"generating", "ready", "no_changes"}:
         change_set.status = "rejected"
         operation = db.scalar(
             select(ConversationOperation).where(
