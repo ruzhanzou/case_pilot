@@ -631,4 +631,4 @@ openpyxl / xlrd 提取原始数据，再通过 MarkItDown 0.1.8 的本地表格�
 ### 对话截图
 
 对话附件支持 PNG/JPEG，可选择图片或在输入区粘贴剪贴板图片（Mac Command+V，Windows Ctrl+V）。图片上传后保留原图，不依赖 OCR；发送时与文字一起传给模型。
-API 和 worker 使用相同的 `CASEPILOT_AGENT_IMAGE_MODELS`，值为已确认支持图片输入的模型 ID，逗号分隔。默认空列表保守禁用图片发送，不根据模型名称猜测能力。未支持的模型仍可上传图片，发送前须切换模型或移除图片。单次发送的图片总大小默认不超过 25MB，可通过 `CASEPILOT_AGENT_MAX_IMAGE_BYTES` 调整。修改配置后重启 API 和 worker。
+API 和 worker 使用相同的 `CASEPILOT_AGENT_IMAGE_MODELS`，值为已确认支持图片输入的模型 ID，逗号分隔。示例环境已启用确认支持视觉理解的 `doubao-seed-2.0-lite`；其他部署仍应按实际端点能力配置，不根据模型名称猜测能力。未支持的模型仍可上传图片，发送前须切换模型或移除图片。单次发送的图片总大小默认不超过 25MB，可通过 `CASEPILOT_AGENT_MAX_IMAGE_BYTES` 调整。修改配置后重启 API 和 worker。

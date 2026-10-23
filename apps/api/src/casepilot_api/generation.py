@@ -84,10 +84,13 @@ def list_generation_models(account: CurrentAccount) -> dict[str, object]:
                 },
             }
         )
-    return {
-        "default_model_id": models[0]["id"] if models else "auto",
-        "models": models,
-    }
+    configured_ids = {str(model["id"]) for model in models}
+    default_model_id = (
+        settings.agent_model
+        if settings.agent_model in configured_ids
+        else models[0]["id"] if models else "auto"
+    )
+    return {"default_model_id": default_model_id, "models": models}
 
 
 def ensure_job_access(db: Session, account: Account, job_id: UUID) -> GenerationJob:

@@ -91,10 +91,11 @@ def test_generation_models_expose_the_configured_catalog(monkeypatch) -> None:
         "agent_models",
         "ark-code-latest,glm-5.2,kimi-k2.7-code",
     )
+    monkeypatch.setattr(generation.settings, "agent_model", "glm-5.2")
 
     result = list_generation_models(None)
 
-    assert result["default_model_id"] == "ark-code-latest"
+    assert result["default_model_id"] == "glm-5.2"
     assert [model["id"] for model in result["models"]] == [
         "ark-code-latest",
         "glm-5.2",

@@ -48,9 +48,13 @@ test("conversation owns progress and summaries while workstation owns results", 
   await expect(page.locator(".conversation-task-flow")).toBeVisible();
   await expect(page.locator(".conversation-task-flow li")).toHaveCount(3);
   await expect(page.locator(".case-task-workspace .task-workflow")).toHaveCount(0);
+  await expect.poll(() => page.locator("details.case-task-context").evaluateAll(nodes =>
+    nodes.every(node => Boolean(node.querySelector("button"))))).toBe(true);
   await expect(page.locator(".case-task-running")).toContainText("Follow progress or provide details in the conversation");
   await page.getByRole("button", { name: "Result history" }).click();
   await page.locator(".case-task-history > button").filter({ hasText: "Query test cases" }).click();
+  await expect.poll(() => page.locator("details.case-task-context").evaluateAll(nodes =>
+    nodes.every(node => Boolean(node.querySelector("button"))))).toBe(true);
   await expect(page.locator(".case-task-result")).toHaveCount(0);
   await expect(page.locator("#case-message-result-1")).toContainText("Found 4 account login cases.");
   await expect(composer).toBeEnabled();

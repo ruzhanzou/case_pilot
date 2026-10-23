@@ -43,6 +43,10 @@ export function CaseTaskWorkspace({ tasks, selectedId, displayedVersion, onSelec
     : displayedTask ? taskLabel(displayedTask) : "";
   const plan = displayedTask?.operation?.payload.plan as { target_text?: string; constraints?: string[] } | undefined;
   const sourceTask = tasks.find((item) => item.id === task?.sourceTaskId);
+  const canDiscard = Boolean(
+    !historical && onDiscard && task?.operation &&
+    (task.id === activeTaskId || task.message.intent === "CASE_GENERATE" && task.status === "awaiting_confirmation")
+  );
   const statusLabel = (status: string) => statusLabels[status] ?? ({
     superseded: pick("Superseded", "已被新方案替代"),
     conflict: pick("Version conflict", "版本冲突"),
@@ -80,8 +84,8 @@ export function CaseTaskWorkspace({ tasks, selectedId, displayedVersion, onSelec
                   : pick("Results will appear here. Follow progress or provide details in the conversation.", "结果将在这里展示，请在对话区查看进度或补充信息。")}</p><button type="button" onClick={() => onConversation(task.messageIds.at(-1))}>{needsDetails ? pick("Provide details", "补充信息") : failed ? pick("Retry in conversation", "前往对话区重试") : pick("View conversation", "查看对话")}</button></div>}
             {task.message.metadata.action === "module_created" && <button type="button" onClick={() => onArtifact(task)}>{pick("View module", "查看模块")}</button>}
             {children}
-            {(onDiscard || sourceTask) && <details className="case-task-context"><summary>{pick("Task actions", "任务操作")}</summary>
-            {!historical && onDiscard && task.operation && (task.id === activeTaskId || task.message.intent === "CASE_GENERATE" && task.status === "awaiting_confirmation") && <button type="button" disabled={running} onClick={() => onDiscard(task)}>{pick("Abandon this task", "放弃当前任务")}</button>}
+            {(canDiscard || sourceTask) && <details className="case-task-context"><summary>{pick("Task actions", "任务操作")}</summary>
+            {canDiscard && onDiscard && <button type="button" disabled={running} onClick={() => onDiscard(task)}>{pick("Abandon this task", "放弃当前任务")}</button>}
               {sourceTask && <button type="button" onClick={() => onSelect(sourceTask.id)}>{pick("Source result", "来源结果")} · {taskLabel(sourceTask)}</button>}
             </details>}
           </div>

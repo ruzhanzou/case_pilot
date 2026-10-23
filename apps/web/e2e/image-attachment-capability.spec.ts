@@ -15,6 +15,7 @@ test("image attachment remains reviewable and cannot be sent to a text-only mode
   await page.goto("/workbench");
   const composer = page.locator(".new-conversation__composer");
   await expect(composer).toBeVisible();
+  await composer.getByLabel("生成模型").selectOption("ark-code-latest");
   const uploaded = page.waitForResponse(response =>
     response.request().method() === "POST" && response.url().endsWith("/attachments"));
   await composer.locator('input[type="file"]').setInputFiles({
