@@ -519,3 +519,31 @@ def test_polish_does_not_silently_drop_missing_candidate(scope):
     )
     assert error
     selector.assert_not_called()
+
+
+def test_exact_case_query_in_large_collection_does_not_call_model(scope, monkeypatch):
+    db, conversation, cases, selector = scope
+    catalog = [{**cases[0], 'id': str(uuid4()), 'case_key': f'BIG-{i}'} for i in range(2001)]
+    monkeypatch.setattr(conversations, '_load_scope_snapshots', lambda *args: catalog)
+    result, error = conversations._resolve_model_scope(db, conversation,
+        ConversationMessageCreate(content='查询 BIG-2000'), 'CASE_QUERY')
+    assert error is None
+    assert list(map(str, result.target_case_ids)) == [catalog[-1]['id']]
+    selector.assert_not_called()
+
+
+def test_complex_large_scope_uses_filter_selector(scope, monkeypatch):
+    from casepilot_api import scope_filter
+    db, conversation, cases, selector = scope
+    catalog = [{**cases[0], 'id': str(uuid4()), 'case_key': f'BIG-{i}'} for i in range(2001)]
+    monkeypatch.setattr(conversations, '_load_scope_snapshots', lambda *args: catalog)
+    filtered = Mock(return_value=CaseScopeDecision(
+        ids=[catalog[-1]['id']], ambiguous=False, clarification='', reference='none',
+        referenced_case_keys=[], requested_count=None))
+    monkeypatch.setattr(scope_filter, 'select_large_scope', filtered)
+    result, error = conversations._resolve_model_scope(db, conversation,
+        ConversationMessageCreate(content='删除登录模块但保留P0'), 'CASE_DELETE')
+    assert error is None
+    assert list(map(str, result.target_case_ids)) == [catalog[-1]['id']]
+    filtered.assert_called_once()
+    selector.assert_not_called()

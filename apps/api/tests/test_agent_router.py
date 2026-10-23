@@ -1,3 +1,4 @@
+import json
 import sys
 from types import ModuleType, SimpleNamespace
 
@@ -286,6 +287,7 @@ def test_sdk_router_uses_the_configured_chat_completions_provider(
         "解释边界值",
         phase="idle",
         target_context=[],
+        attachment_context={"document_ids": ["checked-document"]},
         model_name="doubao-test",
         base_url="https://ark.example/v1/",
         api_key="test-only",
@@ -300,6 +302,8 @@ def test_sdk_router_uses_the_configured_chat_completions_provider(
     assert captured["model"]["model"] == "doubao-test"
     assert captured["agent"]["output_type"] is IntentPlanDraft
     assert captured["tracing_disabled"] is True
+
+    assert json.loads(captured["prompt"])["available_attachments"] == {"document_ids": ["checked-document"]}
 
 
 def test_unique_coverage_in_dedup_request_does_not_create_an_extra_review():
@@ -423,6 +427,25 @@ def test_model_cannot_invent_action_evidence() -> None:
         "看看现有用例", plan, has_targets=False, phase="idle"
     ).operations[0]
     assert draft.intent == "UNRESOLVED"
+
+
+@pytest.mark.parametrize(('content', 'evidence', 'expected'), [
+    ('仅将用例 CASE-176BE2 的标题改为「登录成功」，其他字段保持不变。', '将用例的标题改为', 'CASE_MODIFY'),
+    ('不要将用例 CASE-176BE2 的标题改为「登录成功」。', '将用例的标题改为', 'KNOWLEDGE_QA'),
+    ('仅将用例 CASE-176BE2 的标题改为「登录成功」。', '将用例 CASE-OTHER 的标题改为', 'UNRESOLVED'),
+    ('仅查看用例 CASE-176BE2 的标题。', '将用例的标题改为', 'UNRESOLVED'),
+    ('将用例 CASE-176BE2 归档，标题改为需要另行确认。', '将用例的标题改为', 'UNRESOLVED'),
+])
+def test_action_evidence_can_omit_case_identifier_but_not_meaning(content, evidence, expected):
+    plan = IntentPlanDraft(operations=[agent_router.IntentOperationDraft(
+        intent='CASE_MODIFY', instruction=content, confidence=1,
+        target_kind='case', target_text='CASE-176BE2', action_evidence=evidence,
+    )])
+    draft = agent_router._validate_model_plan(content, plan, has_targets=False, phase='idle').operations[0]
+    assert draft.intent == expected
+    if expected == 'CASE_MODIFY':
+        assert draft.action_evidence in content
+        assert 'CASE-176BE2' in draft.action_evidence
 
 
 def test_setting_priority_without_modify_keyword_is_an_explicit_action() -> None:

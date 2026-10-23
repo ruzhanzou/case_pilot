@@ -1,0 +1,23 @@
+import {test,expect} from '@playwright/test';
+import {writeFileSync} from 'node:fs';
+test.skip(process.env.CASEPILOT_REAL_ACCEPTANCE!=='1','Requires real-model acceptance services');
+test('formal deletion clearly distinguishes confirmation and deleted result after reload',async({page},info)=>{
+ const api=`${process.env.CASEPILOT_E2E_API_URL}/api/v1`;
+ const post=async(path:string,data:unknown)=>{const r=await page.request.post(api+path,{data});expect(r.ok(),await r.text()).toBeTruthy();return r.json();};
+ const user=await post('/auth/register',{email:`delete-label-${Date.now()}@casepilot.test`,password:'CasePilot123!',display_name:'删除状态验收'});
+ const collection=await post(`/spaces/${user.spaces[0].id}/collections`,{name:'删除结果说明验收'});
+ const item=await post(`/collections/${collection.id}/test-cases`,{title:'仅用于删除验收',module:'账号',priority:'P1',steps:[{action:'提交登录',expected:'进入首页'}]});
+ const r=await page.request.put(`${api}/collections/${collection.id}/workspace`);const cid=(await r.json()).id;
+ const turn=await post(`/conversations/${cid}/messages`,{content:`删除用例 ${item.case_key}，其他用例不变。`});expect(turn.intent).toBe('CASE_DELETE');
+ await page.addInitScript(()=>localStorage.setItem('casepilot.locale.v1','zh-CN'));await page.goto(`/workbench/collections/${collection.id}`);
+ await page.getByRole('button',{name:'用例工作区',exact:true}).click();
+ const review=page.locator('.collection-changes__review');
+ await expect(page.getByRole('heading',{name:'删除确认',exact:true})).toBeVisible();await expect(review).not.toContainText('软删除');
+ await review.getByRole('button',{name:'确认删除已选用例',exact:true}).click();
+ await expect(review.getByText('用例已删除',{exact:true})).toBeVisible();
+ await page.reload();await expect(page.getByRole('heading',{name:'删除结果',exact:true})).toBeVisible();
+ await expect(review.getByText('用例已删除',{exact:true})).toBeVisible();await expect(review).not.toContainText('已采纳');
+ await expect(page.getByRole('heading',{name:'删除结果',exact:true})).toBeVisible();
+ const cases=await(await page.request.get(`${api}/collections/${collection.id}/test-cases`)).json();expect(cases).toEqual([]);
+ writeFileSync(info.outputPath('evidence.json'),JSON.stringify({collection,item,turn,cases},null,2));await page.screenshot({path:info.outputPath('deleted-result.png'),fullPage:true});
+});

@@ -1,6 +1,7 @@
 import json
 import re
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from functools import lru_cache
 from hashlib import sha256
@@ -35,9 +36,12 @@ from sqlalchemy.engine import Connection
 
 metadata = MetaData()
 
+_execution_connection: ContextVar[Connection | None] = ContextVar("job_execution_connection", default=None)
+
 
 def generation_failure_message(error_code: str, output_payload: dict[str, Any]) -> str:
     friendly_message = {
+        "WorkerInterrupted": "执行进程意外中断，已保留任务与已有结果，请重试当前任务。",
         "ProviderResponseError": "模型返回内容暂时无法解析，请稍后重试或更换模型。",
         "ModelBehaviorError": "模型输出格式仍不符合要求，本次处理已停止。可重试或更换模型。",
         "StageContractError": "模型输出未通过用例或来源核对校验，本次处理已停止。请检查测试说明后重试。",
@@ -512,7 +516,27 @@ class JobStore:
         self.redis = _get_redis(redis_url)
 
     @contextmanager
+    def execution_guard(self, job_id: UUID):
+        # Transaction-scoped ownership vanishes when a worker process dies.
+        # No timeout: a slow model call must never be mistaken for a lost worker.
+        key = int.from_bytes(sha256(f"casepilot:job:{job_id}".encode()).digest()[:8],
+                             "big", signed=True)
+        with self.engine.begin() as owner:
+            acquired = bool(owner.scalar(select(func.pg_try_advisory_xact_lock(key))))
+            token = _execution_connection.set(owner) if acquired else None
+            try:
+                yield acquired
+            finally:
+                if token is not None:
+                    _execution_connection.reset(token)
+
+    @contextmanager
     def connection(self):
+        owner = _execution_connection.get()
+        if owner is not None:
+            # Do not persist late results after the ownership connection is lost.
+            # An open transaction cannot silently reconnect and regain ownership.
+            owner.execute(select(literal(1)))
         with self.engine.begin() as connection:
             yield connection
 

@@ -1,3 +1,5 @@
+import { createSubmissionSender } from "./submission-retry";
+
 const configuredApiBaseUrl =
   process.env.NEXT_PUBLIC_CASEPILOT_API_URL ?? "http://localhost:8000";
 
@@ -386,6 +388,7 @@ export type GenerationQuestion = {
 };
 
 export type GenerationJobDetail = GenerationCompleted & {
+  analysis_progress?: { completed_batches: number; total_batches: number; progress: number } | null;
   planning_preview?: TestBriefContentDto | null;
   planning_progress?: PlanningProgress | null;
 
@@ -462,6 +465,7 @@ export type PlanningProgress = {
 };
 
 export type GenerationStage = {
+  analysis_progress?: { completed_batches: number; total_batches: number; progress: number } | null;
   planning_preview?: TestBriefContentDto | null;
   planning_progress?: PlanningProgress | null;
 
@@ -825,6 +829,18 @@ const publicErrors: Record<string, string> = {
   provider_response_invalid: "模型返回内容暂时无法解析，请重试或更换模型。",
   generation_quality_blocked: "生成内容未通过质量检查，请补充需求后重试。",
   generation_failed: "处理暂时未完成，请稍后重试。",
+  BadZipFile: "文件损坏或格式不符，请重新导出后上传。",
+  XLRDError: "表格文件损坏或格式不符，请重新导出后上传。",
+  FileDataError: "PDF 文件损坏或格式不符，请重新导出后上传。",
+  EmptyFileError: "文件没有内容，请检查后重新上传。",
+  UnicodeDecodeError: "无法读取文字编码，请保存为 UTF-8 格式后重新上传。",
+  attachment_batch_partial_failure: "部分附件解析失败；已就绪的文件已保留，请移除失败文件后继续，或重新上传失败文件。",
+  attachment_batch_failed: "这些附件未能解析，请查看各文件的提示后重新上传。",
+  DocumentTextUnavailable: "无法提取文字，请上传清晰的扫描件或可复制文字的文档。",
+  DocumentOcrUnavailable: "扫描件文字识别服务暂不可用，请联系管理员，或上传可复制文字的文档。",
+  DocumentOcrFailed: "扫描件文字识别未完成，请重试或上传清晰、可复制文字的文档。",
+  TesseractNotFoundError: "扫描件文字识别服务暂不可用，请联系管理员，或上传可复制文字的文档。",
+  WorkerInterrupted: "执行进程意外中断，已保留任务与已有结果，请重试当前任务。",
   ProviderResponseError: "模型返回内容暂时无法解析，请重试或更换模型。",
   TimeoutError: "模型响应超时，请稍后重试。",
   APIConnectionError: "模型连接暂时中断，请重试。",
@@ -987,6 +1003,7 @@ export function watchGeneration(
             onStage({
               planning_preview: job.planning_preview,
               planning_progress: job.planning_progress,
+              analysis_progress: job.analysis_progress,
               name: job.stage,
               progress: job.progress,
               retry_attempt: job.retry_attempt,
@@ -1041,6 +1058,7 @@ export function watchGeneration(
       onStage({
         planning_preview: payload.planning_preview,
         planning_progress: payload.planning_progress,
+        analysis_progress: payload.analysis_progress,
         name: event.type,
         progress: payload.progress ?? 0,
         count: payload.count,
@@ -1055,6 +1073,7 @@ export function watchGeneration(
     };
     [
       "knowledge.searching", "documents.reading", "cases.searching",
+      "cases.analyzing",
       "reuse.comparing", "reuse.compared",
       "context.prepared",
       "requirement.analyzed",
@@ -1338,6 +1357,11 @@ export function getConversation(
   return apiRequest(`/api/v1/conversations/${conversationId}`);
 }
 
+const sendSubmission = createSubmissionSender(
+  () => typeof window === "undefined" ? null : window.sessionStorage,
+  () => crypto.randomUUID(),
+);
+
 export function sendConversationMessage(
   conversationId: string,
   input: {
@@ -1358,9 +1382,7 @@ export function sendConversationMessage(
     sourceCollectionIds?: string[];
   },
 ): Promise<ConversationTurnDto> {
-  return apiRequest(`/api/v1/conversations/${conversationId}/messages`, {
-    method: "POST",
-    body: JSON.stringify({
+  const body = JSON.stringify({
       content: input.content,
       generation_strategy: input.generationStrategy,
       source_collection_ids: input.sourceCollectionIds ?? [],
@@ -1376,8 +1398,12 @@ export function sendConversationMessage(
       intent_override: input.intentOverride,
       target_scope: input.targetScope ?? "inferred",
       targets: input.targets ?? [],
-    }),
   });
+  return sendSubmission(conversationId, body, (requestId) =>
+    apiRequest(`/api/v1/conversations/${conversationId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({...JSON.parse(body), client_request_id: requestId}),
+    }));
 }
 
 export function confirmConversationIntent(
@@ -1396,6 +1422,8 @@ export function confirmConversationIntent(
 export function resumeConversationOperation(
   operationId: string,
   input?: {
+    documentIds?: string[];
+    knowledgeSourceIds?: string[];
     confirmModification?: boolean;
     content?: string;
     intent?: ConversationIntent;
@@ -1407,6 +1435,8 @@ export function resumeConversationOperation(
   return apiRequest(`/api/v1/conversation-operations/${operationId}/resume`, {
     method: "POST",
     body: JSON.stringify({
+      document_ids: input?.documentIds ?? [],
+      knowledge_source_ids: input?.knowledgeSourceIds ?? [],
       confirm_modification: input?.confirmModification ?? false,
       intent: input?.intent,
       content: input?.content,
@@ -1668,7 +1698,7 @@ export async function waitForKnowledgeSource(
     if (!source) throw new Error("知识来源不存在或已删除");
     if (source.status === "ready") return source;
     if (source.status === "failed") {
-      throw new Error(source.error_code ?? "资料解析失败");
+      throw new Error(publicErrorMessage(source.error_code ?? "资料解析失败，请重新上传。"));
     }
     await new Promise((resolve) => window.setTimeout(resolve, 1200));
   }

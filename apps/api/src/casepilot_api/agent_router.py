@@ -22,14 +22,20 @@ IntentName = Literal[
     "UNRESOLVED",
 ]
 
+from casepilot_api.model_client import managed_model_client
+
 logger = logging.getLogger(__name__)
 
 
-def _run_routing_agent(runner, agent, prompt: str, *, stage: str, model_name: str):
+def _run_routing_agent(runner, agent, prompt: str, *, stage: str, model_name: str, client=None):
     started = perf_counter()
     outcome = "error"
     try:
-        result = runner.run_sync(agent, prompt, max_turns=1).final_output
+        if client is None:
+            result = runner.run_sync(agent, prompt, max_turns=1).final_output
+        else:
+            with managed_model_client(client):
+                result = runner.run_sync(agent, prompt, max_turns=1).final_output
         outcome = "ok"
         return result
     finally:
@@ -127,6 +133,7 @@ NEGATED_DELETE = re.compile(r"(?:不要|无需|不用|别|禁止).{0,8}(?:删除
 NEGATED_WRITE = re.compile(
     r"(?:不要|无需|不用|别|禁止|暂不|先别).{0,12}"
     r"(?:生成|创建|新增|补充|修改|改写|重写|调整|替换|删除|移除|作废)|"
+    r"(?:不要|无需|不用|别|禁止|暂不|先别)(?:把|将)[^，,。；;！？!?]{0,200}(?:改为|设为|设置为)|"
     r"\b(?:do\s+not|don't|never|without)\s+"
     r"(?:generate|create|write|draft|design|modify|edit|update|rewrite|"
     r"revise|delete|remove|archive)\b",
@@ -191,6 +198,30 @@ def draft_needs_confirmation(draft: dict) -> bool:
     if draft.get("routing_source") == "semantic":
         return draft["intent"] == "UNRESOLVED"
     return needs_intent_confirmation(str(draft["intent"]), float(draft["confidence"]))
+
+
+def _literal_action_span(content: str, evidence: str) -> str | None:
+    """Restore omitted case keys/spacing without accepting paraphrased actions.
+
+    Keep a source-offset map so all later negation and scope checks use the
+    actual user sentence. An evidence key must match literally; it cannot be
+    replaced with a different key by normalization.
+    """
+    if evidence in content:
+        return evidence
+    key_pattern = r"\b[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+\b"
+    omitted = set()
+    if not re.search(key_pattern, evidence):
+        for match in re.finditer(key_pattern, content):
+            omitted.update(range(match.start(), match.end()))
+    offsets = [index for index, char in enumerate(content)
+               if index not in omitted and not char.isspace()]
+    normalized = ''.join(content[index] for index in offsets)
+    needle = re.sub(r'\s+', '', evidence)
+    start = normalized.find(needle) if needle else -1
+    if start < 0:
+        return None
+    return content[offsets[start]:offsets[start + len(needle) - 1] + 1]
 
 
 def _validate_model_plan(
@@ -261,7 +292,11 @@ def _validate_model_plan(
             for part in re.split(r"[，,、；;]|\.{2,}|…+", operation.action_evidence)
             if part.strip()
         ]
-        evidence_valid = bool(evidence_parts) and all(part in content for part in evidence_parts)
+        literal_parts = [_literal_action_span(content, part) for part in evidence_parts]
+        evidence_valid = bool(evidence_parts) and all(part is not None for part in literal_parts)
+        if evidence_valid:
+            evidence_parts = [part for part in literal_parts if part is not None]
+            operation.action_evidence = '，'.join(evidence_parts)
         clauses = re.split(r"[。；;，,]|然后|随后|接着", content)
         matches = [clause for clause in clauses if evidence_parts and evidence_parts[0] in clause]
         evidence_clause = next(
@@ -525,6 +560,7 @@ def sdk_plan(
     tracing_enabled: bool,
     conversation_memory: list[dict[str, str]] | None = None,
     active_operations: list[dict] | None = None,
+    attachment_context: dict | None = None,
 ) -> IntentPlanDraft:
     if not api_key:
         raise ValueError("agent_api_key_required")
@@ -572,6 +608,9 @@ def sdk_plan(
             "没有改动方向时保留CASE_MODIFY并追问方向，不能启动新用例生成。"
             "对于只有优化一下、重写一下而未提供改动方向的请求，询问需要修改哪些内容或希望达到什么效果；"
             "已有明确修改要求时不重复提问，把修改目标与保留要求分别写入changes和constraints。"
+            "available_attachments是已校验且可读取的附件，执行阶段会读取正文。用户明确要求依据这些附件修改时，"
+            "不要因路由输入没有正文而要求用户粘贴或重新上传；保留引用要求，交给执行阶段核对规则。"
+            "附件可用不代表规则充分，不要自行编造附件内容；用户没有指定修改方向时仍需澄清。"
             "selected_targets只是可用上下文，只有当前消息明确指向选中/当前用例时才引用，不能继承旧目标。"
             "若selected_targets提供previous_result且用户说这一版不满意、保留刚才修改、再调整，"
             "这是对已有方案的CASE_MODIFY，target_kind=previous_result，不必再次询问目标。"
@@ -590,10 +629,11 @@ def sdk_plan(
             "selected_targets": target_context,
             "recent_messages": (conversation_memory or [])[-12:],
             "active_operations": active_operations or [],
+            "available_attachments": attachment_context or {},
         },
         ensure_ascii=False,
     )
-    return _run_routing_agent(Runner, agent, prompt, stage="intent", model_name=model_name)
+    return _run_routing_agent(Runner, agent, prompt, stage="intent", model_name=model_name, client=client)
 
 
 def plan_intents(
@@ -605,6 +645,7 @@ def plan_intents(
     target_context: list[dict],
     conversation_memory: list[dict[str, str]] | None = None,
     active_operations: list[dict] | None = None,
+    attachment_context: dict | None = None,
     provider: str,
     model_name: str,
     base_url: str,
@@ -637,6 +678,7 @@ def plan_intents(
             target_context=target_context,
             conversation_memory=conversation_memory or [],
             active_operations=active_operations or [],
+            attachment_context=attachment_context or {},
             model_name=model_name,
             base_url=base_url,
             api_key=api_key,
@@ -722,11 +764,12 @@ def select_query_case_ids(condition: str, cases: list[dict], *, model_name: str,
         model_settings=ModelSettings(extra_body={'response_format': {'type':'json_object'}}),
         output_type=AgentOutputSchema(QueryCaseSelection, strict_json_schema=False),
     )
-    selection = Runner.run_sync(agent, json.dumps({'condition':condition,'cases':[
-        {**{key: c.get(key) for key in ('case_key', 'title', 'module', 'priority',
-             'case_type', 'description', 'tags', 'preconditions', 'steps')},
-         'id': str(c['id'])} for c in cases
-    ]}, ensure_ascii=False), max_turns=1).final_output
+    with managed_model_client(client):
+        selection = Runner.run_sync(agent, json.dumps({'condition':condition,'cases':[
+            {**{key: c.get(key) for key in ('case_key', 'title', 'module', 'priority',
+                 'case_type', 'description', 'tags', 'preconditions', 'steps')},
+             'id': str(c['id'])} for c in cases
+        ]}, ensure_ascii=False), max_turns=1).final_output
     allowed = {str(c['id']) for c in cases}
     if selection.ambiguous or not set(selection.ids).issubset(allowed):
         raise ValueError('query_scope_ambiguous')
@@ -819,7 +862,7 @@ def select_case_scope(instruction: str, cases: list[dict], context: dict, *, int
             {**case, 'source_id': str(case['id']), 'id': aliases[str(case['id'])]}
             for case in cases
         ],
-    }, ensure_ascii=False, default=str), stage="scope", model_name=model_name)
+    }, ensure_ascii=False, default=str), stage="scope", model_name=model_name, client=client)
     resolved_ids = []
     for ref in decision.ids:
         if ref in original_ids:

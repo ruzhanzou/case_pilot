@@ -1,0 +1,41 @@
+import {test,expect} from '@playwright/test';
+import {writeFileSync} from 'node:fs';
+import type {ConversationTurnDto} from '../lib/casepilot-api';
+test.skip(process.env.CASEPILOT_REAL_ACCEPTANCE!=='1','Requires real services');
+test.setTimeout(600000);
+test('lost collection confirmation response retries into the original workspace',async({page},info)=>{
+ const api=`${process.env.CASEPILOT_E2E_API_URL}/api/v1`;
+ const email=`binding-replay-${Date.now()}@casepilot.test`;
+ const registered=await page.request.post(`${api}/auth/register`,{data:{email,password:'CasePilot123!',display_name:'确认恢复验收'}});
+ expect(registered.ok()).toBeTruthy();const user=await registered.json();
+ await page.addInitScript(()=>localStorage.setItem('casepilot.locale.v1','zh-CN'));
+ await page.goto('/');await page.getByLabel('写给 CasePilot').fill('生成1条账号登录测试用例，只验证已注册且启用账号输入正确密码后登录成功并进入首页。');
+ await page.getByRole('button',{name:'发送',exact:true}).click();
+ const picker=page.locator('.conversation-collection-picker');await expect(picker).toBeVisible({timeout:180000});
+ const name=`响应丢失恢复-${Date.now()}`;await picker.getByPlaceholder('或输入新集合名称').fill(name);
+ let dropped:ConversationTurnDto|null=null;
+ await page.route('**/conversation-operations/*/confirm-collection',async route=>{
+  if(dropped){await route.continue();return;}
+  const response=await route.fetch({timeout:180000});expect(response.status()).toBe(202);
+  dropped=await response.json();await route.abort('failed');
+ });
+ const confirm=picker.getByRole('button',{name:'确认并进入工作台',exact:true});
+ await confirm.click();await expect.poll(()=>dropped,{timeout:180000}).not.toBeNull();
+ await expect(confirm).toBeEnabled();
+ const received=page.waitForResponse(r=>r.url().endsWith('/confirm-collection')&&r.request().method()==='POST',{timeout:180000});
+ await confirm.click();const replay=await received;expect(replay.status()).toBe(202);const restored=await replay.json();
+ expect(restored.action).toEqual(dropped!.action);
+ expect(dropped!.assistant_message).toBeTruthy();
+ expect(restored.assistant_message.id).toBe(dropped!.assistant_message?.id);
+ await expect(page.locator('.principle-workbench')).toBeVisible({timeout:60000});
+ await expect(page.getByRole('region',{name:'测试规划脑图'})).toBeVisible({timeout:360000});
+ const workspace=await (await page.request.get(`${api}/conversations/${restored.conversation_id}`)).json();
+ expect(workspace.workflow_runs).toHaveLength(1);
+ expect(workspace.workflow_runs[0].job_id).toBe(restored.action.job_id);
+ const collections=await(await page.request.get(`${api}/spaces/${user.spaces[0].id}/collections`)).json();
+ expect(collections.filter((c:{name:string})=>c.name===name)).toHaveLength(1);
+ const cases=await(await page.request.get(`${api}/collections/${workspace.collection_id}/test-cases`)).json();expect(cases).toEqual([]);
+ await page.reload();await expect(page.getByRole('region',{name:'测试规划脑图'})).toBeVisible();
+ writeFileSync(info.outputPath('evidence.json'),JSON.stringify({email,dropped,restored,workspace,collections,cases},null,2));
+ await page.screenshot({path:info.outputPath('restored-original-workspace.png'),fullPage:true});
+});

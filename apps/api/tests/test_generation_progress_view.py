@@ -5,6 +5,19 @@ from uuid import uuid4
 from casepilot_api.generation import job_view
 
 
+def test_analysis_progress_restores_completed_batch_count_without_claiming_completion():
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = []
+    metadata = {'progress': 52, 'completed_batches': 2, 'total_batches': 4}
+    job = SimpleNamespace(id=uuid4(), space_id=uuid4(), status='running',
+                          stage='cases.analyzing', error_code=None, input_payload={},
+                          output_payload={'analysis_progress': metadata})
+    assert job_view(db, job).progress == 52
+    assert job_view(db, job).analysis_progress == metadata
+    job.status = job.stage = 'completed'
+    assert job_view(db, job).progress == 100
+
+
 def test_compact_progress_uses_verified_cases_and_survives_polling():
     db = MagicMock()
     db.scalars.return_value.all.return_value = []

@@ -57,6 +57,7 @@ test('negative reuse clause followed by explicit Excel search respects selected 
   await page.reload();const review=page.locator('.collection-changes__review');const apply=page.waitForResponse(r=>r.url().endsWith('/apply')&&r.request().method()==='POST');await review.getByRole('button',{name:/一键采纳全部待审阅用例/}).click();expect((await apply).ok()).toBeTruthy();
   state=await get(`/conversations/${cid}`);evidence.after=state.candidates;for(const c of before.filter((c:any)=>c.id!==target.id))expect(state.candidates.find((x:any)=>x.id===c.id)).toEqual(c);
   expect((await get(`/collections/${collection.id}/test-cases`))).toHaveLength(0);await page.reload();await expect(page.getByText('正在恢复工作区',{exact:true})).toBeHidden();
+  await page.getByRole('button',{name:'查看更新后的候选',exact:true}).click();
   await expect(page.getByTestId('workspace-case-sources')).toContainText('旧版用例.xlsx');await expect(page.getByTestId('workspace-case-sources')).toContainText('参考改写');await expect(page.getByTestId('workspace-case-sources')).toContainText('OLD-001');await page.screenshot({path:info.outputPath('completed.png'),fullPage:true});
   expect(evidence.errors).toEqual([]);evidence.status='passed';
  }finally{writeFileSync(info.outputPath('evidence.json'),JSON.stringify(evidence,null,2));}

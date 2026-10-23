@@ -368,6 +368,7 @@ class GenerationStartRequest(BaseModel):
 
 
 class GenerationJobView(BaseModel):
+    analysis_progress: dict | None = None
     planning_preview: dict | None = None
     planning_progress: dict | None = None
     retry_attempt: int | None = None
@@ -429,6 +430,7 @@ class ConversationTarget(BaseModel):
 
 
 class ConversationMessageCreate(BaseModel):
+    client_request_id: UUID | None = None
     generation_strategy: Literal["select", "generate", "select_and_generate"] | None = None
     source_collection_ids: list[UUID] = Field(default_factory=list, max_length=100)
     target_scope: str = Field(default="inferred", pattern=r"^(inferred|selected)$")
@@ -490,6 +492,8 @@ class ConversationOperationContinueRequest(BaseModel):
 
 
 class ConversationOperationResumeRequest(BaseModel):
+    document_ids: list[UUID] = Field(default_factory=list, max_length=100)
+    knowledge_source_ids: list[UUID] = Field(default_factory=list, max_length=100)
     confirm_modification: bool = False
     content: str | None = Field(default=None, min_length=1, max_length=8000)
     intent: str | None = Field(

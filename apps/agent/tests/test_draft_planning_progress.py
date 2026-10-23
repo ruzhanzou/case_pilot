@@ -29,6 +29,10 @@ class Store:
         self.stages = []
 
     @contextmanager
+    def execution_guard(self, job_id):
+        yield True
+
+    @contextmanager
     def connection(self):
         with self.lock:
             yield self

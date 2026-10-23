@@ -2,6 +2,7 @@ import base64
 import copy
 import json
 import logging
+from hashlib import sha256
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,14 +13,17 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse
+from fastapi.encoders import jsonable_encoder
 
 from casepilot_api.planning_links import links_view, link_existing_case, link_committed_candidate, inherit_unchanged_links, reusable_current_case
+from casepilot_api.models import ConversationSubmission
+from casepilot_api.submissions import SubmissionTransaction, after_commit
 from casepilot_api.schemas import PlanningCaseLinkRequest, GenerationAssetConfirmRequest
 from casepilot_api.generation_strategy import asset_choice_from_text, generation_strategy_from_text, is_strategy_question
 from casepilot_api.reuse_choices import apply_reviewer_choices, confirm_asset_reuse, reviewer_choices
 from pydantic import ValidationError
 from redis import Redis
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, or_, select, update, text
 from sqlalchemy.orm import Session
 
 from casepilot_api.agent_router import (
@@ -822,6 +826,18 @@ def _operation_runtime_status(
         )
     else:
         operation.status = "running"
+    # Persist the confirmation receipt in the same transaction as collection
+    # binding, the assistant message and job dispatch. A lost response must not
+    # require starting another task or recreating the collection.
+    confirmation = dict(operation.payload).get("collection_confirmation_request")
+    if confirmation and not dict(operation.payload).get("collection_confirmation_receipt"):
+        operation.payload = {
+            **dict(operation.payload),
+            "collection_confirmation_receipt": {
+                "assistant_message_id": str(assistant.id),
+                "action": jsonable_encoder(action),
+            },
+        }
     if assistant.related_job_id:
         operation.related_job_id = assistant.related_job_id
     if action.get("change_set_id"):
@@ -896,9 +912,13 @@ def _messages_with_attachments(db, conversation, messages, pending=None):
     user_views = sorted((view for view in views if view.role == "user"),
                         key=lambda view: (view.created_at, str(view.id)))
     for document in documents:
+        expires_at = getattr(document, "expires_at", None)
+        expired = expires_at is not None and expires_at <= datetime.now(UTC)
         attachment = {
             "id": str(document.id), "name": document.original_name,
-            "size": document.size_bytes, "status": document.status,
+            "size": document.size_bytes, "status": "expired" if expired else document.status,
+            "expires_at": expires_at.isoformat() if expires_at else None,
+            "error_code": getattr(document, "error_code", None),
         }
         owner = next((view for view in user_views if view.created_at >= document.created_at), None)
         if owner is None:
@@ -1011,7 +1031,9 @@ def _conversation_view(db: Session, conversation: Conversation) -> ConversationV
                 operation=job.operation,
                 status=status,
                 current_stage=job.stage,
-                progress=STAGE_PROGRESS.get(job.stage, 0),
+                progress=(int((job.output_payload or {})['analysis_progress'].get('progress', 0))
+                          if status == 'running' and (job.output_payload or {}).get('analysis_progress')
+                          else STAGE_PROGRESS.get(job.stage, 0)),
                 error_code=public_error_code(job.error_code),
                 stages=[
                     ConversationWorkflowStageView(
@@ -1464,6 +1486,15 @@ def _rewrite_proposal_source(db, source):
     return source
 
 
+def _brief_belongs_to_generation_task(brief, source, operation) -> bool:
+    if source is None:
+        # Manually authored draft briefs remain editable before generation.
+        return brief.source_operation_id is None and brief.status == "draft"
+    source_task = str(dict(source.payload).get("task_id") or source.id)
+    current_task = str(dict(operation.payload).get("task_id") or operation.id)
+    return source_task == current_task
+
+
 def _link_rewrite_round(db, conversation, operation, payload, original_instruction=None):
     """A mutation task stays open until a review action closes it."""
     if operation is None or operation.intent not in {"CASE_MODIFY", "CASE_GENERATE"}:
@@ -1589,6 +1620,25 @@ def _resolve_model_scope(db, conversation, payload, intent):
         return payload.model_copy(update={
             "targets": [], "target_case_ids": [], "target_candidate_snapshots": [],
         }), None
+    # Only a complete single-reference command bypasses semantic selection.
+    # Compound conditions and additional actions must still be interpreted together.
+    exact = re.fullmatch(
+        r"(?:查询|查看|删除|丢弃)\s*(?:用例\s*)?([A-Za-z0-9_-]+)\s*[。.!！]?",
+        payload.content.strip(),
+    ) if intent in {"CASE_QUERY", "CASE_DELETE"} else None
+    if exact:
+        matches = [case for case in catalog
+                   if exact[1] in {str(case["id"]), str(case.get("case_key", ""))}]
+        if len(matches) == 1:
+            chosen = matches[0]
+            return payload.model_copy(update={
+                "targets": [],
+                "target_case_ids": [UUID(str(chosen["id"]))] if chosen["kind"] == "formal" else [],
+                "target_candidate_snapshots": [ConversationTargetSnapshot(
+                    ref=c.ref, version=c.version, snapshot=dict(c.snapshot))
+                    for c in candidates if str(c.id) == str(chosen["id"])],
+            }), None
+        return payload, "指定编号不存在或不唯一，请检查完整用例编号。"
     allowed = {str(case["id"]) for case in catalog}
     ref_ids = {str(case.get("case_key", "")): str(case["id"]) for case in catalog}
     # The expansion helper defaults to the collection for legacy callers. That
@@ -1641,7 +1691,10 @@ def _resolve_model_scope(db, conversation, payload, intent):
             if remaining <= 0:
                 raise TimeoutError("scope_routing_budget_exhausted")
             try:
-                decision = select_case_scope(payload.content, catalog, context, intent=intent,
+                from casepilot_api.scope_filter import select_large_scope
+
+                selector = select_large_scope if len(catalog) > 2000 else select_case_scope
+                decision = selector(payload.content, catalog, context, intent=intent,
                     model_name=settings.routing_model, base_url=settings.agent_base_url,
                     api_key=settings.agent_api_key, timeout_seconds=remaining,
                     tracing_enabled=settings.agent_tracing_enabled)
@@ -2339,7 +2392,7 @@ def _start_action(
         return assistant, {"type": "case_query", "count": len(items)}, None
 
     if intent == "CASE_DELETE":
-        if not payload.target_case_ids:
+        if not case_context:
             assistant = _new_assistant_message(
                 conversation.id,
                 content="请先选择当前用例或当前模块，再说明删除原因。",
@@ -2355,9 +2408,12 @@ def _start_action(
             {
                 "operation": "delete",
                 "ref": item["ref"],
-                "target_type": "formal",
-                "test_case_id": item["ref"],
-                "base_revision_id": item["snapshot"]["current_revision_id"],
+                "target_type": item["target_type"],
+                **({"test_case_id": item["ref"],
+                    "base_revision_id": item["snapshot"]["current_revision_id"]}
+                   if item["target_type"] == "formal" else
+                   {"base_version": next(target.version for target in payload.target_candidate_snapshots
+                                         if target.ref == item["ref"])}),
                 "base_snapshot": item["snapshot"],
                 "proposed_snapshot": item["snapshot"],
                 "field_diff": [
@@ -2370,7 +2426,6 @@ def _start_action(
                 "status": "pending",
             }
             for item in case_context
-            if item["target_type"] == "formal"
         ]
         change_set = CaseChangeSet(
             conversation_id=conversation.id,
@@ -2386,7 +2441,8 @@ def _start_action(
         assistant = _new_assistant_message(
             conversation.id,
             content=(
-                f"将软删除 {len(items)} 条用例。请审阅受影响清单并明确确认；取消不会改变任何资产。"
+                f"将软删除 {sum(item['target_type'] == 'formal' for item in items)} 条正式用例，"
+                f"丢弃 {sum(item['target_type'] == 'candidate' for item in items)} 条候选。请审阅清单并确认；取消不会改变任何资产。"
             ),
             intent=intent,
             confidence=confidence,
@@ -2461,6 +2517,7 @@ def _start_action(
             return assistant, {"type": "clarification"}, None
         operation.payload = {
             **dict(operation.payload), "modification_confirmation": None,
+            "last_confirmed_modification": confirmation,
         }
     asset_references = dict(operation.payload).get("asset_reference_sources", []) if operation else []
     if intent == "CASE_MODIFY":
@@ -2585,6 +2642,12 @@ def _start_action(
         .where(WorkspaceTestBrief.conversation_id == conversation.id)
         .order_by(WorkspaceTestBrief.version.desc())
     )
+    if intent == "CASE_GENERATE" and latest_brief is not None and operation is not None:
+        # Merge only revisions of this task. A completed generation is context,
+        # not an instruction to regenerate its already accepted test points.
+        brief_source = db.get(ConversationOperation, latest_brief.source_operation_id) if latest_brief.source_operation_id else None
+        if not _brief_belongs_to_generation_task(latest_brief, brief_source, operation):
+            latest_brief = None
     if latest_brief is not None:
         current_test_brief = dict(latest_brief.content)
         if provided_test_object and not str(current_test_brief.get("test_object") or "").strip():
@@ -4064,8 +4127,8 @@ def _is_generation_retry(content: str) -> bool:
     # Full commands only: requests to design retry test cases are ordinary input.
     return bool(re.fullmatch(
         r"(?:请|帮我)?(?:确认)?(?:重试|重新执行|再试一次)"
-        r"(?:(?:一下|一次)|(?:(?:刚才|上次|本次|这个|当前|失败的|中断的|的)*)"
-        r"(?:生成任务|生成请求|任务|请求|生成))?[。！!？?\s]*"
+        r"(?:(?:一下|一次)|(?:(?:刚才|上次|本次|这个|当前|失败的|未完成的|中断的|的)*)"
+        r"(?:(?:生成|修改|删除|查询|评审)(?:任务|请求)?|任务|请求))?[。！!？?\s]*"
         r"|(?:please\s+)?(?:retry|try again)(?:\s+(?:the\s+)?(?:failed\s+)?"
         r"(?:generation|request|task))?[.!?\s]*",
         content.strip(), re.I,
@@ -4076,9 +4139,7 @@ def _retry_generation_from_text(
     db: Session, account: CurrentAccount, conversation: Conversation,
     payload: ConversationMessageCreate,
 ) -> ConversationTurnView | None:
-    if (payload.intent_override or payload.source_operation_id or payload.targets
-        or payload.target_case_ids or payload.target_candidate_snapshots
-        or payload.document_ids):
+    if payload.intent_override or payload.source_operation_id:
         return None
     explicit = _is_generation_retry(payload.content)
     if not explicit:
@@ -4095,12 +4156,85 @@ def _retry_generation_from_text(
             or not _is_generation_retry(recent[1].content)
             or not re.search(r"(?:是否|要不要|确认|要).*重试|retry.*\?", recent[0].content, re.I)):
             return None
+    latest_operation = db.scalar(select(ConversationOperation).where(
+        ConversationOperation.conversation_id == conversation.id,
+    ).order_by(ConversationOperation.created_at.desc(),
+               ConversationOperation.sequence.desc()).limit(1))
+    # A compound request may end in queued steps blocked by an earlier failure.
+    # Retry that failed predecessor, never skip ahead to the queued mutation.
+    if latest_operation is not None and latest_operation.status == "queued":
+        failed_predecessor = db.scalar(select(ConversationOperation).where(
+            ConversationOperation.message_id == latest_operation.message_id,
+            ConversationOperation.conversation_id == conversation.id,
+            ConversationOperation.sequence < latest_operation.sequence,
+            ConversationOperation.status == "failed",
+        ).order_by(ConversationOperation.sequence).limit(1))
+        if failed_predecessor is not None:
+            latest_operation = failed_predecessor
+    requested_kind = next((intent for label, intent in {
+        "生成": "CASE_GENERATE", "修改": "CASE_MODIFY", "删除": "CASE_DELETE",
+        "查询": "CASE_QUERY", "评审": "CASE_REVIEW",
+    }.items() if label in payload.content), None)
+    if (requested_kind and latest_operation is not None
+            and latest_operation.intent != requested_kind):
+        raise HTTPException(status_code=409, detail="retry_context_mismatch")
+    if (latest_operation is None or latest_operation.intent == "CASE_GENERATE") and (
+        payload.document_ids or payload.knowledge_source_ids
+    ):
+        # New generation evidence needs normal planning, not replay of an old brief.
+        return None
+    if latest_operation is not None and latest_operation.intent != "CASE_GENERATE":
+        if latest_operation.status != "failed":
+            raise HTTPException(status_code=409, detail="message_not_retryable")
+        retry_message = ConversationMessage(
+            conversation_id=conversation.id, role="user", content=payload.content.strip(),
+            intent=latest_operation.intent, intent_confidence=1.0, status="completed",
+            target_case_ids=[], citations=[],
+            message_metadata={"retry_operation_id": str(latest_operation.id)},
+        )
+        db.add(retry_message)
+        turn = resume_conversation_operation(
+            latest_operation.id, ConversationOperationResumeRequest(
+                document_ids=payload.document_ids, knowledge_source_ids=payload.knowledge_source_ids), account, db,
+        )
+        db.refresh(retry_message)
+        return turn.model_copy(update={"user_message": _message_view(retry_message)})
     job = db.scalar(select(GenerationJob).where(
         GenerationJob.input_payload["conversation_id"].astext == str(conversation.id),
-        GenerationJob.operation.in_({"generate", "draft_brief"}),
     ).order_by(GenerationJob.created_at.desc(), GenerationJob.id.desc()).limit(1))
+    # A completed compact job can still have explicitly reported missing slots.
+    # Reconfirm just those slots under the same current brief; persisted successful
+    # candidates are outside that selected scope and must remain unchanged.
+    if (job is not None and job.status == "completed" and job.operation == "generate"
+            and job.input_payload.get("output_contract") == "case_batch_v2"):
+        missing = {str(issue.get("object_id")) for issue in
+                   dict(job.output_payload or {}).get("quality", {}).get("issues", [])
+                   if issue.get("code") == "uncovered_test_point" and issue.get("object_id")}
+        planned = {str(point["id"]) for point in
+                   dict(job.input_payload.get("confirmed_plan") or {}).get("test_points", [])}
+        if missing and missing <= planned:
+            brief = db.scalar(select(WorkspaceTestBrief).where(
+                WorkspaceTestBrief.conversation_id == conversation.id,
+            ).order_by(WorkspaceTestBrief.version.desc()).limit(1))
+            if (latest_operation is None or latest_operation.related_job_id != job.id
+                    or brief is None or brief.source_operation_id != latest_operation.id
+                    or brief.version != job.input_payload.get("confirmed_test_brief_version")):
+                raise HTTPException(status_code=409, detail="retry_context_mismatch")
+            retry_message = ConversationMessage(
+                conversation_id=conversation.id, role="user", content=payload.content.strip(),
+                intent="CASE_GENERATE", intent_confidence=1.0, status="completed",
+                target_case_ids=[], citations=[],
+                message_metadata={"retry_job_id": str(job.id), "missing_test_point_ids": sorted(missing)},
+            )
+            db.add(retry_message)
+            turn = confirm_test_brief(conversation.id, TestBriefConfirmRequest(
+                version=brief.version, selected_test_point_ids=sorted(missing),
+                model_id=str(job.input_payload.get("model_id") or "auto"),
+            ), account, db)
+            db.refresh(retry_message)
+            return turn.model_copy(update={"user_message": _message_view(retry_message)})
     # Do not revive an older failure after a newer generation succeeded.
-    if job is None or job.status != "failed":
+    if job is None or job.status != "failed" or job.operation not in {"generate", "draft_brief"}:
         raise HTTPException(status_code=409, detail="message_not_retryable")
     assistant = db.scalar(select(ConversationMessage).where(
         ConversationMessage.conversation_id == conversation.id,
@@ -4139,6 +4273,36 @@ def send_message(
     account: CurrentAccount,
     db: DbSession,
 ) -> ConversationTurnView:
+    if payload.client_request_id is None:
+        return _send_message(conversation_id, payload, account, db)
+    conversation = _ensure_conversation(db, account.id, conversation_id)
+    fingerprint = sha256(json.dumps(payload.model_dump(mode="json", exclude={"client_request_id"}),
+                                    sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    lock_key = int.from_bytes(sha256(str(conversation_id).encode()).digest()[:8],
+                              "big", signed=True)
+    db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
+    db.refresh(conversation)
+    receipt = db.get(ConversationSubmission, (conversation_id, payload.client_request_id))
+    if receipt is not None:
+        if receipt.request_hash != fingerprint:
+            raise HTTPException(409, "submission_request_mismatch")
+        return ConversationTurnView.model_validate(receipt.response)
+    transaction = SubmissionTransaction(db)
+    try:
+        turn = _send_message(conversation_id, payload, account, transaction)
+        db.add(ConversationSubmission(
+            conversation_id=conversation_id, request_id=payload.client_request_id,
+            request_hash=fingerprint, response=turn.model_dump(mode="json"),
+        ))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    transaction.publish_committed_effects()
+    return turn
+
+
+def _send_message(conversation_id, payload, account, db) -> ConversationTurnView:
     conversation = _ensure_conversation(db, account.id, conversation_id)
     # Explicit asset redirection stops the prior job before accepting a new scope.
     if generation_strategy_from_text(payload.content) != "generate":
@@ -4254,6 +4418,8 @@ def send_message(
                 target_context=[item.model_dump(mode="json") for item in payload.targets],
                 conversation_memory=_agent_conversation_memory(db, conversation.id),
                 active_operations=active_operation_context,
+                attachment_context={"document_ids": list(map(str, payload.document_ids)),
+                                    "knowledge_source_ids": list(map(str, payload.knowledge_source_ids))},
                 provider=settings.agent_provider,
                 model_name=settings.routing_model,
                 base_url=settings.agent_base_url,
@@ -4270,8 +4436,12 @@ def send_message(
         for draft in operation_drafts:
             if draft["intent"] == "CASE_MODIFY":
                 draft.update(intent="CASE_GENERATE", clarification_questions=[])
+    # Reviewing generated candidates includes discarding individual candidates.
+    # A separate deletion proposal must not force users to adopt them first.
+    can_review_candidate_deletion = bool(open_task and open_task.intent == "CASE_GENERATE"
+                                         and phase == "candidate_review")
     blocked_new_task = bool(open_task and any(
-        draft["intent"] == "CASE_DELETE" or (
+        (draft["intent"] == "CASE_DELETE" and not can_review_candidate_deletion) or (
             draft["intent"] == "CASE_GENERATE" and dict(open_task.payload).get("task_intent", open_task.intent) == "CASE_MODIFY"
         ) for draft in operation_drafts))
     intent = str(operation_drafts[0]["intent"])
@@ -4419,7 +4589,7 @@ def confirm_message_intent(
     _require_idle_conversation(db, conversation)
     if user_message.status != "awaiting_intent":
         raise HTTPException(status_code=409, detail="message_not_awaiting_intent")
-    request_payload = user_message.message_metadata.get("request", {})
+    request_payload = dict(user_message.message_metadata.get("request", {}))
     request_payload["intent_override"] = payload.intent
     message_input = ConversationMessageCreate.model_validate(request_payload)
     user_message.intent = payload.intent
@@ -4497,6 +4667,27 @@ def confirm_conversation_operation_collection(
     if operation is None:
         raise HTTPException(status_code=404, detail="conversation_operation_not_found")
     conversation = _ensure_conversation(db, account.id, operation.conversation_id)
+    choice = payload.model_dump(mode="json")
+    receipt = dict(operation.payload).get("collection_confirmation_receipt")
+    if receipt:
+        if dict(operation.payload).get("collection_confirmation_request") != choice:
+            raise HTTPException(409, "collection_confirmation_choice_mismatch")
+        user_message = db.get(ConversationMessage, operation.message_id)
+        assistant = db.get(ConversationMessage, UUID(receipt["assistant_message_id"]))
+        if user_message is None or assistant is None:
+            raise HTTPException(409, "collection_confirmation_result_unavailable")
+        operations = list(db.scalars(select(ConversationOperation).where(
+            ConversationOperation.message_id == operation.message_id,
+        ).order_by(ConversationOperation.sequence)))
+        return ConversationTurnView(
+            conversation_id=conversation.id,
+            user_message=_message_view(user_message),
+            assistant_message=_message_view(assistant),
+            intent=operation.intent,
+            intent_confidence=operation.confidence,
+            action=receipt["action"],
+            operation_plan=_operation_plan_view(operations),
+        )
     if operation.status != "awaiting_collection":
         raise HTTPException(
             status_code=409,
@@ -4555,6 +4746,9 @@ def confirm_conversation_operation_collection(
         "phase": "maintenance",
         "bound_collection_confirmed": True,
         "generation_output_collection_created": payload.collection_id is None,
+    }
+    operation.payload = {
+        **dict(operation.payload), "collection_confirmation_request": choice,
     }
     operation.status = "queued"
     operation.result = {
@@ -4802,6 +4996,9 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
         try:
             reply = interpret_rewrite_reply(text, {
                 **state, "has_confirmation": bool(pending),
+                "available_attachments": dict(operation.payload).get("attachment_context") or {
+                    key: dict(user_message.message_metadata).get("request", {}).get(key, [])
+                    for key in ("document_ids", "knowledge_source_ids")},
                 "scope_cases": (pending or {}).get("cases", []) or dict(operation.target),
             }, provider=settings.agent_provider, model_name=settings.resolve_agent_model(
                 dict(user_message.message_metadata).get("request", {}).get("model_id", "auto")),
@@ -4868,6 +5065,7 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
                                           len(dict(operation.target).get("candidate_refs", []))), 100)]
     fixed_scope = state["scope_resolved"] or (selection_changed and reply.scope_action != "replace")
     data = {**dict(user_message.message_metadata).get("request", {}),
+        **dict(operation.payload).get("attachment_context", {}),
         "content": state["requirements"] if fixed_scope else state["scope_instruction"],
         "intent_override": "CASE_MODIFY", "target_scope": "inferred",
         "targets": prior_targets, "target_case_ids": [], "target_candidate_snapshots": []}
@@ -4979,6 +5177,34 @@ def resume_conversation_operation(
     user_message = db.get(ConversationMessage, operation.message_id)
     if user_message is None:
         raise HTTPException(status_code=404, detail="conversation_message_not_found")
+    if supplement.document_ids or supplement.knowledge_source_ids:
+        previous = {**dict(user_message.message_metadata).get("request", {}),
+                    **dict(operation.payload).get("attachment_context", {})}
+        for field in ("document_ids", "knowledge_source_ids"):
+            previous[field] = list(dict.fromkeys([
+                *previous.get(field, []), *map(str, getattr(supplement, field)),
+            ]))
+        previous.setdefault("content", user_message.content)
+        attachments = _resolve_turn_attachments(
+            db, conversation, ConversationMessageCreate.model_validate(previous), resuming=True)
+        attachment_context = {"document_ids": list(map(str, attachments.document_ids)),
+                              "knowledge_source_ids": list(map(str, attachments.knowledge_source_ids))}
+        changed = any(set(previous_ids) != set(attachment_context[field]) for field, previous_ids in (
+            ("document_ids", dict(operation.payload).get("attachment_context", {}).get(
+                "document_ids", dict(user_message.message_metadata).get("request", {}).get("document_ids", []))),
+            ("knowledge_source_ids", dict(operation.payload).get("attachment_context", {}).get(
+                "knowledge_source_ids", dict(user_message.message_metadata).get("request", {}).get("knowledge_source_ids", []))),
+        ))
+        operation.payload = {**dict(operation.payload), "attachment_context": attachment_context,
+                             **({"modification_confirmation": None, "last_confirmed_modification": None}
+                                if changed else {})}
+    if (operation.status == "failed" and operation.intent == "CASE_MODIFY"
+            and not any((supplement.intent, supplement.content, supplement.confirm_modification,
+                         supplement.targets, supplement.target_case_ids, supplement.target_candidate_snapshots))):
+        approved = dict(operation.payload).get("last_confirmed_modification")
+        if approved:
+            operation.payload = {**dict(operation.payload), "modification_confirmation": copy.deepcopy(approved)}
+            supplement = supplement.model_copy(update={"confirm_modification": True})
     if operation.intent == "CASE_MODIFY" and supplement.intent is None and (
         supplement.content or supplement.confirm_modification
         or dict(operation.payload).get("rewrite_draft")
@@ -5051,7 +5277,8 @@ def resume_conversation_operation(
                 resume_targets = [
                     ConversationTarget(kind="previous_result", source_operation_id=previous.id)
                 ]
-    request_data = dict(dict(user_message.message_metadata).get("request", {}))
+    request_data = {**dict(user_message.message_metadata).get("request", {}),
+                    **dict(operation.payload).get("attachment_context", {})}
     request_data.update(
         {
             "content": str(operation.payload.get("instruction") or user_message.content)
@@ -5079,6 +5306,7 @@ def resume_conversation_operation(
             **dict(operation.payload), "instruction": request_data["content"],
             "modification_confirmation": None,
         }
+    message_input = _resolve_turn_attachments(db, conversation, ConversationMessageCreate.model_validate(request_data), resuming=True)
     semantic_plan = dict(operation.payload).get("plan", {}).get("routing_source") == "semantic"
     if supplement.content and semantic_plan:
         # A complete correction replaces the old scope. Short answers still need
@@ -5097,6 +5325,8 @@ def resume_conversation_operation(
             ),
             phase=str(dict(conversation.context).get("phase", "idle")),
             target_context=[item.model_dump(mode="json") for item in resume_targets],
+            attachment_context={"document_ids": list(map(str, message_input.document_ids)),
+                                "knowledge_source_ids": list(map(str, message_input.knowledge_source_ids))},
             provider=settings.agent_provider, model_name=settings.resolve_agent_model(
                 request_data.get("model_id", "auto")),
             base_url=settings.agent_base_url, api_key=settings.agent_api_key,
@@ -5118,7 +5348,6 @@ def resume_conversation_operation(
                     "请补充当前任务的目标和修改要求；新的任务请另行发送。"
                 ],
             }}
-    message_input = _resolve_turn_attachments(db, conversation, ConversationMessageCreate.model_validate(request_data), resuming=True)
     message_input = _expand_conversation_targets(db, conversation, message_input)
     if supplement.intent is not None:
         operation.intent = supplement.intent
@@ -5205,6 +5434,19 @@ def retry_conversation_message(
     failed_job = db.get(GenerationJob, failed_message.related_job_id)
     if failed_job is None:
         raise HTTPException(status_code=404, detail="generation_job_not_found")
+    operation_id = failed_job.input_payload.get("conversation_operation_id")
+    operation = db.get(ConversationOperation, UUID(str(operation_id))) if operation_id else None
+    if operation is not None:
+        if (operation.conversation_id != conversation.id
+                or operation.related_job_id != failed_job.id
+                or operation.status != "failed"):
+            raise HTTPException(status_code=409, detail="retry_context_mismatch")
+        if failed_job.operation not in {"generate", "draft_brief"}:
+            return resume_conversation_operation(
+                operation.id, ConversationOperationResumeRequest(), account, db,
+            )
+    if failed_job.status != "failed":
+        raise HTTPException(status_code=409, detail="message_not_retryable")
     user_message_id = failed_job.input_payload.get("user_message_id")
     user_message = (
         db.get(ConversationMessage, UUID(str(user_message_id)))
@@ -5213,9 +5455,23 @@ def retry_conversation_message(
     )
     if user_message is None or not user_message.intent:
         raise HTTPException(status_code=409, detail="retry_context_missing")
-    request_payload = user_message.message_metadata.get("request", {})
+    if failed_job.operation in {"generate", "draft_brief"}:
+        from casepilot_api.generation import retry_generation
+
+        retry_generation(failed_job.id, account, db)
+        db.refresh(failed_message)
+        return ConversationTurnView(
+            conversation_id=conversation.id,
+            user_message=_message_view(user_message),
+            assistant_message=_message_view(failed_message),
+            intent="CASE_GENERATE", intent_confidence=1.0,
+            action={"type": "generation", "job_id": str(failed_job.id)},
+        )
+    request_payload = dict(user_message.message_metadata.get("request", {}))
     request_payload["intent_override"] = user_message.intent
-    message_input = ConversationMessageCreate.model_validate(request_payload)
+    message_input = _resolve_turn_attachments(
+        db, conversation, ConversationMessageCreate.model_validate(request_payload), resuming=True,
+    )
     operation_id = failed_job.input_payload.get("conversation_operation_id")
     operation = db.get(ConversationOperation, UUID(str(operation_id))) if operation_id else None
     if operation is not None and operation.conversation_id != conversation.id:
@@ -5312,7 +5568,8 @@ def answer_conversation_generation(
     conversation.updated_at = datetime.now(UTC)
     enqueue_task(db, "casepilot.agent.generate", [str(job.id)], task_id=job.id)
     db.commit()
-    Redis.from_url(settings.redis_url).delete(f"casepilot:generation:{job.id}:events")
+    after_commit(db, lambda: Redis.from_url(settings.redis_url).delete(
+        f"casepilot:generation:{job.id}:events"))
     db.refresh(conversation)
     return _conversation_view(db, conversation)
 
@@ -5476,6 +5733,13 @@ def apply_change_set(
                 if candidate_revision is not None and candidate_revision.status == "pending":
                     candidate_revision.status = "rejected"
             continue
+        if item.get("operation") == "delete" and item["target_type"] == "candidate":
+            candidate = candidate_cases[item["ref"]]
+            candidate.status = "discarded"
+            candidate.version += 1
+            candidate.updated_at = datetime.now(UTC)
+            updated_items.append({**item, "status": "applied", "accepted_fields": ["delete"]})
+            continue
         if item.get("operation") == "delete":
             test_case = formal_cases[item["ref"]]
             confirmed = "delete" in accepted
@@ -5612,13 +5876,17 @@ def apply_change_set(
             _finish_mutation_task(db, operation)
     deleted_count = sum(
         item.get("operation") == "delete" and item.get("status") == "applied"
-        for item in updated_items
+        and item["target_type"] == "formal" for item in updated_items
     )
+    discarded_refs = {item["ref"] for item in updated_items
+                      if item.get("operation") == "delete" and item.get("status") == "applied"
+                      and item["target_type"] == "candidate"}
     deleted_ids = {
         str(item["test_case_id"]) for item in updated_items
         if item.get("operation") == "delete" and item.get("status") == "applied"
+        and item["target_type"] == "formal"
     }
-    if deleted_ids:
+    if deleted_ids or discarded_refs:
         conversation = db.get(Conversation, change_set.conversation_id)
         if conversation is not None:
             context = dict(conversation.context)
@@ -5628,6 +5896,9 @@ def apply_change_set(
                 target["case_ids"] = [
                     value for value in target.get("case_ids", []) if value not in deleted_ids
                 ]
+                target["candidate_refs"] = [
+                    value for value in target.get("candidate_refs", []) if value not in discarded_refs
+                ]
                 if (
                     target.get("kind") != "case"
                     or target["case_ids"]
@@ -5635,14 +5906,25 @@ def apply_change_set(
                 ):
                     kept_targets.append({**selection, "target": target})
             context["selected_targets"] = kept_targets
-            if context.get("selected_case_id") in deleted_ids:
+            if context.get("selected_case_id") in deleted_ids | discarded_refs:
                 context["selected_case_id"] = ""
             conversation.context = context
+            if discarded_refs:
+                db.flush()
+                generation_task = _open_mutation_operation(db, conversation)
+                if generation_task is not None and generation_task.intent == "CASE_GENERATE":
+                    remaining_candidates = db.scalar(select(WorkspaceCandidate.id).where(
+                        WorkspaceCandidate.conversation_id == conversation.id,
+                        WorkspaceCandidate.status.in_({"candidate", "generating"}),
+                    ).limit(1))
+                    if remaining_candidates is None:
+                        _finish_mutation_task(db, generation_task)
+                        conversation.context = {**dict(conversation.context), "phase": "maintenance"}
     has_deletions = any(
         item.get("operation") == "delete" for item in updated_items
     )
     result_message = (
-        f"已确认软删除 {deleted_count} 条用例，审计记录已保留。"
+        f"已确认软删除 {deleted_count} 条正式用例，丢弃 {len(discarded_refs)} 条候选，剩余 {pending_count} 条待审阅。"
         if has_deletions
         else (
             f"已采纳 {sum(item.get('status') == 'applied' for item in updated_items)} 条用例变更，"

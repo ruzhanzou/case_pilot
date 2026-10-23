@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ConversationDto, ConversationMessageDto } from "../lib/casepilot-api";
-import { requestsImplicitMutation, workspaceIsRunning, workspaceTasks, shouldResumePendingTask } from "../lib/workspace-tasks";
+import { candidatesForTask, requestsImplicitMutation, workspaceIsRunning, workspaceJobNeedsWatch, workspaceTasks, shouldResumePendingTask } from "../lib/workspace-tasks";
 
 const message = (id: string, overrides: Partial<ConversationMessageDto> = {}): ConversationMessageDto => ({
   id, role: "assistant", content: id, intent: "CASE_MODIFY", intent_confidence: 1,
@@ -162,4 +162,34 @@ test("parallel previews follow planned positions instead of completion order", a
   state.candidate_history = [{ ...base, id: "fast-second", position: 5 }, { ...base, id: "slow-first", position: 0 }];
   assert.deepEqual(candidatesForTask(workspaceTasks(state)[0], state).map(item => item.id), ["slow-first", "fast-second"]);
   assert.equal(state.candidate_history[0].id, "fast-second");
+});
+
+
+test("partial regeneration keeps successful candidates from earlier jobs of the same task", () => {
+  const first = message("first", { intent: "CASE_GENERATE", related_job_id: "old-job" });
+  const retry = message("retry", { intent: "CASE_GENERATE", related_job_id: "retry-job" });
+  const unrelated = message("unrelated", { intent: "CASE_GENERATE", related_job_id: "other-job" });
+  const state = conversation([first, retry, unrelated]);
+  const makeCandidate = (job: string) => ({id: job, generation_job_id: job, ref: job, version: 1,
+    position: 0, snapshot: {} as ConversationDto["candidates"][number]["snapshot"], included: true,
+    status: "candidate", updated_at: ""});
+  state.candidates = [makeCandidate("old-job"), makeCandidate("retry-job"), makeCandidate("other-job")];
+  const task = {id:"task", messageIds:["first", "retry"], message:retry, status:"completed"};
+  assert.deepEqual(candidatesForTask(task, state).map(item => item.id), ["old-job", "retry-job"]);
+});
+
+
+test("reload observes a terminal job until its running operation snapshot catches up", () => {
+  const state = conversation([message("draft", { related_job_id: "job" })]);
+  state.workflow_runs = [{ job_id: "job", message_id: "draft", operation: "CASE_MODIFY", status: "completed", current_stage: "completed", progress: 100, error_code: null, stages: [], created_at: "", updated_at: "" }];
+  state.operation_history = [{ id: "modify", sequence: 0, intent: "CASE_MODIFY", confidence: 1, status: "running", target: {}, payload: {}, result: {}, requires_confirmation: true, related_job_id: "job", related_change_set_id: "change", error_code: null, created_at: "" }];
+  assert.equal(workspaceJobNeedsWatch(state, "job"), true);
+  assert.equal(workspaceIsRunning(state), true);
+  state.operation_history[0].status = "awaiting_confirmation";
+  assert.equal(workspaceJobNeedsWatch(state, "job"), false);
+  assert.equal(workspaceIsRunning(state), false);
+  state.operation_history[0].status = "running";
+  state.operation_history[0].related_job_id = "other-job";
+  assert.equal(workspaceJobNeedsWatch(state, "job"), false);
+  assert.equal(workspaceJobNeedsWatch(state, ""), false);
 });

@@ -119,6 +119,16 @@ export function workspaceTasks(conversation: ConversationDto | null): WorkspaceT
   return merged.reverse().sort((a, b) => (b.operation?.created_at ?? b.message.created_at ?? "").localeCompare(a.operation?.created_at ?? a.message.created_at ?? "") || (b.operation?.sequence ?? 0) - (a.operation?.sequence ?? 0));
 }
 
+// Reads can straddle a worker commit: the job is already terminal while the
+// operation snapshot still says running. Keep observing until both agree.
+export function workspaceJobNeedsWatch(conversation: ConversationDto | null, jobId: string) {
+  if (!conversation || !jobId) return false;
+  const run = conversation.workflow_runs.find(item => item.job_id === jobId);
+  const operationRunning = (conversation.operation_history ?? conversation.operation_plan?.operations ?? [])
+    .some(item => item.related_job_id === jobId && item.status === "running");
+  return operationRunning || !run || !["completed", "failed", "cancelled"].includes(run.status);
+}
+
 export function workspaceIsRunning(conversation: ConversationDto | null) {
   return Boolean(conversation?.workflow_runs.some((run) => ["queued", "running"].includes(run.status)) ||
     (conversation?.operation_history ?? conversation?.operation_plan?.operations)?.some((operation) => operation.status === "running"));
@@ -140,7 +150,13 @@ export function candidatesForTask(task: WorkspaceTask | undefined, conversation:
   if (!generation) return [];
   const candidates = conversation.candidate_history ?? conversation.candidates;
   const ids = new Set(generation.operation?.result.candidate_ids as string[] ?? []);
-  return candidates.filter(candidate => ids.has(candidate.id) || (candidate.generation_job_id && candidate.generation_job_id === (generation.operation?.related_job_id ?? generation.message.related_job_id)))
+  const messageIds = new Set(generation.messageIds);
+  const jobIds = new Set([
+    generation.operation?.related_job_id ?? generation.message.related_job_id,
+    ...conversation.messages.filter(message => messageIds.has(message.id) && message.intent === "CASE_GENERATE")
+      .map(message => message.related_job_id),
+  ].filter(Boolean));
+  return candidates.filter(candidate => ids.has(candidate.id) || (candidate.generation_job_id && jobIds.has(candidate.generation_job_id)))
     .sort((left, right) => left.position - right.position || left.version - right.version);
 }
 

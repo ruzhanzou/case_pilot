@@ -350,6 +350,23 @@
   color: #3e7267;
 }
 .principle-attachment__body { flex: 1; min-width: 0; }
+.principle-attachment__body > span { display: block; margin-top: 3px; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.principle-attachment > svg { flex-shrink: 0; }
+.principle-attachment button.principle-attachment__remove {
+  flex: 0 0 28px;
+  min-width: 28px;
+  width: 28px;
+  min-height: 28px;
+  height: 28px;
+  padding: 0;
+  margin-left: 0;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
 .principle-attachment strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #263631; font-size: 13px; font-weight: 600; }
 .principle-attachment small { display: block; margin-top: 4px; font-size: 11px; color: #60766d; }
 .principle-attachment progress { display: block; width: 100%; height: 4px; margin-top: 8px; accent-color: #3e7267; }

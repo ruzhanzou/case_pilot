@@ -1,0 +1,45 @@
+import {test,expect} from '@playwright/test';
+import {execFileSync} from 'node:child_process';
+import {resolve} from 'node:path';
+import {writeFileSync} from 'node:fs';
+test.skip(process.env.CASEPILOT_REAL_ACCEPTANCE!=='1','Requires isolated services');
+test.setTimeout(360000);
+test('shared case edit rejects stale AI proposal and protects private conversation',async({page,browser},info)=>{
+ const api=`${process.env.CASEPILOT_E2E_API_URL}/api/v1`;
+ const memberContext=await browser.newContext();const member=await memberContext.newPage();
+ const outsiderContext=await browser.newContext();const outsider=await outsiderContext.newPage();
+ try{
+ const stamp=Date.now();const ownerEmail=`shared-owner-${stamp}@casepilot.test`;const memberEmail=`shared-member-${stamp}@casepilot.test`;
+ const register=async(p:typeof page,email:string)=>{const r=await p.request.post(`${api}/auth/register`,{data:{email,password:'CasePilot123!',display_name:'多人冲突验收'}});expect(r.ok()).toBeTruthy();return r.json();};
+ const owner=await register(page,ownerEmail);await register(member,memberEmail);await register(outsider,`shared-outsider-${stamp}@casepilot.test`);
+ const post=async(path:string,data:unknown)=>{const r=await page.request.post(api+path,{data});expect(r.ok(),await r.text()).toBeTruthy();return r.json();};
+ const collection=await post(`/spaces/${owner.spaces[0].id}/collections`,{name:'多人版本冲突验收'});
+ const item=await post(`/collections/${collection.id}/test-cases`,{title:'原始登录',module:'账号',priority:'P1',preconditions:['账号启用'],steps:[{action:'提交登录',expected:'进入首页'}]});
+ const root=resolve(process.cwd(),'../..');execFileSync(resolve(root,'.venv/bin/python'),[resolve(root,'scripts/qa/share_acceptance_collection.py'),ownerEmail,memberEmail,owner.spaces[0].id]);
+ await page.addInitScript(()=>localStorage.setItem('casepilot.locale.v1','zh-CN'));await page.goto(`/workbench/collections/${collection.id}`);
+ await expect(page.locator('.principle-composer textarea')).toBeEnabled();await page.locator('.principle-composer textarea').fill(`仅把用例 ${item.case_key} 的标题改为「AI建议标题」，其他字段保持不变。`);
+ const first=page.waitForResponse(r=>r.url().endsWith('/messages')&&r.request().method()==='POST',{timeout:180000});await page.locator('.principle-composer button[type=submit]').click();const turn=await(await first).json();
+ const confirm=page.waitForResponse(r=>r.url().endsWith('/resume')&&r.request().method()==='POST',{timeout:180000});await page.getByRole('button',{name:'确认修改并生成建议',exact:true}).last().click();const launched=await(await confirm).json();
+ await expect(page.locator('.collection-changes__review').getByRole('button',{name:/一键采纳全部待审阅用例/})).toBeEnabled({timeout:180000});
+ expect((await member.request.get(`${api}/conversations/${turn.conversation_id}`)).status()).toBe(404);
+ expect((await member.request.get(`${api}/generation-jobs/${launched.action.job_id}`)).status()).toBe(404);
+ expect((await outsider.request.get(`${api}/collections/${collection.id}/test-cases`)).status()).toBe(403);
+ expect((await outsider.request.post(`${api}/case-change-sets/${launched.action.change_set_id}/apply`,{data:{}})).status()).toBe(404);
+ const edit=await member.request.patch(`${api}/test-cases/${item.id}`,{data:{...item,base_revision_id:item.current_revision_id,title:'成员B最新标题'}});expect(edit.ok(),await edit.text()).toBeTruthy();const updated=await edit.json();
+ const stale=page.waitForResponse(r=>r.url().endsWith('/apply')&&r.request().method()==='POST');await page.locator('.collection-changes__review').getByRole('button',{name:/一键采纳全部待审阅用例/}).click();const rejected=await stale;expect(rejected.status()).toBe(409);
+ await expect(page.getByText('该用例刚被其他成员修订，请刷新并基于最新版本重试。',{exact:true})).toBeVisible();
+ await page.reload();const after=await(await page.request.get(`${api}/collections/${collection.id}/test-cases`)).json();expect(after).toEqual([updated]);
+ const change=await(await page.request.get(`${api}/case-change-sets/${launched.action.change_set_id}`)).json();expect(change.status).toBe('conflict');
+ await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+ await page.locator('.principle-composer textarea').fill(`基于用例 ${item.case_key} 的最新版本，仅将优先级改为P0，保留成员B最新标题和所有其他字段。`);
+ const retry=page.waitForResponse(r=>r.url().endsWith('/messages')&&r.request().method()==='POST',{timeout:180000});await page.locator('.principle-composer button[type=submit]').click();expect((await retry).ok()).toBeTruthy();
+ const reconfirm=page.waitForResponse(r=>r.url().endsWith('/resume')&&r.request().method()==='POST',{timeout:180000});await page.getByRole('button',{name:'确认修改并生成建议',exact:true}).last().click();const resumed=await(await reconfirm).json();
+ await expect(page.locator('.collection-changes__review').getByRole('button',{name:/一键采纳全部待审阅用例/})).toBeEnabled({timeout:180000});
+ const fresh=await(await page.request.get(`${api}/case-change-sets/${resumed.action.change_set_id}`)).json();
+ expect(fresh.items[0].proposed_snapshot.title).toBe(updated.title);expect(fresh.items[0].proposed_snapshot.priority).toBe('P0');
+ const apply=page.waitForResponse(r=>r.url().endsWith('/apply')&&r.request().method()==='POST');await page.locator('.collection-changes__review').getByRole('button',{name:/一键采纳全部待审阅用例/}).click();expect((await apply).ok()).toBeTruthy();
+ const recovered=await(await page.request.get(`${api}/collections/${collection.id}/test-cases`)).json();
+ expect(recovered).toHaveLength(1);expect(recovered[0].title).toBe(updated.title);expect(recovered[0].priority).toBe('P0');expect(recovered[0].revision_number).toBe(updated.revision_number+1);
+ writeFileSync(info.outputPath('evidence.json'),JSON.stringify({turn,launched,updated,after,change,resumed,recovered},null,2));await page.screenshot({path:info.outputPath('conflict-preserved.png'),fullPage:true});
+ }finally{await memberContext.close();await outsiderContext.close();}
+});

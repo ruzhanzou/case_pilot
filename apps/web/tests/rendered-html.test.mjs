@@ -41,6 +41,7 @@ test("keeps the persisted case management and execution baseline", async () => {
     caseLibrary,
     caseMindMap,
     caseWorkbench,
+    caseChanges,
     caseEditor,
     caseImport,
     excelParser,
@@ -63,6 +64,7 @@ test("keeps the persisted case management and execution baseline", async () => {
     readFile(new URL("../components/case-library.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/case-mind-map.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/case-workbench.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/case-collection-changes.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/case-editor-dialog.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/case-import-dialog.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/test-case-excel.ts", import.meta.url), "utf8"),
@@ -122,7 +124,8 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(caseLibrary, /CASES_PER_PAGE = 20/);
   assert.match(caseLibrary, /用例列表分页/);
   assert.doesNotMatch(caseLibrary, /<th>用例状态<\/th>/);
-  assert.match(caseLibrary, /执行结果请在 QA 执行批次中查看/);
+  assert.match(caseLibrary, /onClick=\{onStartExecution\}/);
+  assert.match(caseLibrary, /创建 Playlist 执行/);
   assert.match(caseMindMap, /在\$\{data.title\}下新增用例/);
   assert.match(caseMindMap, /zoomOnScroll=\{false\}/);
   assert.match(caseMindMap, /panOnScroll/);
@@ -130,7 +133,7 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(caseMindMap, /进入脑图全屏/);
   assert.match(caseMindMap, /requestFullscreen/);
   assert.match(caseMindMap, /toggleModuleLeaves/);
-  assert.match(caseMindMap, /position: \{ x: 360, y: moduleCenterRow/);
+  assert.match(caseMindMap, /\(path.length - 1\) \* 250/);
   assert.match(caseMindMap, /eyebrow: `title/);
   assert.match(caseMindMap, /test_setup/);
   assert.match(caseMindMap, /test_procedure/);
@@ -145,8 +148,10 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(caseMindMap, /AI 改写中/);
   assert.match(caseWorkbench, /rewriteTargets/);
   assert.match(caseWorkbench, /message\.metadata\.hidden_progress/);
+  const submitMessage = caseWorkbench.slice(caseWorkbench.indexOf("  const submitMessage ="), caseWorkbench.indexOf("  const confirmModification ="));
+  assert.ok(submitMessage.length > 0);
   assert.doesNotMatch(
-    caseWorkbench,
+    submitMessage,
     /intentOverride:\s*[\s\S]{0,160}?CASE_MODIFY/,
     "selected cases provide context without forcing every message into the rewrite workflow",
   );
@@ -155,7 +160,7 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(caseEditor, /case-mind-map\.is-fullscreen/);
   assert.match(caseWorkbench, /CasePilot/);
   assert.match(caseWorkbench, /结构化测试说明/);
-  assert.match(caseWorkbench, /确认并生成用例/);
+  assert.match(caseWorkbench, /确认规划并生成用例/);
   assert.match(caseWorkbench, /正在启动生成/);
   assert.match(caseWorkbench, /confirmPendingIntent/);
   assert.match(caseWorkbench, /conversation-intent-confirmation/);
@@ -173,23 +178,23 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(caseWorkbench, /等待确认/);
   assert.match(caseWorkbench, /pointercancel/);
   assert.doesNotMatch(caseWorkbench, /切换集合/);
-  assert.doesNotMatch(caseWorkbench, /saveTestBrief/);
+  assert.match(caseWorkbench, /saveTestBrief\(workspace.id, content, selectedBrief.version\)/);
   assert.doesNotMatch(caseWorkbench, /briefDirty/);
-  assert.match(caseWorkbench, /停止生成/);
+  assert.match(caseWorkbench, /结束任务/);
   assert.match(caseWorkbench, /脑图和用例列表保持空白/);
   assert.match(caseWorkbench, /纳入正式集合/);
   assert.match(caseWorkbench, /用例脑图/);
   assert.match(caseWorkbench, /用例列表/);
   assert.match(caseWorkbench, /修改目标/);
   assert.match(caseWorkbench, /AI 改写状态/);
-  assert.match(caseWorkbench, /AI 正在改写/);
+  assert.match(caseWorkbench, /正在处理/);
   assert.match(caseWorkbench, /改写完成，等待审阅/);
-  assert.match(caseWorkbench, /已保存为新 Revision/);
-  assert.match(caseWorkbench, /用自然语言修改选中目标/);
+  assert.match(caseWorkbench, /修改已应用/);
+  assert.match(caseWorkbench, /描述你希望如何修改/);
   assert.match(caseWorkbench, /让 AI 修改/);
   assert.match(caseWorkbench, /sendConversationMessage/);
   assert.match(caseWorkbench, /watchGeneration/);
-  assert.doesNotMatch(caseWorkbench, /setInterval/);
+  assert.match(caseWorkbench, /return \(\) => window.clearInterval\(timer\)/);
   assert.match(apiClient, /resolveApiBaseUrl/);
   assert.match(apiClient, /127\.0\.0\.1/);
   assert.match(caseWorkbench, /commitWorkspaceCandidates/);
@@ -205,8 +210,9 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(caseWorkbench, /CASE_QUERY/);
   assert.match(caseWorkbench, /KNOWLEDGE_QA/);
   assert.match(caseWorkbench, /SMALL_TALK/);
-  assert.match(caseWorkbench, /变更审阅/);
-  assert.match(caseWorkbench, /确认软删除/);
+  assert.match(caseChanges, /修改审阅/);
+  assert.match(caseChanges, /确认删除已选用例/)
+  assert.match(caseChanges, /删除这条正式用例/);
   assert.match(newConversation, /conversation\.hero/);
   assert.match(newConversation, /conversation\.autoIntent/);
   assert.match(newConversation, /conversation\.processing/);

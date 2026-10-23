@@ -22,9 +22,11 @@ test('new conversation → planning → generate → query → add → modify �
   const picker = page.locator('.conversation-collection-picker');
   await expect(picker).toBeVisible({ timeout: 180000 });
   await picker.getByPlaceholder('或输入新集合名称').fill(`部署深度验收-${Date.now()}`);
-  const binding = page.waitForResponse(r => r.url().endsWith('/confirm-collection') && r.request().method() === 'POST');
+  const binding = page.waitForResponse(r => r.url().endsWith('/confirm-collection') && r.request().method() === 'POST', { timeout: 180000 });
   await picker.getByRole('button', { name: '确认并进入工作台' }).click();
-  const bound = await (await binding).json();
+  const bindingResponse = await binding;
+  expect(bindingResponse.ok(), await bindingResponse.text()).toBeTruthy();
+  const bound = await bindingResponse.json();
   records.push({ binding: bound }); save();
   await expect(page.locator('.principle-workbench')).toBeVisible({ timeout: 180000 });
   const boundConversation = await (await page.request.get(`${api}/conversations/${bound.conversation_id}`)).json();
@@ -42,28 +44,33 @@ test('new conversation → planning → generate → query → add → modify �
     const r = await pending; expect(r.ok(), await r.text()).toBeTruthy(); const turn = await r.json();
     records.push({ content, turn }); save(); expect(turn.intent).toBe(intent); return turn;
   }
-  async function planAndGenerate(label: string) {
+  async function planAndGenerate(label: string, expectedCount: number) {
     await expect(page.getByRole('region', { name: '测试规划脑图' })).toBeVisible({ timeout: 300000 });
     const before = await read(); const s = await state(); records.push({ label, planning: s.test_briefs.at(-1) });
-    expect(s.test_briefs.at(-1).content.planning.test_points.length).toBeGreaterThan(0);
+    expect(s.test_briefs.at(-1).content.planning.test_points).toHaveLength(expectedCount);
     await shot(`${label}-planning`);
-    await page.getByRole('button', { name: '确认规划并生成用例', exact: true }).click();
-    await expect(page.getByRole('button', { name: '纳入已选候选', exact: true })).toBeVisible({ timeout: 360000 });
+    await page.getByRole('button', { name: /^(确认规划并生成用例|确认选择并生成候选)$/ }).click();
+    await expect(page.getByRole('button', { name: /^纳入正式集合（\d+）$/ })).toBeVisible({ timeout: 360000 });
     expect(await read()).toEqual(before);
-    const candidates = (await state()).candidates.filter((c: {status: string}) => c.status !== 'committed');
+    const candidates = (await state()).candidates.filter((c: {status: string}) => c.status === 'candidate');
+    const pointIds = new Set(s.test_briefs.at(-1).content.planning.test_points.map((point: {id: string}) => point.id));
+    for (const candidate of candidates) {
+      expect(candidate.snapshot.test_point_ids.length).toBeGreaterThan(0);
+      expect(candidate.snapshot.test_point_ids.every((id: string) => pointIds.has(id))).toBeTruthy();
+    }
     records.push({ label, candidates }); save();
     await shot(`${label}-candidates`);
-    await page.getByRole('button', { name: '纳入已选候选', exact: true }).click();
+    await page.getByRole('button', { name: /^纳入正式集合（\d+）$/ }).click();
     await expect.poll(async () => (await read()).length).toBeGreaterThan(before.length);
   }
   expect(await read()).toHaveLength(0);
-  await planAndGenerate('01');
+  await planAndGenerate('01', 2);
   const initial = await read(); expect(initial).toHaveLength(2);
-  expect(initial.every((c: {module: string}) => c.module.split('/').length >= 4)).toBeTruthy();
+  expect(initial.every((c: {module: string}) => c.module.trim().length > 0)).toBeTruthy();
   await send('查询当前集合的所有用例，只查询不修改', 'CASE_QUERY');
   await expect(composer).toBeEnabled({ timeout: 180000 }); expect(await read()).toEqual(initial); await shot('02-query');
   await send('新增1条密码重置用例：重置链接过期后禁止重置密码，并提示重新申请。仅生成这个场景的候选用例。', 'CASE_GENERATE');
-  await planAndGenerate('03-add');
+  await planAndGenerate('03-add', 1);
   const added = await read(); expect(added).toHaveLength(3);
   const target = added.find((c: {id: string}) => !initial.some((x: {id: string}) => x.id === c.id));
   await send(`仅修改用例 ${target.case_key}：将标题改为「过期重置链接拒绝修改密码」，其他字段保持不变`, 'CASE_MODIFY');

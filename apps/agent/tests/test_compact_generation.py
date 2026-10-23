@@ -5,7 +5,7 @@ from agents.exceptions import ModelBehaviorError
 from pydantic import ValidationError
 
 from casepilot_agent.compact_generation import BatchAudit, CaseContent, ContentBatch, ReviewContentBatch
-from casepilot_agent.contracts import GenerationRequest
+from casepilot_agent.contracts import GenerationRequest, TestStep as CaseStep
 from casepilot_agent.pipeline import GenerationPipeline
 from casepilot_agent.providers.mock import MockProvider
 
@@ -58,7 +58,7 @@ def test_model_cannot_emit_system_fields_or_unbounded_citations():
                     steps=[{"action": "登录", "expected": "建立会话"}], source_refs=[{"excerpt": "x" * 10000}])
 
 
-def test_invalid_json_retries_once_after_fresh_batches_without_recursive_split():
+def test_invalid_json_retries_are_bounded_after_fresh_batches_without_recursive_split():
     calls, previews = [], []
     def malformed(stage, instruction, payload, result_type, model_id):
         calls.append((payload["batch_start_index"], payload["batch_count"], payload["retry_attempt"]))
@@ -66,7 +66,7 @@ def test_invalid_json_retries_once_after_fresh_batches_without_recursive_split()
             raise ModelBehaviorError("invalid JSON")
         return execute(stage, instruction, payload, result_type, model_id)
     result = run(request(10), malformed, lambda cases, total: previews.append(len(cases)))
-    assert calls == [(1, 5, 0), (6, 5, 0), (1, 5, 1)]
+    assert calls == [(1, 5, 0), (6, 5, 0), (1, 5, 1), (1, 5, 2)]
     assert previews == [5]
     assert result.quality.passed
     missing = [i for i in result.quality.issues if i.code == "uncovered_test_point"]
@@ -98,8 +98,8 @@ def test_local_repair_retains_valid_siblings_and_marks_unresolved():
                 case.steps[0].expected = "正常"
         return result
     result = run(request(3), broken)
-    assert calls == [[1, 2, 3], [2]]
-    assert result.quality.repair_rounds == 1
+    assert calls == [[1, 2, 3], [2], [2]]
+    assert result.quality.repair_rounds == 2
     assert [c.id for c in result.test_cases] == ["TC-P-0-1", "TC-P-2-1"]
     assert result.quality.passed
     assert any(i.object_id == "P-1" and "待完善" in i.message for i in result.quality.issues)
@@ -173,7 +173,7 @@ def test_persistent_connection_loss_is_bounded_and_publishes_nothing():
     result = run(request(5), unavailable, lambda *args: previews.append(args))
     assert not result.quality.passed
     assert any(i.code == "no_test_cases" for i in result.quality.issues)
-    assert calls == [5, 5]
+    assert calls == [5, 5, 5]
     assert previews == []
 
 
@@ -245,7 +245,7 @@ def test_case_checkpoints_are_not_required_for_every_action():
         result = execute(stage, instruction, payload, result_type, model_id)
         if issubclass(result_type, ContentBatch):
             for case in result.test_cases:
-                case.steps = [TestStep(action='Open login', expected='Session is established'), TestStep(action='Submit credentials', expected='')]
+                case.steps = [CaseStep(action='Open login', expected='Session is established'), CaseStep(action='Submit credentials', expected='')]
         return result
     result = run(request(1), independent)
     assert result.quality.passed
@@ -298,7 +298,7 @@ def test_same_title_distinct_scenarios_are_repaired_not_dropped():
     def resolve(*args):
         return DuplicateResolution(equivalent=False, reason="不同前置状态与结果", replacement=CaseContent(
             slot=1, title="过期二维码无法登录", preconditions=second.preconditions,
-            steps=[TestStep(action="扫描过期码", expected="不建立登录会话")]))
+            steps=[CaseStep(action="扫描过期码", expected="不建立登录会话")]))
     assert reconcile_duplicates(base, req, resolve) == 0
     assert len(base.test_cases) == 2
     assert not any(i.code.startswith('duplicate_case') for i in validate_generation(base).issues)
@@ -490,8 +490,33 @@ def test_unrequested_counter_effect_is_reviewed_without_regenerating_good_siblin
     result = run(req, complete)
     assert result.test_cases[0].id == 'TC-P-0-1'
     assert [c for c in calls if c[0]=='test_case.generated'] == (
-        [('test_case.generated',[1,2]),('test_case.generated',[2])] if audit_fails else [('test_case.generated',[1,2])])
+        [('test_case.generated',[1,2]),('test_case.generated',[2]),('test_case.generated',[2])] if audit_fails else [('test_case.generated',[1,2])])
     if audit_fails:
         assert len(result.test_cases)==1
     else:
         assert result.test_cases[1].steps[0].expected=='返回E403'
+
+
+def test_format_failure_does_not_exhaust_content_repair_and_keeps_successful_sibling():
+    req = request(2)
+    req.confirmed_plan["test_points"][1]["objective"] = "账号锁定1140秒"
+    calls, previews = [], []
+    def mixed_failure(stage, instruction, payload, result_type, model_id):
+        calls.append((payload["batch_slots"], payload["retry_attempt"]))
+        if payload["retry_attempt"] == 0:
+            raise ModelBehaviorError("invalid JSON")
+        result = execute(stage, instruction, payload, result_type, model_id)
+        if payload["retry_attempt"] == 1:
+            result.test_cases[1].preconditions = ["账号有效"]
+            result.test_cases[1].steps = [CaseStep(action="触发锁定", expected="返回E419")]
+        if payload["retry_attempt"] == 2:
+            assert payload["validation_feedback"] == {2: "required_point_duration_missing_seconds:1140"}
+            # Only the failed point is sent again; the accepted sibling is untouched.
+            result.test_cases[0].steps = [CaseStep(action="触发锁定", expected="账号锁定1140秒")]
+        return result
+    result = run(req, mixed_failure, lambda cases, total: previews.append([c.model_dump() for c in cases]))
+    assert calls == [([1, 2], 0), ([1, 2], 1), ([2], 2)]
+    assert result.quality.passed and len(result.test_cases) == 2
+    assert result.quality.repair_rounds == 2
+    assert previews[0][0] == previews[-1][0]
+    assert not any(i.code == "uncovered_test_point" for i in result.quality.issues)

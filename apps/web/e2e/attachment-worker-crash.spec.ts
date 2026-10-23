@@ -1,0 +1,24 @@
+import {test,expect} from '@playwright/test';
+import {writeFileSync} from 'node:fs';
+test.skip(!process.env.CASEPILOT_QA_FAULT_TOKEN?.startsWith('maturity-upload-'),'Requires isolated upload crash worker');
+test.setTimeout(240000);
+test('parse process loss becomes visible failure and reupload recovers',async({page},info)=>{
+ const token=process.env.CASEPILOT_QA_FAULT_TOKEN!;const api=`${process.env.CASEPILOT_E2E_API_URL}/api/v1`;
+ const post=async(path:string,data:unknown)=>{const r=await page.request.post(api+path,{data});expect(r.ok(),await r.text()).toBeTruthy();return r.json();};
+ const get=async(path:string)=>{const r=await page.request.get(api+path);expect(r.ok()).toBeTruthy();return r.json();};
+ const user=await post('/auth/register',{email:`upload-crash-${Date.now()}@casepilot.test`,password:'CasePilot123!',display_name:'附件解析恢复'});
+ const collection=await post(`/spaces/${user.spaces[0].id}/collections`,{name:'解析进程恢复验收'});
+ const workspace=await page.request.put(`${api}/collections/${collection.id}/workspace`);const cid=(await workspace.json()).id;
+ await page.addInitScript(()=>localStorage.setItem('casepilot.locale.v1','zh-CN'));await page.goto(`/workbench/collections/${collection.id}`);
+ const upload=async()=>{await expect(page.locator('.principle-composer input[type=file]')).toBeEnabled();await page.locator('.principle-composer input[type=file]').setInputFiles({name:'验证码需求.txt',mimeType:'text/plain',buffer:Buffer.from(`验证码300秒过期，返回E731。验收标记：${token}`)});};
+ await upload();await expect(page.locator('.principle-attachment[data-status=failed]').first()).toBeVisible({timeout:120000});
+ await expect(page.locator('.principle-composer input[type=file]')).toBeEnabled({timeout:60000});
+ const failed=await get(`/conversations/${cid}`);expect(failed.context.pending_attachments[0].status).toBe('failed');expect(failed.workflow_runs).toHaveLength(0);
+ await page.reload();await expect(page.locator('.principle-attachment[data-status=failed]')).toContainText('解析失败');
+ await page.getByRole('button',{name:'移除 验证码需求.txt',exact:true}).click();await expect(page.locator('.principle-attachment')).toHaveCount(0);
+ await upload();await expect(page.locator('.principle-attachment[data-status=ready]')).toContainText('验证码需求.txt',{timeout:90000});
+ await expect(page.locator('.principle-composer input[type=file]')).toBeEnabled();
+ const recovered=await get(`/conversations/${cid}`);expect(recovered.context.pending_attachments[0].id).not.toBe(failed.context.pending_attachments[0].id);
+ await page.reload();await expect(page.locator('.principle-attachment[data-status=ready]')).toBeVisible();
+ writeFileSync(info.outputPath('evidence.json'),JSON.stringify({token,failed,recovered},null,2));await page.screenshot({path:info.outputPath('recovered-upload.png'),fullPage:true});
+});

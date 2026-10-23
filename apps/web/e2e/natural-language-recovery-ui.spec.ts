@@ -123,6 +123,10 @@ test('NL-UX-06 review and partial apply at 200 percent equivalent viewport',asyn
  await rows.last().locator('summary').click();await rows.last().getByRole('checkbox').first().uncheck();
  await page.screenshot({path:test.info().outputPath('small-review.png')});await apply(page,true);
  const after=await s.read();expect(after.filter((x:any)=>x.priority==='P0')).toHaveLength(1);
+ await page.reload();await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+ expect(await s.read()).toEqual(after);
+ const unchanged=after.filter((x:any)=>x.priority!=='P0');
+ for(const item of unchanged)expect(item).toEqual(journal.original.find((x:any)=>x.id===item.id));
 });
 test('NL-REC-07 concurrent workspace draft update survives task completion',async({page})=>{
  const s=await setup(page);const turn=await send(page,'把 TC-LOGIN-01 标题改为“并发草稿验证”。');

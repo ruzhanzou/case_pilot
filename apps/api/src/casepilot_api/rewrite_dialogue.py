@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from casepilot_api.model_client import managed_model_client
+
 
 class RewriteReply(BaseModel):
     action: Literal["confirm", "update", "cancel", "clarify"]
@@ -74,6 +76,8 @@ def interpret_rewrite_reply(content: str, state: dict, *, provider: str, model_n
             "确认但添加限制或改变范围是update，绝不能confirm。明确停止整个任务才cancel；不要改标题等字段否定是update。"
             "不明确的否定（不对、不是这些）或多种可能解释是clarify，提出一个具体问题。"
             "草稿含clarification而本轮未回答该问题时仍clarify，不忽略未解决的问题。"
+            "available_attachments是已校验可读取的附件；明确依据附件修改时，正文由执行阶段读取，"
+            "不要要求用户粘贴正文来满足缺少附件内容的旧澄清，但不得猜测附件里的规则。"
             "请求新的无关任务、混合删除/生成等多意图是clarify，不能执行其他任务或忽略部分意图。"
             "先删掉编号X再改其余，明确要求删除整条用例：additional_intents含CASE_DELETE，action=clarify；"
             "不能偷换成范围排除X。仅本轮不改X、范围排除X才是正常范围更新。删除重复步骤是改写字段，不是删除用例。"
@@ -94,5 +98,6 @@ def interpret_rewrite_reply(content: str, state: dict, *, provider: str, model_n
                 for key in ("case_key", "title", "module")
             }} for item in state["scope_cases"]
         ]
-    return Runner.run_sync(agent, json.dumps({"reply": content, "draft": context},
-                          ensure_ascii=False, default=str), max_turns=1).final_output
+    with managed_model_client(client):
+        return Runner.run_sync(agent, json.dumps({"reply": content, "draft": context},
+                              ensure_ascii=False, default=str), max_turns=1).final_output

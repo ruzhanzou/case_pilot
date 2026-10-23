@@ -1132,3 +1132,14 @@ class WorkspaceCaseLink(TimestampMixin, Base):
     test_case_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("test_cases.id", ondelete="CASCADE"), index=True)
     revision_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("test_case_revisions.id", ondelete="CASCADE"))
     origin: Mapped[str] = mapped_column(String(20), default="manual")
+
+
+class ConversationSubmission(TimestampMixin, Base):
+    __tablename__ = "conversation_submissions"
+
+    conversation_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True
+    )
+    request_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    response: Mapped[dict] = mapped_column(JSONB, nullable=False)

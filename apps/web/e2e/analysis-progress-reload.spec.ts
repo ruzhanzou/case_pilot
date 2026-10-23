@@ -1,0 +1,22 @@
+import {test, expect} from '@playwright/test';
+import {readFileSync} from 'node:fs';
+import {resolve} from 'node:path';
+test.skip(!process.env.CASEPILOT_QA_RUNNING_ANALYSIS, 'Requires a running synthetic analysis fixture');
+test('fresh login restores real elapsed time and completed analysis batches', async ({page}, info) => {
+  const fixture = JSON.parse(readFileSync(resolve(process.cwd(), process.env.CASEPILOT_QA_RUNNING_ANALYSIS!), 'utf8'));
+  expect(fixture.email).toMatch(/^dedup-\d+@casepilot\.test$/);
+  const api = `${process.env.CASEPILOT_E2E_API_URL}/api/v1`;
+  const login = await page.request.post(`${api}/auth/login`, {data: {email:fixture.email, password:'CasePilot123!'}});
+  expect(login.ok()).toBeTruthy();
+  const job = await (await page.request.get(`${api}/generation-jobs/${fixture.job_id}`)).json();
+  expect(job.status).toBe('running');
+  expect(job.analysis_progress.completed_batches).toBeGreaterThan(0);
+  await page.addInitScript(() => localStorage.setItem('casepilot.locale.v1','zh-CN'));
+  await page.goto(`/workbench/collections/${fixture.collection_id}`);
+  const status = page.locator('.case-conversation-running').filter({hasText:'分析用例'});
+  await expect(status).toBeVisible();
+  const minimumElapsed = Math.floor((Date.now() - Date.parse(job.started_at)) / 1000) - 5;
+  expect(minimumElapsed).toBeGreaterThan(10);
+  await expect.poll(async () => Number((await status.innerText()).match(/已等待 (\d+) 秒/)?.[1] ?? 0)).toBeGreaterThanOrEqual(minimumElapsed);
+  await page.screenshot({path:info.outputPath('restored-elapsed-time.png'),fullPage:true});
+});

@@ -562,7 +562,11 @@ def requested_case_count(request: GenerationRequest) -> int | None:
     patterns = (
         r"(?:总计|共计|合计|总共|共)\s*([1-9]\d{0,3})\s*条",
         r"(?:生成|编写|设计|创建|新增|增加|补充|恰好)[^。；;\n]{0,24}?"
-        r"(?<!\d)([1-9]\d{0,3})\s*条\s*(?:新(?:的)?\s*)?(?:候选\s*)?(?:测试)?用例",
+        r"(?<!\d)([1-9]\d{0,3})\s*条\s*"
+        # A case noun can include its subject (e.g. 密码重置用例). Do not
+        # cross an intervening action and mistake business records for cases.
+        r"(?:(?!(?:生成|编写|设计|创建|新增|增加|补充|用于|然后|并|再))"
+        r"[^，。；;：:\n\d]){0,24}?用例",
     )
     for text in texts:
         for pattern in patterns:

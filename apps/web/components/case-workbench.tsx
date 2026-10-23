@@ -20,7 +20,7 @@ import { CaseContentFields } from "@/components/case-content-fields";
 import { CaseTaskArtifacts } from "@/components/case-task-artifacts";
 import { ConversationTaskFlow } from "@/components/conversation-task-flow";
 import { CaseTaskWorkspace } from "@/components/case-task-workspace";
-import { candidatesForTask, workspaceTasks, workspaceIsRunning, shouldResumePendingTask, taskScopeChanged, nextWorkspaceOperation, type WorkspaceTask } from "@/lib/workspace-tasks";
+import { candidatesForTask, workspaceTasks, workspaceIsRunning, workspaceJobNeedsWatch, shouldResumePendingTask, taskScopeChanged, nextWorkspaceOperation, type WorkspaceTask } from "@/lib/workspace-tasks";
 import { consumptionSummary } from "@/lib/planning-consumption";
 import { TestPlanningMap } from "@/components/test-planning-map";
 import { CaseMindMap } from "@/components/case-mind-map";
@@ -175,6 +175,7 @@ const workflowStageLabels: Record<string, string> = {
   "reuse.compared": "复用分析已完成",
   queued: "任务已排队",
   "context.prepared": "检索并整理上下文",
+  "cases.analyzing": "分批分析用例",
   "requirement.analyzed": "分析测试需求",
   "generation.awaiting_input": "等待补充信息",
   "feature.generated": "整理功能点",
@@ -227,7 +228,7 @@ const englishWorkflowStageLabels: Record<string, string> = {
   "knowledge.searching": "Searching knowledge…", "documents.reading": "Reading reference documents…",
   "cases.searching": "Searching case assets…", "reuse.objects_matching": "Checking asset test objects…", "reuse.objects_matched": "Asset test objects checked", "reuse.comparing": "Comparing changes and reusable cases…",
   "reuse.compared": "Reuse analysis completed",
-  queued: "Task queued", "context.prepared": "Preparing context",
+  queued: "Task queued", "context.prepared": "Preparing context", "cases.analyzing": "Reviewing case batches",
   "requirement.analyzed": "Analyzing requirements",
   "generation.awaiting_input": "Waiting for more details",
   "feature.generated": "Organizing features",
@@ -514,6 +515,8 @@ export function CaseWorkbench({
         message.content.trim() || workflowByMessageId.has(message.id) ||
         (Array.isArray(message.metadata.attachments) && message.metadata.attachments.length > 0),
     ) ?? [];
+  const pendingDocumentIds: string[] = (Array.isArray(workspace?.context.pending_attachments)
+    ? workspace.context.pending_attachments : []).map((file: { id: string }) => file.id);
   const hasProcessingFiles = [
     ...messages.flatMap(message => Array.isArray(message.metadata.attachments) ? message.metadata.attachments : []),
     ...(Array.isArray(workspace?.context.pending_attachments) ? workspace.context.pending_attachments : []),
@@ -542,6 +545,8 @@ export function CaseWorkbench({
   const conversationRunning = busy || queueRunning || workspaceIsRunning(workspace);
   const runningLabel = pendingMessage !== null
     ? pick("Thinking — understanding your request and selecting cases", "正在思考 · 理解需求并筛选用例")
+    : progress?.analysis_progress
+      ? pick(`Reviewing cases · ${progress.analysis_progress.completed_batches}/${progress.analysis_progress.total_batches} batches complete`, `分析用例 · 已完成 ${progress.analysis_progress.completed_batches}/${progress.analysis_progress.total_batches} 批`)
     : progress && ["knowledge.searching", "documents.reading", "cases.searching", "reuse.objects_matching", "reuse.objects_matched", "reuse.comparing", "reuse.compared"].includes(progress.name)
       ? localizedWorkflowStageLabels[progress.name]
     : planningProgress?.phase === "requirements"
@@ -610,16 +615,18 @@ export function CaseWorkbench({
         setError(caught instanceof Error ? caught.message : pick("Failed to save view", "视图保存失败"));
       });
   };
-  const openReviewPlan = (messageId?: string) => {
+  const openReviewPlan = (messageId?: string, pane: "changes" | "candidates" = "changes") => {
     if (messageId) {
       const task = resultTasks.find(item => item.id === messageId || item.messageIds.includes(messageId) || item.versions?.some(version => version.id === messageId));
       const version = task?.versions?.find(item => item.id === messageId || item.messageIds.includes(messageId));
+      setResultPane({ key: `${task?.id ?? messageId}:${String((version ?? task)?.message.metadata.change_set_id ?? "")}`, pane });
       setPlanMessageId(task?.id ?? messageId);
       setReviewVersion(version?.operation && task?.operation
         ? { taskId: task.id, latestId: task.operation.id, operationId: version.operation.id }
         : { taskId: "", latestId: "", operationId: "" });
+    } else {
+      setResultPane({ key: resultPaneKey, pane });
     }
-    setResultPane({ key: "", pane: "changes" });
     viewTouchedRef.current = true;
     setArtifactOpen(false);
     setViewMode("plan");
@@ -779,13 +786,14 @@ export function CaseWorkbench({
       : [];
     const normalizedTargets = restoredTargets.map((item) => ({
       ...item,
+      label: item.target.kind === "case" && /^\d+ cases$/.test(item.label)
+        ? pick(item.label, `${item.label.split(" ")[0]} 条用例`) : item.label,
       key: JSON.stringify(item.target),
     }));
     setSelectedTargets(normalizedTargets);
     setRewriteTargets(normalizedTargets);
     const activeJobId = String(result.context.active_job_id ?? "");
-    const jobIsRunning = Boolean(activeJobId) && !result.workflow_runs.some((run) =>
-      run.job_id === activeJobId && terminalWorkflowStatuses.has(run.status));
+    const jobIsRunning = workspaceJobNeedsWatch(result, activeJobId);
     setCurrentJobId(jobIsRunning ? activeJobId : "");
     setBusy(jobIsRunning);
     const restoredCandidate =
@@ -795,7 +803,7 @@ export function CaseWorkbench({
     setCandidateDraft(
       restoredCandidate ? structuredClone(restoredCandidate) : null,
     );
-  }, [selectedCollectionId, setCandidateDraft, setSelectedBriefVersion, setArtifactOpen]);
+  }, [selectedCollectionId, setCandidateDraft, setSelectedBriefVersion, setArtifactOpen, pick]);
   const refreshWorkspace = useCallback(async () => {
     if (!selectedCollectionId) return null;
     const result = conversationId
@@ -849,6 +857,8 @@ export function CaseWorkbench({
             }
             setProgress((current) => ({
               ...stage,
+              analysis_progress: stage.analysis_progress && (!current?.analysis_progress || stage.analysis_progress.completed_batches >= current.analysis_progress.completed_batches)
+                ? stage.analysis_progress : current?.analysis_progress,
               planning_preview: (stage.planning_progress?.phase === current?.planning_progress?.phase && (stage.planning_progress?.completed_batches ?? 0) < (current?.planning_progress?.completed_batches ?? 0))
                 ? current?.planning_preview : stage.planning_preview ?? current?.planning_preview,
               planning_progress: (stage.planning_progress?.phase === current?.planning_progress?.phase && (stage.planning_progress?.completed_batches ?? 0) < (current?.planning_progress?.completed_batches ?? 0))
@@ -998,7 +1008,7 @@ export function CaseWorkbench({
     if (
       !workspace ||
       !activeWorkspaceJobId ||
-      workspace.workflow_runs.some((run) => run.job_id === activeWorkspaceJobId && terminalWorkflowStatuses.has(run.status))
+      !workspaceJobNeedsWatch(workspace, activeWorkspaceJobId)
     ) {
       return;
     }
@@ -1090,12 +1100,14 @@ export function CaseWorkbench({
     const ids = new Set(entries.map((entry) => entry.id));
     setAttachments((current) => [...current, ...entries]);
     const update = (values: Partial<(typeof attachments)[number]>) => setAttachments((current) => current.map((item) => ids.has(item.id) ? { ...item, ...values } : item));
+    let persisted = false;
     try {
       const result = await uploadConversationAttachments(
         workspace.id,
         files,
         (percent) => update({ percent, status: percent === 100 ? "processing" : "uploading" }),
       );
+      persisted = true;
       update({ percent: 100, status: "processing" });
       setWorkspace(await getConversation(workspace.id));
       await waitForKnowledgeSource(spaceId, result.source.id);
@@ -1107,7 +1119,11 @@ export function CaseWorkbench({
       update({ status: "failed" });
       // Parsing can fail after a successful upload; refresh persisted document statuses too.
       const refreshed = await getConversation(workspace.id).catch(() => null);
-      if (refreshed) setWorkspace(refreshed);
+      if (refreshed) {
+        setWorkspace(refreshed);
+        // The persisted card owns parsing status and recovery actions after upload.
+        if (persisted) setAttachments(current => current.filter(file => !ids.has(file.id)));
+      }
       setError(caught instanceof Error ? caught.message : pick("Failed to save attachment", "附件保存失败"));
     } finally {
       setUploading(false);
@@ -1209,7 +1225,7 @@ export function CaseWorkbench({
       }
       const turn = await sendConversationMessage(workspace.id, {
         content, modelId, scope: "current", intentOverride: "CASE_MODIFY", targetScope: "selected",
-        targets: [target], knowledgeSourceIds: sourceIds, useSpaceKnowledge: true,
+        targets: [target], knowledgeSourceIds: sourceIds, documentIds: pendingDocumentIds, useSpaceKnowledge: true,
       });
       setPolishOpen(false);
       setSelectedTargets([{ key: JSON.stringify(target), label: selectedCase.title, target }]);
@@ -1270,6 +1286,7 @@ export function CaseWorkbench({
     // Explicit UI selections are context; the server model resolves the request.
     const structuredTargets = selectedTargets.map((item) => item.target);
     const refinementSourceId = refineSourceId;
+    let messageAccepted = false;
     let resolvedCaseId = selectedCaseId;
     let resolvedSelections = selectedTargets;
     setBusy(true);
@@ -1286,6 +1303,8 @@ export function CaseWorkbench({
       await ensureTargetSelectionSaved();
       const turn = effectivePendingOperationId
         ? await resumeConversationOperation(effectivePendingOperationId, {
+            documentIds: pendingDocumentIds,
+            knowledgeSourceIds: sourceIds,
             targets: structuredTargets,
             content: content || undefined,
           })
@@ -1294,10 +1313,12 @@ export function CaseWorkbench({
             modelId,
             scope: "current",
             knowledgeSourceIds: sourceIds,
+            documentIds: pendingDocumentIds,
             useSpaceKnowledge: true,
             sourceOperationId: refinementSourceId || undefined,
             targets: structuredTargets,
           });
+      messageAccepted = true;
       // Replace the optimistic echo with the server's messages before any
       // follow-up requests, so slow state saves do not hide the accepted turn.
       setWorkspace((current) => {
@@ -1383,7 +1404,8 @@ export function CaseWorkbench({
         await continueTaskQueue(await refreshWorkspace());
       }
     } catch (caught) {
-      editPrompt(content);
+      if (!messageAccepted) editPrompt(content);
+      else await refreshWorkspace().catch(() => undefined);
       setError(caught instanceof Error ? caught.message : pick("Failed to process message", "消息处理失败"));
     } finally {
       setPendingMessage(null);
@@ -1408,12 +1430,16 @@ export function CaseWorkbench({
       // A lost response can leave the already-submitted instruction in the
       // composer. Only genuinely new content needs another preview.
       const newContent = content === confirmedInstruction ? "" : content;
-      const changed = newContent || !matchesRewriteScope(targets, operation?.target ?? {});
+      const confirmedDocuments = (operation?.payload.attachment_context as { document_ids?: string[] } | undefined)?.document_ids ?? [];
+      const newAttachments = pendingDocumentIds.some(id => !confirmedDocuments.includes(id));
+      const changed = newContent || newAttachments || !matchesRewriteScope(targets, operation?.target ?? {});
       // Changed scope or unsent requirements need a new preview, not execution
       // of the confirmation text that was rendered before those edits.
-      const turn = await resumeConversationOperation(operationId, changed
-        ? { targets, content: newContent || undefined }
-        : { confirmModification: true });
+      const turn = await resumeConversationOperation(operationId, {
+        documentIds: pendingDocumentIds,
+        knowledgeSourceIds: sourceIds,
+        ...(changed ? { targets, content: newContent || undefined } : { confirmModification: true }),
+      });
       if (content) editPrompt("");
       if (turn.action.job_id) {
         openReviewPlan(operationId);
@@ -2842,8 +2868,13 @@ export function CaseWorkbench({
               key={selectedTaskChangeSet.id}
               onCandidates={() => {
                 const refs = new Set(selectedTaskChangeSet.items.map((item) => item.ref));
-                const source = tasks.find((task) => candidatesForTask(task, workspace).some((item) => refs.has(item.ref)));
-                if (source) openReviewPlan(source.id);
+                if (candidatesForTask(resultVersion, workspace).some(item => refs.has(item.ref))) {
+                  setResultPane({ key: resultPaneKey, pane: "candidates" });
+                } else {
+                  const source = resultTasks.find(task => candidatesForTask(task, workspace).some(item => refs.has(item.ref)));
+                  if (source) openReviewPlan(source.id, "candidates");
+                }
+                focusWorkspace();
               }}
               onRefine={!historicalVersion && selectedTask?.operation ? () => {
                 setRefineSourceId(selectedTask.operation!.id);

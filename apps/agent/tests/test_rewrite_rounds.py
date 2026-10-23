@@ -35,6 +35,7 @@ def test_cancelled_batch_stops_before_next_model_call_and_keeps_cancelled_state(
     from casepilot_agent import tasks
     store = Mock()
     store.connection.return_value = MagicMock()
+    store.execution_guard.return_value = MagicMock()
     store.claim_job.return_value = {'input_payload': {'instruction': '改写', 'candidate_targets': [{'ref': 'one'}]}}
     monkeypatch.setattr(tasks, 'JobStore', lambda *args: store)
     provider = Mock()
@@ -81,6 +82,7 @@ def test_worker_reports_merged_pending_changes_when_current_subset_is_unchanged(
     job = {"input_payload": payload}
     store = Mock()
     store.connection.return_value = MagicMock()
+    store.execution_guard.return_value = MagicMock()
     store.claim_job.return_value = job
     persist = JobStore.persist_change_set
     store.persist_change_set.side_effect = lambda connection, **kwargs: persist(

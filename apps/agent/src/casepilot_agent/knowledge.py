@@ -40,27 +40,45 @@ def pretokenize(text: str) -> str:
     return " ".join(token.strip() for token in jieba.cut(text) if token.strip())
 
 
+class DocumentTextUnavailable(ValueError):
+    """The document contains no usable text, including after OCR."""
+
+
+class DocumentOcrUnavailable(RuntimeError):
+    """OCR cannot run in this worker environment."""
+
+
+class DocumentOcrFailed(RuntimeError):
+    """OCR ran unsuccessfully; do not expose engine diagnostics to users."""
+
+
 def _ocr_image(image: Image.Image) -> str:
-    return pytesseract.image_to_string(image, lang="chi_sim+eng").strip()
+    try:
+        return pytesseract.image_to_string(image, lang="chi_sim+eng", timeout=60).strip()
+    except pytesseract.TesseractNotFoundError as error:
+        raise DocumentOcrUnavailable() from error
+    except (pytesseract.TesseractError, RuntimeError) as error:
+        raise DocumentOcrFailed() from error
 
 
 def _parse_pdf(content: bytes) -> list[ParsedBlock]:
-    document = fitz.open(stream=content, filetype="pdf")
     blocks: list[ParsedBlock] = []
-    for page_index, page in enumerate(document):
-        text = page.get_text("text").strip()
-        if len(text) < 40:
-            pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
-            image = Image.open(BytesIO(pixmap.tobytes("png")))
-            text = _ocr_image(image)
-        if text:
-            blocks.append(
-                ParsedBlock(
-                    content=text,
-                    locator=f"第 {page_index + 1} 页",
-                    metadata={"page": page_index + 1},
+    with fitz.open(stream=content, filetype="pdf") as document:
+        for page_index, page in enumerate(document):
+            text = page.get_text("text").strip()
+            if len(text) < 40 and (page.get_images() or page.get_drawings()):
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                with Image.open(BytesIO(pixmap.tobytes("png"))) as image:
+                    ocr_text = _ocr_image(image)
+                text = ocr_text or text
+            if text:
+                blocks.append(
+                    ParsedBlock(
+                        content=text,
+                        locator=f"第 {page_index + 1} 页",
+                        metadata={"page": page_index + 1},
+                    )
                 )
-            )
     return blocks
 
 

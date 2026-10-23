@@ -500,3 +500,52 @@ def test_stale_superseded_source_follows_the_current_proposal():
     )
     db.scalar.return_value = current
     assert conversations._rewrite_proposal_source(db, old) is current
+
+
+@pytest.mark.parametrize('accept', [True, False])
+def test_candidate_delete_is_reviewed_and_idempotent(monkeypatch, accept):
+    ref = 'candidate-delete'
+    candidate = SimpleNamespace(version=3, status='candidate', snapshot={'title': 'Keep snapshot'})
+    item = {'ref': ref, 'target_type': 'candidate', 'base_version': 3,
+            'operation': 'delete', 'status': 'pending',
+            'field_diff': [{'field': 'delete', 'before': False, 'after': True}]}
+    change = SimpleNamespace(id=uuid4(), conversation_id=uuid4(), generation_job_id=None,
+        instruction='删除候选', scope='current', status='ready', items=[item],
+        created_at=datetime.now(UTC), applied_at=None)
+    db = Mock()
+    db.scalar.side_effect = [candidate, None] if accept else [None]
+    conversation = SimpleNamespace(id=change.conversation_id, context={'active_mutation_task_id': None, 'selected_case_id': ref, 'selected_targets': [
+        {'target': {'kind': 'case', 'candidate_refs': [ref], 'case_ids': []}}]})
+    db.get.return_value = conversation
+    monkeypatch.setattr(conversations, '_ensure_change_set', lambda *args: change)
+    request = ChangeSetApplyRequest(accepted_fields={ref: ['delete'] if accept else []})
+    conversations.apply_change_set(change.id, request, SimpleNamespace(id=uuid4()), db)
+    assert candidate.status == ('discarded' if accept else 'candidate')
+    assert candidate.version == (4 if accept else 3)
+    assert candidate.snapshot == {'title': 'Keep snapshot'}
+    if accept:
+        assert conversation.context['selected_targets'] == []
+        assert conversation.context['selected_case_id'] == ''
+    calls = db.add.call_count
+    conversations.apply_change_set(change.id, request, SimpleNamespace(id=uuid4()), db)
+    assert db.add.call_count == calls
+
+
+def test_candidate_delete_conflict_prevents_any_write(monkeypatch):
+    from fastapi import HTTPException
+    change = SimpleNamespace(id=uuid4(), conversation_id=uuid4(), status='ready', items=[
+        {'ref': 'candidate-delete', 'target_type': 'candidate', 'base_version': 3,
+         'operation': 'delete', 'status': 'pending', 'field_diff': [{'field': 'delete'}]}])
+    candidate = SimpleNamespace(version=4, status='candidate')
+    db = Mock()
+    db.scalar.return_value = candidate
+    monkeypatch.setattr(conversations, '_ensure_change_set', lambda *args: change)
+    conflict = Mock()
+    monkeypatch.setattr(conversations, '_mark_change_set_conflict', conflict)
+    with pytest.raises(HTTPException) as error:
+        conversations.apply_change_set(change.id, ChangeSetApplyRequest(),
+                                       SimpleNamespace(id=uuid4()), db)
+    assert error.value.detail == 'candidate_changed'
+    assert candidate.status == 'candidate'
+    db.add.assert_not_called()
+    conflict.assert_called_once_with(db, change)

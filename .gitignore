@@ -29,3 +29,5 @@ celerybeat-schedule*
 *.log
 artifacts/
 prototype/
+/output/
+/tmp/

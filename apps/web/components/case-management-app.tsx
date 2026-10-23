@@ -284,6 +284,7 @@ export function CaseManagementApp({
     sourceCollectionIds: string[];
   }) => {
     if (!space) return;
+    let messageAccepted = false;
     setSaving(true);
     setError("");
     try {
@@ -304,6 +305,12 @@ export function CaseManagementApp({
         scope: "current",
         useSpaceKnowledge: true,
       });
+      messageAccepted = true;
+      setLandingConversation(current => current?.id === conversation.id
+        ? {...current, messages: [...current.messages.filter(message =>
+            message.id !== turn.user_message.id && message.id !== turn.assistant_message?.id),
+          turn.user_message, ...(turn.assistant_message ? [turn.assistant_message] : [])]}
+        : current);
       let refreshedConversation = await getConversation(conversation.id);
       setLandingConversation(refreshedConversation);
 
@@ -366,7 +373,7 @@ export function CaseManagementApp({
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : pick("Failed to process message", "消息处理失败"));
-      throw caught;
+      if (!messageAccepted) throw caught;
     } finally {
       setSaving(false);
     }

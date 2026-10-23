@@ -33,6 +33,7 @@ from casepilot_agent.reuse import reuse_ref
 CONTRACT = "case_batch_v2"
 BATCH_SIZE = 5
 BATCH_CONCURRENCY = 4
+MAX_REPAIR_ROUNDS = 2
 PROMPT_VERSION = "case-batch-v10-extra-assertions"
 
 
@@ -489,15 +490,15 @@ def run_compact(request, provider, execute_stage, on_batch, count):
                     generated_by_slot.update(valid)
                     if valid and on_batch:
                         on_batch([generated_by_slot[i] for i in sorted(generated_by_slot)], total)
-                    if invalid and attempt == 0:
-                        # Fresh batches go first. Each failed slot gets just one
-                        # repair, without regenerating successful siblings.
+                    if invalid and attempt < MAX_REPAIR_ROUNDS:
+                        # Fresh batches go first. Only failed slots receive
+                        # bounded repairs, without regenerating successful siblings.
                         repair_groups = []
                         for slot in sorted(invalid):
                             if not repair_groups or repair_groups[-1][-1] + 1 != slot:
                                 repair_groups.append([])
                             repair_groups[-1].append(slot)
-                        pending.extend((group, 1, {s: invalid[s] for s in group})
+                        pending.extend((group, attempt + 1, {s: invalid[s] for s in group})
                                        for group in repair_groups)
                     else:
                         unresolved.update(invalid)
@@ -522,7 +523,7 @@ def run_compact(request, provider, execute_stage, on_batch, count):
         elif issue.code == "uncovered_test_point" and any(points[s - 1].id == issue.object_id for s in unresolved):
             issue.severity = "warning"
             point = next(p for p in points if p.id == issue.object_id)
-            issue.message = f"待完善：{point.title}（{point.id}）。一次修复后仍未通过基础校验，尚无可采纳用例。"
+            issue.message = f"待完善：{point.title}（{point.id}）。{MAX_REPAIR_ROUNDS}轮修复后仍未通过基础校验，尚无可采纳用例。"
     result.quality.issues.append(QualityIssue(
         code="manual_review_required", severity="warning",
         message="已完成基础校验，附加预期按需核对依据；仍请人工确认业务预期、覆盖范围和重复场景后再采纳。"))

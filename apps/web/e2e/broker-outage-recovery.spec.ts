@@ -1,0 +1,48 @@
+import {test,expect} from '@playwright/test';
+import {writeFileSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
+import {resolve} from 'node:path';
+test.skip(process.env.CASEPILOT_QA_BROKER_OUTAGE!=='1','Requires isolated acceptance Redis on 6392');
+test.setTimeout(300000);
+test('confirmed modification survives broker outage and reload without duplicate application',async({page},info)=>{
+ const api=`${process.env.CASEPILOT_E2E_API_URL}/api/v1`;
+ const post=async(path:string,data:unknown)=>{const r=await page.request.post(api+path,{data});expect(r.ok(),await r.text()).toBeTruthy();return r.json();};
+ const get=async(path:string)=>{const r=await page.request.get(api+path);expect(r.ok(),await r.text()).toBeTruthy();return r.json();};
+ await page.addInitScript(()=>localStorage.setItem('casepilot.locale.v1','zh-CN'));
+ const email=`broker-${Date.now()}@casepilot.test`;
+ const user=await post('/auth/register',{email,password:'CasePilot123!',display_name:'队列恢复验收'});
+ const collection=await post(`/spaces/${user.spaces[0].id}/collections`,{name:'队列短暂中断恢复'});
+ const item=await post(`/collections/${collection.id}/test-cases`,{title:'原始登录',module:'账号',priority:'P1',preconditions:['账号有效'],steps:[{action:'提交登录',expected:'进入首页'}]});
+ const workspace=await page.request.put(`${api}/collections/${collection.id}/workspace`);expect(workspace.ok()).toBeTruthy();const cid=(await workspace.json()).id;
+ await page.goto(`/workbench/collections/${collection.id}`);
+ await page.locator('.principle-composer textarea').fill(`仅修改用例 ${item.case_key} 的标题为「队列恢复后的登录」，其他字段保持不变。`);
+ const previewResponse=page.waitForResponse(r=>r.url().endsWith('/messages')&&r.request().method()==='POST',{timeout:180000});
+ await page.locator('.principle-composer button[type=submit]').click();expect((await previewResponse).ok()).toBeTruthy();
+ const button=page.getByRole('button',{name:'确认修改并生成建议',exact:true}).last();await expect(button).toBeEnabled();
+ const loseDelivery=process.env.CASEPILOT_QA_LOSE_DELIVERY==='1';
+ const duplicateDelivery=process.env.CASEPILOT_QA_DUPLICATE_DELIVERY==='1';
+ if(loseDelivery)execFileSync(resolve(process.cwd(),'../../.venv/bin/python'),[resolve(process.cwd(),'../../scripts/qa/drop_acceptance_delivery.py'),'prepare']);
+ const pid=loseDelivery?'worker-paused':duplicateDelivery?'two-live-workers':execFileSync(resolve(process.cwd(),'../../.venv/bin/python'),[resolve(process.cwd(),'../../scripts/qa/pause_acceptance_broker.py'),'pause'],{encoding:'utf8'}).trim();
+ const started=Date.now();const launchResponse=page.waitForResponse(r=>r.url().endsWith('/resume')&&r.request().method()==='POST',{timeout:10000});
+ await button.click();const response=await launchResponse;expect(response.ok(),await response.text()).toBeTruthy();const launched=await response.json();
+ const lostDelivery=loseDelivery?JSON.parse(execFileSync(resolve(process.cwd(),'../../.venv/bin/python'),[resolve(process.cwd(),'../../scripts/qa/drop_acceptance_delivery.py'),'drop',launched.action.job_id,email],{encoding:'utf8'})):null;
+ const launchMs=Date.now()-started;expect(launchMs).toBeLessThan(10000);
+ let duplicates=null;
+ if(duplicateDelivery) {
+  await expect.poll(async()=>(await get(`/generation-jobs/${launched.action.job_id}`)).status,{timeout:30000}).toBe('running');
+  duplicates=JSON.parse(execFileSync(resolve(process.cwd(),'../../.venv/bin/python'),[resolve(process.cwd(),'../../scripts/qa/duplicate_acceptance_delivery.py'),'duplicate',launched.action.job_id,email],{encoding:'utf8'}));
+ }
+ const queued=await get(`/generation-jobs/${launched.action.job_id}`);expect(duplicateDelivery?['queued','running','completed']:['queued']).toContain(queued.status);
+ expect(await get(`/collections/${collection.id}/test-cases`)).toEqual([item]);await page.reload();
+ await expect(page.getByText('队列短暂中断恢复',{exact:true}).first()).toBeVisible();
+ let state=await get(`/conversations/${cid}`);
+ await expect.poll(async()=>{state=await get(`/conversations/${cid}`);return state.workflow_runs.find((r:{job_id:string})=>r.job_id===launched.action.job_id)?.status;},{timeout:180000}).toBe('completed');
+ expect(await get(`/collections/${collection.id}/test-cases`)).toEqual([item]);
+ await page.locator('.collection-changes__review').getByRole('button',{name:/一键采纳全部待审阅用例/}).click();
+ await expect.poll(async()=> (await get(`/collections/${collection.id}/test-cases`))[0].title).toBe('队列恢复后的登录');
+ await page.reload();const after=await get(`/collections/${collection.id}/test-cases`);expect(after).toHaveLength(1);expect(after[0].revision_number).toBe(item.revision_number+1);expect(after[0].priority).toBe(item.priority);expect(after[0].preconditions).toEqual(item.preconditions);
+ expect(after[0].steps.map((s:{action:string;expected:string})=>({action:s.action,expected:s.expected}))).toEqual(item.steps.map((s:{action:string;expected:string})=>({action:s.action,expected:s.expected})));
+ const persistedCounts=duplicateDelivery?JSON.parse(execFileSync(resolve(process.cwd(),'../../.venv/bin/python'),[resolve(process.cwd(),'../../scripts/qa/duplicate_acceptance_delivery.py'),'inspect',launched.action.job_id,email],{encoding:'utf8'})):null;
+ await expect(page.getByRole('heading',{name:collection.name,exact:true})).toBeVisible();
+ writeFileSync(info.outputPath('evidence.json'),JSON.stringify({email,pid,lostDelivery,duplicates,persistedCounts,launchMs,launched,queued,state,after},null,2));await page.screenshot({path:info.outputPath('recovered.png'),fullPage:true});
+});

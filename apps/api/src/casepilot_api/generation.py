@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from casepilot_api.auth import CurrentAccount, require_space_membership
 from casepilot_api.config import get_settings
 from casepilot_api.database import get_db_session
+from casepilot_api.submissions import after_commit
 from casepilot_api.models import (
     Account,
     CaseChangeSet,
@@ -136,6 +137,7 @@ def job_view(db: Session, job: GenerationJob) -> GenerationJobView:
         )
     ).all()
     return GenerationJobView(
+        analysis_progress=output.get('analysis_progress'),
         planning_preview=output.get("planning_preview"),
         planning_progress=output.get("planning_progress"),
         retry_attempt=output.get("retry_attempt"),
@@ -149,7 +151,9 @@ def job_view(db: Session, job: GenerationJob) -> GenerationJobView:
         status=job.status.value if hasattr(job.status, "value") else str(job.status),
         stage=job.stage,
         space_id=job.space_id,
-        progress=(int(output["planning_progress"].get("progress", 0))
+        progress=(int(output['analysis_progress'].get('progress', 0))
+                  if job.status == 'running' and output.get('analysis_progress')
+                  else int(output["planning_progress"].get("progress", 0))
                   if job.status in {"running", "failed", "cancelled"} and output.get("planning_progress")
                   else min(95, int(95 * output.get("generated_count", 0) / output["total_count"]))
                   if job.status in {"running", "failed", "cancelled"} and job.input_payload.get("output_contract") == "case_batch_v2" and output.get("total_count")
@@ -293,9 +297,9 @@ def answer_generation_questions(
     job.error_code = None
     enqueue_task(db, "casepilot.agent.generate", [str(job.id)], task_id=job.id)
     db.commit()
-    Redis.from_url(settings.redis_url).delete(
+    after_commit(db, lambda: Redis.from_url(settings.redis_url).delete(
         f"casepilot:generation:{job.id}:events"
-    )
+    ))
     return job_view(db, job)
 
 
@@ -368,9 +372,9 @@ def retry_generation(
     enqueue_task(db, "casepilot.agent.draft_brief" if job.operation == "draft_brief"
                  else "casepilot.agent.generate", [str(job.id)], task_id=job.id)
     db.commit()
-    Redis.from_url(settings.redis_url).delete(
+    after_commit(db, lambda: Redis.from_url(settings.redis_url).delete(
         f"casepilot:generation:{job.id}:events"
-    )
+    ))
     return job_view(db, job)
 
 
@@ -467,19 +471,21 @@ def cancel_generation(
                 if not conversation.context.get("active_mutation_task_id"):
                     conversation.context = {**dict(conversation.context), "selected_targets": []}
     db.commit()
-    task_client.control.revoke(str(job.id), terminate=False)
-    Redis.from_url(settings.redis_url, decode_responses=True).rpush(
-        f"casepilot:generation:{job.id}:events",
-        json.dumps(
-            {
-                "event": "generation.cancelled",
-                "job_id": str(job.id),
-                "status": "cancelled",
-                "progress": 100,
-            },
-            ensure_ascii=False,
-        ),
-    )
+    def notify_cancelled():
+        task_client.control.revoke(str(job.id), terminate=False)
+        Redis.from_url(settings.redis_url, decode_responses=True).rpush(
+            f"casepilot:generation:{job.id}:events",
+            json.dumps(
+                {
+                    "event": "generation.cancelled",
+                    "job_id": str(job.id),
+                    "status": "cancelled",
+                    "progress": 100,
+                },
+                ensure_ascii=False,
+            ),
+        )
+    after_commit(db, notify_cancelled)
     db.refresh(job)
     return job_view(db, job)
 
