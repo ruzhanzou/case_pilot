@@ -22,86 +22,18 @@ function resolveApiBaseUrl(): string {
 
 const apiBaseUrl = resolveApiBaseUrl();
 
-const STREAM_TYPEWRITER_FRAME_MS = 32;
-const STREAM_TYPEWRITER_DRAIN_MS = 2_200;
-
-function advanceByCodePoints(content: string, offset: number, count: number) {
-  let nextOffset = offset;
-  for (const character of content.slice(offset)) {
-    nextOffset += character.length;
-    count -= 1;
-    if (count <= 0) break;
-  }
-  return nextOffset;
-}
-
+// Publish provider chunks as they arrive; replaying them character by character
+// creates a growing display backlog even after the server has finished.
 function createStreamTypewriter(onDelta?: (content: string) => void) {
   let targetContent = "";
-  let renderedOffset = 0;
-  let timer: number | null = null;
-  let finishing = false;
-  let finishStartedAt = 0;
-  const finishWaiters: Array<() => void> = [];
-
-  const completeFinish = () => {
-    if (!finishing || renderedOffset < targetContent.length) return;
-    finishWaiters.splice(0).forEach((resolve) => resolve());
-  };
-
-  const renderFrame = () => {
-    timer = null;
-    const remaining = Array.from(targetContent.slice(renderedOffset)).length;
-    if (!remaining) {
-      completeFinish();
-      return;
-    }
-
-    let characterCount = remaining > 160 ? 4 : remaining > 72 ? 3 : remaining > 24 ? 2 : 1;
-    if (finishing) {
-      const elapsed = window.performance.now() - finishStartedAt;
-      const framesLeft = Math.max(
-        1,
-        Math.ceil((STREAM_TYPEWRITER_DRAIN_MS - elapsed) / STREAM_TYPEWRITER_FRAME_MS),
-      );
-      characterCount = Math.max(
-        characterCount,
-        Math.min(12, Math.ceil(remaining / framesLeft)),
-      );
-    }
-
-    renderedOffset = advanceByCodePoints(
-      targetContent,
-      renderedOffset,
-      characterCount,
-    );
-    onDelta?.(targetContent.slice(0, renderedOffset));
-
-    if (renderedOffset < targetContent.length) {
-      timer = window.setTimeout(renderFrame, STREAM_TYPEWRITER_FRAME_MS);
-    } else {
-      completeFinish();
-    }
-  };
-
-  const scheduleFrame = (delay = STREAM_TYPEWRITER_FRAME_MS) => {
-    if (timer !== null || renderedOffset >= targetContent.length) return;
-    timer = window.setTimeout(renderFrame, delay);
-  };
-
   return {
     push(content: string) {
-      if (content.length < targetContent.length) return;
+      if (content.length <= targetContent.length) return;
       targetContent = content;
-      // Paint the first character immediately, then keep a stable visual cadence
-      // independent from the provider's irregular network chunk sizes.
-      scheduleFrame(renderedOffset === 0 ? 0 : STREAM_TYPEWRITER_FRAME_MS);
+      onDelta?.(content);
     },
     finish() {
-      finishing = true;
-      finishStartedAt = window.performance.now();
-      scheduleFrame(0);
-      if (renderedOffset >= targetContent.length) return Promise.resolve();
-      return new Promise<void>((resolve) => finishWaiters.push(resolve));
+      return Promise.resolve();
     },
   };
 }
@@ -1393,7 +1325,7 @@ export function sendConversationMessage(
       target_candidate_snapshots: input.targetCandidateSnapshots ?? [],
       knowledge_source_ids: input.knowledgeSourceIds ?? [],
       document_ids: input.documentIds ?? [],
-      use_space_knowledge: input.useSpaceKnowledge ?? true,
+      use_space_knowledge: input.useSpaceKnowledge ?? false,
       inherit_attachments: input.inheritAttachments ?? true,
       intent_override: input.intentOverride,
       target_scope: input.targetScope ?? "inferred",

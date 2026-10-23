@@ -40,9 +40,17 @@ for (const mode of ["generation", "conversation"] as const) {
       resolveRequest = resolve;
       rejectRequest = reject;
     }));
+    const displayed: string[] = [];
     const pending = mode === "generation"
       ? watchGeneration("job", () => {})
-      : waitForConversationJob("conversation", "job");
+      : waitForConversationJob("conversation", "job", 900_000, (content) => displayed.push(content));
+    if (mode === "conversation") {
+      const chunk = "即时显示完整回复🙂".repeat(100);
+      Source.current.dispatchEvent(new MessageEvent("qa.delta", { data: JSON.stringify({ delta: chunk }) }));
+      assert.deepEqual(displayed, [chunk]);
+      Source.current.dispatchEvent(new MessageEvent("qa.delta", { data: JSON.stringify({ delta: "结束" }) }));
+      assert.equal(displayed[1], chunk + "结束");
+    }
     poll(); poll(); poll();
     assert.equal(fetch.mock.callCount(), 1);
     rejectRequest(new Error("temporary network failure"));

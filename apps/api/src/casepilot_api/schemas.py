@@ -454,7 +454,7 @@ class ConversationMessageCreate(BaseModel):
     knowledge_source_ids: list[UUID] = Field(default_factory=list, max_length=50)
     document_ids: list[UUID] = Field(default_factory=list, max_length=6)
     inherit_attachments: bool = True
-    use_space_knowledge: bool = True
+    use_space_knowledge: bool = False
     source_operation_id: UUID | None = None
     intent_override: str | None = Field(
         default=None,

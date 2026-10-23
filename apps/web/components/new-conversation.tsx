@@ -43,11 +43,13 @@ import { Streamdown } from "streamdown";
 type NewConversationProps = {
   spaceName: string;
   saving: boolean;
+  pendingMessage: string | null;
   conversation: ConversationDto | null;
   collections: CaseCollectionDto[];
   onSend: (input: {
     content: string;
     modelId: AgentModelId;
+    useSpaceKnowledge: boolean;
     generationStrategy: GenerationStrategy;
     sourceCollectionIds: string[];
   }) => Promise<void>;
@@ -102,6 +104,7 @@ const coreIntents: ConversationIntent[] = [
 export function NewConversation({
   spaceName,
   saving,
+  pendingMessage,
   conversation,
   collections,
   onSend,
@@ -116,6 +119,7 @@ export function NewConversation({
   onConfirmOperation,
 }: NewConversationProps) {
   const { t, pick } = useI18n();
+  const [useSpaceKnowledge, setUseSpaceKnowledge] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [generationStrategy, setGenerationStrategy] = useState<GenerationStrategy>("generate");
   const [sourceCollectionIds, setSourceCollectionIds] = useState<string[]>([]);
@@ -135,7 +139,7 @@ export function NewConversation({
   const [collectionError, setCollectionError] = useState("");
   const collectionSubmitRef = useRef(false);
   const confirmedCollectionRef = useRef<{ operationId: string; turn: ConversationTurnDto } | null>(null);
-  const hasConversation = Boolean(conversation?.messages.length);
+  const hasConversation = Boolean(conversation?.messages.length || pendingMessage);
   const latestConversationMessage = conversation?.messages.at(-1);
   const hasRunningAssistant =
     latestConversationMessage?.role === "assistant" &&
@@ -204,7 +208,7 @@ export function NewConversation({
     const content = prompt.trim();
     if (!content || saving) return;
     setPrompt("");
-    void onSend({ content, modelId, generationStrategy, sourceCollectionIds: generationStrategy === "generate" ? [] : sourceCollectionIds }).catch(() => {
+    void onSend({ content, modelId, useSpaceKnowledge, generationStrategy, sourceCollectionIds: generationStrategy === "generate" ? [] : sourceCollectionIds }).catch(() => {
       setPrompt(content);
     });
   };
@@ -297,6 +301,11 @@ export function NewConversation({
           title={t("conversation.uploadHint")}
         >
           <Plus size={20} />
+        </button>
+        <button type="button" role="switch" aria-checked={useSpaceKnowledge}
+          disabled={saving} onClick={() => setUseSpaceKnowledge(value => !value)}
+          aria-label={pick("Search space knowledge", "搜索空间知识库")}>
+          {pick("Space knowledge", "空间知识库")}：{useSpaceKnowledge ? pick("On", "开") : pick("Off", "关")}
         </button>
         <span className="new-conversation__access" aria-live="polite">
           {saving ? (
@@ -581,6 +590,11 @@ export function NewConversation({
                 </div>
               </article>
             ))}
+            {pendingMessage && (
+              <article className="new-conversation__message new-conversation__message--user">
+                <div>{pendingMessage}</div>
+              </article>
+            )}
             {saving && !uploading && !hasRunningAssistant && (
               <article className="new-conversation__message new-conversation__message--assistant">
                 <span className="new-conversation__avatar">
@@ -590,7 +604,7 @@ export function NewConversation({
                   <strong>CasePilot</strong>
                   <span className="new-conversation__thinking">
                     <LoaderCircle className="auth-spinner" size={15} />
-                    {t("conversation.preparing")}
+                    {t("conversation.thinking")}
                   </span>
                 </div>
               </article>

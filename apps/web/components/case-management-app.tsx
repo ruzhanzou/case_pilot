@@ -154,6 +154,7 @@ export function CaseManagementApp({
       !route.collectionId,
   );
   const [historyRevision, setHistoryRevision] = useState(0);
+  const [pendingLandingMessage, setPendingLandingMessage] = useState<string | null>(null);
   const [landingConversation, setLandingConversation] =
     useState<ConversationDto | null>(null);
   const [caseEditor, setCaseEditor] = useState<
@@ -280,11 +281,13 @@ export function CaseManagementApp({
   const sendNewConversationMessage = async (input: {
     content: string;
     modelId: AgentModelId;
+    useSpaceKnowledge: boolean;
     generationStrategy: "select" | "generate" | "select_and_generate";
     sourceCollectionIds: string[];
   }) => {
     if (!space) return;
     let messageAccepted = false;
+    setPendingLandingMessage(input.content);
     setSaving(true);
     setError("");
     try {
@@ -303,9 +306,10 @@ export function CaseManagementApp({
         generationStrategy: input.generationStrategy,
         sourceCollectionIds: input.sourceCollectionIds,
         scope: "current",
-        useSpaceKnowledge: true,
+        useSpaceKnowledge: input.useSpaceKnowledge,
       });
       messageAccepted = true;
+      setPendingLandingMessage(null);
       setLandingConversation(current => current?.id === conversation.id
         ? {...current, messages: [...current.messages.filter(message =>
             message.id !== turn.user_message.id && message.id !== turn.assistant_message?.id),
@@ -375,6 +379,7 @@ export function CaseManagementApp({
       setError(caught instanceof Error ? caught.message : pick("Failed to process message", "消息处理失败"));
       if (!messageAccepted) throw caught;
     } finally {
+      setPendingLandingMessage(null);
       setSaving(false);
     }
   };
@@ -1190,6 +1195,7 @@ export function CaseManagementApp({
           </div>
         ) : page === "workbench" && workbenchMode === "create" ? (
           <NewConversation
+            pendingMessage={pendingLandingMessage}
             spaceName={space?.name ?? t("common.localSpace")}
             saving={saving}
             conversation={landingConversation}

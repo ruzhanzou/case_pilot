@@ -370,6 +370,7 @@ export function CaseWorkbench({
   >([]);
   const [queueRunning, setQueueRunning] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [useSpaceKnowledge, setUseSpaceKnowledge] = useState(false);
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   const [runningSeconds, setRunningSeconds] = useState(0);
   const [currentJobId, setCurrentJobId] = useState("");
@@ -1225,7 +1226,7 @@ export function CaseWorkbench({
       }
       const turn = await sendConversationMessage(workspace.id, {
         content, modelId, scope: "current", intentOverride: "CASE_MODIFY", targetScope: "selected",
-        targets: [target], knowledgeSourceIds: sourceIds, documentIds: pendingDocumentIds, useSpaceKnowledge: true,
+        targets: [target], knowledgeSourceIds: sourceIds, documentIds: pendingDocumentIds, useSpaceKnowledge,
       });
       setPolishOpen(false);
       setSelectedTargets([{ key: JSON.stringify(target), label: selectedCase.title, target }]);
@@ -1314,7 +1315,7 @@ export function CaseWorkbench({
             scope: "current",
             knowledgeSourceIds: sourceIds,
             documentIds: pendingDocumentIds,
-            useSpaceKnowledge: true,
+            useSpaceKnowledge,
             sourceOperationId: refinementSourceId || undefined,
             targets: structuredTargets,
           });
@@ -2243,6 +2244,11 @@ export function CaseWorkbench({
         )}
 
         <form className="principle-composer" onSubmit={submitMessage}>
+          <button type="button" role="switch" aria-checked={useSpaceKnowledge}
+            disabled={conversationRunning} onClick={() => setUseSpaceKnowledge(value => !value)}
+            aria-label={pick("Search space knowledge", "搜索空间知识库")}>
+            {pick("Space knowledge", "空间知识库")}：{useSpaceKnowledge ? pick("On", "开") : pick("Off", "关")}
+          </button>
           {showOperationPlan && operationPlan && (
               <ol className="conversation-operation-plan" aria-label={pick("Multi-action progress", "多意图执行进度")}>
                 {pendingIntentOperations.map((operation) => (
