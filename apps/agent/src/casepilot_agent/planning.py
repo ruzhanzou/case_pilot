@@ -9,7 +9,7 @@ from time import sleep
 from typing import Any, Literal
 from uuid import NAMESPACE_URL, uuid5
 
-from openai import APIConnectionError, InternalServerError, RateLimitError
+from openai import APIConnectionError, APITimeoutError, InternalServerError, RateLimitError
 from pydantic import Field, create_model, model_validator
 
 from casepilot_agent.contracts import (
@@ -364,28 +364,40 @@ def build_planning(
                 test_points=(list[point_type], Field(min_length=1, max_length=count)),
                 __validators__={"validate_batch": model_validator(mode="after")(validate_batch)},
             )
-            plan = complete(
-                "test_point.generated",
-                TEST_POINT_DESIGN_INSTRUCTION + "\n【本批输出约束】\n"
-                "title保留边界数值和例外。feature_point_ids是所属功能ID，不是测试点序号，"
-                "必须逐字复用本批feature_points的id，多个测试点可以复用同一个功能ID，严禁递增或发明功能ID。"
-                "本批数量预算为batch_count，最多生成该数量；不得在本批重复追求全局总数。"
-                "coverage_matrix留空；source_refs留空，系统按功能关联原始来源。使用简洁字段，不重复原文。",
-                {
-                    **common,
-                    "feature_points": {
-                        "feature_points": [
-                            f.model_dump(mode="json", exclude={"source_refs"})
-                            for f in feature_slice
-                        ]
-                    },
-                    "planning_feature_count": len(features),
-                    "target_count": target_count,
-                    "batch_count": count,
-                    "batch_index": index + 1,
-                },
-                plan_type,
-            )
+            plan = None
+            for attempt in range(2):
+                check_cancelled()
+                try:
+                    plan = complete(
+                        "test_point.generated",
+                        TEST_POINT_DESIGN_INSTRUCTION + "\n【本批输出约束】\n"
+                        "title保留边界数值和例外。feature_point_ids是所属功能ID，不是测试点序号，"
+                        "必须逐字复用本批feature_points的id，多个测试点可以复用同一个功能ID，严禁递增或发明功能ID。"
+                        "本批数量预算为batch_count，最多生成该数量；不得在本批重复追求全局总数。"
+                        "coverage_matrix留空；source_refs留空，系统按功能关联原始来源。使用简洁字段，不重复原文。",
+                        {
+                            **common,
+                            "feature_points": {
+                                "feature_points": [
+                                    f.model_dump(mode="json", exclude={"source_refs"})
+                                    for f in feature_slice
+                                ]
+                            },
+                            "planning_feature_count": len(features),
+                            "target_count": target_count,
+                            "batch_count": count,
+                            "batch_index": index + 1,
+                        },
+                        plan_type,
+                    )
+                    break
+                except (APIConnectionError, APITimeoutError, InternalServerError, RateLimitError):
+                    if attempt:
+                        raise
+                    for _ in range(4):
+                        check_cancelled()
+                        sleep(0.5)
+            assert plan is not None
             validate_point_batch(plan, {f.id for f in feature_slice}, count)
             for ordinal, point in enumerate(plan.test_points):
                 point.id = f"TP-{index + 1}-{ordinal + 1}"

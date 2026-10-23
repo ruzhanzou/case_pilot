@@ -96,6 +96,33 @@ def test_modified_case_receives_original_and_retains_source():
     assert any("修改参考" in ref.label for ref in result.test_cases[0].source_refs)
 
 
+def test_modified_case_preserves_fields_outside_decision_authorization():
+    req = with_decision("modify", count=1)
+    decision = req.confirmed_plan["reuse"]["decisions"][0]
+    decision["reason"] = "当前规则只要求修改预期结果"
+    decision["changed_fields"] = ["expected"]
+
+    def overreaching(stage, instruction, payload, result_type, model_id):
+        result = execute(stage, instruction, payload, result_type, model_id)
+        if stage == "test_case.generated":
+            case = result.test_cases[0]
+            case.title = "模型擅自重写的标题"
+            case.preconditions = ["模型擅自重写的前置条件"]
+            case.steps[0].action = "模型擅自重写的操作"
+            case.steps[0].expected = "新的可观察预期"
+        return result
+
+    candidate = run(req, overreaching).test_cases[0]
+    original = source()["snapshot"]
+    assert candidate.title == original["title"]
+    assert candidate.preconditions == original["preconditions"]
+    assert candidate.steps[0].action == original["steps"][0]["action"]
+    assert candidate.steps[0].expected == "新的可观察预期"
+    assert candidate.module == original["module"]
+    assert candidate.priority == original["priority"]
+    assert candidate.case_type == original["case_type"]
+
+
 def test_changed_point_cannot_use_stale_reuse_decision():
     req = with_decision()
     req.confirmed_plan["test_points"][0]["objective"] = "改成短信登录"
@@ -143,6 +170,48 @@ def test_reuse_decisions_reject_invented_sources_and_incomplete_coverage(bad):
             lambda *args: ReuseDecisions(decisions=rows),
             "验证码改为2分钟",
         )
+
+
+def test_planning_priority_cannot_turn_unchanged_asset_into_modify():
+    req = request(1)
+    result = plan_reuse(
+        req.confirmed_plan,
+        "change",
+        [source()],
+        lambda *args: ReuseDecisions(decisions=[{
+            "point_id": "P-0",
+            "action": "modify",
+            "test_object_match": "same",
+            "source_key": "asset:one",
+            "changed_fields": ["priority"],
+            "reason": "规划将该测试点推断为P0，原资产为P1，需要修改优先级",
+        }]),
+        "登录规则保持不变，复用现有用例",
+    )
+    decision = result["decisions"][0]
+    assert decision["action"] == "reuse"
+    assert decision["changed_fields"] == []
+
+
+def test_explicit_priority_request_authorizes_priority_modification():
+    req = request(1)
+    result = plan_reuse(
+        req.confirmed_plan,
+        "change",
+        [source()],
+        lambda *args: ReuseDecisions(decisions=[{
+            "point_id": "P-0",
+            "action": "modify",
+            "test_object_match": "same",
+            "source_key": "asset:one",
+            "changed_fields": ["priority"],
+            "reason": "用户要求将优先级改为P0",
+        }]),
+        "把登录用例优先级改为P0",
+    )
+    decision = result["decisions"][0]
+    assert decision["action"] == "modify"
+    assert decision["changed_fields"] == ["priority"]
 
 
 def test_excel_headers_survive_multiple_blocks_and_preserve_identity(tmp_path):

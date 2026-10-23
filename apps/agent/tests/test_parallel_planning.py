@@ -158,6 +158,29 @@ def test_missing_feature_is_rejected_instead_of_reported_complete():
         build_planning(RequirementAnalysis(summary="登录"), {}, complete)
 
 
+def test_test_point_planning_retries_transient_connection_loss(monkeypatch):
+    import httpx
+    from openai import APIConnectionError
+
+    from casepilot_agent import planning
+
+    monkeypatch.setattr(planning, "sleep", lambda _: None)
+    calls = 0
+
+    def complete(stage, instruction, payload, result_type):
+        nonlocal calls
+        if stage == "feature.generated":
+            return features(3)
+        calls += 1
+        if calls == 1:
+            raise APIConnectionError(request=httpx.Request("POST", "https://example.test"))
+        return points(payload)
+
+    result = build_planning(RequirementAnalysis(summary="登录"), {}, complete)
+    assert calls == 2
+    assert len(result["test_points"]) == 3
+
+
 def test_large_document_features_are_bounded_parallel_and_keep_source_order():
     barrier, release, lock = Barrier(3, timeout=5), Event(), Lock()
     active = peak = 0

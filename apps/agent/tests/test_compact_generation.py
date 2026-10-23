@@ -239,17 +239,20 @@ def test_parallel_fatal_error_stops_new_batches_and_joins_inflight(monkeypatch):
     assert set(calls) <= {1, 6}
 
 
-def test_case_checkpoints_are_not_required_for_every_action():
+def test_action_without_observable_expectation_is_repaired():
     from casepilot_agent.contracts import TestStep
+    attempts = []
     def independent(stage, instruction, payload, result_type, model_id):
         result = execute(stage, instruction, payload, result_type, model_id)
-        if issubclass(result_type, ContentBatch):
+        if issubclass(result_type, ContentBatch) and not attempts:
+            attempts.append(payload["retry_attempt"])
             for case in result.test_cases:
                 case.steps = [CaseStep(action='Open login', expected='Session is established'), CaseStep(action='Submit credentials', expected='')]
         return result
     result = run(request(1), independent)
     assert result.quality.passed
-    assert result.test_cases[0].steps[1].expected == ''
+    assert attempts == [0]
+    assert all(step.expected for step in result.test_cases[0].steps if step.action)
 
 
 def test_count_does_not_recycle_confirmed_points():
@@ -351,7 +354,7 @@ def test_batch_configuration_preserves_coverage(size, concurrency, count):
     calls = []
     def tracked(stage, instruction, payload, result_type, model_id):
         calls.append(payload)
-        assert payload['prompt_version'] == 'case-batch-v10-extra-assertions'
+        assert payload['prompt_version'] == 'case-batch-v11-authorized-modifications'
         assert payload['batch_count'] <= size
         return execute(stage, instruction, payload, result_type, model_id)
     result = run(req, tracked)

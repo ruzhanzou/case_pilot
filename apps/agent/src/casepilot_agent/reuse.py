@@ -28,6 +28,18 @@ class ReuseDecision(BaseModel):
     action: Literal["new", "reuse", "modify"]
     source_key: str | None
     test_object_match: Literal["same", "different", "unknown"] = "unknown"
+    changed_fields: list[
+        Literal[
+            "title",
+            "module",
+            "priority",
+            "case_type",
+            "tags",
+            "preconditions",
+            "actions",
+            "expected",
+        ]
+    ] = Field(default_factory=list, max_length=8)
     reason: str = Field(min_length=1, max_length=1000)
 
 
@@ -216,6 +228,33 @@ def shortlist(sources, points, limit=30, budget=36000):
     return selected
 
 
+def explicit_identity_field_changes(prompt: str) -> set[str]:
+    """Planning inferences cannot authorize mutations of persisted case identity."""
+    clauses = re.split(r"[，。；;\n]", prompt)
+    labels = {
+        "title": r"标题|用例名称",
+        "module": r"模块",
+        "priority": r"优先级",
+        "case_type": r"用例类型|测试类型",
+        "tags": r"标签",
+        "preconditions": r"前置条件|前提条件|测试准备",
+    }
+    mutation = r"修改|调整|更新|改为|设为|设置|替换|重写|补充|新增"
+    authorized = set()
+    for field, label in labels.items():
+        if any(
+            re.search(
+                rf"(?:{mutation})[^，。；;]{{0,24}}(?:{label})|(?:{label})[^，。；;]{{0,24}}(?:{mutation})",
+                clause,
+            )
+            for clause in clauses
+        ):
+            authorized.add(field)
+    if any(re.search(r"(?:改为|设为|调整为)\s*P[012]\b", clause, re.I) for clause in clauses):
+        authorized.add("priority")
+    return authorized
+
+
 def plan_reuse(
     plan, strategy, sources, complete, prompt, progress=lambda: None, check_cancelled=lambda: None,
     test_object="", assets_confirmed=False,
@@ -278,6 +317,8 @@ def plan_reuse(
             "仅功能或标题相似不足以判断一致；测试对象不同或无法确认必须new。"
             "reuse要求前提、操作、预期及所有数值规则仍适用，不能仅因标题相似复用；不确定则new。"
             "modify仅用于同一业务场景已有用例需适应新规则；理由说明变化。"
+            "modify必须在changed_fields中精确列出新规则要求改变的字段；未列出的字段由服务器逐值保留。"
+            "actions表示操作内容，expected表示预期结果。不要把规划推断出的措辞优化或分类变化列为修改字段。"
             "规划自行推断的优先级或模块分类不是用户新增业务规则，不能仅因此判为modify；用户明确修改字段时才按新要求处理。"
             "每个point_id恰好一次；source_key只能引用sources，new必须为null。明确全新生成不得复用。"
             "没有旧需求时只能比较历史用例中可观察的规则，不能声称完成了完整需求差异分析。",
@@ -294,9 +335,23 @@ def plan_reuse(
             ScopedDecisions,
         )
         result = ScopedDecisions.model_validate(result.model_dump(mode="json"))
+        identity_authorizations = explicit_identity_field_changes(prompt)
         decisions = []
         for decision in result.decisions:
             row = decision.model_dump()
+            if decision.action == "modify":
+                declared = set(decision.changed_fields)
+                protected = {
+                    "title", "module", "priority", "case_type", "tags", "preconditions"
+                }
+                row["changed_fields"] = sorted(
+                    declared - (protected - identity_authorizations)
+                )
+                if declared and not row["changed_fields"]:
+                    row.update(
+                        action="reuse",
+                        reason="仅规划推断字段发生变化，用户未授权修改原用例字段，按原内容复用",
+                    )
             row["point_snapshot"] = next(p for p in group if p["id"] == decision.point_id)
             if decision.action != "new" and decision.test_object_match != "same":
                 row.update(
