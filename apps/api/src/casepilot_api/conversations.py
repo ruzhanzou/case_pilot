@@ -2963,6 +2963,9 @@ def upload_conversation_attachments(
 ) -> KnowledgeUploadView:
     conversation = _ensure_conversation(db, account.id, conversation_id)
     allowed = {
+        ".png": {"image/png"},
+        ".jpg": {"image/jpeg"},
+        ".jpeg": {"image/jpeg"},
         ".pdf": {"application/pdf"},
         ".txt": {"text/plain"},
         ".xlsx": {
@@ -4054,6 +4057,11 @@ def _resolve_turn_attachments(db, conversation, payload, *, resuming=False):
         if doc_ids
         else []
     )
+    if any(getattr(doc, "mime_type", "").startswith("image/") for doc in documents):
+        image_models = {v.strip() for v in settings.image_models.split(",") if v.strip()}
+        if (settings.ai_mode == "mock" or settings.agent_provider == "mock"
+                or settings.resolve_agent_model(payload.model_id) not in image_models):
+            raise HTTPException(status_code=422, detail="当前模型不支持图片，请切换支持图片的模型或移除图片附件后发送。")
     ready_docs = {doc.id for doc in documents}
     sources = (
         list(
@@ -4290,6 +4298,14 @@ def send_message(
     transaction = SubmissionTransaction(db)
     try:
         turn = _send_message(conversation_id, payload, account, transaction)
+        user_message = db.get(ConversationMessage, turn.user_message.id)
+        if user_message is None:
+            raise RuntimeError("submission_user_message_missing")
+        user_message.message_metadata = {
+            **dict(user_message.message_metadata),
+            "submission_request_id": str(payload.client_request_id),
+        }
+        turn.user_message.metadata = dict(user_message.message_metadata)
         db.add(ConversationSubmission(
             conversation_id=conversation_id, request_id=payload.client_request_id,
             request_hash=fingerprint, response=turn.model_dump(mode="json"),

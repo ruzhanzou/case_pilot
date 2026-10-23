@@ -36,6 +36,10 @@ async def test_message_retry_identity_is_independent_of_text(monkeypatch, concur
         assert replay.status_code == 202, replay.text
         assert replay.json()['user_message']['id'] == first.json()['user_message']['id']
         assert replay.json()['assistant_message']['id'] == first.json()['assistant_message']['id']
+        assert (
+            replay.json()['user_message']['metadata']['submission_request_id']
+            == request['client_request_id']
+        )
         changed = await client.post(url, json={**request, 'content': '查询P0用例'})
         assert changed.status_code == 409
         intentional = await client.post(url, json={**request, 'client_request_id': str(uuid4())})

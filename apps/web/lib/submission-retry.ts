@@ -3,10 +3,21 @@ type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
 export function createSubmissionSender(storage: () => StorageLike | null, uuid: () => string) {
   const pending = new Map<string, Pending>();
-  return async function send<T>(conversationId: string, body: string, post: (requestId: string) => Promise<T>): Promise<T> {
+  const read = (key: string) => {
+    let request = pending.get(key);
+    try { request ??= JSON.parse(storage()?.getItem(key) ?? 'null') as Pending | undefined; } catch { /* Fall back to memory. */ }
+    return request;
+  };
+  const clear = (key: string, requestId: string) => {
+    if (pending.get(key)?.requestId === requestId) pending.delete(key);
+    try {
+      const saved = JSON.parse(storage()?.getItem(key) ?? 'null') as Pending | null;
+      if (saved?.requestId === requestId) storage()?.removeItem(key);
+    } catch { /* An unavailable storage backend must not hide a successful turn. */ }
+  };
+  const send = async <T>(conversationId: string, body: string, post: (requestId: string) => Promise<T>): Promise<T> => {
     const key = `casepilot.submission.v1:${conversationId}`;
-    let previous = pending.get(key);
-    try { previous ??= JSON.parse(storage()?.getItem(key) ?? 'null') as Pending | undefined; } catch { /* Fall back to memory. */ }
+    const previous = read(key);
     const request: Pending = previous?.body === body && previous.requestId
       ? previous : {body, requestId: uuid()};
     pending.set(key, request);
@@ -19,11 +30,13 @@ export function createSubmissionSender(storage: () => StorageLike | null, uuid: 
       if (!(error instanceof TypeError || error instanceof SyntaxError)) throw error;
       result = await post(request.requestId);
     }
-    if (pending.get(key)?.requestId === request.requestId) pending.delete(key);
-    try {
-      const saved = JSON.parse(storage()?.getItem(key) ?? 'null') as Pending | null;
-      if (saved?.requestId === request.requestId) storage()?.removeItem(key);
-    } catch { /* An unavailable storage backend must not hide a successful turn. */ }
+    clear(key, request.requestId);
     return result;
   };
+  const acknowledge = (conversationId: string, acceptedRequestIds: Iterable<string>) => {
+    const key = `casepilot.submission.v1:${conversationId}`;
+    const request = read(key);
+    if (request && new Set(acceptedRequestIds).has(request.requestId)) clear(key, request.requestId);
+  };
+  return {send, acknowledge};
 }

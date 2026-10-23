@@ -248,6 +248,7 @@ export type TestCaseInput = {
 export type AgentModelId = string;
 
 export type GenerationModelDto = {
+  supports_images?: boolean;
   id: AgentModelId;
   label: string;
   provider: string;
@@ -1286,7 +1287,13 @@ export function commitWorkspaceCandidates(
 export function getConversation(
   conversationId: string,
 ): Promise<ConversationDto> {
-  return apiRequest(`/api/v1/conversations/${conversationId}`);
+  return apiRequest<ConversationDto>(`/api/v1/conversations/${conversationId}`).then((conversation) => {
+    sendSubmission.acknowledge(conversationId, conversation.messages.flatMap((message) => {
+      const requestId = message.metadata?.submission_request_id;
+      return typeof requestId === "string" ? [requestId] : [];
+    }));
+    return conversation;
+  });
 }
 
 const sendSubmission = createSubmissionSender(
@@ -1331,7 +1338,7 @@ export function sendConversationMessage(
       target_scope: input.targetScope ?? "inferred",
       targets: input.targets ?? [],
   });
-  return sendSubmission(conversationId, body, (requestId) =>
+  return sendSubmission.send(conversationId, body, (requestId) =>
     apiRequest(`/api/v1/conversations/${conversationId}/messages`, {
       method: "POST",
       body: JSON.stringify({...JSON.parse(body), client_request_id: requestId}),
