@@ -1,6 +1,7 @@
 "use client";
 
 // UI identifiers must also work on HTTP origins without crypto.randomUUID.
+import { attachmentAccept, clipboardImages, isImageAttachment } from "@/lib/image-attachments";
 import { nanoid } from "nanoid/non-secure";
 
 import { ConversationAttachments } from "@/components/conversation-attachments";
@@ -125,7 +126,7 @@ export function NewConversation({
   const [sourceCollectionIds, setSourceCollectionIds] = useState<string[]>([]);
   const [modelId, setModelId] = useState<AgentModelId>("auto");
   const [models, setModels] = useState([
-    { id: "auto" as AgentModelId, label: t("model.auto") },
+    { id: "auto" as AgentModelId, label: t("model.auto"), supports_images: false },
   ]);
   const messageEndRef = useRef<HTMLDivElement>(null);
   const streamScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -167,6 +168,7 @@ export function NewConversation({
           result.models.map((model) => ({
             id: model.id,
             label: model.label,
+            supports_images: Boolean(model.supports_images),
           })),
         );
         setModelId(result.default_model_id);
@@ -203,10 +205,26 @@ export function NewConversation({
     [modelId, models, t],
   );
 
+  const uploadFiles = (files: File[]) => {
+    if (!files.length || saving || uploading) return;
+    const entries = files.map(file => ({ id: nanoid(), name: file.name, size: file.size, percent: 0, status: "uploading" as const }));
+    const ids = new Set(entries.map(file => file.id));
+    setAttachments(current => [...current, ...entries]);
+    const update = (values: Partial<(typeof attachments)[number]>) => setAttachments(current => current.map(file => ids.has(file.id) ? { ...file, ...values } : file));
+    void onUploadFiles(files, percent => update({ percent, status: percent === 100 ? "processing" : "uploading" }))
+      .then(() => setAttachments(current => current.filter(file => !ids.has(file.id))))
+      .catch(() => update({ status: "failed" }));
+  };
+  const pendingImages = (conversation?.context.pending_attachments ?? []) as {name: string}[];
+  const inheritedImages = (conversation?.messages ?? []).flatMap(message => Array.isArray(message.metadata.attachments) ? message.metadata.attachments : []).filter((file: {id: string; status: string}) => file.status === "ready" && ((conversation?.context.document_ids ?? []) as string[]).includes(file.id));
+  const hasImages = pendingImages.some(isImageAttachment) || inheritedImages.some(isImageAttachment) || attachments.some(isImageAttachment);
+  const hasPendingImage = pendingImages.some(isImageAttachment);
+  const imageBlocked = hasImages && !models.find(model => model.id === modelId)?.supports_images;
+
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const content = prompt.trim();
-    if (!content || saving) return;
+    const content = prompt.trim() || (hasPendingImage ? pick("Please analyze the attached image.", "请分析附件中的图片。") : "");
+    if (!content || saving || uploading || imageBlocked) return;
     setPrompt("");
     void onSend({ content, modelId, useSpaceKnowledge, generationStrategy, sourceCollectionIds: generationStrategy === "generate" ? [] : sourceCollectionIds }).catch(() => {
       setPrompt(content);
@@ -258,7 +276,12 @@ export function NewConversation({
           {!pendingMessage && <ConversationAttachments pending disabled={saving} onRemove={id => { void onRemoveAttachment(id); }} metadata={{ attachments: (
             Array.isArray(conversation?.context.pending_attachments) ? conversation.context.pending_attachments : []
           ).filter((file: { name: string }) => !attachments.some(local => local.name === file.name && local.status !== "failed")) }} />}
+      {imageBlocked && <p role="alert">{pick(
+        "The selected model cannot read images. Switch models or remove the image before sending.",
+        "当前模型不支持图片，请切换支持图片的模型或移除图片附件后发送。",
+      )}</p>}
       <textarea
+        onPaste={event => { const files = clipboardImages(event.clipboardData); if (files.length) { event.preventDefault(); uploadFiles(files); } }}
         value={prompt}
         onChange={(event) => setPrompt(event.target.value)}
         onKeyDown={(event) => {
@@ -277,19 +300,13 @@ export function NewConversation({
           ref={fileRef}
           hidden
           type="file"
-          accept=".pdf,.txt,.xlsx,.xls,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+          accept={attachmentAccept}
           multiple
           onChange={(event) => {
             const files = Array.from(event.target.files ?? []);
             event.target.value = "";
             if (!files.length) return;
-            const entries = files.map(file => ({ id: nanoid(), name: file.name, size: file.size, percent: 0, status: "uploading" as const }));
-            const ids = new Set(entries.map(file => file.id));
-            setAttachments(current => [...current, ...entries]);
-            const update = (values: Partial<(typeof attachments)[number]>) => setAttachments(current => current.map(file => ids.has(file.id) ? { ...file, ...values } : file));
-            void onUploadFiles(files, percent => update({ percent, status: percent === 100 ? "processing" : "uploading" }))
-              .then(() => setAttachments(current => current.filter(file => !ids.has(file.id))))
-              .catch(() => update({ status: "failed" }));
+            uploadFiles(files);
           }}
         />
         <button
@@ -346,7 +363,7 @@ export function NewConversation({
         <button
           type="submit"
           className="new-conversation__send"
-          disabled={!prompt.trim() || saving}
+          disabled={(!prompt.trim() && !hasPendingImage) || saving || uploading || imageBlocked}
           aria-label={saving ? t("conversation.sending") : t("conversation.send")}
         >
           {saving ? (

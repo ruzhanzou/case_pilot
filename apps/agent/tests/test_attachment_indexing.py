@@ -2,13 +2,20 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+from PIL import Image
 from casepilot_agent import tasks
 
 
-def test_temporary_attachment_is_readable_without_remote_embeddings(monkeypatch, tmp_path):
+@pytest.mark.parametrize("image", [False, True])
+def test_temporary_attachment_is_readable_without_remote_embeddings(monkeypatch, tmp_path, image):
     source_id = uuid4()
     path = tmp_path / "login.txt"
     path.write_text("Valid credentials open the account home page.")
+    if image:
+        path = tmp_path / "screenshot.png"
+        Image.new("RGB", (20, 20), "white").save(path)
+        monkeypatch.setattr(tasks, "parse_document", lambda *_: pytest.fail("Images must not require OCR"))
     chunks = []
     updates = []
 
@@ -29,7 +36,7 @@ def test_temporary_attachment_is_readable_without_remote_embeddings(monkeypatch,
 
         def get_source_documents(self, *_):
             return [{"id": uuid4(), "storage_key": path.name,
-                     "original_name": path.name, "mime_type": "text/plain"}]
+                     "original_name": path.name, "mime_type": "image/png" if image else "text/plain"}]
 
         def update_document(self, *_, **values):
             updates.append(values)

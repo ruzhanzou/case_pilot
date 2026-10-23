@@ -91,6 +91,16 @@ class AgentsSdkProvider:
             return model_id
         return self.model
 
+    def _image_prompt(self, prompt, model):
+        images = getattr(self, "image_inputs", [])
+        if not images:
+            return prompt
+        from casepilot_agent.config import get_settings
+        allowed = {v.strip() for v in get_settings().image_models.split(",") if v.strip()}
+        if model not in allowed:
+            raise ValueError("model_does_not_support_images")
+        return [{"role": "user", "content": [{"type": "input_text", "text": prompt}, *images]}]
+
     def _run(
         self,
         *,
@@ -114,6 +124,9 @@ class AgentsSdkProvider:
 
         set_tracing_disabled(not self.tracing_enabled)
         resolved_model = self.resolve_model(model_id)
+        if getattr(self, "image_inputs", []):
+            model_id = resolved_model
+            allow_model_fallback = False
         evidence_review = any(
             item.get("context", {}).get("evidence")
             or item.get("context", {}).get("evidence_ref_indexes")
@@ -227,7 +240,10 @@ class AgentsSdkProvider:
         )
         async def run_once():
             try:
-                return await asyncio.wait_for(Runner.run(agent, prompt, max_turns=3), timeout)
+                return await asyncio.wait_for(
+                    Runner.run(agent, self._image_prompt(prompt, resolved_model), max_turns=3),
+                    timeout,
+                )
             except TimeoutError as error:
                 raise APITimeoutError(request=httpx.Request("POST", self.base_url)) from error
 
@@ -376,7 +392,9 @@ class AgentsSdkProvider:
 
         async def consume() -> tuple[str, object]:
             try:
-                result = Runner.run_streamed(agent, prompt, max_turns=3)
+                result = Runner.run_streamed(
+                    agent, self._image_prompt(prompt, resolved_model), max_turns=3
+                )
                 async for event in result.stream_events():
                     if (
                         event.type == "raw_response_event"

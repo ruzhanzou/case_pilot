@@ -58,6 +58,7 @@ def list_generation_models(account: CurrentAccount) -> dict[str, object]:
                     "id": "auto",
                     "label": "Mock Agent",
                     "provider": "本地验收",
+                    "supports_images": False,
                 }
             ],
         }
@@ -66,7 +67,7 @@ def list_generation_models(account: CurrentAccount) -> dict[str, object]:
         (model, model, settings.agent_provider_label)
         for model in settings.available_agent_models
     ]
-    models: list[dict[str, str]] = []
+    models: list[dict[str, object]] = []
     seen_labels: set[str] = set()
     for model_id, label, provider in configured:
         normalized_label = label.strip()
@@ -78,6 +79,9 @@ def list_generation_models(account: CurrentAccount) -> dict[str, object]:
                 "id": model_id,
                 "label": normalized_label,
                 "provider": provider,
+                "supports_images": model_id in {
+                    v.strip() for v in settings.image_models.split(",") if v.strip()
+                },
             }
         )
     return {

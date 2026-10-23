@@ -916,7 +916,8 @@ def _messages_with_attachments(db, conversation, messages, pending=None):
         expired = expires_at is not None and expires_at <= datetime.now(UTC)
         attachment = {
             "id": str(document.id), "name": document.original_name,
-            "size": document.size_bytes, "status": "expired" if expired else document.status,
+            "size": document.size_bytes, "mime_type": document.mime_type,
+            "status": "expired" if expired else document.status,
             "expires_at": expires_at.isoformat() if expires_at else None,
             "error_code": getattr(document, "error_code", None),
         }
@@ -4057,11 +4058,16 @@ def _resolve_turn_attachments(db, conversation, payload, *, resuming=False):
         if doc_ids
         else []
     )
-    if any(getattr(doc, "mime_type", "").startswith("image/") for doc in documents):
+    image_documents = [
+        doc for doc in documents if getattr(doc, "mime_type", "").startswith("image/")
+    ]
+    if image_documents:
         image_models = {v.strip() for v in settings.image_models.split(",") if v.strip()}
         if (settings.ai_mode == "mock" or settings.agent_provider == "mock"
                 or settings.resolve_agent_model(payload.model_id) not in image_models):
             raise HTTPException(status_code=422, detail="当前模型不支持图片，请切换支持图片的模型或移除图片附件后发送。")
+        if sum(int(getattr(doc, "size_bytes", 0)) for doc in image_documents) > settings.image_max_total_bytes:
+            raise HTTPException(status_code=422, detail="图片附件总大小超过单次发送限制，请移除部分图片后重试。")
     ready_docs = {doc.id for doc in documents}
     sources = (
         list(

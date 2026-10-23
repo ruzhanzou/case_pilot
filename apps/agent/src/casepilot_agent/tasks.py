@@ -394,6 +394,49 @@ class BufferedDeltaPublisher:
         self._last_published_at = self._clock() if now is None else now
 
 
+def bind_job_images(provider, store, job):
+    import base64
+
+    provider.image_inputs = []
+    ids = [UUID(str(value)) for value in job["input_payload"].get("document_ids", [])]
+    if not ids:
+        return
+    with store.connection() as connection:
+        documents = connection.execute(
+            select(knowledge_documents).join(
+                knowledge_sources, knowledge_sources.c.id == knowledge_documents.c.source_id
+            ).where(
+                knowledge_documents.c.id.in_(ids),
+                knowledge_documents.c.space_id == job["space_id"],
+                knowledge_documents.c.status == "ready",
+                knowledge_sources.c.deleted_at.is_(None),
+                or_(knowledge_documents.c.expires_at.is_(None),
+                    knowledge_documents.c.expires_at > datetime.now(UTC)),
+            )
+        ).mappings().all()
+    by_id = {doc["id"]: doc for doc in documents}
+    image_documents = [
+        by_id[document_id]
+        for document_id in ids
+        if document_id in by_id and by_id[document_id]["mime_type"].startswith("image/")
+    ]
+    if sum(int(doc["size_bytes"]) for doc in image_documents) > settings.image_max_total_bytes:
+        raise ValueError("image_attachments_too_large")
+    provider.image_inputs = [
+        {
+            "type": "input_image",
+            "detail": "auto",
+            "image_url": (
+                f"data:{doc['mime_type']};base64,"
+                + base64.b64encode(
+                    (Path(settings.knowledge_storage_path) / doc["storage_key"]).read_bytes()
+                ).decode("ascii")
+            ),
+        }
+        for doc in image_documents
+    ]
+
+
 def ensure_not_cancelled(store: JobStore, job_id: UUID) -> None:
     with store.connection() as connection:
         if store.is_cancelled(connection, job_id):
@@ -902,6 +945,7 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
             job = store.claim_job(connection, parsed_job_id, stage="context.prepared")
         if job is None:
             return {"job_id": job_id, "status": "duplicate_ignored"}
+        bind_job_images(provider, store, job)
         started_at = datetime.now(UTC).isoformat()
         context = _context_payload(store, job, embedding_provider, full_documents=True)
         ensure_not_cancelled(store, parsed_job_id)
@@ -1606,6 +1650,7 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
             job = store.claim_job(connection, parsed_job_id)
         if job is None:
             return {"job_id": job_id, "status": "duplicate_ignored"}
+        bind_job_images(provider, store, job)
         partial_output = dict(job.get("output_payload") or {})
         partial_output.setdefault("started_at", datetime.now(UTC).isoformat())
         payload = job["input_payload"]
@@ -2259,6 +2304,7 @@ def rewrite_test_case(job_id: str) -> dict[str, Any]:
                 UUID(payload["base_revision_id"]),
             )
         pipeline = GenerationPipeline(create_provider(settings.provider))
+        bind_job_images(pipeline.provider, store, job)
         request = RewriteRequest(
             test_case=RewriteCaseDraft.model_validate(snapshot),
             instruction=payload["instruction"],
@@ -2359,6 +2405,7 @@ def rewrite_test_cases_batch(job_id: str) -> dict[str, Any]:
                 return {"job_id": job_id, "status": "duplicate_ignored"}
             payload = job["input_payload"]
         pipeline = GenerationPipeline(create_provider(settings.provider))
+        bind_job_images(pipeline.provider, store, job)
         items: list[dict[str, Any]] = []
         instruction = str(payload["instruction"])
         previous_proposals = dict(payload.get("previous_proposals", {}))
@@ -2636,6 +2683,7 @@ def answer_knowledge_question(job_id: str) -> dict[str, Any]:
             job = store.claim_job(connection, parsed_job_id, stage="context.prepared")
         if job is None:
             return {"job_id": job_id, "status": "duplicate_ignored"}
+        bind_job_images(provider, store, job)
         context = _context_payload(store, job, embedding_provider)
         payload = job["input_payload"]
 
@@ -3058,7 +3106,19 @@ def index_knowledge_source(source_id: str) -> dict[str, Any]:
                         error_code=None,
                     )
                 path = Path(settings.knowledge_storage_path) / document["storage_key"]
-                blocks = parse_document(path, document["mime_type"])
+                if (source["persistence"] == "temporary"
+                        and document["mime_type"].startswith("image/")):
+                    from PIL import Image
+
+                    from casepilot_agent.knowledge import ParsedBlock
+                    with Image.open(path) as image:
+                        image.verify()
+                    blocks = [ParsedBlock(
+                        content=f"图片附件：{document['original_name']}（请依据随请求提供的原图分析）",
+                        locator="image",
+                    )]
+                else:
+                    blocks = parse_document(path, document["mime_type"])
                 if not blocks or not any(block.content.strip() for block in blocks):
                     raise DocumentTextUnavailable("document_contains_no_extractable_text")
                 if path.suffix.lower() in {".xlsx", ".xls"}:

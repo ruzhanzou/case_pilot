@@ -60,6 +60,13 @@ class Settings(BaseSettings):
         default="ark-code-latest",
         validation_alias="CASEPILOT_AGENT_LOCAL_MODEL",
     )
+    image_models: str = Field(default="", validation_alias="CASEPILOT_AGENT_IMAGE_MODELS")
+    image_max_total_bytes: int = Field(
+        default=25 * 1024 * 1024,
+        gt=0,
+        validation_alias="CASEPILOT_AGENT_MAX_IMAGE_BYTES",
+    )
+
     agent_models: str = Field(
         default="",
         validation_alias="CASEPILOT_AGENT_MODELS",

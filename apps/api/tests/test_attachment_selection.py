@@ -106,3 +106,63 @@ def test_detaching_file_excludes_whole_source_but_keeps_selected_siblings(
     assert conversation.context["excluded_document_ids"] == [str(doc_id)]
     assert conversation.context["excluded_source_ids"] == [str(source_id)]
     db.delete.assert_not_called()
+
+
+@pytest.mark.parametrize('supported', [False, True])
+def test_image_send_requires_configured_image_model(monkeypatch, supported):
+    from casepilot_api import conversations
+    doc_id, source_id = uuid4(), uuid4()
+    db = Mock()
+    db.scalars.return_value = [SimpleNamespace(
+        id=doc_id, source_id=source_id, mime_type='image/png', size_bytes=1024
+    )]
+    monkeypatch.setattr(conversations, 'settings', SimpleNamespace(
+        ai_mode='live', agent_provider='openai_compatible',
+        image_models='vision' if supported else '', image_max_total_bytes=2048,
+        resolve_agent_model=lambda _: 'vision'))
+    payload = ConversationMessageCreate(content='解释截图', document_ids=[doc_id], model_id='vision')
+    conversation = SimpleNamespace(space_id=uuid4(), context={})
+    if supported:
+        assert _resolve_turn_attachments(db, conversation, payload).document_ids == [doc_id]
+    else:
+        with pytest.raises(HTTPException) as error:
+            _resolve_turn_attachments(db, conversation, payload)
+        assert error.value.status_code == 422
+        assert '不支持图片' in error.value.detail
+
+
+def test_image_send_rejects_oversized_combined_payload(monkeypatch):
+    from casepilot_api import conversations
+
+    document_ids = [uuid4(), uuid4()]
+    source_id = uuid4()
+    db = Mock()
+    db.scalars.return_value = [
+        SimpleNamespace(
+            id=document_id,
+            source_id=source_id,
+            mime_type="image/jpeg",
+            size_bytes=600,
+        )
+        for document_id in document_ids
+    ]
+    monkeypatch.setattr(
+        conversations,
+        "settings",
+        SimpleNamespace(
+            ai_mode="live",
+            agent_provider="openai_compatible",
+            image_models="vision",
+            image_max_total_bytes=1024,
+            resolve_agent_model=lambda _: "vision",
+        ),
+    )
+    payload = ConversationMessageCreate(
+        content="比较截图", document_ids=document_ids, model_id="vision"
+    )
+    with pytest.raises(HTTPException) as error:
+        _resolve_turn_attachments(
+            db, SimpleNamespace(space_id=uuid4(), context={}), payload
+        )
+    assert error.value.status_code == 422
+    assert "总大小" in error.value.detail

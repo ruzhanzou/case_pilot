@@ -1,5 +1,6 @@
 "use client";
 
+import { attachmentAccept, clipboardImages, isImageAttachment } from "@/lib/image-attachments";
 import { CaseSource, type AssetProvenance } from "@/components/workspace-case-sources";
 import { CompactModificationConfirmation } from "@/components/compact-modification-confirmation";
 import { GenerationAssets } from "@/components/generation-assets";
@@ -96,7 +97,6 @@ import {
 import {
   Activity,
   type CSSProperties,
-  type ChangeEvent,
   type FormEvent,
   type PointerEvent as ReactPointerEvent,
   useCallback,
@@ -341,7 +341,7 @@ export function CaseWorkbench({
   const restoredDraftConversationRef = useRef("");
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const [modelId, setModelId] = useState<AgentModelId>("auto");
-  const [models, setModels] = useState<{ id: string; label: string }[]>([]);
+  const [models, setModels] = useState<{ id: string; label: string; supports_images?: boolean }[]>([]);
   const [viewMode, setViewMode] = useState<"list" | "map" | "plan" | "files">("plan");
   // Mount the graph on first use, then retain layout, zoom and measured nodes.
   // Activity pauses its effects while another result view is visible.
@@ -948,7 +948,7 @@ export function CaseWorkbench({
     void listGenerationModels()
       .then((result) => {
         setModels(
-          result.models.map((item) => ({ id: item.id, label: item.label })),
+          result.models.map((item) => ({ id: item.id, label: item.label, supports_images: item.supports_images })),
         );
         setModelId((current) =>
           current === "auto" ? result.default_model_id : current,
@@ -1091,9 +1091,8 @@ export function CaseWorkbench({
     } finally { setUploading(false); }
   };
 
-  const handleFiles = async (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []);
-    event.target.value = "";
+  const handleFiles = async (files: File[]) => {
+    if (uploading || conversationRunning) return;
     if (!files.length || !spaceId || !workspace) return;
     setUploading(true);
     setError("");
@@ -1274,16 +1273,22 @@ export function CaseWorkbench({
     finally { setBusy(false); }
   };
 
+  const pendingImages = (workspace?.context.pending_attachments ?? []) as {name: string}[];
+  const inheritedImages = (workspace?.messages ?? []).flatMap(message => Array.isArray(message.metadata.attachments) ? message.metadata.attachments : []).filter((file: {id: string; status: string}) => file.status === "ready" && ((workspace?.context.document_ids ?? []) as string[]).includes(file.id));
+  const hasImages = pendingImages.some(isImageAttachment) || inheritedImages.some(isImageAttachment) || attachments.some(isImageAttachment);
+  const hasPendingImage = pendingImages.some(isImageAttachment);
+  const imageBlocked = hasImages && !models.find(model => model.id === modelId)?.supports_images;
+
   const submitMessage = async (event: FormEvent) => {
     event.preventDefault();
     if (
       !workspace ||
-      conversationRunning ||
-      (!effectivePendingOperationId && !prompt.trim()) ||
-      (effectivePendingOperationId && !selectedTargets.length && !prompt.trim())
+      uploading || imageBlocked || conversationRunning ||
+      (!effectivePendingOperationId && !prompt.trim() && !hasPendingImage) ||
+      (effectivePendingOperationId && !selectedTargets.length && !prompt.trim() && !hasPendingImage)
     ) return;
     setPlanMessageId("");
-    const content = prompt.trim();
+    const content = prompt.trim() || (hasPendingImage ? pick("Please analyze the attached image.", "请分析附件中的图片。") : "");
     // Explicit UI selections are context; the server model resolves the request.
     const structuredTargets = selectedTargets.map((item) => item.target);
     const refinementSourceId = refineSourceId;
@@ -2352,7 +2357,12 @@ export function CaseWorkbench({
             <span>{runningLabel}{progress?.active_batches?.length ? pick(` · Processing ${progress.active_batches.length} batches`, ` · 同时处理 ${progress.active_batches.length} 批`) : progress?.batch_start_index && progress?.batch_count ? pick(` · Current batch: cases ${progress.batch_start_index}–${progress.batch_start_index + progress.batch_count - 1}`, ` · 当前批次：第 ${progress.batch_start_index}–${progress.batch_start_index + progress.batch_count - 1} 条`) : ""}{progress && pendingMessage === null ? ` · ${progress.progress}%` : ""} · {pick(`Elapsed ${runningSeconds}s`, `已等待 ${runningSeconds} 秒`)}</span>
           </div>}
           {refineSourceId && <p role="status">{pick("Refining the selected result; earlier edits will be preserved.", "正在继续调整所选结果；未要求改变的已有修改将保留。")} <button type="button" onClick={() => setRefineSourceId("")}>{pick("Cancel", "取消续改")}</button></p>}
+          {imageBlocked && <p role="alert">{pick(
+            "The selected model cannot read images. Switch models or remove the image before sending.",
+            "当前模型不支持图片，请切换支持图片的模型或移除图片附件后发送。",
+          )}</p>}
           <textarea
+            onPaste={event => { const files = clipboardImages(event.clipboardData); if (files.length) { event.preventDefault(); void handleFiles(files); } }}
             ref={promptRef}
             value={prompt}
             onChange={(event) => editPrompt(event.target.value)}
@@ -2383,10 +2393,10 @@ export function CaseWorkbench({
               ref={fileRef}
               hidden
               type="file"
-              accept=".pdf,.txt,.xlsx,.xls,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+              accept={attachmentAccept}
               multiple
               disabled={uploading || conversationRunning || !workspace || !spaceId}
-              onChange={(event) => void handleFiles(event)}
+              onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void handleFiles(files); }}
             />
             <button
               type="button"
@@ -2445,11 +2455,11 @@ export function CaseWorkbench({
               <button
                 type="submit"
                 disabled={
-                  conversationRunning || uploading ||
+                  conversationRunning || uploading || imageBlocked ||
                   !workspace ||
                   (effectivePendingOperationId
-                    ? !selectedTargets.length && !prompt.trim()
-                    : !prompt.trim())
+                    ? !selectedTargets.length && !prompt.trim() && !hasPendingImage
+                    : !prompt.trim() && !hasPendingImage)
                 }
               >
                 <Send size={16} /> {effectivePendingOperationId

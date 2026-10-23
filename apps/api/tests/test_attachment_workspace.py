@@ -28,6 +28,7 @@ def test_upload_stays_pending_until_a_later_user_message_is_sent():
     document = SimpleNamespace(
         id=uuid4(),
         original_name="登录.txt",
+        mime_type="text/plain",
         size_bytes=1024,
         status="ready",
         created_at=now,
@@ -37,6 +38,7 @@ def test_upload_stays_pending_until_a_later_user_message_is_sent():
     pending = []
     assert conversations._messages_with_attachments(db, conversation, [], pending) == []
     assert pending[0]["name"] == "登录.txt"
+    assert pending[0]["mime_type"] == "text/plain"
 
     def message(role, created_at):
         return SimpleNamespace(
@@ -81,7 +83,7 @@ def test_upload_stays_pending_until_a_later_user_message_is_sent():
 
 def test_expired_attachment_is_not_presented_as_ready():
     now = datetime.now(UTC)
-    document = SimpleNamespace(id=uuid4(), original_name='旧需求.pdf', size_bytes=1024,
+    document = SimpleNamespace(id=uuid4(), original_name='旧需求.pdf', mime_type='application/pdf', size_bytes=1024,
         status='ready', created_at=now - timedelta(days=8), expires_at=now - timedelta(days=1))
     conversation = SimpleNamespace(space_id=uuid4(), context={'document_ids': [str(document.id)]})
     pending = []
@@ -93,7 +95,7 @@ def test_expired_attachment_is_not_presented_as_ready():
 
 
 def test_failed_attachment_reason_survives_conversation_projection():
-    document = SimpleNamespace(id=uuid4(), original_name='扫描.pdf', size_bytes=1024,
+    document = SimpleNamespace(id=uuid4(), original_name='扫描.pdf', mime_type='application/pdf', size_bytes=1024,
         status='failed', error_code='DocumentOcrUnavailable', created_at=datetime.now(UTC), expires_at=None)
     conversation = SimpleNamespace(space_id=uuid4(), context={'document_ids': [str(document.id)]})
     pending = []
