@@ -21,12 +21,13 @@ test('negative reuse clause followed by explicit Excel search respects selected 
    await page.locator('.principle-composer button[type=submit]').click();const r=await response;expect(r.ok(),await r.text()).toBeTruthy();const value=await r.json();evidence.turns.push({content,result:value});return value;
   };
   const waitJob=async(job:string)=>{let state:any;await expect.poll(async()=>{state=await get(`/conversations/${cid}`);const run=state.workflow_runs.find((r:any)=>r.job_id===job);if(run?.status==='failed')throw Error(JSON.stringify(run));return run?.status;},{timeout:360000,intervals:[1000,2000]}).toBe('completed');return state;};
-  const first=await chat('测试对象：星桥验证码登录系统。全新生成，不搜索或复用历史。严格2个测试点，每点1条：R1 验证码签发后经过时间达到300秒即过期，登录失败返回E731；R2 连续输错验证码达到4次锁定账号1140秒，锁定期间返回E419。环境提供签发验证码、推进服务端时钟、重置错误次数的测试接口；手机号13800000001已注册且启用。不得自行补充其他规则。先规划。');
+  const first=await chat('测试对象：星桥验证码登录系统。全新生成，不搜索或复用历史。严格2个测试点，每点1条：R1 测试开始前已成功为手机号13800000001签发验证码并记录签发时刻，签发后经过时间达到300秒即过期，登录失败返回E731；R1步骤不得重新签发验证码。R2 连续输错验证码达到4次锁定账号1140秒，锁定期间返回E419。环境提供推进服务端时钟、重置错误次数的测试接口；手机号13800000001已注册且启用。不得自行补充其他规则。先规划。');
   let state=await waitJob(first.action.job_id);expect(state.test_briefs.at(-1).content.planning.test_points).toHaveLength(2);
   const generated=await post(`/workspaces/${cid}/test-briefs/confirm`,{version:state.test_briefs.at(-1).version});state=await waitJob(generated.action.job_id);
   const before=state.candidates;evidence.before=before;expect(before).toHaveLength(2);
   const target=before.find((c:any)=>JSON.stringify(c.snapshot.steps).includes('E731'));expect(target).toBeTruthy();
   expect(JSON.stringify(target.snapshot)).toMatch(/300|5\s*分钟/);expect(JSON.stringify(before)).toContain('E419');
+  expect(target.snapshot.preconditions.join('\n')).toMatch(/已.*签发|签发.*完成/);
   expect((await get(`/collections/${collection.id}/test-cases`))).toHaveLength(0);
   const workbook=XLSX.utils.book_new();XLSX.utils.book_append_sheet(workbook,XLSX.utils.aoa_to_sheet([
    ['用例编号','用例名称','模块','优先级','前置条件','测试步骤','预期结果'],
@@ -52,6 +53,8 @@ test('negative reuse clause followed by explicit Excel search respects selected 
   expect(proposal.title).toBe(target.snapshot.title);expect(proposal.priority).toBe(target.snapshot.priority);expect(proposal.preconditions).toEqual(target.snapshot.preconditions);
   expect(proposal.steps.map((s:any)=>s.expected).filter(Boolean)).toEqual(target.snapshot.steps.map((s:any)=>s.expected).filter(Boolean));
   const text=JSON.stringify({preconditions:proposal.preconditions,steps:proposal.steps});expect(text).toMatch(/300|5\s*分钟/);expect(text).not.toMatch(/420|7\s*分钟|PAY-EXPIRED/);
+  const actions=proposal.steps.map((s:any)=>s.action).join('\n');expect(actions).not.toMatch(/调用.{0,12}签发接口|重新签发|再次签发|获取验证码/);
+  const trigger=proposal.steps.find((s:any)=>s.expected?.includes('E731'));expect(trigger?.action).toMatch(/300|5\s*分钟/);
   expect(JSON.stringify(proposal.source_refs)).toContain('旧版用例.xlsx');expect(JSON.stringify(proposal.source_refs)).toContain('OLD-001');
   expect((await get(`/conversations/${cid}`)).candidates).toEqual(before);
   await page.reload();const review=page.locator('.collection-changes__review');const apply=page.waitForResponse(r=>r.url().endsWith('/apply')&&r.request().method()==='POST');await review.getByRole('button',{name:/一键采纳全部待审阅用例/}).click();expect((await apply).ok()).toBeTruthy();

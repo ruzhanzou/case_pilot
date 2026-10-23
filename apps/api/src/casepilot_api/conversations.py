@@ -4348,9 +4348,16 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
         if source_operation.status not in {"completed", "awaiting_confirmation"}:
             raise HTTPException(status_code=409, detail="source_task_not_ready")
     strategy = generation_strategy_from_text(payload.content)
-    payload = payload.model_copy(update={"generation_strategy": strategy,
-        **({"intent_override": "CASE_GENERATE"} if strategy != "generate" else
-           {"intent_override": "KNOWLEDGE_QA"} if is_strategy_question(payload.content) else {})})
+    strategy_update = {"generation_strategy": strategy}
+    if not payload.intent_override:
+        strategy_update.update(
+            {"intent_override": "CASE_GENERATE"}
+            if strategy != "generate"
+            else {"intent_override": "KNOWLEDGE_QA"}
+            if is_strategy_question(payload.content)
+            else {}
+        )
+    payload = payload.model_copy(update=strategy_update)
     payload = _resolve_turn_attachments(db, conversation, payload)
     if not settings.is_agent_model_allowed(payload.model_id):
         raise HTTPException(status_code=422, detail="generation_model_not_configured")

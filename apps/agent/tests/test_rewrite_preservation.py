@@ -264,6 +264,66 @@ def test_reference_retry_changes_actions_preserves_expected_and_point_links():
     assert not request.test_case.source_refs
 
 
+def boundary_reference_request():
+    case = RewriteCaseDraft.model_validate({
+        **original().model_dump(mode="json"),
+        "preconditions": ["手机号已注册", "已成功为该手机号签发验证码"],
+        "steps": [
+            {
+                "action": "推进服务端时钟，使签发后经过时间恰好达到300秒",
+                "expected": "服务端时间成功推进至目标时刻",
+            },
+            {"action": "使用该验证码发起登录请求", "expected": "登录失败，返回E731"},
+        ],
+    })
+    return RewriteRequest(
+        test_case=case,
+        instruction="参考Excel只改写操作步骤，当前仍是300秒即过期，预期结果保持不变",
+        context={"approved_reference_assets": [{"key": "excel:book:2", "kind": "excel"}]},
+    )
+
+
+def test_reference_rewrite_rejects_repeating_completed_setup_and_missing_trigger_boundary():
+    request = boundary_reference_request()
+    invalid = {"step_updates": [
+        {"step_index": 0, "action": "调用签发接口获取验证码；推进服务端时钟至300秒"},
+    ]}
+    repaired = {"step_updates": [
+        {"step_index": 0, "action": "记录已有验证码的签发时刻；推进服务端时钟至恰好300秒"},
+        {"step_index": 1, "action": "使用签发后恰好满300秒的验证码发起登录请求"},
+    ]}
+    provider = Provider(invalid, repaired)
+    result = GenerationPipeline(provider).rewrite_many({"one": request})["one"]
+    feedback = provider.calls[1]["validation_feedback"]["one"]
+    assert "前置条件已声明签发验证码完成" in feedback
+    assert "关键边界必须同时写入触发预期结果的操作" in feedback
+    assert result.quality.passed
+    assert "调用签发接口" not in "\n".join(step.action for step in result.proposed.steps)
+    assert "300秒" in result.proposed.steps[1].action
+
+
+def test_reference_rewrite_allows_explicitly_requested_setup_reexecution():
+    request = boundary_reference_request().model_copy(update={
+        "instruction": "参考Excel只改写操作步骤，先重新签发验证码，再按300秒边界登录，预期结果保持不变",
+    })
+    result = GenerationPipeline(Provider({"step_updates": [
+        {"step_index": 0, "action": "重新签发验证码并推进服务端时钟至300秒"},
+        {"step_index": 1, "action": "使用签发后满300秒的验证码发起登录请求"},
+    ]})).rewrite_many({"one": request})["one"]
+    assert result.quality.passed
+
+
+def test_reference_rewrite_completes_boundary_on_business_result_action():
+    request = boundary_reference_request()
+    result = GenerationPipeline(Provider({"step_updates": [
+        {"step_index": 0, "action": "记录已有验证码签发时刻并推进服务端时钟至300秒"},
+    ]})).rewrite_many({"one": request})["one"]
+    assert result.quality.passed
+    assert result.quality.repair_rounds == 0
+    assert result.proposed.steps[1].action.startswith("在300秒边界条件下，")
+    assert result.proposed.steps[1].expected == request.test_case.steps[1].expected
+
+
 def test_reference_title_rewrite_does_not_require_step_changes():
     request = reference_request().model_copy(update={
         "instruction": "参考Excel优化标题，步骤保持不变"})

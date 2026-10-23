@@ -21,12 +21,13 @@ test('confirmed Excel reference changes existing candidate actions and retains b
   expect(before.every((c:any)=>c.status==='candidate')).toBe(true);
   const target=before.find((c:any)=>JSON.stringify(c.snapshot.steps).includes('E731'));expect(target).toBeTruthy();
   expect(JSON.stringify(target.snapshot)).toMatch(/300|5\s*分钟/);expect(JSON.stringify(before)).toContain('E419');
+  expect(target.snapshot.preconditions.join('\n')).toMatch(/已.*签发|签发.*完成/);
   expect((await get(`/collections/${collection.id}/test-cases`))).toHaveLength(0);
   const previous=state.operation_plan.operations.find((o:any)=>o.intent==='CASE_MODIFY'&&o.payload.asset_reference_sources?.length);
   expect(previous).toBeTruthy();
   evidence.confirmedSources=previous.payload.asset_reference_sources;
   expect(evidence.confirmedSources.map((source:any)=>source.snapshot.original_id)).toEqual(['OLD-001']);
-  const turn=await post(`/conversations/${cid}/messages`,{content:previous.payload.instruction.replace('查找刚上传Excel里的已有用例作为参考，','继续按已确认的参考修改，'),source_operation_id:previous.id,intent_override:'CASE_MODIFY'});
+  const turn=await post(`/conversations/${cid}/messages`,{content:`继续按已确认的Excel参考修改候选${target.ref}的步骤：当前规则仍为签发后恰好300秒即过期，不能沿用420秒；不要重新签发验证码；标题、优先级、前置条件和预期保持不变。`,source_operation_id:previous.id,intent_override:'CASE_MODIFY'});
   evidence.turns.push(turn);expect(turn.intent).toBe('CASE_MODIFY');
   state=await get(`/conversations/${cid}`);const op=state.operation_plan.operations.find((o:any)=>o.intent==='CASE_MODIFY'&&o.status==='awaiting_target');
   expect(op).toBeTruthy();expect(op.payload.asset_reference_sources).toEqual(previous.payload.asset_reference_sources);
@@ -37,8 +38,10 @@ test('confirmed Excel reference changes existing candidate actions and retains b
   expect(proposal.steps.map((s:any)=>s.action)).not.toEqual(target.snapshot.steps.map((s:any)=>s.action));
   expect(change.items[0].field_diff.some((diff:any)=>diff.field==='steps')).toBe(true);
   const actions=proposal.steps.map((s:any)=>s.action).join('\n');
-  expect(actions).toMatch(/记录.*(?:签发|时刻|时间)|(?:签发|时刻|时间).*记录/);
+  expect(actions).toMatch(/签发后.{0,16}(?:300|5\s*分钟)/);
   expect(actions).toMatch(/300|5\s*分钟/);
+  expect(actions).not.toMatch(/调用.{0,12}签发接口|重新签发|再次签发|获取验证码/);
+  const trigger=proposal.steps.find((s:any)=>s.expected?.includes('E731'));expect(trigger?.action).toMatch(/300|5\s*分钟/);
   expect(proposal.title).toBe(target.snapshot.title);expect(proposal.priority).toBe(target.snapshot.priority);expect(proposal.preconditions).toEqual(target.snapshot.preconditions);
   expect(proposal.steps.map((s:any)=>s.expected).filter(Boolean)).toEqual(target.snapshot.steps.map((s:any)=>s.expected).filter(Boolean));
   const text=JSON.stringify({preconditions:proposal.preconditions,steps:proposal.steps});expect(text).toMatch(/300|5\s*分钟/);expect(text).not.toMatch(/420|7\s*分钟|PAY-EXPIRED/);

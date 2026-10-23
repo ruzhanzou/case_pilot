@@ -220,6 +220,25 @@ async def test_missing_direction_is_resolved_by_followup_without_asking_again(dr
 
 
 @pytest.mark.asyncio
+async def test_explicit_modify_override_wins_over_reference_strategy(draft):
+    client, workspace, oid, cases, _ = draft
+    assert (await client.post(f"/api/v1/conversation-operations/{oid}/cancel")).status_code == 200
+    started = await client.post(
+        f"/api/v1/conversations/{workspace}/messages",
+        json={
+            "content": "不要改标题，参考已有资产修改步骤",
+            "intent_override": "CASE_MODIFY",
+            "target_case_ids": [cases[0]["id"]],
+        },
+    )
+    assert started.status_code == 202, started.text
+    body = started.json()
+    assert body["intent"] == "CASE_MODIFY"
+    assert body["user_message"]["metadata"]["request"]["intent_override"] == "CASE_MODIFY"
+    assert body["user_message"]["metadata"]["request"]["generation_strategy"] == "select_and_generate"
+
+
+@pytest.mark.asyncio
 async def test_direction_question_persists_inferred_scope_before_short_reply(draft, monkeypatch):
     client, workspace, oid, cases, dispatched = draft
     from casepilot_api.models import Conversation, ConversationMessage
