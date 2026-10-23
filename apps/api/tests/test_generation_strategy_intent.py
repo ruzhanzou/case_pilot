@@ -24,6 +24,7 @@ from casepilot_api.generation_strategy import generation_strategy_from_text, is_
         ("请总结：```select```", "generate"),
         ("请翻译“使用 select”", "generate"),
         ("策略：select，但不要复用", "generate"),
+        ("新增发票管理模块并生成10条候选用例，现有用例和其他模块不得改写或删除", "generate"),
     ],
 )
 def test_only_explicit_unambiguous_strategy_directives_enable_reuse(text, expected):

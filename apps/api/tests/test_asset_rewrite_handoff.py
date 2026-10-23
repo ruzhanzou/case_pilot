@@ -194,3 +194,52 @@ async def test_explicit_asset_request_cancels_running_job_before_starting_follow
             assert new.input_payload['generation_strategy'] == 'select_and_generate'
             assert new.input_payload['predecessor_job_id'] == str(old_id)
             assert db.get(Conversation, UUID(cid)).context['active_job_id'] == str(new_id)
+
+
+@pytest.mark.asyncio
+async def test_new_module_guard_does_not_inherit_asset_rewrite_mode(monkeypatch):
+    monkeypatch.setattr(conversations.settings, "agent_provider", "mock")
+    monkeypatch.setattr(conversations, "enqueue_task", lambda *a, **k: None)
+    scope_intents = []
+    resolve_scope = conversations._resolve_action_scope
+
+    def capture_scope(db, conversation, payload, intent, *args, **kwargs):
+        scope_intents.append(intent)
+        return resolve_scope(db, conversation, payload, intent, *args, **kwargs)
+
+    monkeypatch.setattr(conversations, "_resolve_action_scope", capture_scope)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async def post(route, data):
+            response = await client.post("/api/v1" + route, json=data)
+            assert response.status_code in {200, 201, 202}, response.text
+            return response.json()
+
+        user = await post("/auth/register", {
+            "email": f"new-module-{uuid4().hex}@casepilot.test",
+            "password": "CasePilot123!", "display_name": "New module",
+        })
+        space = user["spaces"][0]["id"]
+        collection = await post(f"/spaces/{space}/collections", {"name": "Existing suite"})
+        await post(f"/collections/{collection['id']}/test-cases", {
+            "title": "Existing login", "module": "Login", "priority": "P1",
+            "case_type": "functional", "preconditions": [],
+            "steps": [{"action": "Login", "expected": "Success"}],
+        })
+        workspace = await post("/conversations", {
+            "collection_id": collection["id"], "title": "Add invoice module",
+        })
+        turn = await post(f"/conversations/{workspace['id']}/messages", {
+            "content": (
+                "新增「发票管理」模块，并生成恰好10条新的候选用例。"
+                "现有用例和其他模块不得改写或删除，先生成候选供我审阅。"
+            ),
+            # Simulate stale UI state from an earlier asset-reuse turn.
+            "generation_strategy": "select_and_generate",
+        })
+        assert scope_intents == ["CASE_GENERATE"]
+        assert turn["assistant_message"]["status"] != "awaiting_clarification"
+        with get_session_factory()() as db:
+            job = db.get(GenerationJob, UUID(turn["action"]["job_id"]))
+            assert job.input_payload["generation_strategy"] == "generate"
+            assert job.input_payload["target_module_path"] == "发票管理"
+            assert job.input_payload["target_module_exact"] is True

@@ -85,6 +85,24 @@ from casepilot_agent.store import (
 )
 
 settings = get_settings()
+
+
+def constrain_generated_modules(
+    candidates: list[dict[str, Any]], target_module: str, *, exact: bool = False
+) -> None:
+    """Keep generated cases inside the requested module boundary."""
+    target_module = target_module.strip("/")
+    if not target_module:
+        return
+    for candidate in candidates:
+        proposed_module = str(candidate.get("module") or "").strip("/")
+        if exact or (
+            proposed_module != target_module
+            and not proposed_module.startswith(target_module + "/")
+        ):
+            candidate["module"] = target_module
+
+
 celery_app = Celery(
     "casepilot-agent",
     broker=settings.celery_broker_url,
@@ -1877,12 +1895,9 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
                     return
                 snapshots = [draft.model_dump(mode="json") for draft in drafts]
                 target_module = str(payload.get("target_module_path") or "").strip("/")
-                if target_module:
-                    for draft in snapshots:
-                        if draft["module"] != target_module and not draft["module"].startswith(
-                            target_module + "/"
-                        ):
-                            draft["module"] = target_module
+                constrain_generated_modules(
+                    snapshots, target_module, exact=bool(payload.get("target_module_exact"))
+                )
                 with store.connection() as connection:
                     lock_active_job(store, connection, parsed_job_id)
                     persistence_started = monotonic()
@@ -1931,12 +1946,10 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
         output = result.model_dump(mode="json")
         target_module_path = str(payload.get("target_module_path") or "").strip("/")
         if target_module_path and not store.is_integration_generation(job):
-            for candidate in output["test_cases"]:
-                proposed_module = str(candidate.get("module") or "").strip("/")
-                if proposed_module != target_module_path and not proposed_module.startswith(
-                    target_module_path + "/"
-                ):
-                    candidate["module"] = target_module_path
+            constrain_generated_modules(
+                output["test_cases"], target_module_path,
+                exact=bool(payload.get("target_module_exact")),
+            )
         quality_input = {
             "feature_points": output["feature_points"],
             "test_points": output["test_points"],

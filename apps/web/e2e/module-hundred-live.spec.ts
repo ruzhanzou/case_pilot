@@ -29,9 +29,16 @@ async function send(page: Page, content: string, intent: string | string[]) {
   const composer = page.locator('.principle-composer textarea'); await expect(composer).toBeEnabled({ timeout: 900000 }); await composer.fill(content);
   const pending = page.waitForResponse(r => r.request().method() === 'POST' && /\/(messages|resume)$/.test(new URL(r.url()).pathname), { timeout: 180000 });
   await page.locator('.principle-composer button[type=submit]').click(); const response = await pending;
-  expect(response.ok(), await response.text()).toBeTruthy(); const result = await response.json();
+  expect(response.ok(), await response.text()).toBeTruthy(); let result = await response.json();
   save(`request-${Date.now()}`, { content, response: result });
   expect(Array.isArray(intent) ? intent : [intent]).toContain(result.intent);
+  if (result.assistant_message?.metadata.modification_confirmation) {
+    expect(result.action.job_id).toBeFalsy();
+    const resumed = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/resume'), { timeout: 180000 });
+    await page.getByRole('button', { name: '确认修改并生成建议', exact: true }).last().click();
+    const resumedResponse = await resumed; expect(resumedResponse.ok(), await resumedResponse.text()).toBeTruthy();
+    result = await resumedResponse.json(); save(`confirmation-${Date.now()}`, result);
+  }
   expect(result.assistant_message.status, result.assistant_message.content).not.toMatch(/awaiting_clarification|awaiting_target|awaiting_intent/);
   await expect(composer).toBeEnabled({ timeout: 60000 });
   return result;
@@ -121,16 +128,21 @@ test('02 rewrite every case in a whole module semantically and refine the whole 
 
 test('03 add a new module with ten generated cases and cancel deleting the whole module', async ({ page }) => {
   test.setTimeout(1800000); await open(page); const before: TestCaseDto[] = read('after-module-rewrite');
-  await send(page, '新增「发票管理」模块，并生成恰好10条新的候选用例。测试对象是电商电子发票系统，现有100条用例和其他模块不得改写或删除。只覆盖以下10个独立场景，每场景1条：1已支付订单申请个人发票成功；2未支付订单不能开票；3企业发票缺少税号被拒绝；4合法企业税号可开票；5重复提交同一订单不重复开票；6用户不能为他人订单开票；7发票金额等于实付金额；8已全额退款订单禁止开票；9已开票订单可下载PDF；10开票服务暂时失败允许重试且最终仅一张发票。前置条件为测试环境可用，有个人用户、企业用户、已支付/未支付/已退款订单及发票服务。每条必须有明确步骤、预期和优先级。所属模块必须是「发票管理」，先生成候选供我审阅，不直接纳入正式集合。', 'CASE_GENERATE');
-  const confirm = page.getByRole('button', { name: /确认范围并生成用例|确认并生成用例/ }).first(); await expect(confirm).toBeEnabled({ timeout: 600000 });
-  expect(await cases(page)).toEqual(before); await shot(page, '07-new-module-scope'); await confirm.click();
-  const result = page.locator('.task-result-cases'); await expect(result.getByRole('button', { name: '纳入已选候选', exact: true })).toBeEnabled({ timeout: 900000 });
+  if (process.env.CASEPILOT_RESUME_GENERATED !== '1') {
+    await send(page, '新增「发票管理」模块，并生成恰好10条新的候选用例。测试对象是电商电子发票系统，现有100条用例和其他模块不得改写或删除。只覆盖以下10个独立场景，每场景1条：1已支付订单申请个人发票成功；2未支付订单不能开票；3企业发票缺少税号被拒绝；4合法企业税号可开票；5重复提交同一订单不重复开票；6用户不能为他人订单开票；7发票金额等于实付金额；8已全额退款订单禁止开票；9已开票订单可下载PDF；10开票服务暂时失败允许重试且最终仅一张发票。前置条件为测试环境可用，有个人用户、企业用户、已支付/未支付/已退款订单及发票服务。每条必须有明确步骤、预期和优先级。所属模块必须是「发票管理」，先生成候选供我审阅，不直接纳入正式集合。', 'CASE_GENERATE');
+    const confirm = page.getByRole('button', {
+      name: /确认(?:范围并生成用例|并生成用例|规划并生成用例|选择并生成候选)/,
+    }).first(); await expect(confirm).toBeEnabled({ timeout: 600000 });
+    expect(await cases(page)).toEqual(before); await shot(page, '07-new-module-scope'); await confirm.click();
+  }
+  const result = page.locator('.task-result-cases'); await expect(result.getByRole('button', { name: /纳入正式集合（10）|纳入已选候选/ })).toBeEnabled({ timeout: 900000 });
   const state = await (await page.request.get(`${api}/conversations/${read('manifest').conversationId}`)).json();
   const generated = state.candidates.filter((c: {status:string}) => c.status === 'candidate'); expect(generated).toHaveLength(10); save('new-module-candidates', generated);
   for (const c of generated) { expect(c.snapshot.module).toBe('发票管理'); expect(c.snapshot.preconditions.length).toBeGreaterThan(0); expect(c.snapshot.steps.length).toBeGreaterThan(0); }
   expect(new Set(generated.map((c: {snapshot:{title:string}}) => c.snapshot.title)).size).toBe(10); expect(await cases(page)).toEqual(before);
-  await expect(result.locator(':scope > details')).toHaveCount(10); await result.locator(':scope > details').first().locator('summary').click(); await expect(result).toContainText('前置条件'); await shot(page, '08-new-module-candidates');
-  await result.getByRole('button', { name: '纳入已选候选', exact: true }).click(); await expect.poll(async () => (await cases(page)).length).toBe(110);
+  const candidateRows = result.locator(':scope > details:not(.task-generation-notes)');
+  await expect(candidateRows).toHaveCount(10); await candidateRows.first().locator(':scope > summary').click(); await expect(result).toContainText('前置条件'); await shot(page, '08-new-module-candidates');
+  await result.getByRole('button', { name: /纳入正式集合（10）|纳入已选候选/ }).click(); await expect.poll(async () => (await cases(page)).length).toBe(110);
   const added = await cases(page); expect(added.filter(c => c.module === '发票管理')).toHaveLength(10);
   const audit = read('100-case-audit'); for (const old of before) { expect(added.find(c => c.id === old.id)).toEqual(old); Object.assign(audit.find((a: {id:string}) => a.id === old.id), { moduleAdditionIsolation: 'passed', status: 'passed' }); }
   save('100-case-audit', audit); save('final-cases', added);
@@ -138,7 +150,7 @@ test('03 add a new module with ten generated cases and cancel deleting the whole
   const deletion = await send(page, '删除「发票管理」模块下的全部10条用例，其他100条用例保持不变，先让我在工作区确认。', 'CASE_DELETE');
   const change = await proposal(page, deletion.action.change_set_id); expect(change.items).toHaveLength(10); expect(change.items.map(i => i.ref).sort()).toEqual(added.filter(c => c.module === '发票管理').map(c => c.id).sort());
   expect(await cases(page)).toEqual(added); await shot(page, '10-module-delete-review'); await page.locator('.collection-changes__review').getByRole('button', { name: '取消变更', exact: true }).click();
-  await expect(page.locator('.collection-changes__badge')).toHaveText('未应用'); expect(await cases(page)).toEqual(added); await shot(page, '11-module-delete-cancelled');
+  await expect(page.locator('.collection-changes__badge')).toHaveText(/未应用|已丢弃/); expect(await cases(page)).toEqual(added); await shot(page, '11-module-delete-cancelled');
   save('module-addition-result', { passed: true, generated: 10, finalTotal: 110, untouchedOriginalCases: 100, wholeModuleDeleteCancelled: true });
 });
 

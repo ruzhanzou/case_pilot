@@ -2034,19 +2034,28 @@ def _start_action(
     confirmed_targets: bool = False,
     confirm_modification: bool = False,
 ) -> tuple[ConversationMessage, dict[str, Any], str | None]:
+    instruction = user_message.content if user_message is not None else payload.content
+    if intent == "CASE_GENERATE":
+        # The instruction is authoritative for each turn. A strategy carried by
+        # the workspace can describe an earlier asset-reuse task and must not
+        # turn a fresh generation request into a rewrite of existing cases.
+        strategy = generation_strategy_from_text(instruction)
+        payload = payload.model_copy(update={"generation_strategy": strategy})
+    rewrite_instruction = re.sub(
+        r"(?:不要|无需|禁止|勿|不(?:得)?)(?:修改|改写|重写)[^，,。；;\n]*",
+        "",
+        instruction,
+    )
     asset_rewrite = (
         intent == "CASE_GENERATE" and payload.generation_strategy == "select_and_generate"
-        and bool(re.search(r"改写|修改|重写", user_message.content))
-        and not re.search(r"测试点|重新规划", user_message.content)
+        and bool(re.search(r"改写|修改|重写", rewrite_instruction))
+        and not re.search(r"测试点|重新规划", instruction)
         and bool(payload.targets or payload.target_case_ids or payload.target_candidate_snapshots
             or (conversation.collection_id and db.scalar(select(CollectionCaseMembership.test_case_id).where(
                 CollectionCaseMembership.collection_id == conversation.collection_id).limit(1)))
             or db.scalar(select(WorkspaceCandidate.id).where(WorkspaceCandidate.conversation_id == conversation.id,
                 WorkspaceCandidate.status == "candidate").limit(1)))
     )
-    if intent == "CASE_GENERATE":
-        strategy = generation_strategy_from_text(user_message.content)
-        payload = payload.model_copy(update={"generation_strategy": strategy})
     collection_gate = _collection_gate(
         db,
         conversation,
@@ -2608,11 +2617,13 @@ def _start_action(
                         "title", "module", "priority", "case_type", "tags", "preconditions", "steps", "source_refs")}}}
                 for case, revision in rows]
             input_payload["source_collection_ids"] = [str(value) for value in source_ids]
-        input_payload["target_module_path"] = requested_new_module(
+        explicit_new_module = requested_new_module(
             payload.content
-        ) or requested_new_module(user_message.content) or common_module_path(
+        ) or requested_new_module(instruction)
+        input_payload["target_module_path"] = explicit_new_module or common_module_path(
             [str(item["snapshot"].get("module") or "") for item in case_context]
         )
+        input_payload["target_module_exact"] = bool(explicit_new_module)
 
     if intent == "CASE_MODIFY" and not (
         payload.target_case_ids or payload.target_candidate_snapshots
@@ -2822,6 +2833,7 @@ def _start_action(
         context_update["active_operation_id"] = str(operation_id) if operation_id else None
     if intent == "CASE_GENERATE":
         context_update["generation_target_module_path"] = input_payload["target_module_path"]
+        context_update["generation_target_module_exact"] = input_payload["target_module_exact"]
         context_update.pop("pending_predecessor_job_id", None)
         context_update["generation_strategy"] = payload.generation_strategy
         context_update["generation_source_collection_ids"] = [str(value) for value in payload.source_collection_ids]
@@ -3534,6 +3546,9 @@ def confirm_test_brief(
             "confirmed_test_brief_version": brief.version,
             "target_module_path": str(
                 dict(conversation.context).get("generation_target_module_path") or ""
+            ),
+            "target_module_exact": bool(
+                dict(conversation.context).get("generation_target_module_exact", False)
             ),
             "conversation_operation_id": (
                 str(active_operation.id) if active_operation else None

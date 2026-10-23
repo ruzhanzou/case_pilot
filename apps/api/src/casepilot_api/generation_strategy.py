@@ -39,7 +39,11 @@ def _authorization_text(content: str) -> str:
             retained = []
             continue
         # These constraints describe how to use assets, not permission to search.
-        clause = re.sub(r"(?:不|不要|无需)(?:重新)?(?:生成|改写|修改)(?:新的|新用例)?", "", clause)
+        clause = re.sub(
+            r"(?:不要|无需|禁止|勿|不(?:得)?)(?:重新)?(?:生成|改写|修改)(?:新的|新用例)?",
+            "",
+            clause,
+        )
         retained.append(clause)
     return "，".join(retained)
 
@@ -86,7 +90,9 @@ def generation_strategy_from_text(content: str) -> str:
     if re.search(r"(?:复用|沿用)(?:已有|现有|原有)(?:的)?(?:会话|账号(?!系统)|token|连接|缓存)", text, re.I):
         return "generate"
     asset = r"(?:已有|现有|历史|原有|原来|以前|之前|过去|现成|旧(?:版|的)?用例|资产|用例库)"
-    action = r"(?:找|搜|查找|检索|参考|参照|借鉴|复用|选用|挑选|选择|只选|沿用)"
+    # “候选用例” contains the characters “选用”, but does not authorize
+    # selecting or reusing an existing asset.
+    action = r"(?:找|搜|查找|检索|参考|参照|借鉴|复用|(?<!候)选用|挑选|选择|只选|沿用)"
     explicit_search = _has_search_command(text)
     if not (
         explicit_search or re.search(action + r".{0,24}" + asset, text) or re.search(asset + r".{0,24}" + action, text)
