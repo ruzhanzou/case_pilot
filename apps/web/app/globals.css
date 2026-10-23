@@ -13862,13 +13862,44 @@ fieldset.principle-candidate-editor { border: 0; padding: 0; margin: 0; min-widt
 .collection-changes__actions select { max-width: 100%; border: 1px solid #dce4f0; border-radius: 6px; background: #fff; padding: 7px; font: inherit; }
 .generation-assets__collection { min-width: 0; border: 1px solid #dce4f0; border-radius: 8px; padding: 10px; margin: 8px 0; }
 .generation-assets__collection > div { padding: 8px 0; border-top: 1px solid #eef2f7; }
-.reuse-decision-overview { padding: 12px; margin: 10px 0; border: 1px solid #dce4f0; border-radius: 10px; }
-.reuse-decision-overview p { color: #64748b; font-size: 12px; margin: 6px 0; }
-.reuse-decision-filters { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
-.reuse-decision-overview button { border: 1px solid #dce4f0; background: white; border-radius: 6px; padding: 6px 9px; color: #3563cd; cursor: pointer; }
-.reuse-decision-filters button[aria-pressed="true"] { background: #edf3ff; border-color: #94b4fb; }
-.reuse-decision-rows { max-height: 280px; overflow: auto; }
-.reuse-decision-rows article { padding: 10px 0; border-top: 1px solid #eef2f7; }
-.reuse-decision-rows article > div { display: flex; justify-content: space-between; gap: 12px; }
-.reuse-decision-rows article span { white-space: nowrap; color: #3563cd; font-size: 12px; }
-.reuse-decision-rows small { display: block; margin-bottom: 6px; overflow-wrap: anywhere; }
+
+/* Keep the brief header in flow; long guidance and details scroll as one pane. */
+.principle-canvas > header { flex-shrink: 0; }
+.principle-brief { overflow-y: auto; }
+.principle-brief > * { flex-shrink: 0; }
+.principle-brief > .test-planning { flex: 1 0 auto; overflow: visible; }
+
+/* Execution puts the case first; secondary run metadata is available on demand. */
+.management-app:has(.execution-workspace--detail) .management-topbar {
+  min-height: 48px; height: auto; padding-block: 6px;
+}
+.management-app:has(.execution-workspace--detail) .management-topbar > div:first-child > span { display: none; }
+.execution-workspace--detail { padding-top: 8px; }
+.execution-workspace--detail .execution-header--detail {
+  flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding-bottom: 4px;
+}
+.execution-header__identity { display: flex; align-items: center; gap: 8px; flex: 1 1 300px; }
+.execution-header--detail .execution-back { flex: 0 0 30px; height: 30px; margin: 0; justify-content: center; border-radius: 6px; }
+.execution-header--detail .execution-back:hover { background: #eef3fa; }
+.execution-header--detail h1 { min-width: 0; margin: 0; font-size: 18px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.execution-run-status { flex-shrink: 0; padding: 2px 7px; border-radius: 5px; background: #edf3ff; color: #3563cd; font-size: 12px; }
+.execution-workspace--detail .execution-header__actions { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; width: auto; }
+.execution-workspace--detail .execution-header__actions > button { width: auto; min-height: 32px; padding: 5px 9px; }
+.execution-workspace--detail .execution-progress { flex: 0 1 170px; width: 170px; min-width: 150px; padding: 0; border: 0; gap: 3px; }
+.execution-workspace--detail .execution-progress strong { font-size: 14px; }
+.execution-workspace--detail .execution-progress__track { height: 3px; }
+.execution-run-info { position: relative; font-size: 12px; color: #475569; }
+.execution-run-info > summary { cursor: pointer; padding: 6px 8px; border: 1px solid var(--management-line); border-radius: 6px; }
+.execution-run-info > div { position: absolute; top: calc(100% + 6px); left: 0; z-index: 10; width: min(420px, calc(100vw - 120px)); max-height: 40dvh; overflow: auto; padding: 12px; border: 1px solid var(--management-line); border-radius: 8px; background: white; box-shadow: 0 6px 20px #17203320; overflow-wrap: anywhere; }
+.execution-run-info p { margin: 8px 0 0; }
+@media (max-width: 1400px), (max-height: 800px) {
+  .execution-workspace--detail .execution-case { padding-top: 12px; }
+  .execution-workspace--detail .execution-case__header { gap: 10px; padding-bottom: 12px; }
+  .execution-workspace--detail .execution-case__header h2 { font-size: 18px; line-height: 1.35; }
+  .execution-workspace--detail .execution-case__header p { margin-top: 5px; }
+}
+@media (max-width: 760px) {
+  .execution-workspace--detail .execution-header__actions { width: 100%; }
+  .execution-workspace--detail .execution-progress { flex: 1; }
+  .execution-header__identity { flex-basis: 100%; }
+}

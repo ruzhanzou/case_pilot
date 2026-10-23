@@ -2,7 +2,6 @@
 
 import { CaseSource, type AssetProvenance } from "@/components/workspace-case-sources";
 import { CompactModificationConfirmation } from "@/components/compact-modification-confirmation";
-import { ReuseDecisionOverview } from "@/components/reuse-decision-overview";
 import { GenerationAssets } from "@/components/generation-assets";
 import { candidateBrief } from "@/lib/candidate-planning";
 import { CandidatePointLinks } from "@/components/candidate-point-links";
@@ -2623,7 +2622,6 @@ export function CaseWorkbench({
               <summary>{pick("Generation strategy", "生成策略")} · {({fresh: pick("Fresh", "全新生成"), regression: pick("Regression", "回归补充"), change: pick("Change-based", "按变更生成")})[selectedBrief.content.planning.reuse.strategy]}</summary>
               <p>{pick("Inspect each test point to review the original case and choose reuse, regeneration, or exclusion. Confirm after reviewing your choices.", "点击测试点的「查看关联与复用依据」，检查历史用例，选择使用建议、重新生成或不纳入本次，再确认生成候选。")}</p>
             </details>}
-            {!!selectedBrief.content.planning?.test_points?.length && selectedBrief.content.planning.reuse && <ReuseDecisionOverview key={`${selectedBrief.version}`} planning={selectedBrief.content.planning} onInspect={id => { setPlanningFocusPointId(id); setBriefView("map"); requestAnimationFrame(() => document.querySelector<HTMLElement>(".test-planning-detail")?.scrollIntoView({ block: "nearest" })); }} />}
             {(!selectedBrief.content.planning?.test_points?.length || briefView === "text") && <div className="principle-brief-guidance">
               {pick("This is a read-only Markdown artifact. Use the CasePilot conversation on the left to make changes.", "这是一份只读 Markdown 产物。如需调整，请在左侧与 CasePilot 对话。")}
             </div>}

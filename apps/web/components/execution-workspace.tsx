@@ -974,10 +974,12 @@ export function ExecutionWorkspace({
       {view === "detail" && run && (
         <>
           <header className="execution-header execution-header--detail">
-            <div>
+            <div className="execution-header__identity">
               <button
                 type="button"
                 className="execution-back"
+                aria-label={pick("Back to runs", "返回任务列表")}
+                title={pick("Back to runs", "返回任务列表")}
                 onClick={() => {
                   if (!confirmDiscardRecordDraft()) return;
                   discardRecordDraft();
@@ -985,15 +987,10 @@ export function ExecutionWorkspace({
                   void refreshHistory();
                 }}
               >
-                <ArrowLeft size={15} /> {pick("Back to runs", "返回任务列表")}
+                <ArrowLeft size={17} />
               </button>
-              <span className="management-kicker">{pick("QA EXECUTION", "QA 执行任务")}</span>
-              <h1>{run.description}</h1>
-              <p>
-                {run.source_name} · {pick(`from ${run.source_collection_count} collections · ${run.records.length} cases`, `来自 ${run.source_collection_count} 个集合 · ${run.records.length} 条用例`)}
-                {" · "}{runStatusLabel[run.status] ?? run.status}
-                {" · "}{pick("Created by", "创建人")} {run.creator_name}
-              </p>
+              <h1 title={run.description}>{run.description}</h1>
+              <span className="execution-run-status">{runStatusLabel[run.status] ?? run.status}</span>
             </div>
             <div className="execution-header__actions">
               <ExcelExportButton
@@ -1028,23 +1025,22 @@ export function ExecutionWorkspace({
             </div>
           </header>
 
-          <section className="execution-collaborators">
-            <Users size={15} />
-            <strong>{pick("Participants", "参与成员")}</strong>
-            <span>
-              {run.assignee_names.join("、")}
-            </span>
-            <small>{pick("Multi-user updates sync every 5 seconds", "多人更新每 5 秒自动同步")}</small>
-          </section>
-
           <section className="execution-filters" aria-label={pick("Case filters", "用例筛选")}>
             <div className="execution-filters__toolbar">
-              <strong>{pick("Case filters", "用例筛选")}</strong>
-              <select aria-label={pick("Filter combination", "条件组合方式")} value={filterMode}
+              <details className="execution-run-info" key={run.id}>
+                <summary>{pick("Run details", "任务信息")}</summary>
+                <div>
+                  <strong>{run.description}</strong>
+                  <p>{run.source_name} · {pick(`from ${run.source_collection_count} collections · ${run.records.length} cases`, `来自 ${run.source_collection_count} 个集合 · ${run.records.length} 条用例`)}</p>
+                  <p>{pick("Created by", "创建人")}：{run.creator_name}</p>
+                  <p>{pick("Participants", "参与成员")}：{run.assignee_names.join("、")}</p>
+                </div>
+              </details>
+              {caseFilters.length > 1 && <select aria-label={pick("Filter combination", "条件组合方式")} value={filterMode}
                 onChange={(event) => setFilterMode(event.target.value as ExecutionFilterMode)}>
                 <option value="and">{pick("AND · Match all", "AND · 满足全部条件")}</option>
                 <option value="or">{pick("OR · Match any", "OR · 满足任一条件")}</option>
-              </select>
+              </select>}
               <button type="button" className="management-button" onClick={() => {
                 const id = nextFilterId.current++;
                 setCaseFilters((current) => [...current, { id, field: "title", operator: "contains", value: "" }]);
