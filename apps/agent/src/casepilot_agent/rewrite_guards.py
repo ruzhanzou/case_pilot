@@ -50,6 +50,42 @@ def contains_in_order(original, proposed) -> bool:
     return all(any(item == value for value in remaining) for item in original)
 
 
+def reference_rewrite_error(request, proposed) -> str | None:
+    """Confirmed reference rewrites must change content, not just citations."""
+    if not request.context.get("approved_reference_assets"):
+        return None
+    original = request.test_case
+    # Compare normalized text so whitespace-only edits do not satisfy the request.
+    def normalized(value):
+        if isinstance(value, str):
+            return re.sub(r"\s+", "", value)
+        if isinstance(value, list):
+            return [normalized(item) for item in value]
+        if isinstance(value, dict):
+            return {key: normalized(item) for key, item in value.items()}
+        return value
+
+    before, after = original.model_dump(), proposed.model_dump()
+    clauses = re.split(r"[，。；;\n]", request.instruction)
+    requests_actions = any(
+        re.search(r"(?:改写|重写|修改|优化|整理|完善|补充)[^，。；;\n]*步骤", clause)
+        and not re.search(r"不(?:要|得|能)?(?:改写|重写|修改)|禁止", clause)
+        for clause in clauses
+    ) and not preserves(request.instruction, r"(?:操作|执行)?步骤")
+    if requests_actions and normalized([s.action for s in original.steps]) == normalized(
+        [s.action for s in proposed.steps]
+    ):
+        return ("参考改写未改变操作步骤；请采用已确认参考中的相关操作细节，"
+                "遵循当前规则和保留约束，不能仅更新来源或空白。"
+                "比较基准是items.test_case，不能将参考旧值到候选已有值当作修改；"
+                "请补足参考中相关且当前操作尚未明确的细节，不要原样返回已有操作")
+    fields = ("title", "module", "priority", "case_type", "tags", "preconditions", "steps")
+    if all(normalized(before[field]) == normalized(after[field]) for field in fields):
+        return ("参考改写未产生实质内容变化；来源引用不算改写。"
+                "请按当前要求修改相关内容；没有适用变化时不要编造修改")
+    return None
+
+
 def preservation_error(request, proposed) -> str | None:
     original, instruction = request.test_case, request.instruction
     fields = {

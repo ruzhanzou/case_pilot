@@ -1633,13 +1633,8 @@ def _prepare_rewrite_requests(store, job, pipeline, requests):
             "asset_reference_instruction": "这些同测试对象资产已获用户授权，仅参考与本轮修改相关内容；当前修改要求优先，未要求修改的字段保留，不修改来源资产。"}
         references = [reuse_ref({"source": source, "action": "modify",
             "reason": "用户已确认的本轮改写参考范围"}) for source in sources]
-        for ref, request in list(pending.items()):
-            original_refs = list(request.test_case.source_refs)
-            existing_keys = {item.excerpt for item in original_refs}
-            draft = request.test_case.model_copy(update={"source_refs": [*original_refs,
-                *(item for item in references if item.excerpt not in existing_keys)]})
-            pending[ref] = request.model_copy(update={"test_case": draft})
-        requests = {**requests, **pending}
+        context = {**context, "confirmed_reference_refs": [
+            item.model_dump(mode="json") for item in references]}
     # Read each source batch once for the selected set, not once per case.
     groups, current, size = [], [], 0
     for ref, request in pending.items():
@@ -1662,6 +1657,10 @@ def _prepare_rewrite_requests(store, job, pipeline, requests):
         reference = _rewrite_reference_context(
             store, job, pipeline, context, {"selected_cases": snapshots}
         )
+        if sources:
+            # Evidence extraction must not discard the server-confirmed contract.
+            reference = {**reference, "approved_reference_assets": sources,
+                         "confirmed_reference_refs": context["confirmed_reference_refs"]}
         for snapshot in snapshots:
             ref = snapshot["ref"]
             prepared[ref] = requests[ref].model_copy(update={"context": reference})

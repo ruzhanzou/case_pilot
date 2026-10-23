@@ -468,7 +468,9 @@ def test_confirmed_assets_reach_rewrite_when_space_knowledge_disabled(monkeypatc
         'use_space_knowledge': False, 'asset_reference_sources': [source]}}, Mock(),
         {'one': RewriteRequest(test_case=original, instruction='参考原用例改写登录步骤')})
     assert prepared['one'].context['approved_reference_assets'] == [source]
-    assert any('asset:one' in ref.excerpt for ref in prepared['one'].test_case.source_refs)
+    assert prepared['one'].test_case == original
+    assert any('asset:one' in ref['excerpt']
+               for ref in prepared['one'].context['confirmed_reference_refs'])
     assert all('asset:one' not in ref.excerpt for ref in original.source_refs)
 
 

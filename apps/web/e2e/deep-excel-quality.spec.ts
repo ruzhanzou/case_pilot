@@ -49,6 +49,12 @@ test('late Excel reference preserves current rules and unrelated candidates',asy
   const modify=await post(`/conversation-operations/${op.id}/resume`,{confirm_modification:true});await waitJob(modify.action.job_id);
   const change=await get(`/case-change-sets/${modify.action.change_set_id}`);evidence.change=change;expect(change.status).toBe('ready');expect(change.items).toHaveLength(1);
   const proposal=change.items[0].proposed_snapshot;evidence.proposal=proposal;
+  expect(change.items[0].quality.passed).toBe(true);
+  expect(proposal.steps.map((s:any)=>s.action)).not.toEqual(target.snapshot.steps.map((s:any)=>s.action));
+  expect(change.items[0].field_diff.some((diff:any)=>diff.field==='steps')).toBe(true);
+  const actions=proposal.steps.map((s:any)=>s.action).join('\n');
+  expect(actions).toMatch(/记录.*(?:签发|时刻|时间)|(?:签发|时刻|时间).*记录/);
+  expect(actions).toMatch(/300|5\s*分钟/);
   expect(proposal.title).toBe(target.snapshot.title);expect(proposal.priority).toBe(target.snapshot.priority);expect(proposal.preconditions).toEqual(target.snapshot.preconditions);
   expect(proposal.steps.map((s:any)=>s.expected).filter(Boolean)).toEqual(target.snapshot.steps.map((s:any)=>s.expected).filter(Boolean));
   const text=JSON.stringify({preconditions:proposal.preconditions,steps:proposal.steps});expect(text).toMatch(/300|5\s*分钟/);expect(text).not.toMatch(/420|7\s*分钟|PAY-EXPIRED/);
@@ -56,9 +62,17 @@ test('late Excel reference preserves current rules and unrelated candidates',asy
   expect((await get(`/conversations/${cid}`)).candidates).toEqual(before);
   await page.reload();const review=page.locator('.collection-changes__review');const apply=page.waitForResponse(r=>r.url().endsWith('/apply')&&r.request().method()==='POST');await review.getByRole('button',{name:/一键采纳全部待审阅用例/}).click();expect((await apply).ok()).toBeTruthy();
   state=await get(`/conversations/${cid}`);evidence.after=state.candidates;for(const c of before.filter((c:any)=>c.id!==target.id))expect(state.candidates.find((x:any)=>x.id===c.id)).toEqual(c);
+  for(const c of state.candidates)expect(c.snapshot.test_point_ids).toEqual(before.find((b:any)=>b.id===c.id).snapshot.test_point_ids);
   expect((await get(`/collections/${collection.id}/test-cases`))).toHaveLength(0);await page.reload();await expect(page.getByText('正在恢复工作区',{exact:true})).toBeHidden();
   await page.getByRole('button',{name:'查看更新后的候选',exact:true}).click();
   await expect(page.getByTestId('workspace-case-sources')).toContainText('旧版用例.xlsx');await expect(page.getByTestId('workspace-case-sources')).toContainText('参考改写');await expect(page.getByTestId('workspace-case-sources')).toContainText('OLD-001');await page.screenshot({path:info.outputPath('completed.png'),fullPage:true});
+  await post(`/workspaces/${cid}/candidates/commit`,{candidate_ids:state.candidates.map((c:any)=>c.id)});
+  const final=await get(`/conversations/${cid}`);const cases=await get(`/collections/${collection.id}/test-cases`);
+  expect(cases).toHaveLength(2);const points=before.flatMap((c:any)=>c.snapshot.test_point_ids);
+  for(const c of cases){const links=final.planning_case_links.filter((l:any)=>l.test_case_id===c.id);expect(links.length).toBeGreaterThan(0);for(const l of links){expect(points).toContain(l.test_point_id);expect(l.revision_id).toBe(c.current_revision_id);expect(l.stale).toBe(false);}}
+  const rewritten=cases.find((c:any)=>c.title===proposal.title);expect(rewritten).toBeTruthy();
+  expect(rewritten.steps.map((s:any)=>({action:s.action,expected:s.expected}))).toEqual(proposal.steps);
+  evidence.finalCases=cases;evidence.persistedLinks=final.planning_case_links;
   expect(evidence.errors).toEqual([]);evidence.status='passed';
  }finally{writeFileSync(info.outputPath('evidence.json'),JSON.stringify(evidence,null,2));}
 });

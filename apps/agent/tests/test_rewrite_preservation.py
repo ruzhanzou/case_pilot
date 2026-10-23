@@ -216,3 +216,80 @@ def test_model_cannot_drop_confirmed_asset_provenance_when_reselecting_citations
         {'one': RewriteRequest(test_case=case, instruction='只将标题改为登录成功校验')})['one']
     assert result.quality.passed
     assert source in result.proposed.source_refs
+
+
+def reference_request():
+    return RewriteRequest(
+        test_case=original(), instruction="参考Excel只改写操作步骤，预期结果保持不变",
+        context={
+            "approved_reference_assets": [{"key": "excel:book:2", "kind": "excel"}],
+            "evidence": [{"label": "历史.xlsx", "excerpt": "记录签发时刻"}],
+            "confirmed_reference_refs": [{
+                "label": "修改参考 · 历史.xlsx",
+                "excerpt": '{"source_key":"excel:book:2","action":"modify"}',
+            }],
+        },
+    )
+
+
+@pytest.mark.parametrize("changes", [{}, {"source_ref_indexes": [0]}, {"title": "换个标题"}, {
+    "step_updates": [{"step_index": 0, "action": " 原操作0 "}],
+}])
+def test_reference_step_rewrite_retries_then_retains_original_without_false_provenance(changes):
+    request = reference_request()
+    provider = Provider(changes)
+    result = GenerationPipeline(provider).rewrite_many({"one": request})["one"]
+    assert len(provider.calls) == 2
+    assert "未改变操作步骤" in provider.calls[1]["validation_feedback"]["one"]
+    assert not result.quality.passed
+    assert result.proposed == request.test_case
+    assert result.diff == []
+    assert not result.proposed.source_refs
+
+
+def test_reference_retry_changes_actions_preserves_expected_and_point_links():
+    request = reference_request()
+    provider = Provider({}, {"step_updates": [
+        {"step_index": 0, "action": "记录签发时刻并推进服务端时钟至300秒"}]})
+    result = GenerationPipeline(provider).rewrite_many({"one": request})["one"]
+    assert result.quality.passed
+    assert result.quality.repair_rounds == 1
+    assert result.proposed.steps[0].action != request.test_case.steps[0].action
+    assert [s.expected for s in result.proposed.steps] == [
+        s.expected for s in request.test_case.steps]
+    assert result.proposed.steps[1:] == request.test_case.steps[1:]
+    assert result.proposed.test_point_ids == request.test_case.test_point_ids
+    assert result.proposed.source_refs[0].label == "修改参考 · 历史.xlsx"
+    assert {d.field for d in result.diff} == {"steps", "source_refs"}
+    assert not request.test_case.source_refs
+
+
+def test_reference_title_rewrite_does_not_require_step_changes():
+    request = reference_request().model_copy(update={
+        "instruction": "参考Excel优化标题，步骤保持不变"})
+    result = GenerationPipeline(Provider({"title": "验证码过期校验"})).rewrite_many(
+        {"one": request})["one"]
+    assert result.quality.passed
+    assert result.proposed.steps == request.test_case.steps
+
+
+def test_ordinary_review_may_legitimately_have_no_changes():
+    request = RewriteRequest(test_case=original(), instruction="核对用例内容，正确的保持不变")
+    result = GenerationPipeline(Provider({})).rewrite_many({"one": request})["one"]
+    assert result.quality.passed
+    assert result.diff == []
+
+
+def test_reference_rewrite_repairs_full_source_row_to_local_step_update():
+    request = reference_request()
+    provider = Provider(
+        {"steps": [{"action": "参考表合并为一个操作", "expected": "原校验点2"}]},
+        {"step_updates": [{"step_index": 0, "action": "记录签发时刻，供推进时钟使用"}]},
+    )
+    result = GenerationPipeline(provider).rewrite_many({"one": request})["one"]
+    assert result.quality.passed
+    assert result.quality.repair_rounds == 1
+    assert len(result.proposed.steps) == len(request.test_case.steps)
+    assert [s.expected for s in result.proposed.steps] == [
+        s.expected for s in request.test_case.steps]
+    assert result.proposed.test_point_ids == request.test_case.test_point_ids
