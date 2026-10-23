@@ -174,6 +174,10 @@ async def test_selected_assets_form_new_collection_and_only_combined_mode_enqueu
         assert dispatched == (
             ["casepilot.agent.draft_brief"] if mode == "select_and_generate" else []
         )
+        if mode == "select":
+            restored = (await client.get(f"/api/v1/conversations/{cid}")).json()
+            assert restored["context"]["active_view"] == "list"
+            assert confirmed.json()["assistant_message"]["metadata"]["action"] == "assets_selected"
         if mode == "select_and_generate":
             with get_session_factory()() as db:
                 job = db.get(GenerationJob, UUID(confirmed.json()["action"]["job_id"]))

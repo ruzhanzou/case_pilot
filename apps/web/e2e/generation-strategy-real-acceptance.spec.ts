@@ -5,13 +5,14 @@ import path from 'node:path';
 
 const api = process.env.CASEPILOT_E2E_API_URL ?? 'http://localhost:8018';
 const defaultOutput = path.resolve(process.cwd(), process.cwd().endsWith('/apps/web') ? '../../output/generation-strategy-acceptance-20261021' : 'output/generation-strategy-acceptance-20261021');
+const strategyModes = (process.env.CASEPILOT_STRATEGY_MODES ?? 'generate,select,select_and_generate').split(',').map(item => item.trim()).filter(Boolean);
 test.skip(process.env.CASEPILOT_REAL_ACCEPTANCE !== '1', 'Requires isolated API, database, Redis and real-model worker');
 test.use({ viewport: { width: 1600, height: 1100 }, trace: 'on' });
 test.use({ video: 'off' });
 test.setTimeout(900_000);
 
 test('real services: default isolation, multi-collection select, confirmed gap generation and visible provenance', async ({ page }, info) => {
-  const output = process.env.CASEPILOT_ACCEPTANCE_OUTPUT ? path.resolve(process.env.CASEPILOT_ACCEPTANCE_OUTPUT, `run-${info.repeatEachIndex}`) : defaultOutput;
+  const output = process.env.CASEPILOT_ACCEPTANCE_OUTPUT ? path.resolve(process.env.CASEPILOT_ACCEPTANCE_OUTPUT, "strategies", `run-${info.repeatEachIndex}`) : defaultOutput;
   await mkdir(output, { recursive: true });
   const evidence: any = { provider: 'real configured provider', cases: [], browserErrors: [] };
   page.on('pageerror', error => evidence.browserErrors.push(error.message));
@@ -53,7 +54,7 @@ test('real services: default isolation, multi-collection select, confirmed gap g
     return state;
   };
   try {
-    for (const mode of ['generate', 'select', 'select_and_generate']) {
+    for (const mode of strategyModes) {
       const conversation = await post('/conversations', { space_id: space, title: `验收-${mode}` });
       // A hidden reuse flag must not enable reuse when the user did not say select.
       const text = mode === 'generate' ? request : (mode === "select" ? `选择现有用例组成新集合。${request}` : `找已有用例参考，复用已有的，规则变化的改写，缺少的补齐。${request}`);
@@ -99,6 +100,12 @@ test('real services: default isolation, multi-collection select, confirmed gap g
           await expect(page.getByTestId('workspace-case-sources')).toContainText(origins[0].name);
           await expect(page.getByTestId('workspace-case-sources')).toContainText(assets[0].case_key);
           await page.screenshot({ path: path.join(output, `${mode}-sources.png`), fullPage: true });
+          await page.getByRole('button', { name: '用例工作区', exact: true }).click();
+          const taskResult = page.getByRole('region', { name: '当前任务结果' });
+          await expect(taskResult).toContainText('已完成');
+          await expect(taskResult).not.toContainText('等待确认');
+          await taskResult.getByRole('button', { name: '查看已选用例', exact: true }).click();
+          await expect(page.getByTestId('workspace-case-sources')).toContainText(origins[0].name);
           entry.final = await get(`/conversations/${conversation.id}`);
           continue;
         }

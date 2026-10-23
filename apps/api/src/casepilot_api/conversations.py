@@ -6183,10 +6183,20 @@ def confirm_generation_assets(
     if selection["strategy"] == "select":
         assistant = _new_assistant_message(conversation.id,
             content=f"已将 {len(sources)} 条现有用例选入新集合，可在工作区查看。未生成新用例。",
-            intent="CASE_GENERATE", confidence=1.0, status="completed", target_case_ids=chosen)
-        conversation.context = {**dict(conversation.context), "phase": "maintenance", "active_job_id": None}
+            intent="CASE_GENERATE", confidence=1.0, status="completed", target_case_ids=chosen,
+            metadata={"action": "assets_selected", "case_count": len(sources),
+                **({"operation_id": str(operation.id)} if operation else {})})
+        conversation.context = {
+            **dict(conversation.context), "phase": "maintenance",
+            "active_job_id": None, "active_view": "list",
+        }
         if operation:
             operation.status = "completed"
+            operation.result = {**dict(operation.result), "task_closed": True,
+                "selected_case_ids": chosen}
+            task_id = str(operation.payload.get("task_id") or operation.id)
+            if str(conversation.context.get("active_mutation_task_id", "")) == task_id:
+                conversation.context = {**dict(conversation.context), "active_mutation_task_id": None}
         action = {"type": "assets_selected", "case_count": len(sources)}
     else:
         job = GenerationJob(space_id=conversation.space_id, account_id=account.id,

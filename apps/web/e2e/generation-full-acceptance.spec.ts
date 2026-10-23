@@ -11,7 +11,7 @@ test.use({ video: 'off' });
 test.setTimeout(900_000);
 
 test('full acceptance: reuse identity, effective rewrites and persisted test-point links', async ({ page }, info) => {
-  const output = process.env.CASEPILOT_ACCEPTANCE_OUTPUT ? path.resolve(process.env.CASEPILOT_ACCEPTANCE_OUTPUT, `run-${info.repeatEachIndex}`) : defaultOutput;
+  const output = process.env.CASEPILOT_ACCEPTANCE_OUTPUT ? path.resolve(process.env.CASEPILOT_ACCEPTANCE_OUTPUT, "full-flow", `run-${info.repeatEachIndex}`) : defaultOutput;
   await mkdir(output, { recursive: true });
   const evidence: any = { provider: 'real configured provider', cases: [], browserErrors: [] };
   page.on('pageerror', error => evidence.browserErrors.push(error.message));

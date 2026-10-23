@@ -2848,6 +2848,10 @@ export function CaseWorkbench({
                 else setViewMode("list");
               }}
             >
+            {resultVersion?.message.metadata.action === "assets_selected" && <div role="status">
+              <p>{resultVersion.message.content}</p>
+              <button type="button" onClick={() => setViewMode("list")}>{pick("View selected cases", "查看已选用例")}</button>
+            </div>}
             {selectedChangeSetId && candidatesForTask(resultVersion, workspace).length > 0 && <div className="task-result-switch" role="group" aria-label={pick("Result content", "结果内容")}>
               <button type="button" aria-pressed={!showCandidatePane} onClick={() => { setResultPane({ key: resultPaneKey, pane: "changes" }); focusWorkspace(); }}>{pick("Review changes", "修改审阅")}</button>
               <button type="button" aria-pressed={showCandidatePane} onClick={() => { setResultPane({ key: resultPaneKey, pane: "candidates" }); focusWorkspace(); }}>{pick("Candidate cases", "候选用例")} · {candidatesForTask(resultVersion, workspace).length}</button>

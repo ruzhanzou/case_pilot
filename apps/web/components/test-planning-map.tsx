@@ -180,15 +180,15 @@ export function TestPlanningMap({ planning, title, busy, editable, onGenerate, o
         </form>}
       </section>
       {planning.reuse && <div className="planning-reuse-detail">
-        <p><strong>建议：{planningActionLabels[decision?.action ?? "new"]}</strong> · {decision?.reason ?? "没有匹配的历史用例"}</p>
+        <p><strong>建议：{decision ? planningActionLabels[decision.action] : "待判断"}</strong> · {decision?.reason ?? "尚未记录处理判断，不能据此认定没有可复用的历史用例。"}</p>
         {onChooseReuse && <label>本次处理方式 <select aria-label="本次处理方式" disabled={busy || !editable}
           value={planning.reuse.user_choices?.[detail.id] ?? "suggested"}
           onChange={event => void onChooseReuse(detail.id, event.target.value as "suggested" | "new" | "exclude" | "copy")}>
-          <option value="suggested">使用建议：{planningActionLabels[decision?.action ?? "new"]}</option>
+          <option value="suggested">{decision ? `使用建议：${planningActionLabels[decision.action]}` : "暂无建议（默认新增）"}</option>
           {decision?.action === "reuse" && decision.source?.kind === "formal" && <option value="copy">复制原文为新用例</option>}<option value="new">重新生成，不复用正文</option><option value="exclude">不纳入本次</option>
         </select></label>}
         <p>本批比较 {decision?.compared_source_count ?? 0} 条，另有 {decision?.omitted_source_count ?? 0} 条未进入本批比较。</p>
-        <p>当前选择：{planningActionLabels[pointAction(planning, detail.id)]}。修改选择会保存为新的规划版本。</p>
+        <p>当前选择：{planningActionLabels[pointAction(planning, detail.id)]}{!decision && !planning.reuse.user_choices?.[detail.id] ? "（默认处理方式，尚无复用判断）" : ""}。修改选择会保存为新的规划版本。</p>
         {decision?.source && <details open><summary>历史用例原文 · {decision.source.label} / {decision.source.locator}</summary>
           <p><strong>{decision.source.snapshot?.title}</strong></p>
           <p>前置条件：{decision.source.snapshot?.preconditions.join("；")}</p>

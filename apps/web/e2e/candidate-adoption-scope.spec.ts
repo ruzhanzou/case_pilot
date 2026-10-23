@@ -29,7 +29,7 @@ test('task adoption submits only visible selected candidates from that generatio
   const result = page.locator('.task-result-cases');
   await expect(result).toContainText('new用例');
   await expect(result).not.toContainText('old用例');
-  await result.getByRole('button', { name: '采纳已选（1）', exact: true }).click();
+  await result.getByRole('button', { name: '纳入正式集合（1）', exact: true }).click();
   await expect.poll(() => submitted).toEqual(['new']);
   expect(workspace.candidates.find(c => c.id === 'old')?.included).toBe(true);
 });
