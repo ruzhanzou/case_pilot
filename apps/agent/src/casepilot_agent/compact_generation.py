@@ -260,6 +260,34 @@ def validate_point_literals(case, point):
         expected = " ".join(step.expected for step in case.steps)
         if not re.search(r"(?<!\d)" + status + r"(?!\d)", expected):
             raise StageContractError(f"required_point_status_missing:{status}")
+    session_invalidation = bool(
+        re.search(r"退出|注销|登出|log\s*out|sign\s*out", requirement, re.I)
+        and re.search(r"会话失效|session.{0,12}(?:invalid|expire|revoke)", requirement, re.I)
+    )
+    if session_invalidation:
+        actions = " ".join(step.action for step in case.steps)
+        expected = " ".join(step.expected for step in case.steps)
+        if not re.search(
+            r"退出(?:登录|操作|账号)|注销(?:登录|账号)?|登出|(?:log|sign)\s*out\b",
+            actions,
+            re.I,
+        ):
+            raise StageContractError("required_logout_action_missing")
+        if not re.search(
+            r"会话.{0,12}(?:失效|无效|过期|作废|撤销|终止|清除|清空|销毁|删除)|"
+            r"(?:清除|清空|销毁|删除|撤销|终止).{0,12}会话|"
+            r"session.{0,12}(?:invalid|expire|revoke|clear|destroy|terminate)",
+            expected,
+            re.I,
+        ):
+            raise StageContractError("required_session_invalidation_missing")
+        if re.search(r"受保护|protected", requirement, re.I) and not re.search(
+            r"退出前.{0,12}(?:会话|token)|原(?:会话|token)|(?:旧|当前|该|同一)(?:会话|token)|"
+            r"(?:cookie|token|session).{0,12}(?:before|prior|previous|same|old)",
+            actions,
+            re.I,
+        ):
+            raise StageContractError("prior_session_probe_missing")
 
 
 def extra_assertion_risks(case, point):
@@ -433,6 +461,7 @@ def run_compact(request, provider, execute_stage, on_batch, count):
                 "如果准备动作没有独立可观察结果，将它与下一项操作合并，不留下空预期。"
                 "逐条落实本测试点要求的全部可观察结果，包括错误码、状态、计数、数值边界和持续时间；不得因其他测试点已经覆盖而省略。"
                 "这些要求必须落实到前置、操作及预期，不能只出现在标题或来源引用；例如要求锁定时长时，应明确校验该时长或解锁时间，不能仅写锁定时刻正确。"
+                "状态变化本身属于被测动作，不能提前写成前置条件；例如退出后会话失效必须执行退出，再使用退出前的同一会话或token访问受保护资源，并分别明确会话失效与访问结果。"
                 "不得添加当前需求未规定的规则。不得用正常、符合预期代替断言。若有validation_feedback，只修复本次指定slot的问题。",
                 payload, ReviewContentBatch, request.model_id,
             )

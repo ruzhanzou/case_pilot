@@ -469,6 +469,60 @@ def test_point_duration_is_executable_and_unit_equivalent(duration):
         validate_point_literals(case, point)
 
 
+def test_logout_session_invalidation_is_an_executable_end_to_end_check():
+    from casepilot_agent.compact_generation import validate_point_literals, StageContractError
+    point = SimpleNamespace(
+        objective='已登录用户退出后会话失效，访问受保护页面返回登录页',
+        scenario='用户已登录并持有当前会话',
+    )
+    incomplete = CaseContent(
+        slot=1, title='退出后访问受保护页面', preconditions=['用户已完成退出'],
+        steps=[{'action': '访问受保护页面', 'expected': '返回登录页'}],
+    )
+    with pytest.raises(StageContractError, match='required_logout_action_missing'):
+        validate_point_literals(incomplete, point)
+    state_moved_to_precondition = CaseContent(
+        slot=1, title='退出后访问受保护页面', preconditions=['用户已完成退出操作'],
+        steps=[{'action': '使用退出前的原会话访问受保护页面', 'expected': '返回登录页且会话已失效'}],
+    )
+    with pytest.raises(StageContractError, match='required_logout_action_missing'):
+        validate_point_literals(state_moved_to_precondition, point)
+    missing_probe = CaseContent(
+        slot=1, title='退出后访问受保护页面', preconditions=['用户已登录'],
+        steps=[
+            {'action': '退出登录', 'expected': '当前会话失效'},
+            {'action': '访问受保护页面', 'expected': '返回登录页'},
+        ],
+    )
+    with pytest.raises(StageContractError, match='prior_session_probe_missing'):
+        validate_point_literals(missing_probe, point)
+    complete = CaseContent(
+        slot=1, title='退出后访问受保护页面', preconditions=['用户已登录'],
+        steps=[
+            {'action': '退出登录', 'expected': '当前会话失效'},
+            {'action': '使用退出前同一会话访问受保护页面', 'expected': '返回登录页且无法访问'},
+        ],
+    )
+    validate_point_literals(complete, point)
+
+
+@pytest.mark.parametrize('expected', ['原有登录会话被清除', '系统销毁当前用户会话', '旧会话已作废'])
+def test_logout_session_invalidation_accepts_equivalent_observable_wording(expected):
+    from casepilot_agent.compact_generation import validate_point_literals
+    point = SimpleNamespace(
+        objective='已登录用户退出后会话失效，访问受保护页面返回登录页',
+        scenario='用户已登录并持有当前会话',
+    )
+    case = CaseContent(
+        slot=1, title='退出后访问受保护页面', preconditions=['用户已登录'],
+        steps=[
+            {'action': '退出登录', 'expected': expected},
+            {'action': '使用退出前同一会话访问受保护页面', 'expected': '返回登录页且无法访问'},
+        ],
+    )
+    validate_point_literals(case, point)
+
+
 @pytest.mark.parametrize('audit_fails', [False, True])
 def test_unrequested_counter_effect_is_reviewed_without_regenerating_good_sibling(audit_fails):
     from casepilot_agent.compact_generation import StageContractError

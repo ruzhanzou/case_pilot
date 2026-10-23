@@ -135,6 +135,16 @@ test('real services: default isolation, multi-collection select, confirmed gap g
         expect(finalCases.map((item: any) => item.id)).toContain(assets[0].id);
         expect(finalCases.map((item: any) => item.id)).not.toContain(assets[1].id);
         expect(finalCases).toHaveLength(3);
+        const changed = finalCases.find((item: any) => JSON.stringify(item.steps).includes('凭据无效'));
+        expect(changed.title).toBe(assets[1].title);
+        expect(changed.preconditions).toEqual(assets[1].preconditions);
+        for (const item of finalCases) for (const step of item.steps) {
+          expect(step.action.trim()).toBeTruthy(); expect(step.expected.trim()).toBeTruthy();
+        }
+        const logout = finalCases.find((item: any) => JSON.stringify(item).includes('退出'));
+        expect(logout.steps.some((step: any) => /退出(登录|操作|账号)|注销(登录|账号)?|登出/.test(step.action))).toBe(true);
+        expect(logout.steps.some((step: any) => /会话.{0,12}(失效|无效|过期|作废|撤销|终止|清除|清空|销毁|删除)|(清除|清空|销毁|删除|撤销|终止).{0,12}会话/.test(step.expected))).toBe(true);
+        expect(logout.steps.some((step: any) => /退出前.{0,12}会话|原会话|同一会话/.test(step.action))).toBe(true);
       }
       entry.finalCases = finalCases;
       await page.reload();
