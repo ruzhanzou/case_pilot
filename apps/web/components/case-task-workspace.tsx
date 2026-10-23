@@ -32,6 +32,8 @@ export function CaseTaskWorkspace({ tasks, selectedId, displayedVersion, onSelec
   const versionNumber = task?.versions ? task.versions.findIndex(item => item.operation?.id === displayedTask?.operation?.id) + 1 : 0;
   const isRunning = task && !task.waitingOn && ["queued", "running"].includes(task.status);
   const needsDetails = task && ["awaiting_target", "awaiting_clarification"].includes(task.status);
+  const failed = task?.status === "failed";
+  const cancelled = task?.status === "cancelled";
   const taskLabel = (item: Task) => item.message.metadata.action === "module_created" ? pick("Create module", "创建模块") : labels[(item.operation?.intent ?? item.message.intent) as ConversationIntent];
   const resultTitle = displayedTask?.message.metadata.change_set_id
     ? (displayedTask.operation?.intent === "CASE_DELETE" || displayedTask.message.intent === "CASE_DELETE"
@@ -71,7 +73,11 @@ export function CaseTaskWorkspace({ tasks, selectedId, displayedVersion, onSelec
             {!!plan?.constraints?.length && <p>{pick("Preserve", "保留约束")}：{plan.constraints.join("；")}</p>}
             {!historical && !hasLiveResults && (task.waitingOn || isRunning || task.status.startsWith("awaiting_") && task.status !== "awaiting_confirmation" || ["failed", "cancelled"].includes(task.status)) && <div className="case-task-running" role="status"><p>{needsDetails
               ? pick("Confirm the affected cases and requirements in the conversation. Suggestions will appear here.", "请在对话区确认影响范围和修改要求，变更建议将在这里展示。")
-              : pick("Results will appear here. Follow progress or provide details in the conversation.", "结果将在这里展示，请在对话区查看进度或补充信息。")}</p><button type="button" onClick={() => onConversation(task.messageIds.at(-1))}>{needsDetails ? pick("Provide details", "补充信息") : pick("View conversation", "查看对话")}</button></div>}
+              : failed
+                ? pick("This task did not complete, so there are no changes to review. Retry it in the conversation.", "本次任务未完成，没有可审阅的变更。请在对话区重试。")
+                : cancelled
+                  ? pick("This task was stopped. No changes were applied.", "本次任务已停止，未应用任何变更。")
+                  : pick("Results will appear here. Follow progress or provide details in the conversation.", "结果将在这里展示，请在对话区查看进度或补充信息。")}</p><button type="button" onClick={() => onConversation(task.messageIds.at(-1))}>{needsDetails ? pick("Provide details", "补充信息") : failed ? pick("Retry in conversation", "前往对话区重试") : pick("View conversation", "查看对话")}</button></div>}
             {task.message.metadata.action === "module_created" && <button type="button" onClick={() => onArtifact(task)}>{pick("View module", "查看模块")}</button>}
             {children}
             {(onDiscard || sourceTask) && <details className="case-task-context"><summary>{pick("Task actions", "任务操作")}</summary>

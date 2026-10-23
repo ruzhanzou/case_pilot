@@ -29,6 +29,9 @@ test('failed modification resumes through natural retry without applying or dupl
  }
  expect(await get(`/collections/${collection.id}/test-cases`)).toEqual([item]);
  const failedState=state;await page.reload();
+ await expect(page.locator('.case-task-running')).toContainText('本次任务未完成，没有可审阅的变更。请在对话区重试。');
+ await expect(page.getByText('改写预览生成中',{exact:true})).toHaveCount(0);
+ await expect(page.getByText('没有匹配的变更，请调整搜索或审阅状态。',{exact:true})).toHaveCount(0);
  const retried=await send('重试修改任务');expect(retried.intent).toBe('CASE_MODIFY');
  expect(retried.action.job_id).toBeTruthy();
  await expect.poll(async()=>{state=await get(`/conversations/${cid}`);const run=state.workflow_runs.find((r:{job_id:string})=>r.job_id===retried.action.job_id);if(run?.status==='failed')throw Error(JSON.stringify(run));return run?.status;},{timeout:360000}).toBe('completed');

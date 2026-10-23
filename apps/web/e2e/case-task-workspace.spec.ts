@@ -41,7 +41,9 @@ test("conversation owns progress and summaries while workstation owns results", 
   });
   await page.goto("/workbench/collections/alpha");
   const composer = page.getByRole("textbox", { name: "Conversation message", exact: true });
-  await expect(composer).toBeDisabled();
+  await expect(composer).toBeEnabled();
+  await expect(composer).toHaveAttribute("placeholder", "Describe an adjustment, then pause to continue…");
+  await expect(page.getByRole("button", { name: "End task" })).toBeVisible();
   await expect(page.locator(".case-conversation-running")).toBeVisible();
   await expect(page.locator(".conversation-task-flow")).toBeVisible();
   await expect(page.locator(".conversation-task-flow li")).toHaveCount(3);
@@ -51,7 +53,7 @@ test("conversation owns progress and summaries while workstation owns results", 
   await page.locator(".case-task-history > button").filter({ hasText: "Query test cases" }).click();
   await expect(page.locator(".case-task-result")).toHaveCount(0);
   await expect(page.locator("#case-message-result-1")).toContainText("Found 4 account login cases.");
-  await expect(composer).toBeDisabled();
+  await expect(composer).toBeEnabled();
   expect(sends).toBe(0);
   running = false;
   await page.reload();
@@ -65,7 +67,7 @@ test("conversation owns progress and summaries while workstation owns results", 
   await expect(page.locator(".case-task-workspace")).not.toContainText("Passwords require at least 8 characters.");
   await page.getByRole("button", { name: "View request in conversation" }).click();
   await expect(page.locator("#case-message-request-1")).toBeInViewport();
-  await page.getByRole("button", { name: "Generate cases", exact: true }).click();
+  await composer.fill("Generate cases for the current collection: ");
   await expect(composer).toHaveValue("Generate cases for the current collection: ");
   await expect(composer).toBeFocused();
   expect(sends).toBe(0);

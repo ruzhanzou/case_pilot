@@ -573,6 +573,11 @@ export function CaseWorkbench({
     : historicalChangeSet?.id === selectedChangeSetId ? historicalChangeSet : null;
   const selectedTaskChangeSet = loadedTaskChangeSet && historicalVersion && loadedTaskChangeSet.status === "ready"
     ? { ...loadedTaskChangeSet, status: "superseded" as const } : loadedTaskChangeSet;
+  const showTaskChangeSet = Boolean(selectedTaskChangeSet && !(
+    ["failed", "cancelled"].includes(selectedTask?.status ?? "") &&
+    selectedTaskChangeSet.status === "generating" &&
+    selectedTaskChangeSet.items.length === 0
+  ));
   const resultPaneKey = `${selectedTask?.id}:${selectedChangeSetId}`;
   const showCandidatePane = !selectedChangeSetId || (resultPane.key === resultPaneKey && resultPane.pane === "candidates");
   const pendingCandidateRefs = [...new Set([activeChangeSet, historicalChangeSet].flatMap(change =>
@@ -2862,7 +2867,7 @@ export function CaseWorkbench({
             </details>}
             {selectedScopeChanged && <p className="task-version-notice">{pick("This result is based on earlier case versions. Review again before preparing changes.", "此结果基于历史用例版本，请重新检查后再生成变更。")}</p>}
             {selectedChangeSetId && !selectedTaskChangeSet && <p role="status">{resultLoadError || pick("Loading task result…", "正在加载任务结果…")}</p>}
-        {selectedTaskChangeSet && !showCandidatePane && (
+        {selectedTaskChangeSet && showTaskChangeSet && !showCandidatePane && (
           <div id="collection-changes">
             <CaseCollectionChanges
               key={selectedTaskChangeSet.id}
