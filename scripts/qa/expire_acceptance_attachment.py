@@ -1,4 +1,5 @@
-"""Expire only a synthetic attachment in the isolated maturity acceptance database."""
+"""Expire one owned synthetic attachment in the configured acceptance database."""
+import os
 import sys
 from pathlib import Path
 from uuid import UUID
@@ -10,8 +11,10 @@ root = Path(__file__).resolve().parents[2]
 email, document = sys.argv[1], str(UUID(sys.argv[2]))
 if not email.startswith('expiry-') or not email.endswith('@casepilot.test'):
     raise SystemExit('Synthetic expiry account required')
-url = make_url(dotenv_values(root / '.env')['DATABASE_URL']).set(
-    host='127.0.0.1', database='casepilot_maturity_acceptance_20261023')
+configured_url = os.environ.get('CASEPILOT_ACCEPTANCE_DATABASE_URL') or dotenv_values(
+    root / '.env'
+)['DATABASE_URL']
+url = make_url(configured_url).set(host='127.0.0.1')
 with create_engine(url).begin() as connection:
     result = connection.execute(text('''UPDATE knowledge_documents d
         SET expires_at = now() - interval '1 second'

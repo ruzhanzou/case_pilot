@@ -337,6 +337,14 @@
   margin-bottom: 8px;
 }
 
+.principle-attachments__hint {
+  flex: 0 0 100%;
+  margin: 0 0 2px;
+  color: #60766d;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .principle-attachment {
   display: flex;
   align-items: center;

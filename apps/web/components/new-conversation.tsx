@@ -4,7 +4,7 @@
 import { attachmentAccept, clipboardImages, isImageAttachment } from "@/lib/image-attachments";
 import { nanoid } from "nanoid/non-secure";
 
-import { ConversationAttachments } from "@/components/conversation-attachments";
+import { activeConversationAttachments, ConversationAttachments } from "@/components/conversation-attachments";
 
 import {
   confirmConversationOperationCollection,
@@ -217,8 +217,11 @@ export function NewConversation({
       .catch(() => update({ status: "failed" }));
   };
   const pendingImages = (conversation?.context.pending_attachments ?? []) as {name: string}[];
-  const inheritedImages = (conversation?.messages ?? []).flatMap(message => Array.isArray(message.metadata.attachments) ? message.metadata.attachments : []).filter((file: {id: string; status: string}) => file.status === "ready" && ((conversation?.context.document_ids ?? []) as string[]).includes(file.id));
-  const hasImages = pendingImages.some(isImageAttachment) || inheritedImages.some(isImageAttachment) || attachments.some(isImageAttachment);
+  const activeAttachments = useMemo(
+    () => activeConversationAttachments(conversation),
+    [conversation],
+  );
+  const hasImages = pendingImages.some(isImageAttachment) || activeAttachments.some(isImageAttachment) || attachments.some(isImageAttachment);
   const hasPendingImage = pendingImages.some(isImageAttachment);
   const imageBlocked = hasImages && !models.find(model => model.id === modelId)?.supports_images;
 
@@ -277,6 +280,7 @@ export function NewConversation({
           {!pendingMessage && <ConversationAttachments pending disabled={saving} onRemove={id => { void onRemoveAttachment(id); }} metadata={{ attachments: (
             Array.isArray(conversation?.context.pending_attachments) ? conversation.context.pending_attachments : []
           ).filter((file: { name: string }) => !attachments.some(local => local.name === file.name && local.status !== "failed")) }} />}
+          {!pendingMessage && <ConversationAttachments active disabled={saving} onRemove={id => { void onRemoveAttachment(id); }} metadata={{ attachments: activeAttachments }} />}
       {imageBlocked && <p role="alert">{pick(
         "The selected model cannot read images. Switch models or remove the image before sending.",
         "当前模型不支持图片，请切换支持图片的模型或移除图片附件后发送。",

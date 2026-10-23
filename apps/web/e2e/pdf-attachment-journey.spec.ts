@@ -28,7 +28,10 @@ test('PDF rules ground a rewrite and unusable PDFs report actionable failure',as
  expect(JSON.stringify(proposed.steps)).toContain('300');expect(JSON.stringify(proposed.steps)).toContain('E731');expect(proposed.title).toBe(item.title);expect(proposed.priority).toBe(item.priority);expect(proposed.preconditions).toEqual(item.preconditions);
  if(process.env.CASEPILOT_QA_CHINESE_MIXED==='1') {
   expect(JSON.stringify(proposed.steps)).not.toContain('OLD');
-  expect(proposed.source_refs.some((ref:{label:string;locator:string})=>ref.label===primary&&ref.locator==='第 2 页')).toBe(true);
+  const attachmentRefs=proposed.source_refs.filter((ref:{document_id?:string|null})=>ref.document_id);
+  expect(attachmentRefs.some((ref:{label:string;locator:string})=>ref.label===primary&&ref.locator==='第 2 页')).toBe(true);
+  expect(attachmentRefs.map((ref:{locator:string})=>ref.locator)).toEqual(['第 2 页']);
+  expect(JSON.stringify(attachmentRefs)).not.toMatch(/历史版本|已作废|420|OLD/);
  }
  expect(await get(`/collections/${collection.id}/test-cases`)).toEqual([item]);
  await expect(file).toBeEnabled();await file.setInputFiles(resolve(fixtures,secondary));

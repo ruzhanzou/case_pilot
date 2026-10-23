@@ -390,6 +390,36 @@ def test_rewrite_rule_id_hint_restores_original_conditions_and_overlapping_windo
     assert all(any(x['excerpt'] in s['excerpt'] for s in context['evidence']) for x in result['evidence'])
 
 
+def test_rewrite_filters_obsolete_rules_even_when_evidence_fits_one_batch():
+    from casepilot_agent.contracts import RequirementAnalysis
+    from casepilot_agent.planning import rewrite_evidence
+
+    context = {'evidence': [
+        {'chunk_id': 'old', 'label': 'requirements.pdf', 'locator': '第 1 页',
+         'excerpt': '历史版本，已作废。验证码在签发后420秒过期，返回OLD。'},
+        {'chunk_id': 'current', 'label': 'requirements.pdf', 'locator': '第 2 页',
+         'excerpt': '当前生效规则：验证码在签发后300秒过期，返回E731。'},
+    ]}
+
+    def extract(stage, instruction, payload, result_type):
+        assert stage == 'rewrite.evidence'
+        assert len(payload['context']['evidence']) == 2
+        return RequirementAnalysis(
+            summary='当前规则',
+            business_rules=['验证码在签发后300秒过期，返回E731'],
+        )
+
+    result = rewrite_evidence(
+        context,
+        {'id': 'selected', 'steps': [{'action': '提交验证码', 'expected': 'OLD'}]},
+        extract,
+    )
+
+    assert result['business_rules'] == ['验证码在签发后300秒过期，返回E731']
+    assert [item['chunk_id'] for item in result['evidence']] == ['current']
+    assert result['processed_batches'] == 1
+
+
 def test_rewrite_timeout_retries_once_and_preserves_targets():
     import httpx
     from openai import APITimeoutError

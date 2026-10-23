@@ -612,8 +612,6 @@ def rewrite_evidence(context, snapshot, complete):
     if not context.get("evidence"):
         return context
     batches = evidence_batches(context)
-    if len(batches) == 1:
-        return batches[0]
     rules = []
     sources = []
     # Existing expected outcomes are under review, not source material. Supplying

@@ -11,7 +11,7 @@ import { CandidatePointLinks } from "@/components/candidate-point-links";
 import { nanoid } from "nanoid/non-secure";
 
 import { WorkspaceFiles } from "@/components/workspace-files";
-import { ConversationAttachments } from "@/components/conversation-attachments";
+import { activeConversationAttachments, ConversationAttachments } from "@/components/conversation-attachments";
 import { planningModuleAliases } from "@/lib/case-module-tree";
 import { matchesRewriteScope, toggleRewriteSelection } from "@/lib/rewrite-selection";
 
@@ -1257,8 +1257,11 @@ export function CaseWorkbench({
   };
 
   const pendingImages = (workspace?.context.pending_attachments ?? []) as {name: string}[];
-  const inheritedImages = (workspace?.messages ?? []).flatMap(message => Array.isArray(message.metadata.attachments) ? message.metadata.attachments : []).filter((file: {id: string; status: string}) => file.status === "ready" && ((workspace?.context.document_ids ?? []) as string[]).includes(file.id));
-  const hasImages = pendingImages.some(isImageAttachment) || inheritedImages.some(isImageAttachment) || attachments.some(isImageAttachment);
+  const activeAttachments = useMemo(
+    () => activeConversationAttachments(workspace),
+    [workspace],
+  );
+  const hasImages = pendingImages.some(isImageAttachment) || activeAttachments.some(isImageAttachment) || attachments.some(isImageAttachment);
   const hasPendingImage = pendingImages.some(isImageAttachment);
   const imageBlocked = hasImages && !models.find(model => model.id === modelId)?.supports_images;
 
@@ -2323,6 +2326,7 @@ export function CaseWorkbench({
           <ConversationAttachments pending onRemove={id => { void removeAttachment(id); }} disabled={conversationRunning || uploading} metadata={{ attachments: (
             Array.isArray(workspace?.context.pending_attachments) ? workspace.context.pending_attachments : []
           ).filter((file: { name: string }) => !attachments.some(local => local.name === file.name && local.status !== "failed")) }} />
+          <ConversationAttachments active onRemove={id => { void removeAttachment(id); }} disabled={conversationRunning || uploading} metadata={{ attachments: activeAttachments }} />
           {resumeTaskId && <div className="case-conversation-running"><span>{pick("Replying to task clarification", "正在补充当前任务信息")}</span><button type="button" disabled={conversationRunning} onClick={() => setResumeTaskId("")}>{pick("Cancel reply", "取消补充")}</button></div>}
           {conversationRunning && <div className="case-conversation-running" role="status">
             <LoaderCircle size={16} className="auth-spinner" />
