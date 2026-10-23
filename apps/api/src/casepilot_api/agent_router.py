@@ -150,6 +150,7 @@ QUESTION_SIGNAL = re.compile(
     r"(?:什么|为何|为什么|怎么|如何|是否|能否|可否|吗|么|呢|多少|哪些|哪个|"
     r"哪里|何时|含义|指什么|区别|[？?])"
 )
+QUOTED_LITERAL = re.compile(r"「[^」]*」|“[^”]*”|\"[^\"]*\"|'[^']*'")
 WRITE_SIGNAL = re.compile(
     r"(?:生成|编写|设计|创建|新增|增加|补充|修改|改写|调整|替换|删除|移除|作废|改成|改为|"
     r"\b(?:generate|create|write|draft|design)\s+(?:some\s+|new\s+|more\s+|a\s+set\s+of\s+)?test\s+cases?\b|"
@@ -186,11 +187,17 @@ def _looks_like_question(content: str) -> bool:
     return bool(QUESTION_SIGNAL.search(content))
 
 
+def _without_quoted_literals(content: str) -> str:
+    """Exclude field values from command and negation classification."""
+    return QUOTED_LITERAL.sub("", content)
+
+
 def _has_explicit_write_request(content: str) -> bool:
+    directive = _without_quoted_literals(content)
     return (
-        not (NEGATED_WRITE.search(content) or INFORMATION_QUESTION.search(content))
-        and bool(WRITE_SIGNAL.search(content))
-        and (bool(EXPLICIT_REQUEST_SIGNAL.search(content)) or not _looks_like_question(content))
+        not (NEGATED_WRITE.search(directive) or INFORMATION_QUESTION.search(directive))
+        and bool(WRITE_SIGNAL.search(directive))
+        and (bool(EXPLICIT_REQUEST_SIGNAL.search(directive)) or not _looks_like_question(directive))
     )
 
 
@@ -304,13 +311,14 @@ def _validate_model_plan(
             matches[0] if matches else content,
         )
         primary = re.split(r"[，,]|(?:但|同时)(?:不要|保留)", evidence_clause, maxsplit=1)[0]
+        primary_directive = _without_quoted_literals(primary)
         operation.routing_source = "semantic"
         operation.instruction = operation.instruction.strip() or content.strip()
         if operation.action_evidence and not evidence_valid:
             operation.intent = "UNRESOLVED"
             operation.reason_codes.append("ACTION_EVIDENCE_NOT_IN_REQUEST")
         if operation.intent in {"CASE_GENERATE", "CASE_MODIFY", "CASE_DELETE"}:
-            if INFORMATION_QUESTION.search(primary) or NEGATED_WRITE.search(primary):
+            if INFORMATION_QUESTION.search(primary_directive) or NEGATED_WRITE.search(primary_directive):
                 operation.intent = "KNOWLEDGE_QA"
                 operation.reason_codes.append("QUESTION_OR_NEGATED_ACTION")
             elif not operation.action_evidence and not WRITE_SIGNAL.search(content):
@@ -715,10 +723,20 @@ def plan_intents(
             and item.intent in {"CASE_QUERY", "KNOWLEDGE_QA", "SMALL_TALK"}
             for item in fallback.operations
         )
-        if reliable_fallback:
+        reliable_write_fallback = len(fallback.operations) == 1 and _has_explicit_write_request(content) and all(
+            not needs_intent_confirmation(item.intent, item.confidence)
+            and item.intent in {"CASE_GENERATE", "CASE_MODIFY", "CASE_DELETE"}
+            for item in fallback.operations
+        )
+        if reliable_fallback or reliable_write_fallback:
             for item in fallback.operations:
                 item.routing_source = "fallback"
-                item.reason_codes = ["MODEL_FAILED", "SAFE_RULE_FALLBACK"]
+                item.reason_codes = [
+                    "MODEL_FAILED",
+                    "EXPLICIT_WRITE_RULE_FALLBACK" if reliable_write_fallback else "SAFE_RULE_FALLBACK",
+                ]
+                if reliable_write_fallback:
+                    item.requires_confirmation = True
             return fallback
         return IntentPlanDraft(
             operations=[

@@ -455,6 +455,7 @@ def test_preservation_constraints_do_not_override_requested_action(content, expe
 def test_semantic_target_scope_does_not_filter_by_desired_priority(monkeypatch) -> None:
     from casepilot_api import conversations
     case_id = uuid4()
+    monkeypatch.setattr(conversations.settings, "agent_provider", "mock")
     monkeypatch.setattr(conversations, "_load_scope_snapshots", lambda *args: [
         {"id": str(case_id), "case_key": "TC-1", "module": "账号登录", "priority": "P1"},
         {"id": str(uuid4()), "case_key": "TC-2", "module": "订单库存", "priority": "P0"},
@@ -470,6 +471,7 @@ def test_semantic_target_scope_does_not_filter_by_desired_priority(monkeypatch) 
 
 def test_semantic_target_cannot_drop_protected_module(monkeypatch) -> None:
     from casepilot_api import conversations
+    monkeypatch.setattr(conversations.settings, "agent_provider", "mock")
     monkeypatch.setattr(conversations, "_load_scope_snapshots", lambda *args: [
         {"id": str(uuid4()), "case_key": "TC-1", "module": "账号登录", "priority": "P1"},
         {"id": str(uuid4()), "case_key": "TC-2", "module": "订单库存", "priority": "P1"},

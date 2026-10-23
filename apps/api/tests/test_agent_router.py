@@ -457,6 +457,7 @@ def test_model_cannot_invent_action_evidence() -> None:
 
 @pytest.mark.parametrize(('content', 'evidence', 'expected'), [
     ('仅将用例 CASE-176BE2 的标题改为「登录成功」，其他字段保持不变。', '将用例的标题改为', 'CASE_MODIFY'),
+    ('修改用例 CASE-176BE2：仅将标题改为「库存不足时拒绝创建订单」，其他字段保持不变。', '修改用例 CASE-176BE2', 'CASE_MODIFY'),
     ('不要将用例 CASE-176BE2 的标题改为「登录成功」。', '将用例的标题改为', 'KNOWLEDGE_QA'),
     ('仅将用例 CASE-176BE2 的标题改为「登录成功」。', '将用例 CASE-OTHER 的标题改为', 'UNRESOLVED'),
     ('仅查看用例 CASE-176BE2 的标题。', '将用例的标题改为', 'UNRESOLVED'),
@@ -848,6 +849,22 @@ def test_model_failure_does_not_turn_query_result_modification_into_query(monkey
         api_key='test-only', timeout_seconds=5, tracing_enabled=False)
     assert plan.operations[0].intent == 'UNRESOLVED'
     assert plan.operations[0].requires_confirmation
+
+
+def test_model_failure_preserves_an_unambiguous_write_intent(monkeypatch):
+    from unittest.mock import Mock
+
+    monkeypatch.setattr(agent_router, 'sdk_plan', Mock(side_effect=TimeoutError()))
+    plan = plan_intents(
+        '修改不存在模块的用例', classify_intent, has_targets=False,
+        phase='maintenance', target_context=[], provider='openai_compatible',
+        model_name='test', base_url='https://example.test/v1', api_key='test-only',
+        timeout_seconds=5, tracing_enabled=False,
+    )
+    operation = plan.operations[0]
+    assert operation.intent == 'CASE_MODIFY'
+    assert operation.requires_confirmation
+    assert operation.reason_codes == ['MODEL_FAILED', 'EXPLICIT_WRITE_RULE_FALLBACK']
 
 
 @pytest.mark.parametrize("content,target", [

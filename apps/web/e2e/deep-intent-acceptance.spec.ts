@@ -46,7 +46,8 @@ async function scenario(page: Page, info: TestInfo) {
     if (intent !== 'SMALL_TALK') await expect(page.getByRole('button', { name: '用例工作区', exact: true })).toHaveClass(/is-active/);
     else await expect(page.getByRole('button', { name: '用例列表', exact: true })).toHaveClass(/is-active/);
     if (turn.action.job_id && wait) {
-      await expect(composer).toBeDisabled();
+      await expect(composer).toBeEnabled();
+      await expect(composer).toHaveAttribute('placeholder', '可输入调整要求，暂停当前任务后继续…');
       await expect(page.getByRole('button', { name: '结束任务', exact: true })).toBeVisible();
       await shot('01-running');
       await expect.poll(async () => (await state()).messages.find((m: { id: string }) => m.id === turn.assistant_message.id)?.status, { timeout: 420_000, intervals: [1500, 3000] }).not.toMatch(/^(running|queued|streaming|pending)$/);
@@ -56,9 +57,18 @@ async function scenario(page: Page, info: TestInfo) {
     }
     return turn;
   }
+  async function confirmModification() {
+    const button = page.getByRole('button', { name: '确认修改并生成建议', exact: true }).last();
+    await expect(button).toBeVisible({ timeout: 60_000 });
+    const response = page.waitForResponse(r => r.url().endsWith('/resume') && r.request().method() === 'POST', { timeout: 180_000 });
+    await button.click();
+    const result = await response; expect(result.ok(), await result.text()).toBeTruthy();
+    await expect(page.locator('.collection-changes__review')).toBeVisible({ timeout: 360_000 });
+    return result.json();
+  }
   info.attachments.push({ name: 'evidence', path: resolve(dir, 'evidence.json'), contentType: 'application/json' });
   save();
-  return { cases, collection, state, readCases, send, shot, composer, records, save, errors, workspace };
+  return { cases, collection, state, readCases, send, confirmModification, shot, composer, records, save, errors, workspace };
 }
 
 test('01-query 查询自动进入工作区且保持正式数据不变', async ({ page }, info) => {
@@ -76,6 +86,7 @@ test('02-smalltalk 日常对话不创建任务不切换视图', async ({ page },
 });
 
 test('03-clarify 模糊修改在对话中澄清并恢复同一任务', async ({ page }, info) => {
+  test.setTimeout(480_000);
   const s = await scenario(page, info); const turn = await s.send('修改不存在模块的用例', 'CASE_MODIFY');
   const operation = turn.operation_plan.operations[0]; expect(operation.status).toMatch(/awaiting/);
   await expect(s.composer).toBeEnabled(); await s.shot('01-clarification');
@@ -86,7 +97,7 @@ test('03-clarify 模糊修改在对话中澄清并恢复同一任务', async ({ 
   const resumed = page.waitForRequest(r => r.url().endsWith(`/conversation-operations/${operation.id}/resume`));
   await page.locator('.principle-composer button[type="submit"]').click();
   expect((await resumed).postDataJSON().content).toBe(clarification);
-  await expect(page.locator('.collection-changes__review')).toBeVisible({ timeout: 60_000 });
+  await s.confirmModification();
   await expect(page.locator('.collection-changes__review')).toContainText('账号验证通过后进入首页');
   await expect(page.locator('.principle-message.is-user').last()).toContainText(clarification);
   expect((await s.state()).operation_history).toHaveLength(1);
@@ -111,8 +122,10 @@ for (const [id, intent, request] of [
 }
 
 test('08-modify 改写仅确认后落库并保留任务历史', async ({ page }, info) => {
+  test.setTimeout(480_000);
   const s = await scenario(page, info); await s.send(`修改用例 ${s.cases[2].case_key}：仅将标题改为「库存不足时拒绝创建订单」，其他字段保持不变。`, 'CASE_MODIFY');
-  const review = page.locator('.collection-changes__review'); await expect(review).toBeVisible();
+  await s.confirmModification();
+  const review = page.locator('.collection-changes__review');
   expect(await s.readCases()).toEqual(s.cases); await s.shot('01-proposed-change');
   await review.getByRole('button', { name: '应用已选修改', exact: true }).click();
   await expect.poll(async () => (await s.readCases()).find((c: Row) => c.id === s.cases[2].id)?.title).toBe('库存不足时拒绝创建订单');
@@ -136,14 +149,18 @@ test('09-delete 删除取消与确认互不串任务', async ({ page }, info) =>
 test('10-generate 新增模块从测试说明到候选纳入', async ({ page }, info) => {
   test.setTimeout(900_000); const s = await scenario(page, info);
   await s.send('新增密码重置模块的2条用例。需求：已注册邮箱申请重置后收到有效期10分钟的链接；过期链接禁止重置并提示重新申请。仅这两个场景。', 'CASE_GENERATE');
-  await expect(page.getByRole('button', { name: '确认范围并生成用例', exact: true })).toBeVisible(); await s.shot('02-brief');
+  const confirmPlan = page.getByRole('button', { name: /^(确认范围并生成用例|确认选择并生成候选)$/ });
+  await expect(confirmPlan).toBeVisible(); await s.shot('02-brief');
   expect(await s.readCases()).toEqual(s.cases);
-  await page.getByRole('button', { name: '确认范围并生成用例', exact: true }).click();
-  await expect(s.composer).toBeDisabled(); await s.shot('03-generating');
-  await expect(page.getByRole('button', { name: '纳入已选候选', exact: true })).toBeVisible({ timeout: 600_000 });
+  await confirmPlan.click();
+  await expect(s.composer).toBeEnabled();
+  await expect(s.composer).toHaveAttribute('placeholder', '可输入调整要求，暂停当前任务后继续…');
+  await s.shot('03-generating');
+  const commit = page.getByRole('button', { name: /^(纳入已选候选|纳入正式集合)/ });
+  await expect(commit).toBeVisible({ timeout: 600_000 });
   const state = await s.state(); s.records.push({ candidates: state.candidates, workflows: state.workflow_runs }); s.save();
   expect(state.candidates.length).toBeGreaterThan(0); expect(await s.readCases()).toEqual(s.cases); await s.shot('04-candidates');
-  await page.getByRole('button', { name: '纳入已选候选', exact: true }).click();
+  await commit.click();
   await expect.poll(async () => (await s.readCases()).length).toBe(3 + state.candidates.filter((c: {included: boolean}) => c.included).length);
   await page.getByRole('button', { name: '用例工作区', exact: true }).click(); await page.reload();
   await expect(page.locator('.case-task-detail > header')).toContainText('已完成'); await s.shot('05-incorporated');
@@ -153,7 +170,9 @@ test('10-generate 新增模块从测试说明到候选纳入', async ({ page }, 
 
 test('11-stop 执行中结束任务刷新后解锁且停止后续任务', async ({ page }, info) => {
   const s = await scenario(page, info); const turn = await s.send('检查账号登录模块遗漏；检查账号登录模块冗余', 'COVERAGE_ANALYZE', false);
-  await expect(s.composer).toBeDisabled(); await s.shot('01-running');
+  await expect(s.composer).toBeEnabled();
+  await expect(s.composer).toHaveAttribute('placeholder', '可输入调整要求，暂停当前任务后继续…');
+  await s.shot('01-running');
   const blocked = await page.request.post(`${api}/conversations/${s.workspace.id}/messages`, { data: { content: '查询用例' } }); expect(blocked.status()).toBe(409);
   await page.reload(); await expect(page.getByRole('button', { name: '结束任务', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '结束任务', exact: true }).click();
