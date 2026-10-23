@@ -121,7 +121,15 @@ function CandidateSource({ candidate, conversation, compact = false }: Pick<Prop
     return [[`${action}-${label}`, { action, label }] as const];
   })).values()];
   const refs = [...new Set((candidate.snapshot.source_refs ?? []).map(ref => [ref.label, ref.locator].filter(Boolean).join(" / ")).filter(Boolean))];
-  if (compact) return <span className="task-candidate-sources is-compact">{sources.length ? [...new Set(sources.map(source => source.action))].map(action => <span key={action} className="task-source-badge" data-action={action}>{labels[action]}</span>) : <span className="task-source-badge">{refs.length ? pick("Generated", "全新生成") : pick("Source not recorded", "未记录来源")}</span>}</span>;
+  if (compact) {
+    const primary = sources.find(source => source.label);
+    const sourceLabels = sources.map(source => source.label).filter(Boolean);
+    return <span className="task-candidate-sources is-compact">
+      {sources.length ? [...new Set(sources.map(source => source.action))].map(action => <span key={action} className="task-source-badge" data-action={action}>{labels[action]}</span>) : <span className="task-source-badge">{refs.length ? pick("Generated", "全新生成") : pick("Source not recorded", "未记录来源")}</span>}
+      {primary?.label && <span className="task-source-document" title={sourceLabels.join("；")}>{primary.label}{sourceLabels.length > 1 ? ` +${sourceLabels.length - 1}` : ""}</span>}
+      {!sources.length && refs.length > 0 && <span className="task-source-document" title={refs.join("；")}>{refs[0]}{refs.length > 1 ? ` +${refs.length - 1}` : ""}</span>}
+    </span>;
+  }
   return <span className="task-candidate-sources">
     <span className="task-source-caption">{pick("Source", "用例来源")}</span>
     {sources.map(({ action, label }) => <span className="task-source-item" key={`${action}-${label}`}><span className="task-source-badge" data-action={action}>{labels[action]}</span>{label && <span>{label}</span>}</span>)}
