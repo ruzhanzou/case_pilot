@@ -131,9 +131,9 @@ SEQUENCE_SPLIT = re.compile(
 )
 NEGATED_DELETE = re.compile(r"(?:不要|无需|不用|别|禁止).{0,8}(?:删除|移除|作废)")
 NEGATED_WRITE = re.compile(
-    r"(?:不要|无需|不用|别|禁止|暂不|先别).{0,12}"
+    r"(?:不要|无需|不用|别|禁止|暂不|先别|不).{0,12}"
     r"(?:生成|创建|新增|补充|修改|改写|重写|调整|替换|删除|移除|作废)|"
-    r"(?:不要|无需|不用|别|禁止|暂不|先别)(?:把|将)[^，,。；;！？!?]{0,200}(?:改为|设为|设置为)|"
+    r"(?:不要|无需|不用|别|禁止|暂不|先别|不)(?:把|将)[^，,。；;！？!?]{0,200}(?:改为|设为|设置为)|"
     r"\b(?:do\s+not|don't|never|without)\s+"
     r"(?:generate|create|write|draft|design|modify|edit|update|rewrite|"
     r"revise|delete|remove|archive)\b",
@@ -705,7 +705,7 @@ def plan_intents(
         # A query reference ("刚才查询到的") is not necessarily a query
         # action. Never turn a failed mutation classification into a successful
         # read-only answer merely because its object contains a query keyword.
-        reliable_fallback = not WRITE_SIGNAL.search(content) and all(
+        reliable_fallback = not _has_explicit_write_request(content) and all(
             not needs_intent_confirmation(item.intent, item.confidence)
             and item.intent in {"CASE_QUERY", "KNOWLEDGE_QA", "SMALL_TALK"}
             for item in fallback.operations

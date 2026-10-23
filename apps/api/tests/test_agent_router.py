@@ -78,6 +78,32 @@ def test_model_failure_does_not_dispatch_rule_based_writes(
     assert plan.operations[0].requires_confirmation
 
 
+def test_model_failure_keeps_explicit_query_with_negated_write_safe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_router(*args, **kwargs):
+        raise RuntimeError("router unavailable")
+
+    monkeypatch.setattr(agent_router, "sdk_plan", fail_router)
+    plan = plan_intents(
+        "查询当前集合的P0正式用例，只查询不修改。",
+        classify_intent,
+        has_targets=False,
+        phase="idle",
+        target_context=[],
+        provider="openai_compatible",
+        model_name="test",
+        base_url="https://example.test/v1",
+        api_key="test-only",
+        timeout_seconds=5,
+        tracing_enabled=False,
+    )
+
+    assert [item.intent for item in plan.operations] == ["CASE_QUERY"]
+    assert plan.operations[0].requires_confirmation is False
+    assert plan.operations[0].routing_source == "fallback"
+
+
 def test_negated_generation_is_not_an_explicit_write_request() -> None:
     for content in ("不要生成测试用例", "Please don't generate test cases"):
         assert agent_router._has_explicit_write_request(content) is False
