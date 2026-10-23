@@ -98,6 +98,76 @@ def _setup_reexecution_issues(request, original, proposed) -> list[str]:
     return issues
 
 
+def _reference_recording_issues(request, original, proposed) -> list[str]:
+    """Require an explicitly selected recording action to survive a step rewrite.
+
+    Recording a timestamp or value is an executable dependency for later boundary
+    operations.  A model must not satisfy a reference rewrite by merely restating
+    the current boundary while dropping that newly selected action detail.
+    """
+    if not _requested_action_rewrite(request.instruction):
+        return []
+    evidence = "\n".join(
+        str(item.get("excerpt", ""))
+        for item in request.context.get("evidence", [])
+        if isinstance(item, dict)
+    )
+    original_actions = "\n".join(step.action for step in original.steps)
+    proposed_actions = "\n".join(step.action for step in proposed.steps)
+    recording_patterns = (
+        ("签发时刻", r"记录.{0,12}(?:签发|生成).{0,8}(?:时刻|时间|时间戳)"),
+        ("开始时刻", r"记录.{0,12}(?:开始|起始).{0,8}(?:时刻|时间|时间戳)"),
+        ("结束时刻", r"记录.{0,12}(?:结束|完成).{0,8}(?:时刻|时间|时间戳)"),
+    )
+    missing = [
+        label
+        for label, pattern in recording_patterns
+        if re.search(pattern, evidence)
+        and not re.search(pattern, original_actions)
+        and not re.search(pattern, proposed_actions)
+    ]
+    if not missing:
+        return []
+    return [
+        "已确认参考包含当前步骤缺少的记录操作，必须将其落实到action："
+        + "、".join(missing)
+    ]
+
+
+def complete_reference_recording_actions(request, proposed):
+    """Add selected, non-numeric recording details without copying obsolete rules."""
+    if not _boundary_variants(request.instruction):
+        return proposed
+    issues = _reference_recording_issues(request, request.test_case, proposed)
+    if not issues or not proposed.steps:
+        return proposed
+    evidence = "\n".join(
+        str(item.get("excerpt", ""))
+        for item in request.context.get("evidence", [])
+        if isinstance(item, dict)
+    )
+    phrases = []
+    for pattern in (
+        r"记录.{0,12}(?:签发|生成).{0,8}(?:时刻|时间|时间戳)",
+        r"记录.{0,12}(?:开始|起始).{0,8}(?:时刻|时间|时间戳)",
+        r"记录.{0,12}(?:结束|完成).{0,8}(?:时刻|时间|时间戳)",
+    ):
+        match = re.search(pattern, evidence)
+        if match:
+            phrase = re.sub(r"[；，。].*$", "", match.group(0)).strip()
+            phrase = re.sub(r"(?:并|后)$", "", phrase).strip()
+            if phrase and not re.search(r"\d", phrase) and phrase not in phrases:
+                phrases.append(phrase)
+    if not phrases:
+        return proposed
+    completed = proposed.model_copy(deep=True)
+    current = "\n".join(step.action for step in completed.steps)
+    missing = [phrase for phrase in phrases if phrase not in current]
+    if missing:
+        completed.steps[0].action = "；".join([*missing, completed.steps[0].action])
+    return completed
+
+
 def complete_reference_trigger_boundaries(request, proposed):
     """Fill an explicit boundary into the business-result action when unambiguous."""
     if (
@@ -223,7 +293,10 @@ def reference_rewrite_error(request, proposed) -> str | None:
             "参考改写未产生实质内容变化；来源引用不算改写。"
             "请按当前要求修改相关内容；没有适用变化时不要编造修改"
         )
-    issues = _setup_reexecution_issues(request, original, proposed)
+    issues = [
+        *_setup_reexecution_issues(request, original, proposed),
+        *_reference_recording_issues(request, original, proposed),
+    ]
     original_actions = "\n".join(step.action for step in original.steps)
     proposed_actions = "\n".join(step.action for step in proposed.steps)
     boundaries = _boundary_variants(request.instruction)

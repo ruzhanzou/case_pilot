@@ -205,15 +205,19 @@ def test_preserve_existing_steps_still_allows_explicit_append():
 
 
 def test_model_cannot_drop_confirmed_asset_provenance_when_reselecting_citations():
-    from casepilot_agent.contracts import SourceRef
     import json
+
+    from casepilot_agent.contracts import SourceRef
     case = original()
     source = SourceRef(label='修改参考 · 旧版用例.xlsx', locator='Sheet1 行2',
                        excerpt=json.dumps({'source_key': 'excel:doc:Sheet1:2', 'action': 'modify',
                                            'case_key': 'OLD-001', 'revision': 1}))
     case.source_refs.append(source)
-    result = GenerationPipeline(Provider({'title': '登录成功校验', 'source_ref_indexes': []})).rewrite_many(
-        {'one': RewriteRequest(test_case=case, instruction='只将标题改为登录成功校验')})['one']
+    result = GenerationPipeline(
+        Provider({'title': '登录成功校验', 'source_ref_indexes': []})
+    ).rewrite_many(
+        {'one': RewriteRequest(test_case=case, instruction='只将标题改为登录成功校验')}
+    )['one']
     assert result.quality.passed
     assert source in result.proposed.source_refs
 
@@ -304,7 +308,10 @@ def test_reference_rewrite_rejects_repeating_completed_setup_and_missing_trigger
 
 def test_reference_rewrite_allows_explicitly_requested_setup_reexecution():
     request = boundary_reference_request().model_copy(update={
-        "instruction": "参考Excel只改写操作步骤，先重新签发验证码，再按300秒边界登录，预期结果保持不变",
+        "instruction": (
+            "参考Excel只改写操作步骤，先重新签发验证码，"
+            "再按300秒边界登录，预期结果保持不变"
+        ),
     })
     result = GenerationPipeline(Provider({"step_updates": [
         {"step_index": 0, "action": "重新签发验证码并推进服务端时钟至300秒"},
@@ -322,6 +329,27 @@ def test_reference_rewrite_completes_boundary_on_business_result_action():
     assert result.quality.repair_rounds == 0
     assert result.proposed.steps[1].action.startswith("在300秒边界条件下，")
     assert result.proposed.steps[1].expected == request.test_case.steps[1].expected
+
+
+def test_reference_rewrite_completes_selected_recording_action_without_old_boundary():
+    request = boundary_reference_request().model_copy(update={
+        "context": {
+            "approved_reference_assets": [{"key": "excel:book:2", "kind": "excel"}],
+            "evidence": [{
+                "label": "历史.xlsx",
+                "excerpt": "调用签发接口获取验证码并记录签发时刻；推进服务端时钟到签发后420秒",
+            }],
+        },
+    })
+    provider = Provider({"step_updates": [{
+        "step_index": 1,
+        "action": "在300秒边界条件下使用该验证码发起登录请求",
+    }]})
+    result = GenerationPipeline(provider).rewrite_many({"one": request})["one"]
+    assert result.quality.passed
+    assert result.quality.repair_rounds == 0
+    assert "记录签发时刻" in result.proposed.steps[0].action
+    assert "420" not in "\n".join(step.action for step in result.proposed.steps)
 
 
 def test_reference_title_rewrite_does_not_require_step_changes():

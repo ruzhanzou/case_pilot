@@ -41,6 +41,7 @@ from casepilot_agent.contracts import (
 )
 from casepilot_agent.planning import planned_module
 from casepilot_agent.rewrite_guards import (
+    complete_reference_recording_actions,
     complete_reference_trigger_boundaries,
     permits_step_removal,
     preservation_error,
@@ -72,6 +73,7 @@ class RewriteContentError(ValueError):
 
 
 def validate_rewrite_candidate(request, candidate):
+    candidate.proposed = complete_reference_recording_actions(request, candidate.proposed)
     candidate.proposed = complete_reference_trigger_boundaries(request, candidate.proposed)
     original, proposed = request.test_case, candidate.proposed
     for field in ("id", "automated", "status", "test_point_ids"):
