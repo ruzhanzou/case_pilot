@@ -2329,6 +2329,15 @@ export function CaseWorkbench({
             ref={promptRef}
             value={prompt}
             onChange={(event) => editPrompt(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+              event.preventDefault();
+              if (event.repeat) return;
+              const form = event.currentTarget.form;
+              const submitButton = form?.querySelector<HTMLButtonElement>('button[type="submit"]');
+              if (submitButton && !submitButton.disabled) form?.requestSubmit(submitButton);
+            }}
+            title={pick("Enter to send, Shift+Enter for a new line", "回车发送，Shift+回车换行")}
             placeholder={
               conversationRunning ? pick("Describe an adjustment, then pause to continue…", "可输入调整要求，暂停当前任务后继续…") : effectivePendingOperationId
                 ? pick("Provide details or select cases to continue this task", "补充需求或选择用例后，继续执行当前任务")
