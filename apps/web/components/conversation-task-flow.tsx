@@ -20,17 +20,25 @@ export function ConversationTaskFlow({ tasks, labels, statusLabels, busy, onResu
   return <details className="conversation-task-flow" open>
     <summary>{pick("Task flow", "任务流")} · {tasks.length}</summary>
     <ol>{tasks.slice().reverse().map((task) => {
+      const generationReview = task.status === "awaiting_confirmation"
+        && task.operation?.status === "completed"
+        && task.versions?.some((round) => round.message.intent === "CASE_GENERATE");
+      const displayIntent = generationReview ? "CASE_GENERATE" : task.message.intent;
+      const generationRound = generationReview
+        ? task.versions?.find((round) => round.message.intent === "CASE_GENERATE")
+        : undefined;
       const steps = task.message.metadata.action === "module_created"
         ? [pick("Define module", "确定模块"), pick("Create module", "创建模块")]
-        : task.message.intent === "CASE_GENERATE"
+        : displayIntent === "CASE_GENERATE"
           ? [pick("Define scope", "明确范围"), pick("Generate", "生成用例"), pick("Review", "审阅结果"), pick("Add to collection", "纳入集合")]
           : ["CASE_MODIFY", "CASE_DELETE"].includes(task.message.intent ?? "")
             ? [pick("Resolve targets", "确定目标"), pick("Prepare changes", "准备变更"), pick("Review in workstation", "工作区确认"), pick("Apply", "应用变更")]
             : [pick("Resolve scope", "确定范围"), pick("Process", "执行任务"), pick("Result", "结果摘要")];
-      const stepIndex = task.status === "completed" ? steps.length - 1
+      const stepIndex = generationReview ? 2 : task.status === "completed" ? steps.length - 1
         : task.status === "awaiting_confirmation" ? (task.message.intent === "CASE_GENERATE" && !(task.operation?.result.candidate_ids as string[] | undefined)?.length ? 0 : 2)
           : task.status === "running" ? (task.workflow?.operation === "draft_brief" ? 0 : 1) : 0;
-      const status = task.waitingOn ? pick("Waiting for previous task", "等待前置任务") : statusLabels[task.status] ?? ({
+      const status = task.waitingOn ? pick("Waiting for previous task", "等待前置任务")
+        : generationReview ? pick("Candidates awaiting review", "候选待评审") : statusLabels[task.status] ?? ({
         superseded: pick("Superseded", "已被新方案替代"),
         conflict: pick("Version conflict", "版本冲突"),
     not_applied: pick("Not applied", "未应用"),
@@ -38,10 +46,10 @@ export function ConversationTaskFlow({ tasks, labels, statusLabels, busy, onResu
         awaiting_clarification: pick("Needs details", "待补充信息"),
         awaiting_collection: pick("Choose collection", "待选择集合"),
       }[task.status] ?? task.status);
-      const plan = task.operation?.payload.plan as { target_text?: string; constraints?: string[] } | undefined;
+      const plan = (generationRound?.operation?.payload.plan ?? task.operation?.payload.plan) as { target_text?: string; constraints?: string[] } | undefined;
       return <li key={task.id}>
-        <div className="conversation-task-flow__heading"><strong>{task.message.metadata.action === "module_created" ? pick("Create module", "创建模块") : labels[task.message.intent!]}</strong><span role="status">{status}</span></div>
-        <p>{String(task.operation?.payload.instruction ?? task.request?.content ?? "")}</p>
+        <div className="conversation-task-flow__heading"><strong>{task.message.metadata.action === "module_created" ? pick("Create module", "创建模块") : labels[displayIntent!]}</strong><span role="status">{status}</span></div>
+        <p>{String(generationRound?.operation?.payload.instruction ?? generationRound?.request?.content ?? task.operation?.payload.instruction ?? task.request?.content ?? "")}</p>
         {plan?.target_text && <p>{pick("Scope", "范围")}：{plan.target_text}</p>}
         {!!plan?.constraints?.length && <p>{pick("Preserve", "约束")}：{plan.constraints.join("；")}</p>}
         <div className="task-workflow" aria-label={pick("Task workflow", "任务工作流")}>{steps.map((label, index) => <div key={label} aria-current={index === stepIndex && task.status !== "completed" ? "step" : undefined} data-state={index < stepIndex || task.status === "completed" ? "done" : index === stepIndex ? "current" : "pending"}><span>{index + 1}</span>{label}</div>)}</div>

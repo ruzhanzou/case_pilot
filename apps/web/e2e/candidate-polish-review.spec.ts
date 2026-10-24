@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 test.use({ viewport: { width: 1600, height: 1000 } });
-test('candidate rewrite is reviewed above candidates and unlocks acceptance', async ({ page }) => {
+test('candidate rewrite blocks adoption until review and returns to candidate review', async ({ page }) => {
   let applied = false;
   const base = { title: 'Login', module: 'Account', priority: 'P1', case_type: 'Functional', tags: [], preconditions: ['Account ready'], steps: [{ action: 'Log in', expected: 'Success' }], source_refs: [] };
   const candidates = Array.from({ length: 24 }, (_, i) => ({ id: `candidate-${i}`, ref: `TC-${i}`, position: i, version: 1, included: true, status: 'candidate', generation_job_id: 'generation', snapshot: { ...base } }));
@@ -31,12 +31,15 @@ test('candidate rewrite is reviewed above candidates and unlocks acceptance', as
   });
   await page.goto('/workbench/collections/alpha');
   const review = page.getByRole('region', { name: 'Review pending case changes' });
-  await expect(page.getByRole('button', { name: 'Accept selected (24)', exact: true })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Review AI changes', exact: true })).toBeVisible();
+  await expect(review).toBeVisible();
+  await page.getByRole('group', { name: 'Result content' }).getByRole('button', { name: 'Candidate cases · 24', exact: true }).click();
+  const addCandidates = page.getByRole('button', { name: 'Add selected to collection (24)', exact: true });
+  await expect(addCandidates).toBeDisabled();
+  await page.getByRole('group', { name: 'Result content' }).getByRole('button', { name: 'Review changes', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Accept all remaining (1)', exact: true })).toBeInViewport();
-  const reviewBox = await review.boundingBox();
-  const candidatesBox = await page.getByRole('region', { name: 'Candidate results' }).boundingBox();
-  expect(reviewBox!.y).toBeLessThan(candidatesBox!.y);
   await page.getByRole('button', { name: 'Accept all remaining (1)', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Accept selected (24)', exact: true })).toBeEnabled();
+  await expect(addCandidates).toBeEnabled();
+  const activeTask = page.locator('.conversation-task-flow li').filter({ hasText: 'Generate test cases' });
+  await expect(activeTask.getByRole('status')).toHaveText('Candidates awaiting review');
+  await expect(activeTask).not.toContainText('Awaiting confirmation');
 });
