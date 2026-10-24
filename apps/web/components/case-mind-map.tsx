@@ -12,6 +12,7 @@ import type {
 } from "@/lib/casepilot-api";
 import { getCollection, updateCollection } from "@/lib/casepilot-api";
 import { isModuleWithin, moduleAncestors, modulePath } from "@/lib/case-module-tree";
+import { caseContentRows } from "@/lib/case-content";
 import { matchesCaseSearch } from "@/lib/case-search";
 import { useI18n } from "@/lib/i18n";
 import {
@@ -147,7 +148,7 @@ const MindMapCard = memo(function MindMapCard({
   const saveText = async (draft: string) => {
     if (saving || cancelingRef.current) return;
     const value = draft.trim();
-    if (!value) {
+    if (!value && data.detailKind !== "setup") {
       setSaveError(pick("Content cannot be empty", "内容不能为空"));
       window.requestAnimationFrame(() => editorRef.current?.focus());
       return;
@@ -808,14 +809,8 @@ export function CaseMindMap({
         .split("\n")
         .map((line) => line.replace(/^\s*\d+[.、]\s*/, "").trim())
         .filter(Boolean);
-      if (field !== "title" && !lines.length) {
+      if ((field === "procedure" || field === "validation") && !lines.length) {
         throw new Error(pick("Keep at least one item", "至少保留一条内容"));
-      }
-      if (
-        (field === "procedure" || field === "validation") &&
-        lines.length !== testCase.steps.length
-      ) {
-        throw new Error(pick("The step count must stay the same. Use the full editor to add or remove steps.", "步骤数量需保持不变；增删步骤请打开完整编辑器"));
       }
       await onSaveCase(testCase, {
         case_key: testCase.case_key,
@@ -826,11 +821,12 @@ export function CaseMindMap({
         case_type: testCase.case_type,
         tags: testCase.tags,
         preconditions: field === "setup" ? lines : testCase.preconditions,
-        steps: testCase.steps.map((step, index) => ({
-          id: step.id,
-          action: field === "procedure" ? lines[index] : step.action,
-          expected: field === "validation" ? lines[index] : step.expected,
-        })),
+        steps: field === "procedure" || field === "validation"
+          ? caseContentRows(
+              field === "procedure" ? lines.join("\n") : testCase.steps.map(step => step.action).filter(Boolean).join("\n"),
+              field === "validation" ? lines.join("\n") : testCase.steps.map(step => step.expected).filter(Boolean).join("\n"),
+            )
+          : testCase.steps,
         source: testCase.source,
         source_refs: testCase.source_refs,
       });
@@ -1019,19 +1015,19 @@ export function CaseMindMap({
             label: "test_setup",
             text: testCase.preconditions.length
               ? testCase.preconditions.map((item, index) => `${index + 1}. ${item}`).join("\n")
-              : pick("No preconditions", "无前置条件"),
+              : "",
             values: testCase.preconditions,
           },
           {
             kind: "procedure" as const,
             label: "test_procedure",
-            text: testCase.steps.map((step, index) => `${index + 1}. ${step.action}`).join("\n"),
+            text: testCase.steps.filter(step => step.action.trim()).map((step, index) => `${index + 1}. ${step.action}`).join("\n"),
             values: testCase.steps.map((step) => step.action),
           },
           {
             kind: "validation" as const,
             label: "test_validation",
-            text: testCase.steps.map((step, index) => `${index + 1}. ${step.expected}`).join("\n"),
+            text: testCase.steps.filter(step => step.expected.trim()).map((step, index) => `${index + 1}. ${step.expected}`).join("\n"),
             values: testCase.steps.map((step) => step.expected),
           },
         ];
