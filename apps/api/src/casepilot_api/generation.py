@@ -110,6 +110,8 @@ STAGE_PROGRESS = {
     "generation.awaiting_input": 25,
     "feature.generated": 38,
     "test_point.generated": 52,
+    "test_case.allocated": 60,
+    "test_case.allocation_reviewed": 62,
     "test_case.generated": 72,
     "test_case.grounded": 76,
     "enhancement.completed": 86,

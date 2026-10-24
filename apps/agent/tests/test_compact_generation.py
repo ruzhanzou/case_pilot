@@ -8,6 +8,7 @@ from casepilot_agent.compact_generation import BatchAudit, CaseContent, ContentB
 from casepilot_agent.contracts import GenerationRequest, TestStep as CaseStep
 from casepilot_agent.pipeline import GenerationPipeline
 from casepilot_agent.providers.mock import MockProvider
+from semantic_validation_fixture import with_point_semantics
 
 
 @pytest.fixture(autouse=True)
@@ -27,6 +28,9 @@ def request(count=12):
 
 
 def execute(stage, instruction, payload, result_type, model_id):
+    if stage == "output_quantity.interpreted":
+        from casepilot_agent.quantity import OutputQuantity
+        return OutputQuantity()
     if result_type is BatchAudit:
         return BatchAudit(reviews=[{"slot": c["slot"], "verdict": "supported", "replacement": None, "reason": "", "assertions": [{"step": i + 1, "source_index": 0, "quote": payload["grounding_sources"][0], "explanation": "测试审核桩"} for i, step in enumerate(c["steps"]) if step["expected"].strip()]} for c in payload["test_cases"]])
     return MockProvider().complete(stage=stage, instruction=instruction, payload=payload,
@@ -34,12 +38,14 @@ def execute(stage, instruction, payload, result_type, model_id):
 
 
 def run(req, executor=execute, on_batch=None):
-    return GenerationPipeline(SimpleNamespace(name="real")).run(req, context={}, answers={}, execute_stage=executor, on_batch=on_batch)
+    return GenerationPipeline(SimpleNamespace(name="real")).run(req, context={}, answers={}, execute_stage=with_point_semantics(executor), on_batch=on_batch)
 
 
 def test_compact_batches_use_local_checks_and_derive_complete_coverage():
     calls, previews = [], []
     def tracked(*args):
+        if args[0] == "output_quantity.interpreted":
+            return execute(*args)
         calls.append((args[0], args[2]["batch_count"]))
         return execute(*args)
     result = run(request(), tracked, lambda cases, total: previews.append((len(cases), total)))
@@ -61,6 +67,9 @@ def test_model_cannot_emit_system_fields_or_unbounded_citations():
 def test_invalid_json_retries_are_bounded_after_fresh_batches_without_recursive_split():
     calls, previews = [], []
     def malformed(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         calls.append((payload["batch_start_index"], payload["batch_count"], payload["retry_attempt"]))
         if payload["batch_start_index"] == 1:
             raise ModelBehaviorError("invalid JSON")
@@ -76,6 +85,9 @@ def test_invalid_json_retries_are_bounded_after_fresh_batches_without_recursive_
 def test_missing_and_malformed_slots_repair_only_failed_entries():
     calls, previews = [], []
     def broken(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         calls.append([p["slot"] for p in payload["points"]])
         result = execute(stage, instruction, payload, result_type, model_id)
         if payload["retry_attempt"] == 0:
@@ -91,6 +103,9 @@ def test_missing_and_malformed_slots_repair_only_failed_entries():
 def test_local_repair_retains_valid_siblings_and_marks_unresolved():
     calls = []
     def broken(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         calls.append([p["slot"] for p in payload["points"]])
         result = execute(stage, instruction, payload, result_type, model_id)
         for case in result.test_cases:
@@ -153,6 +168,9 @@ def test_transient_connection_loss_retries_same_batch_once_without_duplicates():
     from openai import APIConnectionError
     calls, previews = [], []
     def unstable(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         if stage == "test_case.generated":
             calls.append((payload["batch_start_index"], payload["batch_count"], payload["retry_attempt"]))
             if len(calls) == 1:
@@ -168,6 +186,9 @@ def test_persistent_connection_loss_is_bounded_and_publishes_nothing():
     from openai import APIConnectionError
     calls, previews = [], []
     def unavailable(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         calls.append(payload["batch_count"])
         raise APIConnectionError(request=httpx.Request("POST", "https://example.invalid"))
     result = run(request(5), unavailable, lambda *args: previews.append(args))
@@ -187,6 +208,9 @@ def test_parallel_batches_publish_fast_batch_first_with_stable_checkpoints(monke
     inputs, previews = [], []
 
     def concurrent(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         nonlocal active, peak
         with lock:
             active += 1
@@ -223,6 +247,9 @@ def test_parallel_fatal_error_stops_new_batches_and_joins_inflight(monkeypatch):
     finished = Event()
     calls = []
     def fail(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         calls.append(payload["batch_start_index"])
         if stage == "test_case.generated":
             started.wait(timeout=5)
@@ -243,6 +270,9 @@ def test_action_without_observable_expectation_is_repaired():
     from casepilot_agent.contracts import TestStep
     attempts = []
     def independent(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         result = execute(stage, instruction, payload, result_type, model_id)
         if issubclass(result_type, ContentBatch) and not attempts:
             attempts.append(payload["retry_attempt"])
@@ -255,12 +285,19 @@ def test_action_without_observable_expectation_is_repaired():
     assert all(step.expected for step in result.test_cases[0].steps if step.action)
 
 
-def test_count_does_not_recycle_confirmed_points():
+def test_count_requires_independent_allocation_not_recycling_confirmed_points():
+    from casepilot_agent.case_allocation import CaseAllocation
     req = request(2)
-    req.prompt = "大概生成50条用例"
-    result = GenerationPipeline(MockProvider()).run(req, context={}, answers={}, execute_stage=execute)
-    assert len(result.test_cases) == 2
-    assert any(i.code == "independent_scenarios_below_target" for i in result.quality.issues)
+    def budget(stage, *args):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity(case_count=50)
+        if stage == "test_case.allocated":
+            return CaseAllocation(scenarios=[])
+        raise AssertionError("Invalid allocation must not generate cases")
+    from casepilot_agent.pipeline import AwaitingInput
+    with pytest.raises(AwaitingInput):
+        run(req, budget)
 
 
 def test_duplicate_content_is_rejected_even_when_titles_differ():
@@ -281,6 +318,9 @@ def test_cross_batch_duplicate_merge_retains_both_point_links():
     base.test_cases = [first, duplicate]
     calls = []
     def resolve(stage, instruction, payload, result_type, model):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         calls.append(payload)
         return DuplicateResolution(equivalent=True, reason="同一场景", replacement=CaseContent(
             slot=1, title=first.title, preconditions=first.preconditions, steps=first.steps))
@@ -310,6 +350,9 @@ def test_same_title_distinct_scenarios_are_repaired_not_dropped():
 def test_duplicates_are_flagged_without_model_audit_or_automatic_merge():
     calls = []
     def duplicate(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         calls.append(stage)
         result = execute(stage, instruction, payload, result_type, model_id)
         result.test_cases[1] = result.test_cases[0].model_copy(update={"slot": 2})
@@ -324,6 +367,9 @@ def test_duplicates_are_flagged_without_model_audit_or_automatic_merge():
 def test_compact_payload_shares_features_and_preserves_evidence():
     inputs = []
     def capture(stage, instruction, payload, result_type, model):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         inputs.append(payload)
         return execute(stage, instruction, payload, result_type, model)
     assert run(request(5), capture).quality.passed
@@ -353,6 +399,9 @@ def test_batch_configuration_preserves_coverage(size, concurrency, count):
     req = request(count).model_copy(update={'batch_size': size, 'batch_concurrency': concurrency})
     calls = []
     def tracked(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         calls.append(payload)
         assert payload['prompt_version'] == 'case-batch-v11-authorized-modifications'
         assert payload['batch_count'] <= size
@@ -372,6 +421,9 @@ def test_prompt_removes_exact_repeats_but_preserves_latest_corrections():
     ]
     req.confirmed_plan['feature_points'][0]['description'] = req.prompt
     def tracked(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         assert [m['content'] for m in payload['user_requirements']] == ['改为P0','保留预期','刚才说错了，改为P2']
         assert 'description' not in payload['features'][0]
         return execute(stage, instruction, payload, result_type, model_id)
@@ -394,6 +446,9 @@ def test_explicit_endpoint_or_status_mismatch_retries_only_affected_slot(wrong_b
     req.confirmed_plan['test_points'][0].update(objective='访问/report/90返回报表90及状态200', scenario='管理员已登录')
     calls = []
     def executor(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         calls.append(payload['batch_slots'])
         assert 'global_scenario_index' not in payload
         result = execute(stage, instruction, payload, result_type, model_id)
@@ -414,6 +469,9 @@ def test_rate_limit_retries_only_the_failed_batch_and_retains_successes():
     from openai import RateLimitError
     calls = []
     def limited(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         calls.append(payload['batch_slots'])
         if payload['batch_slots'] == [6] and payload['retry_attempt'] == 0:
             raise RateLimitError('synthetic rate limit', response=httpx.Response(429,
@@ -432,10 +490,12 @@ def test_confirmed_object_survives_prompt_batches_and_artifact(explicit, answer,
     req = request(6).model_copy(update={"test_object": explicit})
     calls = []
     def tracked(*args):
+        if args[0] == "output_quantity.interpreted":
+            return execute(*args)
         calls.append(args[2]["test_object"])
         return execute(*args)
     result = GenerationPipeline(SimpleNamespace(name="real")).run(
-        req, context={}, answers={"Q-TEST-OBJECT": answer}, execute_stage=tracked)
+        req, context={}, answers={"Q-TEST-OBJECT": answer}, execute_stage=with_point_semantics(tracked))
     assert calls == [expected, expected]
     assert result.requirement.test_object == expected
     assert result.requirement.test_object_specified is bool(expected)
@@ -532,6 +592,9 @@ def test_unrequested_counter_effect_is_reviewed_without_regenerating_good_siblin
         p.update(title='账号状态', scenario='停用账号提交正确凭据', objective='返回E403')
     calls = []
     def complete(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         calls.append((stage, payload.get('batch_slots')))
         if stage == 'test_case.grounded':
             assert [c['slot'] for c in payload['test_cases']] == [2]
@@ -559,6 +622,9 @@ def test_format_failure_does_not_exhaust_content_repair_and_keeps_successful_sib
     req.confirmed_plan["test_points"][1]["objective"] = "账号锁定1140秒"
     calls, previews = [], []
     def mixed_failure(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         calls.append((payload["batch_slots"], payload["retry_attempt"]))
         if payload["retry_attempt"] == 0:
             raise ModelBehaviorError("invalid JSON")
@@ -577,3 +643,45 @@ def test_format_failure_does_not_exhaust_content_repair_and_keeps_successful_sib
     assert result.quality.repair_rounds == 2
     assert previews[0][0] == previews[-1][0]
     assert not any(i.code == "uncovered_test_point" for i in result.quality.issues)
+
+
+def test_production_point_validation_obeys_semantic_model_not_literal_rules(monkeypatch):
+    from casepilot_agent.compact_generation import PointSemanticChecks
+    calls = []
+    def model(stage, instruction, payload, result_type, model_id):
+        if stage == "test_case.semantics_checked":
+            calls.append(payload)
+            return PointSemanticChecks(checks=[{"slot": case["slot"]} for case in payload["test_cases"]])
+        return execute(stage, instruction, payload, result_type, model_id)
+    def forbidden(*args):
+        raise AssertionError("Production must not interpret business requirements with regex")
+    monkeypatch.setattr("casepilot_agent.compact_generation.validate_point_literals", forbidden)
+    monkeypatch.setattr("casepilot_agent.compact_generation.extra_assertion_risks", forbidden)
+    result = GenerationPipeline(SimpleNamespace(name="real")).run(
+        request(2), context={}, answers={}, execute_stage=model)
+    assert len(result.test_cases) == 2
+    assert len(calls) == 1 and len(calls[0]["points"]) == 2
+
+
+@pytest.mark.parametrize("failure", ["semantic_error", "invalid_response"])
+def test_production_semantic_failure_repairs_only_affected_slots(failure):
+    from casepilot_agent.compact_generation import PointSemanticChecks
+    generated = []
+    checked = []
+    def model(stage, instruction, payload, result_type, model_id):
+        if stage == "test_case.semantics_checked":
+            slots = [case["slot"] for case in payload["test_cases"]]
+            checked.append(slots)
+            if len(checked) == 1:
+                if failure == "invalid_response":
+                    raise ModelBehaviorError("unparseable semantic response")
+                return PointSemanticChecks(checks=[{"slot": slot, "errors": ["缺少边界断言"] if slot == 2 else []} for slot in slots])
+            return PointSemanticChecks(checks=[{"slot": slot} for slot in slots])
+        if stage == "test_case.generated":
+            generated.append(payload["batch_slots"])
+        return execute(stage, instruction, payload, result_type, model_id)
+    result = GenerationPipeline(SimpleNamespace(name="real")).run(
+        request(2), context={}, answers={}, execute_stage=model)
+    assert generated == [[1, 2], [2] if failure == "semantic_error" else [1, 2]]
+    assert checked == generated
+    assert len(result.test_cases) == 2

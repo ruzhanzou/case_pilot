@@ -166,29 +166,3 @@ export function nextWorkspaceOperation(conversation: ConversationDto | null) {
     .filter((item) => item.sequence < operation.sequence)
     .every((item) => ["completed", "skipped"].includes(item.status)));
 }
-
-/** Keep clarifications on their task, but do not swallow an explicit new action. */
-export function shouldResumePendingTask(intent: string, content: string): boolean {
-  if (/(?:然后|随后|接着|再|\bthen\b)\s*(?:查询|查找|修改|改写|生成|删除|检查|query\b|find\b|modify\b|generate\b|delete\b)/i.test(content)) return false;
-  const command = content.trim().replace(/^(?:(?:请|帮我|麻烦|please)\s*)+/i, "");
-  const explicitIntents: [RegExp, string][] = [
-    [/^(?:修改|改写|调整|替换|modify\b|edit\b|rewrite\b)/i, "CASE_MODIFY"],
-    [/^(?:删除|移除|delete\b|remove\b)/i, "CASE_DELETE"],
-    [/^(?:查询|查找|搜索|列出|query\b|find\b|search\b|list\b)/i, "CASE_QUERY"],
-    [/^(?:生成|新增|创建|编写|generate\b|create\b|write\b)/i, "CASE_GENERATE"],
-    [/^(?:查重|检查重复|检查冗余|dedup\b)/i, "CASE_DEDUP"],
-    [/^(?:评审|审阅|review\b|audit\b)/i, "CASE_REVIEW"],
-    [/^(?:分析覆盖|检查遗漏|检查覆盖)/i, "COVERAGE_ANALYZE"],
-    [/^(?:解释|什么是|如何|为什么|explain\b|what\b|how\b)/i, "KNOWLEDGE_QA"],
-    [/^(?:你好|谢谢|hello\b|thanks\b)/i, "SMALL_TALK"],
-  ];
-  const nextIntent = explicitIntents.find(([pattern]) => pattern.test(command))?.[1];
-  return !nextIntent || nextIntent === intent;
-}
-
-/** Only implicit mutation commands may reuse a previous single-case selection. */
-export function requestsImplicitMutation(content: string): boolean {
-  const positive = content.replace(/(?:不|不要|无需|禁止|暂不)\s*(?:修改|改写|调整|替换|删除|移除)/g, "")
-    .replace(/(?:do\s+not|don't|without)\s+(?:modify|edit|rewrite|delete|remove)(?:ing)?/gi, "");
-  return /(?:修改|改写|调整|替换|改成|改为|删除|移除|\b(?:edit|modify|rewrite|delete|remove)\b)/i.test(positive);
-}

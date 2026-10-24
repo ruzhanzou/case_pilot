@@ -9,6 +9,13 @@ from casepilot_api.case_scope import filter_priority
 from casepilot_api.schemas import ConversationMessageCreate
 
 
+@pytest.fixture(autouse=True)
+def legacy_mock_scope(monkeypatch):
+    # These exercise the deterministic demo provider. Production semantic scope
+    # contracts live in test_model_scope and live acceptance.
+    monkeypatch.setattr(conversations.settings, "agent_provider", "mock")
+
+
 @pytest.mark.parametrize("text", ["查询优先级为P0的用例", "查询P0用例", "修改P0用例，优先级改为P1"])
 def test_priority_source_is_distinct_from_assignment(text):
     assert filter_priority(text, [{"priority": "P0"}, {"priority": "P1"}]) == [{"priority": "P0"}]

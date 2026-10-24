@@ -10,6 +10,14 @@ from casepilot_api.models import ConversationMessage, TestCaseRevision as Revisi
 from casepilot_api.schemas import ChangeSetApplyRequest
 
 
+@pytest.fixture(autouse=True)
+def legacy_mock_scope(monkeypatch):
+    # Deterministic demo-provider contracts. Production semantics are exercised
+    # by test_model_scope and real-model acceptance.
+    from casepilot_api import conversations
+    monkeypatch.setattr(conversations.settings, "agent_provider", "mock")
+
+
 def test_conflicting_proposal_stops_waiting_for_confirmation():
     db = Mock()
     operation = SimpleNamespace(status="awaiting_confirmation", result={"kept": True})

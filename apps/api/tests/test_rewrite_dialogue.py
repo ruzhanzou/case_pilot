@@ -150,6 +150,7 @@ async def test_scope_question_is_resolved_from_catalog_before_asking_user(draft,
         operation = db.get(ConversationOperation, UUID(oid))
         operation.payload = {**operation.payload, "modification_confirmation": None, "plan": {
             "clarification_questions": ["请确认登录模块下需要改写的具体用例编号范围"],
+            "clarification_kind": "scope",
             "reason_codes": [],
         }}
         conversation = db.get(Conversation, UUID(workspace))

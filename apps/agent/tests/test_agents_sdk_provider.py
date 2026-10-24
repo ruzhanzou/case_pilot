@@ -216,6 +216,7 @@ def test_agents_sdk_provider_uses_fast_fallback_for_structured_generation(
     assert models == ["local", "doubao-test"]
     assert "上一次输出未通过 JSON Schema 校验" not in prompts[1]
     assert "上一次输出未通过 JSON Schema 校验" in prompts[2]
+    assert "invalid structured output" in prompts[2]
 
 
 @pytest.mark.parametrize("fails", [False, True])

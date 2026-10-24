@@ -419,3 +419,36 @@ def test_long_review_stops_between_batches_without_reporting_false_completion(mo
     assert provider.complete.call_count == 1
     fail.assert_not_called()
     store.complete_job_message.assert_not_called()
+
+
+def test_analysis_reference_repair_is_bounded_and_preserves_usage():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from casepilot_agent.case_analysis import complete_analysis_batch
+    from casepilot_agent.contracts import UsageMetadata
+    def report(ref):
+        return CaseAnalysisReport(summary="评审结果", findings=[CaseFinding(
+            title="预期不明确", severity="medium", case_refs=[ref], evidence="原文",
+            recommendation="明确断言")])
+    provider = SimpleNamespace(complete=Mock(side_effect=[
+        (report("invented"), UsageMetadata(model="real", token_usage={"total_tokens": 3})),
+        (report("c0"), UsageMetadata(model="real", token_usage={"total_tokens": 5})),
+    ]))
+    result, usage = complete_analysis_batch(provider, instruction="评审全部",
+        payload={"cases": [{"ref": "original-id", "snapshot": {"title": "登录"}}]}, model_id="auto")
+    assert result.findings[0].case_refs == ["original-id"]
+    assert usage.token_usage["total_tokens"] == 8
+    assert provider.complete.call_args.kwargs["payload"]["validation_feedback"]["unknown_references"] == ["invented"]
+
+
+def test_analysis_invalid_reference_is_never_silently_dropped():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from casepilot_agent.case_analysis import complete_analysis_batch
+    from casepilot_agent.contracts import UsageMetadata
+    provider = SimpleNamespace(complete=Mock(return_value=(CaseAnalysisReport(
+        summary="结果", findings=[CaseFinding(title="问题", severity="high", case_refs=["outside"],
+        evidence="原文", recommendation="修订")]), UsageMetadata(model="real"))))
+    with pytest.raises(ValueError, match="analysis_unknown_case_reference"):
+        complete_analysis_batch(provider, instruction="评审全部", payload={"cases": [{"ref": "A"}]}, model_id="auto")
+    assert provider.complete.call_count == 2

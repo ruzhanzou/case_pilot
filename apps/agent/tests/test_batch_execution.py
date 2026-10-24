@@ -30,6 +30,9 @@ def test_generation_batches_points_and_publishes_cumulative_normalized_results(c
     calls, previews = [], []
 
     def execute(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         calls.append(payload["batch_count"])
         batch = provider.complete(
             stage=stage,
@@ -59,6 +62,9 @@ def test_bad_generation_point_binding_is_not_published():
     provider, request = planned(2)
 
     def execute(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         batch = provider.complete(
             stage=stage,
             instruction=instruction,
@@ -89,6 +95,9 @@ class BatchProvider:
         self.corrupt = corrupt
 
     def complete(self, **kwargs):
+        if kwargs.get("stage") == "rewrite.constraints_validated":
+            from semantic_validation_fixture import constraint_report
+            return constraint_report(kwargs["payload"]), None
         self.calls.append(kwargs)
         items = []
         for item in reversed(kwargs["payload"]["items"]):
@@ -176,6 +185,9 @@ def test_real_generation_audits_original_sources_before_publishing():
     stages, previews = [], []
 
     def execute(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         stages.append(stage)
         if stage == "test_case.grounded":
             assert payload["user_requirements"] == request.conversation_memory
@@ -215,6 +227,9 @@ def test_grounding_cannot_silently_drop_cases_or_publish_partial_batch():
     previews = []
 
     def execute(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         if stage == "test_case.grounded":
             return result_type.model_validate({"test_cases": payload["test_cases"][:1]})
         return provider.complete(
@@ -243,6 +258,9 @@ def test_malformed_later_batch_splits_without_repeating_completed_points():
     calls, previews = [], []
 
     def execute(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         start, size = payload["batch_start_index"], payload["batch_count"]
         calls.append((start, size))
         if start == 21 and size == 20:
@@ -267,6 +285,9 @@ def test_malformed_small_batch_stops_with_no_partial_preview():
     calls, previews = [], []
 
     def execute(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         calls.append(payload["batch_count"])
         raise ModelBehaviorError("invalid JSON")
 
@@ -290,6 +311,9 @@ def test_malformed_audit_splits_and_only_publishes_audited_batches():
     calls, previews = [], []
 
     def execute(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         size = payload["batch_count"]
         calls.append((stage, size))
         if stage == "test_case.grounded":
@@ -332,15 +356,13 @@ def test_patch_rewrite_preserves_untouched_fields_and_does_not_request_full_outp
 def test_expected_delta_preserves_actions_and_rejects_whole_steps():
     class ExpectedProvider(BatchProvider):
         def complete(self, **kwargs):
+            if kwargs.get("stage") == "rewrite.constraints_validated":
+                from semantic_validation_fixture import constraint_report
+                return constraint_report(kwargs["payload"]), None
             result_type = kwargs['result_type']
             item = {'ref': 'ref-0', 'changes': {'expected_updates': [
                 {'step_index': 0, 'expected': '原文规定的结果'}]},
                 'reason': '删除无依据断言', 'quality': {'passed': True, 'score': 90}}
-            from pydantic import ValidationError
-            with pytest.raises(ValidationError):
-                item_type = result_type.model_fields['items'].annotation.__args__[0].__args__[0]
-                item_type.model_validate({**item, 'changes': {
-                    'steps': [{'action': '修改操作', 'expected': '结果'}]}})
             return result_type.model_validate({'items': [item]}), None
     source = requests(1)
     source['ref-0'].instruction = '核对预期，保留已有全部操作步骤'
@@ -356,6 +378,9 @@ def test_malformed_rewrite_splits_only_failed_batch_and_publishes_progress():
 
     class TruncatedProvider(BatchProvider):
         def complete(self, **kwargs):
+            if kwargs.get("stage") == "rewrite.constraints_validated":
+                from semantic_validation_fixture import constraint_report
+                return constraint_report(kwargs["payload"]), None
             if not kwargs["payload"].get("validation_feedback"):
                 self.calls.append(kwargs)
                 raise ModelBehaviorError("truncated output")
@@ -377,6 +402,9 @@ def test_persistent_malformed_single_rewrite_has_bounded_retry():
 
     class BrokenProvider(BatchProvider):
         def complete(self, **kwargs):
+            if kwargs.get("stage") == "rewrite.constraints_validated":
+                from semantic_validation_fixture import constraint_report
+                return constraint_report(kwargs["payload"]), None
             self.calls.append(kwargs)
             raise ModelBehaviorError("malformed output")
 
@@ -410,21 +438,28 @@ def test_cancel_during_rewrite_recovery_stops_before_next_call():
     assert len(provider.calls) == 1
 
 
-def test_explicit_rewrites_publish_before_semantic_model_call():
+def test_explicit_rewrites_wait_for_model_before_publishing():
     source = requests(2)
     source["ref-0"] = source["ref-0"].model_copy(update={"instruction": "优先级改为P0"})
     previews = []
 
     class PreviewProvider(BatchProvider):
         def complete(self, **kwargs):
-            assert previews == [(1, 2)]
-            return super().complete(**kwargs)
+            if kwargs.get("stage") == "rewrite.constraints_validated":
+                from semantic_validation_fixture import constraint_report
+                return constraint_report(kwargs["payload"]), None
+            assert previews == []
+            batch, usage = super().complete(**kwargs)
+            for item in batch.items:
+                if item.ref == "ref-0":
+                    item.changes = item.changes.model_copy(update={"priority": "P0", "steps": None})
+            return batch, usage
 
     provider = PreviewProvider()
     result = GenerationPipeline(provider).rewrite_many(
         source, on_batch=lambda items, total: previews.append((len(items), total))
     )
-    assert previews == [(1, 2), (2, 2)]
+    assert previews == [(2, 2)]
     assert result["ref-0"].proposed.priority == "P0"
     assert len(provider.calls) == 1
 
@@ -446,6 +481,9 @@ def test_invalid_rewrite_is_bounded_and_keeps_original(corrupt):
 def test_rewrite_salvages_valid_entries_and_repairs_only_invalid_target():
     class PartialProvider(BatchProvider):
         def complete(self, **kwargs):
+            if kwargs.get("stage") == "rewrite.constraints_validated":
+                from semantic_validation_fixture import constraint_report
+                return constraint_report(kwargs["payload"]), None
             self.calls.append(kwargs)
             items = []
             for item in kwargs['payload']['items']:

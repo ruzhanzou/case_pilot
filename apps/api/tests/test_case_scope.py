@@ -12,6 +12,14 @@ from casepilot_api.case_scope import (
 )
 from casepilot_api.conversations import classify_intent
 
+@pytest.fixture(autouse=True)
+def legacy_mock_scope(monkeypatch):
+    # Deterministic demo-provider contracts. Production semantics are exercised
+    # by test_model_scope and real-model acceptance.
+    from casepilot_api import conversations
+    monkeypatch.setattr(conversations.settings, "agent_provider", "mock")
+
+
 CASES = [
     {
         "id": str(uuid4()),
@@ -46,6 +54,7 @@ CASES = [
     ('新增空模块', '空'),
     ('create module Invoice', 'Invoice'),
 ])
+
 def test_new_module_names_support_quoted_names_and_empty_modules(text, expected):
     assert requested_new_module(text) == expected
 

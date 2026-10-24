@@ -1,0 +1,746 @@
+{
+  "status": "not_accepted",
+  "date": "2026-10-24T12:49:11.724184+00:00",
+  "scope": "真实模型 + ASGI API + 当前工作区任务实现 + 真实数据库；按用户要求不做浏览器端到端。",
+  "models": {
+    "routing": "doubao-seed-2.0-lite",
+    "generation": "doubao-seed-2.0-lite",
+    "configured_provider_fallback": "保留应用既有回退，阶段实际模型记录于原始 jobs 数据；不是全部模型独立认证"
+  },
+  "result_counts": {
+    "passed": 6,
+    "failed": 3,
+    "pending": 0
+  },
+  "scenarios": [
+    {
+      "scenario": "select",
+      "status": "passed",
+      "seconds": 120.57,
+      "evidence": "artifacts/deep-dialogue-acceptance/verified/select-doubao-seed-2.0-lite.json",
+      "sha256": "1d3feb2414c4e4f33bd8be6e7c23304dfd84a63b0f3fde26fa2a7564bff5d4c8",
+      "prompts": [
+        "测试对象是账号系统。选用已有的登录用例组成新集合，先展示资产让我选择，不生成新用例。"
+      ],
+      "intents": [
+        "CASE_GENERATE"
+      ],
+      "planning_counts": [
+        0
+      ],
+      "generated_candidate_count": 0,
+      "committed_count": 0,
+      "explicit_job_retries": [],
+      "failure": null,
+      "cleaned_up": true,
+      "assertion_evidence": {
+        "selected_from": [
+          {
+            "key": "asset:30388597-b0b0-4179-8d98-924d5b2631ad",
+            "kind": "formal",
+            "label": "用例资产 CASE-29E6D4",
+            "case_id": "30388597-b0b0-4179-8d98-924d5b2631ad",
+            "locator": "版本 7cb683eb-c767-4911-a87e-fd24644d444f",
+            "revision": "7cb683eb-c767-4911-a87e-fd24644d444f",
+            "snapshot": {
+              "id": "CASE-29E6D4",
+              "tags": [],
+              "steps": [
+                {
+                  "id": "6bd1082d-8323-4efe-846f-8e7e6afea718",
+                  "action": "在账号系统提交正确账号和错误密码",
+                  "expected": "登录失败且不建立会话"
+                }
+              ],
+              "title": "账号系统错误密码登录",
+              "module": "账号系统",
+              "case_key": "CASE-29E6D4",
+              "priority": "P1",
+              "case_type": "功能",
+              "source_refs": [
+                {
+                  "label": "人工创建",
+                  "excerpt": ""
+                }
+              ],
+              "preconditions": [
+                "账号系统存在有效账号，当前未登录"
+              ],
+              "current_revision_id": "7cb683eb-c767-4911-a87e-fd24644d444f"
+            },
+            "collections": [
+              {
+                "id": "a4c98cfe-fbd8-44a0-9712-7ec72c16d1ac",
+                "name": "账号系统来源"
+              }
+            ],
+            "match_reason": "该用例的业务模块为账号系统，测试对象与当前要求的测试对象账号系统一致",
+            "test_object_match": "same"
+          },
+          {
+            "key": "asset:918765e3-2507-4232-8f94-30104de0bf11",
+            "kind": "formal",
+            "label": "用例资产 CASE-7995E4",
+            "case_id": "918765e3-2507-4232-8f94-30104de0bf11",
+            "locator": "版本 a2c5260b-35d9-4e1b-b262-0fe4dc3a666a",
+            "revision": "a2c5260b-35d9-4e1b-b262-0fe4dc3a666a",
+            "snapshot": {
+              "id": "CASE-7995E4",
+              "tags": [],
+              "steps": [
+                {
+                  "id": "116d6ba5-a6b2-4050-8191-bce65e67734d",
+                  "action": "在账号系统提交正确账号密码",
+                  "expected": "进入首页并建立登录会话"
+                }
+              ],
+              "title": "账号系统正确密码登录",
+              "module": "账号系统",
+              "case_key": "CASE-7995E4",
+              "priority": "P1",
+              "case_type": "功能",
+              "source_refs": [
+                {
+                  "label": "人工创建",
+                  "excerpt": ""
+                }
+              ],
+              "preconditions": [
+                "账号系统存在有效账号，当前未登录"
+              ],
+              "current_revision_id": "a2c5260b-35d9-4e1b-b262-0fe4dc3a666a"
+            },
+            "collections": [
+              {
+                "id": "a4c98cfe-fbd8-44a0-9712-7ec72c16d1ac",
+                "name": "账号系统来源"
+              }
+            ],
+            "match_reason": "该用例的业务模块为账号系统，测试对象与当前要求的测试对象账号系统一致",
+            "test_object_match": "same"
+          }
+        ]
+      }
+    },
+    {
+      "scenario": "reuse_and_generate",
+      "status": "passed",
+      "seconds": 208.07,
+      "evidence": "artifacts/deep-dialogue-acceptance/revision-v2/select_and_generate-doubao-seed-2.0-lite.json",
+      "sha256": "621d4c6240220d7f21ed05dd292aaeb841a02c462f4023c56147b3a83b052403",
+      "prompts": [
+        "测试对象是账号系统。选用已有用例并补充生成，规划两个测试点：正确密码登录成功、错误密码登录失败；总共两条用例。"
+      ],
+      "intents": [
+        "CASE_GENERATE"
+      ],
+      "planning_counts": [
+        0,
+        2
+      ],
+      "generated_candidate_count": 2,
+      "committed_count": 0,
+      "explicit_job_retries": [],
+      "failure": null,
+      "cleaned_up": true,
+      "assertion_evidence": {
+        "selected_from": [
+          {
+            "key": "asset:b5d29798-c5ce-41d7-919b-80ece003eeba",
+            "kind": "formal",
+            "label": "用例资产 CASE-B555CE",
+            "case_id": "b5d29798-c5ce-41d7-919b-80ece003eeba",
+            "locator": "版本 98b252de-39a3-4f05-b966-e14ed05b2794",
+            "revision": "98b252de-39a3-4f05-b966-e14ed05b2794",
+            "snapshot": {
+              "id": "CASE-B555CE",
+              "tags": [],
+              "steps": [
+                {
+                  "id": "e63bc277-eceb-4a9e-be9e-902d7b3eb15e",
+                  "action": "在账号系统提交正确账号密码",
+                  "expected": "进入首页并建立登录会话"
+                }
+              ],
+              "title": "账号系统正确密码登录",
+              "module": "账号系统",
+              "case_key": "CASE-B555CE",
+              "priority": "P1",
+              "case_type": "功能",
+              "source_refs": [
+                {
+                  "label": "人工创建",
+                  "excerpt": ""
+                }
+              ],
+              "preconditions": [
+                "账号系统存在有效账号，当前未登录"
+              ],
+              "current_revision_id": "98b252de-39a3-4f05-b966-e14ed05b2794"
+            },
+            "collections": [
+              {
+                "id": "a665ebda-1628-4a51-b98d-fe3e26ca7839",
+                "name": "账号系统来源"
+              }
+            ],
+            "match_reason": "历史用例的业务对象为账号系统，与当前测试对象一致",
+            "test_object_match": "same"
+          }
+        ]
+      }
+    },
+    {
+      "scenario": "candidate_multiround",
+      "status": "failed",
+      "seconds": 433.75,
+      "evidence": "artifacts/deep-dialogue-acceptance/revision-v3/candidate-doubao-seed-2.0-lite.json",
+      "sha256": "ebe771e01b11d7f7df29396ef507a0e99870ad78ecb019ebcc31963e3ecbddc1",
+      "prompts": [
+        "为账号系统规划两个测试点并生成两条用例：正确密码登录成功、错误密码登录失败；仅覆盖这两种场景。",
+        "仅将候选用例 TC-TP-3f52bcad3d245a42-1 的优先级改为P2，其他字段保持不变。",
+        "继续修改候选用例 TC-TP-3f52bcad3d245a42-1，仅将标题改为“账号系统登录验收修订版”，保留上一轮P2和所有其他字段。",
+        "先不要修改或生成任何用例。解释一下等价类划分是什么。"
+      ],
+      "intents": [
+        "CASE_GENERATE",
+        "CASE_MODIFY",
+        "CASE_MODIFY",
+        "KNOWLEDGE_QA"
+      ],
+      "planning_counts": [
+        2
+      ],
+      "generated_candidate_count": 2,
+      "committed_count": 2,
+      "explicit_job_retries": [],
+      "failure": "Connection error.",
+      "cleaned_up": true,
+      "assertion_evidence": {}
+    },
+    {
+      "scenario": "testpoint_multiround",
+      "status": "failed",
+      "seconds": 251.48,
+      "evidence": "artifacts/deep-dialogue-acceptance/revision-v4/planning-doubao-seed-2.0-lite.json",
+      "sha256": "d0a1904cf2ec3e8cab31b3277216e0a53ff48e96d2db8f0daa3effd2b726dc6e",
+      "prompts": [
+        "为账号系统规划两个测试点并生成两条用例：正确密码登录成功、错误密码登录失败；仅覆盖这两种场景。",
+        "在现有测试规划上增加一个测试点：用户登录后点击退出，返回登录页，会话失效。原有两个测试点保持不变。"
+      ],
+      "intents": [
+        "CASE_GENERATE",
+        "CASE_GENERATE"
+      ],
+      "planning_counts": [
+        2,
+        3
+      ],
+      "generated_candidate_count": 0,
+      "committed_count": 0,
+      "explicit_job_retries": [],
+      "failure": "Connection error.",
+      "cleaned_up": true,
+      "assertion_evidence": {}
+    },
+    {
+      "scenario": "exact_target_and_count_correction",
+      "status": "passed",
+      "seconds": 367.19,
+      "evidence": "artifacts/deep-dialogue-acceptance/verified/scope-doubao-seed-2.0-lite.json",
+      "sha256": "3c3016dea7a0cfcf3f6dd1e0a8c191a103827440507f4af14c7e29b6c3326923",
+      "prompts": [
+        "查询当前集合登录模块的全部用例，不包括订单模块",
+        "仅将刚才查到的这三条用例优先级改为P2，其他字段不变。",
+        "纠正刚才数量，是查到的这两条登录用例。仅将这两条用例优先级改为P2，其他字段保持不变。",
+        "继续修改用例 CASE-1BF7F1，仅将标题改为“登录验收指定用例”，保留上一轮优先级和其他内容。",
+        "先不修改用例。解释一下等价类划分，并举一个例子。"
+      ],
+      "intents": [
+        "CASE_QUERY",
+        "CASE_MODIFY",
+        "CASE_MODIFY",
+        "CASE_MODIFY",
+        "KNOWLEDGE_QA"
+      ],
+      "planning_counts": [],
+      "generated_candidate_count": 0,
+      "committed_count": 0,
+      "explicit_job_retries": [],
+      "failure": null,
+      "cleaned_up": true,
+      "assertion_evidence": {}
+    },
+    {
+      "scenario": "three_turn_qa",
+      "status": "passed",
+      "seconds": 150.06,
+      "evidence": "artifacts/deep-dialogue-acceptance/verified/qa-doubao-seed-2.0-lite.json",
+      "sha256": "35bf9a415a5f4eb9565a19636787ff7f761ceebc532a26271842196927f9f401",
+      "prompts": [
+        "解释一下等价类划分，用登录密码长度为8到20个字符举例。只回答，不生成或修改用例。",
+        "沿用刚才的长度规则，边界值应该选哪些？只解释，不保存到用例。",
+        "把上一条回答简要翻译成英文，不改动任何用例。"
+      ],
+      "intents": [
+        "KNOWLEDGE_QA",
+        "KNOWLEDGE_QA",
+        "KNOWLEDGE_QA"
+      ],
+      "planning_counts": [],
+      "generated_candidate_count": 0,
+      "committed_count": 0,
+      "explicit_job_retries": [],
+      "failure": null,
+      "cleaned_up": true,
+      "assertion_evidence": {}
+    },
+    {
+      "scenario": "selected_testpoints_only",
+      "status": "passed",
+      "seconds": 141.98,
+      "evidence": "artifacts/deep-dialogue-acceptance/verified/subset-doubao-seed-2.0-lite.json",
+      "sha256": "fbef6ce64cdb539b64df1773d4168a03764f0908525267d5e3cc3a0197bf5332",
+      "prompts": [
+        "为账号系统规划两个测试点并生成两条用例：正确密码登录成功、错误密码登录失败；仅覆盖这两种场景。"
+      ],
+      "intents": [
+        "CASE_GENERATE"
+      ],
+      "planning_counts": [
+        2
+      ],
+      "generated_candidate_count": 1,
+      "committed_count": 0,
+      "explicit_job_retries": [],
+      "failure": null,
+      "cleaned_up": true,
+      "assertion_evidence": {}
+    },
+    {
+      "scenario": "partial_failure_retry",
+      "status": "passed",
+      "seconds": 168.09,
+      "evidence": "artifacts/deep-dialogue-acceptance/final/retry-doubao-seed-2.0-lite.json",
+      "sha256": "85af1b019224c184737d9eb55bf85cff2a145101d261dd334ef11fcb0f8e7e54",
+      "prompts": [
+        "为账号系统规划两个测试点并生成两条用例：正确密码登录成功、错误密码登录失败；仅覆盖这两种场景。",
+        "重试未完成的生成，只补齐失败的测试点，已经成功的用例保持不变。"
+      ],
+      "intents": [
+        "CASE_GENERATE",
+        "CASE_GENERATE"
+      ],
+      "planning_counts": [
+        2
+      ],
+      "generated_candidate_count": 2,
+      "committed_count": 0,
+      "explicit_job_retries": [],
+      "failure": null,
+      "cleaned_up": true,
+      "assertion_evidence": {
+        "retry_point_ids": [
+          "TP-848007c50b9355b9"
+        ]
+      }
+    },
+    {
+      "scenario": "independent_point_case_quantities",
+      "status": "failed",
+      "seconds": 206.04,
+      "evidence": "artifacts/deep-dialogue-acceptance/revision-v2/quantities-doubao-seed-2.0-lite.json",
+      "sha256": "9f8096b0c3e8cde73436f172ab66fc28a731b2b006646968a950b73c3c716bcd",
+      "prompts": [
+        "为账号系统规划两个测试点：正确密码登录成功、错误密码登录失败。基于这两个测试点总共生成四条用例，每个测试点覆盖两种不同账号条件。测试点严格两个，用例严格四条。"
+      ],
+      "intents": [
+        "CASE_GENERATE"
+      ],
+      "planning_counts": [
+        2
+      ],
+      "generated_candidate_count": 0,
+      "committed_count": 0,
+      "explicit_job_retries": [
+        {
+          "job_id": "132a2e9f-9a55-4b0d-afc5-081544516b62",
+          "first_failure": {
+            "error": "generation_quality_blocked",
+            "error_type": "GenerationQualityError"
+          },
+          "failed_job": {
+            "analysis_progress": null,
+            "planning_preview": null,
+            "planning_progress": null,
+            "retry_attempt": null,
+            "batch_start_index": null,
+            "batch_count": null,
+            "active_batches": [],
+            "started_at": null,
+            "generated_count": null,
+            "total_count": null,
+            "id": "132a2e9f-9a55-4b0d-afc5-081544516b62",
+            "status": "failed",
+            "stage": "failed",
+            "space_id": "65fcb9c3-83af-434e-804c-cfe1c6bb2449",
+            "progress": 100,
+            "error_code": "generation_quality_blocked",
+            "questions": [],
+            "stages": [
+              {
+                "stage": "output_quantity.interpreted",
+                "attempt": 1,
+                "status": "completed",
+                "model": "doubao-seed-2.0-lite",
+                "latency_ms": 1978,
+                "token_usage": {
+                  "input_tokens": 1567,
+                  "total_tokens": 1643,
+                  "output_tokens": 76
+                },
+                "created_at": "2026-10-24T12:39:02.625733+00:00"
+              },
+              {
+                "stage": "test_case.generated",
+                "attempt": 1,
+                "status": "failed",
+                "model": "doubao-seed-2.0-lite",
+                "latency_ms": 25558,
+                "token_usage": {},
+                "created_at": "2026-10-24T12:39:28.243146+00:00"
+              },
+              {
+                "stage": "test_case.generated",
+                "attempt": 2,
+                "status": "completed",
+                "model": "doubao-seed-2.0-lite",
+                "latency_ms": 23420,
+                "token_usage": {
+                  "input_tokens": 3532,
+                  "total_tokens": 5515,
+                  "output_tokens": 1983
+                },
+                "created_at": "2026-10-24T12:39:51.765475+00:00"
+              },
+              {
+                "stage": "test_case.generated",
+                "attempt": 3,
+                "status": "completed",
+                "model": "doubao-seed-2.0-lite",
+                "latency_ms": 20246,
+                "token_usage": {
+                  "input_tokens": 3536,
+                  "total_tokens": 5352,
+                  "output_tokens": 1816
+                },
+                "created_at": "2026-10-24T12:40:12.118345+00:00"
+              }
+            ],
+            "requirement": {
+              "flows": [],
+              "risks": [],
+              "actors": [],
+              "summary": "# 结构化测试说明 V1\n\n## 测试对象\n\n账号系统登录\n\n## 测试目标\n\n为账号系统规划两个登录相关测试点，分别为正确密码登录成功、错误密码登录失败，满足测试点严格两个的要求，后续将基于这两个测试点生成四条用例，每个测试点覆盖两种不同账号条件\n\n## 测试范围\n\n- 用户输入账号密码提交登录请求\n\n## 角色\n\n- 普通登录用户\n\n## 核心流程\n\n- 用户输入账号密码提交登录请求\n\n## 业务规则\n\n- 当输入正确账号和对应的正确密码，提交登录后登录成功\n- 当输入正确账号和对应的错误密码，提交登录后登录失败\n\n## 约束\n\n- 要求严格规划2个测试点，每个测试点后续生成2条用例，总共生成4条用例\n\n## 风险\n\n未提供\n\n## 覆盖维度\n\n- 正常\n- 权限\n- 异常\n- 边界\n- 性能\n- 兼容性\n- 稳定性\n- 隐私\n\n## 假设\n\n- 系统存在登录入口，登录界面包含账号输入框、密码输入框和登录提交按钮\n\n## 测试对象澄清\n\n测试对象已明确，无需澄清。\n\n## 生成与复用策略\n\n全新生成\n历史用例是参考快照；复用与修改均作为本次候选审阅，不自动覆盖原资产。资产查询最多返回100条，每批最多比较30条；未选中的历史用例不代表已废弃。Excel仅直接复用标题、步骤、预期完整且符合用例结构的行，其他内容仍作为参考资料。\n- TP-3cb51ff255a85e26：建议新增；本次使用建议；按全新生成处理； \n- TP-00acab244fdc5a16：建议新增；本次使用建议；按全新生成处理； \n\n## 测试规划\n\n- 账号系统 / 正确密码登录成功\n  - 用户进入登录界面，输入已注册正确账号和对应正确密码，提交登录请求 / 正确账号密码登录成功验证（待生成）\n- 账号系统 / 错误密码登录失败\n  - 用户进入登录界面，输入已注册正确账号和对应错误密码，提交登录请求 / 正确账号错误密码登录失败验证（待生成）\n",
+              "assumptions": [],
+              "constraints": [],
+              "test_object": "账号系统登录",
+              "business_rules": [],
+              "open_questions": [],
+              "test_object_specified": true
+            },
+            "feature_points": [
+              {
+                "id": "FP-f19a09f38f13546c",
+                "name": "正确密码登录成功",
+                "module": "账号系统",
+                "description": "验证用户使用账号对应的正确密码登录时，登录流程成功完成，后续可基于该测试点覆盖两种不同账号条件生成测试用例",
+                "source_refs": [],
+                "requirement_refs": [
+                  "正确密码登录成功"
+                ]
+              },
+              {
+                "id": "FP-6f071059889f5b68",
+                "name": "错误密码登录失败",
+                "module": "账号系统",
+                "description": "验证用户使用账号对应的错误密码登录时，登录流程失败，后续可基于该测试点覆盖两种不同账号条件生成测试用例",
+                "source_refs": [],
+                "requirement_refs": [
+                  "错误密码登录失败"
+                ]
+              }
+            ],
+            "test_points": [
+              {
+                "id": "TP-3cb51ff255a85e26",
+                "title": "正确账号密码登录成功验证",
+                "category": "功能测试",
+                "priority": "P0",
+                "scenario": "用户进入登录界面，输入已注册正确账号和对应正确密码，提交登录请求",
+                "objective": "验证系统接收正确账号和对应正确密码的登录请求后，返回登录成功，用户进入系统已登录状态",
+                "executable": true,
+                "source_refs": [],
+                "priority_reason": "核心登录流程，失败会导致所有合法用户无法正常登录系统，阻断核心业务",
+                "feature_point_ids": [
+                  "FP-f19a09f38f13546c"
+                ],
+                "executable_analysis": ""
+              },
+              {
+                "id": "TP-00acab244fdc5a16",
+                "title": "正确账号错误密码登录失败验证",
+                "category": "功能测试",
+                "priority": "P1",
+                "scenario": "用户进入登录界面，输入已注册正确账号和对应错误密码，提交登录请求",
+                "objective": "验证系统接收正确账号和对应错误密码的登录请求后，返回登录失败，用户保持未登录状态",
+                "executable": true,
+                "source_refs": [],
+                "priority_reason": "核心账号安全验证规则，失败会导致错误密码也能登录，存在严重账号安全风险",
+                "feature_point_ids": [
+                  "FP-6f071059889f5b68"
+                ],
+                "executable_analysis": ""
+              }
+            ],
+            "test_cases": [],
+            "coverage_matrix": [],
+            "quality": {
+              "score": 27,
+              "issues": [
+                {
+                  "code": "no_test_cases",
+                  "message": "未生成任何测试用例",
+                  "severity": "error",
+                  "object_id": null
+                },
+                {
+                  "code": "uncovered_test_point",
+                  "message": "待完善：正确账号密码登录成功验证（TP-3cb51ff255a85e26）。2轮修复后仍未通过基础校验，尚无可采纳用例。",
+                  "severity": "warning",
+                  "object_id": "TP-3cb51ff255a85e26"
+                },
+                {
+                  "code": "uncovered_test_point",
+                  "message": "待完善：正确账号错误密码登录失败验证（TP-00acab244fdc5a16）。2轮修复后仍未通过基础校验，尚无可采纳用例。",
+                  "severity": "warning",
+                  "object_id": "TP-00acab244fdc5a16"
+                },
+                {
+                  "code": "requirement_coverage_gap",
+                  "message": "需求规则 正确密码登录成功 未出现在覆盖矩阵中",
+                  "severity": "warning",
+                  "object_id": null
+                },
+                {
+                  "code": "requirement_coverage_gap",
+                  "message": "需求规则 错误密码登录失败 未出现在覆盖矩阵中",
+                  "severity": "warning",
+                  "object_id": null
+                },
+                {
+                  "code": "manual_review_required",
+                  "message": "已完成基础校验，附加预期按需核对依据；仍请人工确认业务预期、覆盖范围和重复场景后再采纳。",
+                  "severity": "warning",
+                  "object_id": null
+                },
+                {
+                  "code": "independent_scenarios_below_target",
+                  "message": "请求4条，已确认独立场景仅2条；未循环测试点凑数。",
+                  "severity": "warning",
+                  "object_id": null
+                }
+              ],
+              "passed": false,
+              "repair_rounds": 2,
+              "grounding_status": "unverified",
+              "structural_passed": false
+            },
+            "source_refs": []
+          }
+        }
+      ],
+      "failure": "job 132a2e9f-9a55-4b0d-afc5-081544516b62 did not complete after bounded retry: {'error': 'generation_quality_blocked', 'error_type': 'GenerationQualityError'}",
+      "cleaned_up": true,
+      "assertion_evidence": {}
+    }
+  ],
+  "regression": {
+    "agent": {
+      "passed": 492,
+      "log": "/tmp/deep-agent-release.log"
+    },
+    "api": {
+      "log": "/tmp/deep-api-v3.log",
+      "status": "passed",
+      "passed": 835
+    },
+    "static_checks": "Ruff F + git diff --check passed",
+    "frontend": "本轮未修改前端；既有验收结果不计入本轮通过数"
+  },
+  "fixes": [
+    "真实问答不再进入资产正则范围解释",
+    "规划修改与确认生成使用互斥模型动作",
+    "仅删除动作结构化建模并强制新增内容为0，保留未选测试点",
+    "模型结构修复反馈包含确切缺失功能点ID",
+    "select组成新集合与仅查询分开路由",
+    "已完成任务不能续接；明确允许续接列表，继续修改结果是新一轮任务",
+    "测试点修改无明确策略切换时保留当前模式，业务会话复用不等于历史用例复用"
+  ],
+  "open_findings": [
+    {
+      "priority": "P1",
+      "title": "测试点数量与用例数量独立指定尚未通过",
+      "reproduction": "规划两个测试点：正确密码登录成功、错误密码登录失败；每个点两种账号条件，严格生成四条用例。",
+      "observed": "规划正确为2；生成任务两次执行均generation_quality_blocked，最终无可采纳用例；实现还存在每个点单槽位以及超过点数仅警告的限制。",
+      "expected": "保持两个测试点，生成四条有效且有差异、准确关联的用例；不能默认把两个数量等同。",
+      "code": "apps/agent/src/casepilot_agent/compact_generation.py:367",
+      "disposition": "未修复，阻止宣称全部验收通过；需要独立用例分配与对应的部分重试设计，不能复制测试点凑数。"
+    },
+    {
+      "priority": "P1",
+      "title": "真实模型调用稳定性不足，完整多轮链路尚未通过",
+      "observed": "候选链路完成两次修改、采纳、问答与提交2条后，最后查询出现Connection error；规划复测在编辑测试点时出现Connection error，前一次初始路由还出现超时。",
+      "disposition": "保留失败；不得用离线1327项通过或局部成功代替完整真实模型链路通过。"
+    },
+    {
+      "priority": "P1",
+      "title": "测试点修改误切生成模式的修复仍缺完整实时复验",
+      "observed": "旧复测把复用退出前会话误判为select_and_generate并产生空planning；已经实现无显式策略切换时保持旧模式，6项策略保持/切换回归通过，但最新实时复测在编辑请求处连接失败。",
+      "disposition": "代码已修复，实时验收待通过。"
+    }
+  ],
+  "historical_failures": [
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/dialogue-doubao-seed-2.0-lite.json",
+      "kind": "dialogue",
+      "error": "POST /conversations/aec65b6d-5787-4a41-aca2-aef89a5675dc/messages: 422 {\"detail\":\"invalid_resume_reference\"}",
+      "seconds": 117.57
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/final/dialogue-doubao-seed-2.0-lite.json",
+      "kind": "dialogue",
+      "error": "",
+      "seconds": 649.56
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/release/dialogue-doubao-seed-2.0-lite.json",
+      "kind": "dialogue",
+      "error": "Invalid JSON when parsing {\"test_points\":[{\"id\":\"TP-001\",\"scenario\":\"用户处于成功登录后的会话状态\",\"title\":\"验证登录后点击退出返回登录页且原会话失效\",\"objective\":\"验证用户成功登录后点击退出，系统返回登录页面且原用户会话失效\",\"category\":\"功能测试\",\"priority\":\"P0\",\"priority_reason\":\"退出后会话不失效会引发账号安全风险，属于核心安全相关功能，影响账号安全\",\"feature_point_ids\":[\"FP-0ae4f7a4ad815493\"],\"source_refs\":[]}],\"coverage_matrix\":[]} for TypeAdapter(BatchTestPointPlan); 1 validation error for BatchTestPointPlan\n  Value error, planning_feature_uncovered [type=value_error, input_value={'test_points': [{'id': '..., 'coverage_matrix': []}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error",
+      "seconds": 174.31
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/release/select-doubao-seed-2.0-lite.json",
+      "kind": "select",
+      "error": "intent CASE_QUERY != CASE_GENERATE",
+      "seconds": 40.43
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/retest/dialogue-doubao-seed-2.0-lite.json",
+      "kind": "dialogue",
+      "error": "Connection error.",
+      "seconds": 208.81
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/retest2/dialogue-doubao-seed-2.0-lite.json",
+      "kind": "dialogue",
+      "error": "intent UNRESOLVED != CASE_GENERATE",
+      "seconds": 146.25
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/revision-v2/dialogue-doubao-seed-2.0-lite.json",
+      "kind": "dialogue",
+      "error": "intent UNRESOLVED != CASE_MODIFY",
+      "seconds": 517.03
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/revision-v2/planning-doubao-seed-2.0-lite.json",
+      "kind": "planning",
+      "error": "'test_points'",
+      "seconds": 279.05
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/revision-v2/quantities-doubao-seed-2.0-lite.json",
+      "kind": "quantities",
+      "error": "job 132a2e9f-9a55-4b0d-afc5-081544516b62 did not complete after bounded retry: {'error': 'generation_quality_blocked', 'error_type': 'GenerationQualityError'}",
+      "seconds": 206.04
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/revision-v3/candidate-doubao-seed-2.0-lite.json",
+      "kind": "candidate",
+      "error": "Connection error.",
+      "seconds": 433.75
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/revision-v3/planning-doubao-seed-2.0-lite.json",
+      "kind": "planning",
+      "error": "intent UNRESOLVED != CASE_GENERATE",
+      "seconds": 63.4
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/revision-v4/planning-doubao-seed-2.0-lite.json",
+      "kind": "planning",
+      "error": "Connection error.",
+      "seconds": 251.48
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/select-doubao-seed-2.0-lite.json",
+      "kind": "select",
+      "error": "POST /conversations/95b98482-ab8b-4a2b-8af4-c8b40505bd1f/messages: 422 {\"detail\":\"generation_new_collection_required\"}",
+      "seconds": 92.67
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/select_and_generate-doubao-seed-2.0-lite.json",
+      "kind": "select_and_generate",
+      "error": "POST /conversations/ea6c06a1-7acc-4d5a-9ca1-d57823de379b/messages: 422 {\"detail\":\"generation_new_collection_required\"}",
+      "seconds": 57.07
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/serial/dialogue-doubao-seed-2.0-lite.json",
+      "kind": "dialogue",
+      "error": "intent CASE_MODIFY != CASE_GENERATE",
+      "seconds": 165.97
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/verified/dialogue-doubao-seed-2.0-lite.json",
+      "kind": "dialogue",
+      "error": "planning deletion changed unrelated points",
+      "seconds": 325.61
+    }
+  ],
+  "evidence_corrections": [
+    "final/scope 原早期脚本虽标通过，但问答未实际执行；本报告只采信 verified/scope（问答实际任务完成）。",
+    "早期正式用例步骤比较含持久化id:null造成脚本误报；现比较业务动作与预期字段。",
+    "模型服务429、超时及连接错误保留为失败，未合并为业务通过。"
+  ],
+  "acceptance_rules": [
+    "数量和ID集合必须精确匹配，不以数量接近判通过",
+    "未选用例/测试点逐字段保持不变",
+    "下一轮修改保留上一轮已修改字段，采纳与提交后再次校验",
+    "问答必须执行真实任务，不能把澄清响应视为问答通过",
+    "失败重试仅补缺失测试点，成功候选不变，重复启动返回409",
+    "不删除历史失败，不把一次成功称为模型稳定性保证"
+  ],
+  "limitations": [
+    "小规模合成场景，不是全部输入的零失误保证",
+    "API层验收未覆盖浏览器交互和旧Docker部署",
+    "仅当前默认模型组合；未认证每个可选模型",
+    "retry场景只注入一个槽位的异常，所有成功内容仍由真实模型生成"
+  ],
+  "partial_success_not_counted_as_full_pass": {
+    "candidate_multiround": {
+      "generated": 2,
+      "changes": 2,
+      "committed": 2,
+      "verified": "精确修改一个候选；仅优先级变化后再仅标题变化；另一候选不变；QA无候选副作用；提交2条；末尾查询连接失败。"
+    },
+    "testpoint_deletion": {
+      "evidence": "artifacts/deep-dialogue-acceptance/revision-v2/dialogue-doubao-seed-2.0-lite.json",
+      "verified": "增删后2→3→2，原有两个测试点逐字段一致；后续候选修改路由失败，因此整条不计通过。"
+    },
+    "older_planning_pass": {
+      "evidence": "artifacts/deep-dialogue-acceptance/release/planning-doubao-seed-2.0-lite.json",
+      "verified": "曾完成2→3→3→2和生成2条；后续重复执行发现漂移，因此旧成功不视为充分稳定性证明。"
+    }
+  }
+}

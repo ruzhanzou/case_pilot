@@ -19,7 +19,7 @@ from casepilot_api.planning_links import links_view, link_existing_case, link_co
 from casepilot_api.models import ConversationSubmission
 from casepilot_api.submissions import SubmissionTransaction, after_commit
 from casepilot_api.schemas import PlanningCaseLinkRequest, GenerationAssetConfirmRequest
-from casepilot_api.generation_strategy import asset_choice_from_text, generation_strategy_from_text, is_strategy_question
+from casepilot_api.generation_strategy import interpret_generation_choice
 from casepilot_api.reuse_choices import apply_reviewer_choices, confirm_asset_reuse, reviewer_choices
 from pydantic import ValidationError
 from redis import Redis
@@ -407,6 +407,8 @@ def _test_object_from_messages(
     *,
     before: datetime | None = None,
 ) -> str:
+    if settings.agent_provider != "mock":
+        return ""  # Views use the persisted model-authored brief, never re-infer on reads.
     for message in reversed(messages):
         if message.role != "user" or (before and message.created_at > before):
             continue
@@ -417,6 +419,10 @@ def _test_object_from_messages(
 
 
 def _test_object_from_memory(memory: list[dict[str, str]]) -> str:
+    if settings.agent_provider != "mock":
+        if not memory:
+            return ""
+        return interpret_generation_choice("", settings, conversation_memory=memory).test_object
     for message in reversed(memory):
         if message.get("role") != "user":
             continue
@@ -1310,6 +1316,12 @@ def _collection_candidates(
         {"id": str(item.id), "name": item.name}
         for item in collections
     ]
+    if settings.agent_provider != "mock":
+        if not candidates:
+            return candidates, None
+        choice = interpret_generation_choice(content, settings, collection_catalog=candidates,
+                                              explicit_collection_only=explicit_only)
+        return candidates, UUID(choice.target_collection_id) if choice.target_collection_id else None
     matches = [
         item.id
         for item in collections
@@ -1621,25 +1633,6 @@ def _resolve_model_scope(db, conversation, payload, intent):
         return payload.model_copy(update={
             "targets": [], "target_case_ids": [], "target_candidate_snapshots": [],
         }), None
-    # Only a complete single-reference command bypasses semantic selection.
-    # Compound conditions and additional actions must still be interpreted together.
-    exact = re.fullmatch(
-        r"(?:查询|查看|删除|丢弃)\s*(?:用例\s*)?([A-Za-z0-9_-]+)\s*[。.!！]?",
-        payload.content.strip(),
-    ) if intent in {"CASE_QUERY", "CASE_DELETE"} else None
-    if exact:
-        matches = [case for case in catalog
-                   if exact[1] in {str(case["id"]), str(case.get("case_key", ""))}]
-        if len(matches) == 1:
-            chosen = matches[0]
-            return payload.model_copy(update={
-                "targets": [],
-                "target_case_ids": [UUID(str(chosen["id"]))] if chosen["kind"] == "formal" else [],
-                "target_candidate_snapshots": [ConversationTargetSnapshot(
-                    ref=c.ref, version=c.version, snapshot=dict(c.snapshot))
-                    for c in candidates if str(c.id) == str(chosen["id"])],
-            }), None
-        return payload, "指定编号不存在或不唯一，请检查完整用例编号。"
     allowed = {str(case["id"]) for case in catalog}
     ref_ids = {str(case.get("case_key", "")): str(case["id"]) for case in catalog}
     # The expansion helper defaults to the collection for legacy callers. That
@@ -1682,15 +1675,6 @@ def _resolve_model_scope(db, conversation, payload, intent):
     # Proposal refs are stored as asset IDs; both IDs and visible case keys are
     # legitimate references. Neither may resolve outside this catalog.
     known_keys = {key.casefold() for key in ref_ids} | {ref.casefold() for ref in allowed}
-    explicit_user_ids = set()
-    for case in catalog:
-        for key in {str(case["id"]), str(case.get("case_key", ""))}:
-            if key and re.search(
-                rf"(?<![A-Za-z0-9_-]){re.escape(key)}(?![A-Za-z0-9_-])",
-                payload.content,
-                re.I,
-            ):
-                explicit_user_ids.add(str(case["id"]))
     deadline = monotonic() + settings.routing_timeout_seconds
     try:
         # A malformed model reference is not evidence that the user's target is
@@ -1745,8 +1729,7 @@ def _resolve_model_scope(db, conversation, payload, intent):
         reference_ids = selected_ids & allowed
         if not reference_ids and context["current_case_id"] in allowed:
             reference_ids = {context["current_case_id"]}
-    if (reference_ids is not None and not ids.issubset(reference_ids)
-            and not (ids and ids.issubset(explicit_user_ids))):
+    if reference_ids is not None and not ids.issubset(reference_ids):
         return payload, "选择结果超出了引用范围，请确认需要处理的用例。"
     if decision.requested_count is not None and decision.requested_count != len(ids):
         return payload, f"当前匹配 {len(ids)} 条用例，与指定数量不一致，请确认范围。"
@@ -1785,8 +1768,12 @@ def _resolve_action_scope(
                 or not requested_refs.issubset(resolved_refs)):
             return payload, "选中的用例已不可用，请重新选择。"
         return expanded, None
-    if settings.agent_provider != "mock" and intent in ASSET_INTENTS:
-        return _resolve_model_scope(db, conversation, payload, intent)
+    if settings.agent_provider != "mock":
+        if intent in ASSET_INTENTS:
+            return _resolve_model_scope(db, conversation, payload, intent)
+        # Informational turns have no mutation scope. In particular, a negative
+        # preservation clause in a question must never enter the mock parser.
+        return payload, None
     # The deterministic implementation remains only for offline mock fixtures.
     if intent in {"CASE_MODIFY", "CASE_DELETE"} and any(
         unsupported_mutation_condition(text)
@@ -2045,11 +2032,20 @@ def _start_action(
     confirm_modification: bool = False,
 ) -> tuple[ConversationMessage, dict[str, Any], str | None]:
     instruction = user_message.content if user_message is not None else payload.content
+    generation_details = (interpret_generation_choice(instruction, settings)
+                          if settings.agent_provider != "mock" and intent == "CASE_GENERATE" else None)
     if intent == "CASE_GENERATE":
         # The instruction is authoritative for each turn. A strategy carried by
         # the workspace can describe an earlier asset-reuse task and must not
         # turn a fresh generation request into a rewrite of existing cases.
-        strategy = generation_strategy_from_text(instruction)
+        strategy = (generation_details or interpret_generation_choice(instruction, settings)).strategy
+        if (generation_details and generation_details.brief_action == "revise"
+                and not generation_details.strategy_change_requested):
+            latest_brief = db.scalar(select(WorkspaceTestBrief).where(
+                WorkspaceTestBrief.conversation_id == conversation.id
+            ).order_by(WorkspaceTestBrief.version.desc()))
+            if latest_brief and latest_brief.content.get("generation_strategy"):
+                strategy = latest_brief.content["generation_strategy"]
         payload = payload.model_copy(update={"generation_strategy": strategy})
     rewrite_instruction = re.sub(
         r"(?:不要|无需|禁止|勿|不(?:得)?)(?:修改|改写|重写)[^，,。；;\n]*",
@@ -2058,8 +2054,9 @@ def _start_action(
     )
     asset_rewrite = (
         intent == "CASE_GENERATE" and payload.generation_strategy == "select_and_generate"
-        and bool(re.search(r"改写|修改|重写", rewrite_instruction))
-        and not re.search(r"测试点|重新规划", instruction)
+        and (generation_details.rewrite_existing_assets if generation_details else (
+            bool(re.search(r"改写|修改|重写", rewrite_instruction))
+            and not re.search(r"测试点|重新规划", instruction)))
         and bool(payload.targets or payload.target_case_ids or payload.target_candidate_snapshots
             or (conversation.collection_id and db.scalar(select(CollectionCaseMembership.test_case_id).where(
                 CollectionCaseMembership.collection_id == conversation.collection_id).limit(1)))
@@ -2116,11 +2113,12 @@ def _start_action(
         conversation.updated_at = datetime.now(UTC)
         db.flush()
         return assistant, {"type": "small_talk"}, None
-    new_module = requested_new_module(payload.content)
-    if new_module and re.search(
+    new_module = (generation_details.new_module if generation_details
+                  else requested_new_module(payload.content) if settings.agent_provider == "mock" else "")
+    if new_module and (generation_details.create_empty_module if generation_details else re.search(
         r"空模块|(?:只|仅)(?:需|要)?(?:创建|新增|增加|添加).{0,20}模块|不生成.{0,8}用例",
         payload.content,
-    ):
+    )):
         if new_module == "空":
             assistant = _new_assistant_message(
                 conversation.id, content="请提供新模块名称。", intent=intent,
@@ -2155,7 +2153,7 @@ def _start_action(
     payload = _link_rewrite_round(db, conversation, operation, payload)
     plan = dict(operation.payload).get("plan", {}) if operation else {}
     questions = plan.get("clarification_questions", [])
-    if intent == "CASE_MODIFY" and re.fullmatch(
+    if settings.agent_provider == "mock" and intent == "CASE_MODIFY" and re.fullmatch(
         r"\s*(?:请|帮我)?(?:重写|改写|优化|修改)(?:一下)?[^，,。；;：:\n]{0,100}(?:用例|一下)[。！!]?\s*",
         payload.content,
     ) and not re.search(r"标题|步骤|优先级|预期|前置|补充|增加|删除|改为|改成|覆盖", payload.content) and not (
@@ -2164,16 +2162,16 @@ def _start_action(
         questions = [
             "希望修改哪些内容或达到什么效果？请补充重写方向，以及需要保留的内容。"
         ]
-    if _is_inventory_query(intent, payload.content) and "TARGET_EVIDENCE_NOT_IN_REQUEST" in plan.get("reason_codes", []):
+    if settings.agent_provider == "mock" and _is_inventory_query(intent, payload.content) and "TARGET_EVIDENCE_NOT_IN_REQUEST" in plan.get("reason_codes", []):
         questions = []
-    if (questions and (intent == "CASE_QUERY" or (plan.get("changes") and intent == "CASE_MODIFY"))
+    if (settings.agent_provider == "mock" and questions and (intent == "CASE_QUERY" or (plan.get("changes") and intent == "CASE_MODIFY"))
             and dict(conversation.context).get("phase") == "candidate_review"
             and PENDING_CANDIDATE_SCOPE.search(payload.content)
             and all(re.search(r"指定|指明|具体|哪|范围|编号|名称", question) for question in questions)):
         # Candidate membership is authoritative; the model need not ask the user
         # to repeat identities for an explicitly named remaining-candidate set.
         questions = []
-    target_questions = all(
+    target_questions = plan.get("clarification_kind") == "scope" if settings.agent_provider != "mock" else all(
         re.search(r"指定|指明|哪.*用例|范围|编号|模块名称", question)
         for question in questions
     )
@@ -2377,9 +2375,14 @@ def _start_action(
                 for item in items
             )
         )
-        if _is_inventory_query(intent, payload.content):
+        query_presentation = plan.get("query_presentation", "cases")
+        if (query_presentation in {"inventory", "session_summary"}
+                or settings.agent_provider == "mock" and _is_inventory_query(intent, payload.content)):
             summary = _inventory_summary(case_context)
-            if re.search(r"本次.*(?:新增|改写|删除).*结果", payload.content):
+            if (query_presentation == "session_summary"
+                    or settings.agent_provider == "mock" and re.search(
+                        r"本次.*(?:新增|改写|删除).*结果", payload.content)):
+
                 incorporated = list(db.scalars(select(WorkspaceCandidate).where(
                     WorkspaceCandidate.conversation_id == conversation.id,
                     WorkspaceCandidate.status == "incorporated",
@@ -2627,9 +2630,8 @@ def _start_action(
                         "title", "module", "priority", "case_type", "tags", "preconditions", "steps", "source_refs")}}}
                 for case, revision in rows]
             input_payload["source_collection_ids"] = [str(value) for value in source_ids]
-        explicit_new_module = requested_new_module(
-            payload.content
-        ) or requested_new_module(instruction)
+        explicit_new_module = (generation_details.new_module if generation_details else (
+            requested_new_module(payload.content) or requested_new_module(instruction)))
         input_payload["target_module_path"] = explicit_new_module or common_module_path(
             [str(item["snapshot"].get("module") or "") for item in case_context]
         )
@@ -3418,6 +3420,8 @@ def confirm_test_brief(
             ],
             "coverage_matrix": [],
             "brief_version": brief.version,
+            "selection_context": {"original_test_point_ids": sorted(allowed),
+                                  "selected_test_point_ids": [point["id"] for point in points]},
             **({"reuse": {**planning["reuse"], "user_choices": {
                 key: value for key, value in choices.items() if key in {p["id"] for p in points}
             }, "decisions": [
@@ -4180,21 +4184,31 @@ def _retry_generation_from_text(
 ) -> ConversationTurnView | None:
     if payload.intent_override or payload.source_operation_id:
         return None
-    explicit = _is_generation_retry(payload.content)
-    if not explicit:
-        if payload.content.strip().strip("。！! ").casefold() not in {
-            "确认", "是", "是的", "好的", "好", "确认重试", "yes", "ok", "confirm",
-        }:
-            return None
+    retry_details = None
+    if settings.agent_provider != "mock":
         recent = list(db.scalars(select(ConversationMessage).where(
             ConversationMessage.conversation_id == conversation.id,
         ).order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc()).limit(2)))
-        # Support an outstanding retry question from older conversation turns.
-        # A bare confirmation must never retry an unrelated failure.
-        if (len(recent) != 2 or recent[0].role != "assistant" or recent[1].role != "user"
-            or not _is_generation_retry(recent[1].content)
-            or not re.search(r"(?:是否|要不要|确认|要).*重试|retry.*\?", recent[0].content, re.I)):
+        retry_details = interpret_generation_choice(payload.content, settings,
+            conversation_memory=[{"role": m.role, "content": m.content} for m in reversed(recent)])
+        if not retry_details.retry_requested:
             return None
+    else:
+        explicit = _is_generation_retry(payload.content)
+        if not explicit:
+            if payload.content.strip().strip("。！! ").casefold() not in {
+                "确认", "是", "是的", "好的", "好", "确认重试", "yes", "ok", "confirm",
+            }:
+                return None
+            recent = list(db.scalars(select(ConversationMessage).where(
+                ConversationMessage.conversation_id == conversation.id,
+            ).order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc()).limit(2)))
+            # Support an outstanding retry question from older conversation turns.
+            # A bare confirmation must never retry an unrelated failure.
+            if (len(recent) != 2 or recent[0].role != "assistant" or recent[1].role != "user"
+                or not _is_generation_retry(recent[1].content)
+                or not re.search(r"(?:是否|要不要|确认|要).*重试|retry.*\?", recent[0].content, re.I)):
+                return None
     latest_operation = db.scalar(select(ConversationOperation).where(
         ConversationOperation.conversation_id == conversation.id,
     ).order_by(ConversationOperation.created_at.desc(),
@@ -4210,7 +4224,7 @@ def _retry_generation_from_text(
         ).order_by(ConversationOperation.sequence).limit(1))
         if failed_predecessor is not None:
             latest_operation = failed_predecessor
-    requested_kind = next((intent for label, intent in {
+    requested_kind = retry_details.retry_kind if retry_details else next((intent for label, intent in {
         "生成": "CASE_GENERATE", "修改": "CASE_MODIFY", "删除": "CASE_DELETE",
         "查询": "CASE_QUERY", "评审": "CASE_REVIEW",
     }.items() if label in payload.content), None)
@@ -4349,10 +4363,34 @@ def send_message(
     return turn
 
 
+def _resume_model_selected_operation(db, account, conversation, payload, operation_drafts):
+    if len(operation_drafts) == 1 and operation_drafts[0].get("resume_operation_id"):
+        draft = operation_drafts[0]
+        try:
+            resume_id = UUID(draft["resume_operation_id"])
+        except (TypeError, ValueError) as error:
+            raise HTTPException(422, "invalid_resume_reference") from error
+        pending = db.get(ConversationOperation, resume_id)
+        if (pending is None or pending.conversation_id != conversation.id
+                or pending.status != "awaiting_target" or pending.intent != draft["intent"]):
+            raise HTTPException(422, "invalid_resume_reference")
+        return resume_conversation_operation(resume_id, ConversationOperationResumeRequest(
+            content=payload.content, document_ids=payload.document_ids,
+            knowledge_source_ids=payload.knowledge_source_ids,
+            targets=payload.targets if draft.get("uses_selected_targets") else [],
+            target_case_ids=payload.target_case_ids if draft.get("uses_selected_targets") else [],
+            target_candidate_snapshots=(payload.target_candidate_snapshots
+                                       if draft.get("uses_selected_targets") else []),
+        ), account, db)
+    return None
+
+
 def _send_message(conversation_id, payload, account, db) -> ConversationTurnView:
     conversation = _ensure_conversation(db, account.id, conversation_id)
-    # Explicit asset redirection stops the prior job before accepting a new scope.
-    if generation_strategy_from_text(payload.content) != "generate":
+    # A strategy label is not authorization to cancel an active task.
+    # Preserve the deterministic demo flow only for the mock provider.
+    generation_choice = interpret_generation_choice(payload.content, settings)
+    if settings.agent_provider == "mock" and generation_choice.strategy != "generate":
         active_id = dict(conversation.context).get("active_job_id")
         if active_id:
             from casepilot_api.generation import cancel_generation
@@ -4372,14 +4410,14 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
             raise HTTPException(status_code=422, detail="previous_result_not_found")
         if source_operation.status not in {"completed", "awaiting_confirmation"}:
             raise HTTPException(status_code=409, detail="source_task_not_ready")
-    strategy = generation_strategy_from_text(payload.content)
+    strategy = generation_choice.strategy
     strategy_update = {"generation_strategy": strategy}
-    if not payload.intent_override:
+    if settings.agent_provider == "mock" and not payload.intent_override:
         strategy_update.update(
             {"intent_override": "CASE_GENERATE"}
             if strategy != "generate"
             else {"intent_override": "KNOWLEDGE_QA"}
-            if is_strategy_question(payload.content)
+            if generation_choice.strategy_question
             else {}
         )
     payload = payload.model_copy(update=strategy_update)
@@ -4396,11 +4434,18 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
             WorkspaceTestBrief.conversation_id == conversation.id).order_by(WorkspaceTestBrief.version.desc()))
         pending_selection = (pending_brief.content.get("asset_selection") or {}) if pending_brief else {}
         if pending_selection.get("status") == "awaiting_confirmation" and not pending_selection.get("target_points"):
-            chosen = asset_choice_from_text(payload.content, [source["case_id"] for source in pending_selection.get("sources", [])])
+            chosen = interpret_generation_choice(
+                payload.content, settings,
+                [source["case_id"] for source in pending_selection.get("sources", [])],
+            ).selected_ids
             if chosen is not None:
                 return confirm_generation_assets(conversation_id,
                     GenerationAssetConfirmRequest(version=pending_brief.version, case_ids=chosen), account, db)
-    if phase == "brief_review" and _looks_like_brief_confirmation(payload.content):
+    confirms_brief = (
+        _looks_like_brief_confirmation(payload.content)
+        if settings.agent_provider == "mock" else generation_choice.confirms_brief
+    )
+    if phase == "brief_review" and confirms_brief:
         latest_brief = db.scalar(
             select(WorkspaceTestBrief)
             .where(WorkspaceTestBrief.conversation_id == conversation.id)
@@ -4432,7 +4477,7 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
                 "requires_confirmation": payload.intent_override == "CASE_DELETE",
             }
         ]
-    elif (_open_mutation_operation(db, conversation)
+    elif (settings.agent_provider == "mock" and _open_mutation_operation(db, conversation)
           and classify_intent(payload.content, has_targets, phase)[0] == "CASE_DELETE"):
         # A review gate never executes a write. Keep explicit deletion requests
         # out of model-failure fallbacks while a mutation is awaiting review.
@@ -4482,11 +4527,16 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
                 tracing_enabled=settings.agent_tracing_enabled,
             ).operations
         ]
+    resumed = _resume_model_selected_operation(db, account, conversation, payload, operation_drafts)
+    if resumed is not None:
+        return resumed
     # A single action must retain the user's exact identifiers and constraints.
     if len(operation_drafts) == 1:
         operation_drafts[0]["instruction"] = payload.content
     open_task = _open_mutation_operation(db, conversation)
-    if open_task and str(dict(open_task.payload).get("task_intent", open_task.intent)) == "CASE_GENERATE" and phase == "brief_review":
+    if (settings.agent_provider == "mock" and open_task
+            and str(dict(open_task.payload).get("task_intent", open_task.intent)) == "CASE_GENERATE"
+            and phase == "brief_review"):
         for draft in operation_drafts:
             if draft["intent"] == "CASE_MODIFY":
                 draft.update(intent="CASE_GENERATE", clarification_questions=[])
@@ -4532,11 +4582,11 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
             requires_intent_confirmation=False, action={"type": "task_review_required"}, operation_plan=None)
     operations: list[ConversationOperation] = []
     for sequence, draft in enumerate(operation_drafts):
-        use_input_targets = (draft.get("routing_source") != "semantic"
-                             or draft.get("target_kind") == "previous_result") or bool(re.search(
-            r"选中|所选|当前用例|这些用例|这条用例|selected|current case|these cases",
-            str(draft.get("target_text", "")), re.I,
-        ))
+        use_input_targets = (
+            draft.get("routing_source") != "semantic"
+            or draft.get("target_kind") == "previous_result"
+            or bool(draft.get("uses_selected_targets"))
+        )
         operation = ConversationOperation(
             conversation_id=conversation.id,
             message_id=user_message.id,
@@ -5042,7 +5092,9 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
     if not state["scope_resolved"] and (supplement.target_case_ids or supplement.target_candidate_snapshots):
         selection_changed = True
     text = supplement.content or ""
-    if supplement.confirm_modification or _MODIFICATION_ACKNOWLEDGEMENT.fullmatch(text):
+    if supplement.confirm_modification or (
+        settings.agent_provider == "mock" and _MODIFICATION_ACKNOWLEDGEMENT.fullmatch(text)
+    ):
         reply = RewriteReply(action="confirm")
     elif not text:
         reply = RewriteReply(action="update", requirements_ready=state["requirements_ready"])
@@ -5181,6 +5233,10 @@ def _same_confirmation_targets(operation, supplement):
 
 
 def _without_confirmation_supplements(instruction):
+    if settings.agent_provider != "mock":
+        # Preserve the complete request for semantic interpretation; acknowledgments
+        # and quoted text cannot be classified safely by a keyword pattern.
+        return instruction
     # Recover old pending requests polluted by this bug, retaining real additions.
     return "\n".join(
         line for line in instruction.split("\n")
@@ -5366,7 +5422,8 @@ def resume_conversation_operation(
         # A complete correction replaces the old scope. Short answers still need
         # the original request to explain what is being changed.
         planning_content = request_data["content"]
-        if classify_intent(supplement.content, bool(resume_targets))[0] == operation.intent:
+        if (settings.agent_provider == "mock"
+                and classify_intent(supplement.content, bool(resume_targets))[0] == operation.intent):
             planning_content = supplement.content
         phase = str(dict(conversation.context).get("phase", "idle"))
         replanned = plan_intents(

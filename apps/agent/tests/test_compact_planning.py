@@ -137,6 +137,9 @@ def test_fused_analysis_is_checkpointed_and_reused_on_retry(monkeypatch):
 
     class Provider:
         def complete(self, *, stage, payload, result_type, **kwargs):
+            if stage == "output_quantity.interpreted":
+                from casepilot_agent.quantity import OutputQuantity
+                return OutputQuantity(), UsageMetadata(model="fixture")
             calls.append(stage)
             if stage == 'requirement.extracted':
                 assert result_type is PlanningAnalysis

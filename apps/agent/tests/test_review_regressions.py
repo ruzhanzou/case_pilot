@@ -35,6 +35,8 @@ def test_rewrite_rejects_empty_steps_despite_model_perfect_score():
     proposed.steps[0].expected = ""
     proposed.steps = proposed.steps[:1]
     provider = Mock()
+    from semantic_validation_fixture import constraint_report
+    provider.complete.side_effect = lambda **kw: (constraint_report(kw["payload"]), None)
     provider.rewrite.return_value = RewriteCandidate(
         proposed=proposed, diff=[], reason="改写", quality={"passed": True, "score": 100}
     )
@@ -49,6 +51,8 @@ def test_rewrite_rejects_deleted_protected_action():
     proposed = original.model_copy(deep=True)
     proposed.steps[0].action = "未经授权替换操作"
     provider = Mock()
+    from semantic_validation_fixture import constraint_report
+    provider.complete.side_effect = lambda **kw: (constraint_report(kw["payload"]), None)
     provider.rewrite.return_value = RewriteCandidate(
         proposed=proposed, diff=[], reason="改写", quality={"passed": True, "score": 100}
     )
@@ -154,6 +158,9 @@ def test_invalid_generation_cache_is_replaced_and_never_resaved(monkeypatch):
     calls = []
 
     def complete(**kwargs):
+        if kwargs.get("stage") == "rewrite.constraints_validated":
+            from semantic_validation_fixture import constraint_report
+            return constraint_report(kwargs["payload"]), None
         calls.append(kwargs["stage"])
         return MockProvider().complete(**kwargs)
 
@@ -265,6 +272,9 @@ def test_single_case_malformed_json_retries_only_once():
     calls = []
 
     def unstable(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         calls.append(stage)
         if len(calls) == 1:
             raise ModelBehaviorError("invalid JSON")
@@ -315,6 +325,9 @@ def test_human_review_generation_never_calls_model_audit():
     from test_compact_generation import request, run, execute
     calls = []
     def flaky(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         calls.append((stage, payload['batch_count'], payload.get('validation_feedback')))
         if stage == 'test_case.grounded' and payload['batch_count'] > 1:
             raise ModelBehaviorError('malformed JSON')
@@ -425,6 +438,9 @@ def test_rewrite_timeout_retries_once_and_preserves_targets():
     from openai import APITimeoutError
     calls = []
     def complete(**kwargs):
+        if kwargs.get("stage") == "rewrite.constraints_validated":
+            from semantic_validation_fixture import constraint_report
+            return constraint_report(kwargs["payload"]), None
         items = kwargs['payload']['items'];calls.append(len(items))
         if not kwargs['payload'].get('validation_feedback'):
             raise APITimeoutError(request=httpx.Request('POST', 'https://example.test'))
@@ -449,6 +465,9 @@ def test_rewrite_sources_are_restored_from_server_catalog(index, valid):
     from casepilot_agent.contracts import SourceRef
     original = case();original.source_refs=[SourceRef(label='原资料',excerpt='原文不可改写')]
     def complete(**kwargs):
+        if kwargs.get("stage") == "rewrite.constraints_validated":
+            from semantic_validation_fixture import constraint_report
+            return constraint_report(kwargs["payload"]), None
         entry=kwargs['payload']['items'][0]
         return kwargs['result_type'].model_validate({'items':[{'ref':entry['ref'],
             'changes':{'source_ref_indexes':[index]},'reason':'更新引用',

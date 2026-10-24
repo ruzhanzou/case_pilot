@@ -410,7 +410,9 @@ def test_test_brief_schema_discards_non_object_clarifications() -> None:
     assert content.open_questions == []
 
 
-def test_latest_explicit_test_object_survives_a_follow_up_question() -> None:
+def test_mock_latest_explicit_test_object_survives_a_follow_up_question(monkeypatch) -> None:
+    from casepilot_api import conversations
+    monkeypatch.setattr(conversations.settings, "agent_provider", "mock")
     messages = [
         SimpleNamespace(
             role="user",

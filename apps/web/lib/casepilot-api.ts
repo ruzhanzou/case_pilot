@@ -1013,6 +1013,8 @@ export function watchGeneration(
       "requirement.analyzed",
       "feature.generated",
       "test_point.generated",
+      "test_case.allocated",
+      "test_case.allocation_reviewed",
       "test_case.generated",
       "test_case.grounded",
       "generation.batch_completed",

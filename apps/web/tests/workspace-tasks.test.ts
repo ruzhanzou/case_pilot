@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ConversationDto, ConversationMessageDto } from "../lib/casepilot-api";
-import { candidatesForTask, requestsImplicitMutation, workspaceIsRunning, workspaceJobNeedsWatch, workspaceTasks, shouldResumePendingTask } from "../lib/workspace-tasks";
+import { candidatesForTask, workspaceIsRunning, workspaceJobNeedsWatch, workspaceTasks } from "../lib/workspace-tasks";
 
 const message = (id: string, overrides: Partial<ConversationMessageDto> = {}): ConversationMessageDto => ({
   id, role: "assistant", content: id, intent: "CASE_MODIFY", intent_confidence: 1,
@@ -67,20 +67,6 @@ test("cancelled changes are displayed as not applied, with their source link", (
   assert.equal(task.sourceTaskId, "review");
 });
 
-
-test("explicit new intents do not resume an unrelated pending task", () => {
-  assert.equal(shouldResumePendingTask("CASE_QUERY", "修改用例 CP-001：标题改为成功登录"), false);
-  assert.equal(shouldResumePendingTask("CASE_MODIFY", "请查询账号登录模块"), false);
-  assert.equal(shouldResumePendingTask("CASE_MODIFY", "修改用例 CP-001：标题改为成功登录"), true);
-  assert.equal(shouldResumePendingTask("CASE_MODIFY", "目标是 CP-001"), true);
-  assert.equal(shouldResumePendingTask("CASE_QUERY", "查询登录模块，然后查询商品搜索模块"), false);
-});
-
-test("read-only requests do not inherit a stale mutation selection", () => {
-  assert.equal(requestsImplicitMutation("查询账号登录模块，然后查询商品搜索模块，只查询不修改"), false);
-  assert.equal(requestsImplicitMutation("query cases, do not modify"), false);
-  assert.equal(requestsImplicitMutation("修改标题，不要删除"), true);
-});
 
 test("three rewrite rounds form one stable task with inspectable history", () => {
   const state = conversation([]);

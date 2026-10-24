@@ -21,7 +21,7 @@ import { CaseContentFields } from "@/components/case-content-fields";
 import { CaseTaskArtifacts } from "@/components/case-task-artifacts";
 import { ConversationTaskFlow } from "@/components/conversation-task-flow";
 import { CaseTaskWorkspace } from "@/components/case-task-workspace";
-import { candidatesForTask, workspaceTasks, workspaceIsRunning, workspaceJobNeedsWatch, shouldResumePendingTask, taskScopeChanged, nextWorkspaceOperation, type WorkspaceTask } from "@/lib/workspace-tasks";
+import { candidatesForTask, workspaceTasks, workspaceIsRunning, workspaceJobNeedsWatch, taskScopeChanged, nextWorkspaceOperation, type WorkspaceTask } from "@/lib/workspace-tasks";
 import { operationStatusLabels } from "@/lib/operation-status";
 import { consumptionSummary } from "@/lib/planning-consumption";
 import { TestPlanningMap } from "@/components/test-planning-map";
@@ -184,10 +184,16 @@ const workflowStageLabels: Record<string, string> = {
   queued: "任务已排队",
   "context.prepared": "检索并整理上下文",
   "cases.analyzing": "分批分析用例",
+  "output_quantity.interpreted": "理解生成数量",
+  "reuse.permissions_interpreted": "确认允许调整的字段",
+  "rewrite.constraints_validated": "核对修改要求",
+  "test_case.semantics_checked": "核对测试点要求",
   "requirement.analyzed": "分析测试需求",
   "generation.awaiting_input": "等待补充信息",
   "feature.generated": "整理功能点",
   "test_point.generated": "规划测试点",
+  "test_case.allocated": "分配用例场景",
+  "test_case.allocation_reviewed": "核对场景依据",
   "test_case.generated": "生成候选用例",
   "test_case.grounded": "核对预期与需求来源",
   "generation.batch_completed": "本批候选已更新",
@@ -225,10 +231,16 @@ const englishWorkflowStageLabels: Record<string, string> = {
   "cases.searching": "Searching case assets…", "reuse.objects_matching": "Checking asset test objects…", "reuse.objects_matched": "Asset test objects checked", "reuse.comparing": "Comparing changes and reusable cases…",
   "reuse.compared": "Reuse analysis completed",
   queued: "Task queued", "context.prepared": "Preparing context", "cases.analyzing": "Reviewing case batches",
+  "output_quantity.interpreted": "Interpreting requested quantities",
+  "reuse.permissions_interpreted": "Checking allowed field changes",
+  "rewrite.constraints_validated": "Checking rewrite requirements",
+  "test_case.semantics_checked": "Checking test point requirements",
   "requirement.analyzed": "Analyzing requirements",
   "generation.awaiting_input": "Waiting for more details",
   "feature.generated": "Organizing features",
   "test_point.generated": "Planning test points",
+  "test_case.allocated": "Allocating case scenarios",
+  "test_case.allocation_reviewed": "Checking scenario evidence",
   "test_case.generated": "Generating candidate cases",
   "test_case.grounded": "Checking expectations against requirements",
   "generation.batch_completed": "Batch preview updated",
@@ -452,11 +464,8 @@ export function CaseWorkbench({
     visibleCases[0] ??
     null;
   const pendingWorkspaceOperation = workspace?.operation_plan?.operations.find((item) => item.status === "awaiting_target");
-  const effectivePendingOperationId = resumeTaskId || (workspace
-    ? pendingWorkspaceOperation && shouldResumePendingTask(pendingWorkspaceOperation.intent, prompt)
-      ? pendingWorkspaceOperation.id
-      : undefined
-    : pendingOperationId);
+  // Natural-language continuation is interpreted by the server model.
+  const effectivePendingOperationId = resumeTaskId || (workspace ? undefined : pendingOperationId);
   const activeOperation = workspace?.operation_plan?.operations.find((item) =>
     ["running", "awaiting_confirmation"].includes(item.status));
   const activeRewriteOperation = activeOperation?.intent === "CASE_MODIFY"

@@ -74,6 +74,9 @@ def test_task_persists_and_previews_incremental_plan(monkeypatch):
 
     class Provider:
         def complete(self, *, stage, payload, **kwargs):
+            if stage == 'output_quantity.interpreted':
+                from casepilot_agent.quantity import OutputQuantity
+                return OutputQuantity(), UsageMetadata(model='mock')
             if stage == 'requirement.analyzed':
                 result = PlanningAnalysis(summary='登录稳定性', test_object='登录',
                                           test_object_specified=True,
@@ -130,4 +133,62 @@ def test_successive_point_edits_keep_untouched_points_and_accept_current_ids():
 ])
 def test_explicit_point_quantity_is_a_revision_budget(prompt, count):
     from casepilot_agent.planning import requested_point_count
-    assert requested_point_count(prompt) == count
+    from unittest.mock import Mock
+    from casepilot_agent.quantity import OutputQuantity
+    assert requested_point_count(prompt, Mock(return_value=OutputQuantity(test_point_count=count))) == count
+
+
+def test_delete_only_action_discards_repeated_preserved_features_and_rejects_generated_points():
+    from casepilot_agent.contracts import FeaturePoint
+    revision = analysis(planning_revision_action='delete_only',
+                        superseded_test_point_ids=['login-1'],
+                        feature_points=[FeaturePoint(id='F-login', name='登录', module='登录', description='保留', requirement_refs=[])])
+    assert revision.feature_points == []
+    original = plan('login', 3)
+    result = reconcile_planning(original, {'feature_points': [], 'test_points': []}, [revision])
+    assert result['test_points'] == [original['test_points'][0], original['test_points'][2]]
+    with pytest.raises(ValueError, match='delete_only_revision_generated_content'):
+        reconcile_planning(original, plan('duplicate-login', 2), [revision])
+
+
+def test_delete_only_action_requires_explicit_ids_and_cannot_replace_whole_plan():
+    with pytest.raises(ValueError, match='explicit_removals'):
+        analysis(planning_revision_action='delete_only')
+    with pytest.raises(ValueError, match='explicit_removals'):
+        analysis(planning_revision_action='delete_only', planning_update_mode='replace',
+                 superseded_test_point_ids=['login-1'])
+
+
+def test_delete_only_task_cannot_generate_even_if_model_restates_old_features(monkeypatch):
+    from test_draft_planning_progress import Store
+    from casepilot_agent import tasks
+    from casepilot_agent.contracts import FeaturePoint, UsageMetadata
+    from casepilot_agent.quantity import OutputQuantity
+    class DeleteStore(Store):
+        def persist_test_brief(self, connection, job, content):
+            from copy import deepcopy
+            assert self.job["output_payload"]["planning_progress"]["completed_batches"] == 0
+            self.briefs.append(deepcopy(content))
+            return 1
+    store = DeleteStore()
+    previous = plan('original', 3)
+    store.job['input_payload']['current_test_brief'] = {'planning': previous}
+    store.job['input_payload']['prompt'] = '删除测试点original-1，其他两个不变'
+    calls = []
+    class Provider:
+        def complete(self, *, stage, **kwargs):
+            calls.append(stage)
+            if stage == 'output_quantity.interpreted':
+                return OutputQuantity(), UsageMetadata(model='fixture')
+            assert stage == 'requirement.analyzed', 'Deletion must not generate replacement content'
+            return PlanningAnalysis(summary='登录', test_object='登录', test_object_specified=True,
+                planning_revision_action='delete_only', superseded_test_point_ids=['original-1'],
+                feature_points=[FeaturePoint(id='F-original', name='登录', module='登录',
+                                            description='保留登录功能', requirement_refs=[])]), UsageMetadata(model='fixture')
+    monkeypatch.setattr(tasks, 'JobStore', lambda *a: store)
+    monkeypatch.setattr(tasks, 'create_provider', lambda *a: Provider())
+    monkeypatch.setattr(tasks, 'create_embedding_provider', lambda: None)
+    monkeypatch.setattr(tasks, '_context_payload', lambda *a, **kw: {'evidence': []})
+    tasks.draft_test_brief(str(store.job['id']))
+    assert store.briefs[0]['planning']['test_points'] == [previous['test_points'][0], previous['test_points'][2]]
+    assert 'test_point.generated' not in calls and 'feature.generated' not in calls

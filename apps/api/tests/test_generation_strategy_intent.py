@@ -82,3 +82,48 @@ def test_asset_replies_are_bound_to_displayed_scope(text, expected):
 ])
 def test_colloquial_search_requires_an_operation_not_a_feature_description(text, expected):
     assert generation_strategy_from_text(text) == expected
+
+
+@pytest.mark.parametrize('action,confirmed,expected', [
+    ('revise', True, False), ('none', True, False),
+    ('confirm', True, True), ('confirm', False, False),
+])
+def test_revision_never_passes_brief_confirmation_gate(monkeypatch, action, confirmed, expected):
+    from types import SimpleNamespace
+    from agents import Runner
+    from casepilot_api.config import get_settings
+    from casepilot_api.generation_strategy import interpret_generation_choice
+
+    def run(agent, *args, **kwargs):
+        return SimpleNamespace(final_output=agent.output_type(
+            brief_action=action, confirms_brief=confirmed))
+
+    monkeypatch.setattr(Runner, 'run_sync', run)
+    settings = get_settings().model_copy(update={'agent_provider': 'openai_compatible', 'agent_api_key': 'fixture'})
+    result = interpret_generation_choice('在现有规划中增加一个测试点，其余保持不变', settings)
+    assert result.confirms_brief is expected
+
+
+def test_identical_choices_are_shared_only_inside_one_request(monkeypatch):
+    from unittest.mock import Mock
+    from pydantic import BaseModel
+    from types import SimpleNamespace
+    from casepilot_api import generation_strategy as module
+    class Result(BaseModel):
+        selected_ids: list[str] = []
+    settings = SimpleNamespace(agent_provider='openai_compatible', routing_model='fixture')
+    call = Mock(return_value=Result(selected_ids=['a']))
+    monkeypatch.setattr(module, '_interpret_generation_choice', call)
+    token = module.choice_request_cache.set({})
+    try:
+        first = module.interpret_generation_choice('只选这一条', settings, ['a'])
+        first.selected_ids.clear()
+        assert module.interpret_generation_choice('只选这一条', settings, ['a']).selected_ids == ['a']
+        assert call.call_count == 1
+        module.interpret_generation_choice('只选这一条', settings, ['b'])
+        module.interpret_generation_choice('只选这一条', settings, ['a'], [{'role':'user','content':'新上下文'}])
+        assert call.call_count == 3
+    finally:
+        module.choice_request_cache.reset(token)
+    module.interpret_generation_choice('只选这一条', settings, ['a'])
+    assert call.call_count == 4

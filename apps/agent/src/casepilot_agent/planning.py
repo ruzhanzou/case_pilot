@@ -132,26 +132,40 @@ class PlanningAnalysis(ReuseAnalysis):
 
     feature_points: list[FeaturePoint] = Field(default_factory=list)
     planning_update_mode: Literal["merge", "replace"] = "merge"
+    planning_revision_action: Literal["upsert", "delete_only"] = Field(
+        default="upsert", description=(
+            "本轮只删除已有测试点/功能且保留其余内容时必须delete_only，不生成替代内容；"
+            "有新增或替换场景时才用upsert。"
+        ),
+    )
     superseded_feature_ids: list[str] = Field(default_factory=list)
     superseded_test_point_ids: list[str] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def enforce_revision_action(self):
+        if self.planning_revision_action == "delete_only":
+            if self.planning_update_mode != "merge" or not (
+                self.superseded_feature_ids or self.superseded_test_point_ids
+            ):
+                raise ValueError("delete_only_revision_requires_explicit_removals")
+            # The model-declared operation is a deletion, so its output budget
+            # is zero even if the model redundantly restates retained features.
+            self.feature_points = []
+        return self
 
-def requested_point_count(prompt: str) -> int | None:
-    match = re.search(
-        r"(?:生成|编写|设计|创建|新增|增加|补充|替换为|修改为|恰好)[^。；;\n]{0,24}?"
-        r"(?<!\d)([1-9]\d{0,3})\s*(?:个|条)\s*[^，。；;\n\d]{0,12}?测试点",
-        prompt,
-    )
-    if not match:
-        return None
-    count = int(match.group(1))
-    if count > 500:
-        raise ValueError("单次规划最多支持500个测试点，请缩小范围后重试")
-    return count
+
+def requested_point_count(prompt: str, execute, conversation_memory=None) -> int | None:
+    from casepilot_agent.quantity import interpret_quantity
+    return interpret_quantity(execute, {"prompt": prompt,
+        "conversation_memory": conversation_memory or []}).test_point_count
 
 
 def reconcile_planning(previous, incoming, analyses):
     """Apply an explicit revision; omission in an incremental response is not deletion."""
+    if analyses and all(isinstance(item, PlanningAnalysis) and item.planning_revision_action == "delete_only"
+                        for item in analyses):
+        if not previous or incoming.get("test_points") or incoming.get("feature_points"):
+            raise ValueError("delete_only_revision_generated_content")
     if not previous or any(item.planning_update_mode == "replace" for item in analyses):
         return deepcopy(incoming)
     removed_features = {ref for item in analyses for ref in item.superseded_feature_ids}
@@ -320,7 +334,17 @@ def build_planning(
 
     # The quantity is a planning budget, while every feature retains coverage.
     # Do not silently drop business features when the requested count is smaller.
-    budget = max(target_count or len(features) * 3, len(features))
+    budget = target_count if target_count is not None else len(features) * 3
+    if target_count is not None and target_count < len(features):
+        if sum(len(str(e.get("excerpt", ""))) for e in context.get("evidence", [])) > MAX_CONSOLIDATED_EVIDENCE_CHARS:
+            raise ValueError("planning_budget_requires_smaller_scope")
+        local = requirement.model_dump(mode="json", exclude={"feature_points"})
+        for field, value in list(local.items()):
+            if isinstance(value, list):
+                merged = {json.dumps(v, sort_keys=True): v for common, _ in groups
+                          for v in common["requirement"].get(field, [])}
+                local[field] = list(merged.values())
+        groups = [(compact_planning_context({"requirement": local, "context": context}, features), features)]
     quotas = [budget // len(features) + (i < budget % len(features)) for i in range(len(features))]
     feature_budget = dict(zip((f.id for f in features), quotas, strict=True))
     completed = {}
@@ -350,18 +374,19 @@ def build_planning(
             asyncio.set_event_loop(runner.get_loop())
             check_cancelled()
             common, feature_slice = groups[index]
-            count = min(POINTS_PER_BATCH, sum(feature_budget[f.id] for f in feature_slice))
+            quota = sum(feature_budget[f.id] for f in feature_slice)
+            count = quota if target_count is not None else min(POINTS_PER_BATCH, quota)
             allowed_ref = Literal[tuple(f.id for f in feature_slice)]
             point_type = create_model(
                 "BatchTestPoint", __base__=TestPoint, feature_point_ids=(list[allowed_ref], ...)
             )
             def validate_batch(plan):
-                validate_point_batch(plan, {f.id for f in feature_slice}, count)
+                validate_point_batch(plan, {f.id for f in feature_slice}, count, exact=target_count is not None)
                 return plan
 
             plan_type = create_model(
                 "BatchTestPointPlan", __base__=TestPointPlan,
-                test_points=(list[point_type], Field(min_length=1, max_length=count)),
+                test_points=(list[point_type], Field(min_length=count if target_count is not None else 1, max_length=count)),
                 __validators__={"validate_batch": model_validator(mode="after")(validate_batch)},
             )
             plan = None
@@ -373,7 +398,10 @@ def build_planning(
                         TEST_POINT_DESIGN_INSTRUCTION + "\n【本批输出约束】\n"
                         "title保留边界数值和例外。feature_point_ids是所属功能ID，不是测试点序号，"
                         "必须逐字复用本批feature_points的id，多个测试点可以复用同一个功能ID，严禁递增或发明功能ID。"
-                        "本批数量预算为batch_count，最多生成该数量；不得在本批重复追求全局总数。"
+                        "本批每个功能ID都必须被至少一个测试点关联；一个测试点可以同时关联多个相关功能ID，"
+                        "数量预算小于功能数时也不能遗漏功能关联，不得通过超出数量预算来修复。"
+                        "本批数量为batch_count；target_count非空表示用户明确指定数量，必须恰好输出batch_count个不同测试点，"
+                        "不得合并用户明确拆开的测试点；target_count为空时batch_count只是上限。不得在本批重复追求全局总数。"
                         "coverage_matrix留空；source_refs留空，系统按功能关联原始来源。使用简洁字段，不重复原文。",
                         {
                             **common,
@@ -398,7 +426,7 @@ def build_planning(
                         check_cancelled()
                         sleep(0.5)
             assert plan is not None
-            validate_point_batch(plan, {f.id for f in feature_slice}, count)
+            validate_point_batch(plan, {f.id for f in feature_slice}, count, exact=target_count is not None)
             for ordinal, point in enumerate(plan.test_points):
                 point.id = f"TP-{index + 1}-{ordinal + 1}"
                 # Hydrate citations from the actual referenced features.
@@ -443,19 +471,24 @@ def build_planning(
                 future.cancel()
             raise
     points = [p for index in sorted(completed) for p in completed[index]]
-    return merge_planning(features, points, context, len(batches))
+    result = merge_planning(features, points, context, len(batches))
+    if target_count is not None and len(result["test_points"]) != target_count:
+        raise ValueError("planning_final_point_count_mismatch")
+    return result
 
 
-def validate_point_batch(plan, feature_ids, count):
-    if not plan.test_points or len(plan.test_points) > count:
+def validate_point_batch(plan, feature_ids, count, *, exact=False):
+    if not plan.test_points or len(plan.test_points) > count or (exact and len(plan.test_points) != count):
         raise ValueError("planning_point_batch_size_invalid")
+    if exact and len({(tuple(sorted(p.feature_point_ids)), p.scenario, p.title) for p in plan.test_points}) != len(plan.test_points):
+        raise ValueError("planning_duplicate_test_point")
     covered = set()
     for point in plan.test_points:
         if not point.feature_point_ids or set(point.feature_point_ids) - feature_ids:
             raise ValueError("planning_feature_reference_invalid")
         covered.update(point.feature_point_ids)
     if covered != feature_ids:
-        raise ValueError("planning_feature_uncovered")
+        raise ValueError("planning_feature_uncovered:" + ",".join(sorted(feature_ids - covered)))
 
 
 def source_rule_name(feature, batch):

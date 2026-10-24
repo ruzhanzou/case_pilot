@@ -17,6 +17,12 @@ from casepilot_agent.reuse import (
 from casepilot_agent.store import JobStore
 
 
+def quantity_only(stage, *args):
+    from casepilot_agent.quantity import OutputQuantity
+    assert stage == "output_quantity.interpreted", "Generation must not run for reused assets"
+    return OutputQuantity()
+
+
 def source():
     return {
         "key": "asset:one",
@@ -44,6 +50,7 @@ def with_decision(action="reuse", count=2):
         "source_key": "asset:one",
         "source": source(),
         "reason": "核心登录规则未变",
+        "changed_fields": ["actions", "expected"] if action == "modify" else [],
     }
     req.confirmed_plan["reuse"] = {"strategy": "regression", "decisions": [decision]}
     return req
@@ -55,6 +62,8 @@ def test_adaptation_prompt_preserves_body_without_copying_system_metadata():
     original["steps"][0]["id"] = "source-step-id"
     original["source_refs"] = [{"label": "source identity"}]
     def tracked(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            return execute(stage, instruction, payload, result_type, model_id)
         body = payload["reuse_modifications"][0]["original"]
         assert set(body) == {"title", "preconditions", "steps"}
         assert body["preconditions"] == original["preconditions"]
@@ -67,6 +76,8 @@ def test_reuse_preserves_content_and_does_not_call_model_for_reused_slot():
     req, calls = with_decision(), []
 
     def tracked(*args):
+        if args[0] == "output_quantity.interpreted":
+            return execute(*args)
         calls.append(args[2]["batch_slots"])
         return execute(*args)
 
@@ -80,7 +91,7 @@ def test_reuse_preserves_content_and_does_not_call_model_for_reused_slot():
 
 
 def test_all_reused_never_calls_generation_model():
-    result = run(with_decision(count=1), Mock(side_effect=AssertionError("unnecessary call")))
+    result = run(with_decision(count=1), quantity_only)
     assert len(result.test_cases) == 1
 
 
@@ -88,6 +99,8 @@ def test_modified_case_receives_original_and_retains_source():
     calls = []
 
     def tracked(*args):
+        if args[0] == "output_quantity.interpreted":
+            return execute(*args)
         calls.append(args[2]["reuse_modifications"])
         return execute(*args)
 
@@ -142,7 +155,7 @@ def test_one_reused_case_can_cover_two_points_without_duplicate_candidates():
     second = deepcopy(req.confirmed_plan["reuse"]["decisions"][0])
     second.update(point_id="P-1", point_snapshot=deepcopy(req.confirmed_plan["test_points"][1]))
     req.confirmed_plan["reuse"]["decisions"].append(second)
-    result = run(req, Mock(side_effect=AssertionError("unnecessary call")))
+    result = run(req, quantity_only)
     assert len(result.test_cases) == 1
     assert result.test_cases[0].test_point_ids == ["P-0", "P-1"]
 
@@ -199,7 +212,7 @@ def test_explicit_priority_request_authorizes_priority_modification():
         req.confirmed_plan,
         "change",
         [source()],
-        lambda *args: ReuseDecisions(decisions=[{
+        lambda *args: ReuseDecisions(authorized_identity_fields=["priority"], decisions=[{
             "point_id": "P-0",
             "action": "modify",
             "test_object_match": "same",
@@ -289,6 +302,9 @@ def test_draft_workflow_queries_assets_only_for_reuse_and_persists_decisions(mon
 
     class Provider:
         def complete(self, *, stage, payload, result_type, **kwargs):
+            if stage == "output_quantity.interpreted":
+                from casepilot_agent.quantity import OutputQuantity
+                return OutputQuantity(test_point_count=12), UsageMetadata(model="fixture")
             if stage in {"requirement.analyzed", "requirement.extracted"}:
                 result = ReuseAnalysis(
                     summary="登录",
@@ -479,3 +495,21 @@ def test_excel_reference_preserves_original_identity_and_version():
     assert provenance["source_label"] == "历史用例.xlsx"
     assert provenance["source_locator"] == "历史!2"
     assert provenance["document_checksum"] == "snapshot-hash"
+
+
+def test_legacy_modification_permissions_are_interpreted_by_model():
+    from casepilot_agent.compact_generation import ModificationFields
+    req = with_decision("modify", count=1)
+    req.confirmed_plan["reuse"]["decisions"][0].pop("changed_fields")
+    calls = []
+
+    def interpret(stage, instruction, payload, result_type, model_id):
+        if stage == "reuse.permissions_interpreted":
+            calls.append(payload)
+            return ModificationFields(changed_fields=["expected"])
+        return execute(stage, instruction, payload, result_type, model_id)
+
+    result = run(req, interpret)
+    assert len(calls) == 1
+    assert calls[0]["prompt"] == req.prompt
+    assert result.test_cases[0].steps[0].action == source()["snapshot"]["steps"][0]["action"]

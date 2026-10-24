@@ -149,6 +149,10 @@ class MockProvider:
         model_id: str,
     ) -> tuple[StructuredResultT, UsageMetadata]:
         del instruction
+        if stage == "output_quantity.interpreted":
+            return result_type.model_validate(payload.get("mock_quantity", {})), UsageMetadata(
+                model="mock", latency_ms=0
+            )
         if stage == "attachment.cases_organized":
             # Mock mode cannot infer unfamiliar layouts; preserve deterministic
             # extraction and expose its fallback diagnostic instead of inventing cases.

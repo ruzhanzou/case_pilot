@@ -380,3 +380,45 @@ async def test_stale_ui_autosave_and_worker_context_merge_preserve_latest_task(m
                 db.execute(delete(Space).where(Space.id == space_id))
                 db.execute(delete(Account).where(Account.id == account_id))
                 db.commit()
+
+
+@pytest.mark.asyncio
+async def test_asset_selection_strategy_cannot_override_semantic_query(monkeypatch):
+    from types import SimpleNamespace
+    from casepilot_api.agent_router import CaseScopeDecision, IntentOperationDraft, IntentPlanDraft
+    from casepilot_api.generation_strategy import interpret_generation_choice
+    choice = interpret_generation_choice("", SimpleNamespace(agent_provider="mock"))
+    choice.strategy = "select"
+    monkeypatch.setattr(conversations.settings, "agent_provider", "openai_compatible")
+    monkeypatch.setattr(conversations, "interpret_generation_choice", lambda *a, **k: choice)
+    monkeypatch.setattr(conversations, "plan_intents", lambda content, *a, **k: IntentPlanDraft(
+        operations=[IntentOperationDraft(intent="CASE_QUERY", instruction=content, confidence=1,
+            action_evidence="查询", routing_source="semantic", target_kind="condition")]))
+    monkeypatch.setattr(conversations, "select_case_scope", lambda content, cases, *a, **k:
+        CaseScopeDecision(ids=[str(case["id"]) for case in cases], ambiguous=False, clarification="",
+                          reference="none", referenced_case_keys=[], requested_count=None))
+    account = None
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        try:
+            response = await client.post("/api/v1/auth/register", json={
+                "email": f"semantic-strategy-{uuid4().hex}@casepilot.test",
+                "display_name": "Strategy routing", "password": "CasePilot123!"})
+            account = response.json()
+            space = account["spaces"][0]["id"]
+            collection = (await client.get(f"/api/v1/spaces/{space}/collections")).json()[0]["id"]
+            case = await client.post(f"/api/v1/collections/{collection}/test-cases", json={
+                "title": "登录", "steps": [{"action": "提交密码", "expected": "登录成功"}]})
+            assert case.status_code == 201
+            cid = (await client.put(f"/api/v1/collections/{collection}/workspace")).json()["id"]
+            response = await client.post(f"/api/v1/conversations/{cid}/messages", json={
+                "content": "查询当前集合全部用例"})
+            assert response.status_code == 202, response.text
+            turn = response.json()
+            assert turn["intent"] == "CASE_QUERY"
+            assert turn["action"] == {"type": "case_query", "count": 1}, response.text
+        finally:
+            if account:
+                with get_session_factory()() as db:
+                    db.execute(delete(Space).where(Space.id == UUID(account["spaces"][0]["id"])))
+                    db.execute(delete(Account).where(Account.id == UUID(account["id"])))
+                    db.commit()

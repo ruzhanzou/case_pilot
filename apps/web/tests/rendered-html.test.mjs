@@ -175,7 +175,9 @@ test("keeps the persisted case management and execution baseline", async () => {
   assert.match(caseWorkbench, /requestAnimationFrame\(renderPreview\)/);
   assert.match(caseWorkbench, /separator\.style\.transform/);
   assert.match(caseWorkbench, /showOperationPlan/);
-  assert.match(caseWorkbench, /等待确认/);
+  assert.match(caseWorkbench, /operationStatusLabels/);
+  const operationLabels = await readFile(new URL("../lib/operation-status.ts", import.meta.url), "utf8");
+  assert.match(operationLabels, /awaiting_confirmation: "等待确认"/);
   assert.match(caseWorkbench, /pointercancel/);
   assert.doesNotMatch(caseWorkbench, /切换集合/);
   assert.match(caseWorkbench, /saveTestBrief\(workspace.id, content, selectedBrief.version\)/);

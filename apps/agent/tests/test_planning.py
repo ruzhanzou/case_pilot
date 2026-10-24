@@ -45,6 +45,9 @@ def test_planning_does_not_request_cases_and_generation_reuses_selected_point():
     calls = []
 
     def execute(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         calls.append(payload)
         assert stage == "test_case.generated"
         return provider.complete(
@@ -135,6 +138,9 @@ def test_confirmed_points_supersede_earlier_requested_count():
     }
 
     def execute(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            from casepilot_agent.quantity import OutputQuantity
+            return OutputQuantity()
         return provider.complete(stage=stage, instruction=instruction, payload=payload,
                                  result_type=result_type, model_id=model_id)[0]
 

@@ -155,7 +155,7 @@ def test_explicit_current_candidate_can_be_rewritten_after_discarded_proposal(sc
         ids=[str(candidate_id)],
         ambiguous=False,
         clarification="",
-        reference="previous_proposal",
+        reference="none",
         referenced_case_keys=[candidate.ref],
         requested_count=None,
     )
@@ -341,6 +341,7 @@ def test_router_scope_question_cannot_bypass_catalog_selector(monkeypatch):
         payload={
             "plan": {
                 "clarification_questions": ["请指定要处理的模块名称或用例编号。"],
+                "clarification_kind": "scope",
                 "reason_codes": ["TARGET_EVIDENCE_NOT_IN_REQUEST"],
                 "routing_source": "semantic",
             }
@@ -573,14 +574,20 @@ def test_polish_does_not_silently_drop_missing_candidate(scope):
     selector.assert_not_called()
 
 
-def test_exact_case_query_in_large_collection_does_not_call_model(scope, monkeypatch):
+def test_exact_case_query_in_large_collection_uses_semantic_filter(scope, monkeypatch):
     db, conversation, cases, selector = scope
     catalog = [{**cases[0], 'id': str(uuid4()), 'case_key': f'BIG-{i}'} for i in range(2001)]
     monkeypatch.setattr(conversations, '_load_scope_snapshots', lambda *args: catalog)
+    from casepilot_api import scope_filter
+    filtered = Mock(return_value=CaseScopeDecision(
+        ids=[catalog[-1]["id"]], ambiguous=False, clarification="", reference="none",
+        referenced_case_keys=["BIG-2000"], requested_count=1))
+    monkeypatch.setattr(scope_filter, "select_large_scope", filtered)
     result, error = conversations._resolve_model_scope(db, conversation,
         ConversationMessageCreate(content='查询 BIG-2000'), 'CASE_QUERY')
     assert error is None
     assert list(map(str, result.target_case_ids)) == [catalog[-1]['id']]
+    filtered.assert_called_once()
     selector.assert_not_called()
 
 

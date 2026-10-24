@@ -51,6 +51,16 @@ app.include_router(conversation_router)
 app.include_router(integrations_router)
 
 
+@app.middleware("http")
+async def share_turn_interpretations(request, call_next):
+    from casepilot_api.generation_strategy import choice_request_cache
+    token = choice_request_cache.set({})
+    try:
+        return await call_next(request)
+    finally:
+        choice_request_cache.reset(token)
+
+
 @app.get("/health/live")
 async def live() -> dict[str, str]:
     return {

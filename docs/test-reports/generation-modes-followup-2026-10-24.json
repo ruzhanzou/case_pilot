@@ -1,0 +1,452 @@
+{
+  "status": "passed_with_operational_limitations",
+  "updated_at": "2026-10-24T13:40:06.222112+00:00",
+  "method": "真实默认模型 + ASGI API + 当前任务实现 + 真实数据库，不含浏览器端到端；故障注入仅替换失败响应，成功内容由真实模型产生。",
+  "model": "doubao-seed-2.0-lite；保留配置的内部重试/回退，实际阶段模型见证据jobs.stages。",
+  "counts": {
+    "passed": 13,
+    "failed": 0,
+    "pending": 0
+  },
+  "scenarios": [
+    {
+      "scenario": "select",
+      "rerun_in_followup": false,
+      "assertions": "展示2条，仅选1条，目标集合精确1条；源用例不变，无新生成候选",
+      "status": "passed",
+      "evidence": "artifacts/deep-dialogue-acceptance/verified/select-doubao-seed-2.0-lite.json",
+      "seconds": 120.57,
+      "sha256": "1d3feb2414c4e4f33bd8be6e7c23304dfd84a63b0f3fde26fa2a7564bff5d4c8",
+      "error": null,
+      "review": null,
+      "point_counts": [
+        0
+      ],
+      "generated_count": 0,
+      "committed_count": 0,
+      "explicit_job_retry_count": 0,
+      "prompts": [
+        "测试对象是账号系统。选用已有的登录用例组成新集合，先展示资产让我选择，不生成新用例。"
+      ],
+      "cleaned_up": true
+    },
+    {
+      "scenario": "select_and_generate",
+      "rerun_in_followup": false,
+      "assertions": "复用参考并补充生成2条，源用例不变",
+      "status": "passed",
+      "evidence": "artifacts/deep-dialogue-acceptance/revision-v2/select_and_generate-doubao-seed-2.0-lite.json",
+      "seconds": 208.07,
+      "sha256": "621d4c6240220d7f21ed05dd292aaeb841a02c462f4023c56147b3a83b052403",
+      "error": null,
+      "review": null,
+      "point_counts": [
+        0,
+        2
+      ],
+      "generated_count": 2,
+      "committed_count": 0,
+      "explicit_job_retry_count": 0,
+      "prompts": [
+        "测试对象是账号系统。选用已有用例并补充生成，规划两个测试点：正确密码登录成功、错误密码登录失败；总共两条用例。"
+      ],
+      "cleaned_up": true
+    },
+    {
+      "scenario": "candidate_multiround",
+      "rerun_in_followup": true,
+      "assertions": "两次精确修改同一候选，保留上轮字段、其他候选不变，QA无副作用，提交和查询均2条",
+      "status": "passed",
+      "evidence": "artifacts/deep-dialogue-acceptance/grounded-1/candidate-doubao-seed-2.0-lite.json",
+      "seconds": 405.14,
+      "sha256": "fa8a709d832f6a696343da5a99fb8a063d8e24943a4ccd40f7a768ce8975bc86",
+      "error": null,
+      "review": {
+        "passed": true,
+        "review": "两次修改精确命中同一候选，字段保留、另一候选不变、QA无副作用、采纳提交和查询均由脚本断言通过。"
+      },
+      "point_counts": [
+        2
+      ],
+      "generated_count": 2,
+      "committed_count": 2,
+      "explicit_job_retry_count": 0,
+      "prompts": [
+        "为账号系统规划两个测试点并生成两条用例：正确密码登录成功、错误密码登录失败；仅覆盖这两种场景。",
+        "仅将候选用例 TC-TP-cc593832c9bd533d-1 的优先级改为P2，其他字段保持不变。",
+        "继续修改候选用例 TC-TP-cc593832c9bd533d-1，仅将标题改为“账号系统登录验收修订版”，保留上一轮P2和所有其他字段。",
+        "先不要修改或生成任何用例。解释一下等价类划分是什么。",
+        "查询当前集合全部用例"
+      ],
+      "cleaned_up": true
+    },
+    {
+      "scenario": "testpoint_multiround",
+      "rerun_in_followup": true,
+      "assertions": "测试点2→3→3→2，原有2点逐字段保持，最后生成2条",
+      "status": "passed",
+      "evidence": "artifacts/deep-dialogue-acceptance/continuation-1/planning-doubao-seed-2.0-lite.json",
+      "seconds": 397.48,
+      "sha256": "0508dd8b717d4a25258304c27c548351290be263832ee9320bf6d240facd93ce",
+      "error": null,
+      "review": {
+        "passed": true,
+        "review": "测试点2→3→3→2，指定点替换和删除，其他两个点逐字段相等，最终生成2条。"
+      },
+      "point_counts": [
+        2,
+        3,
+        3,
+        2
+      ],
+      "generated_count": 2,
+      "committed_count": 0,
+      "explicit_job_retry_count": 0,
+      "prompts": [
+        "为账号系统规划两个测试点并生成两条用例：正确密码登录成功、错误密码登录失败；仅覆盖这两种场景。",
+        "在现有测试规划上增加一个测试点：用户登录后点击退出，返回登录页，会话失效。原有两个测试点保持不变。",
+        "仅修改测试规划中的测试点 TP-b48c13c2fceb520a：改为用户退出登录后，用退出前的同一会话访问受保护页面，返回登录页且会话失效。仅替换这一个测试点，不新增测试点，其他两个测试点保持不变。",
+        "从测试规划中删除测试点 TP-79676613229557f5（退出登录），其他两个测试点保持不变。"
+      ],
+      "cleaned_up": true
+    },
+    {
+      "scenario": "formal_case_scope",
+      "rerun_in_followup": false,
+      "assertions": "查到2条却说3条先澄清，纠正后仅改2条，再指定1条改标题保留优先级",
+      "status": "passed",
+      "evidence": "artifacts/deep-dialogue-acceptance/verified/scope-doubao-seed-2.0-lite.json",
+      "seconds": 367.19,
+      "sha256": "3c3016dea7a0cfcf3f6dd1e0a8c191a103827440507f4af14c7e29b6c3326923",
+      "error": null,
+      "review": null,
+      "point_counts": [],
+      "generated_count": 0,
+      "committed_count": 0,
+      "explicit_job_retry_count": 0,
+      "prompts": [
+        "查询当前集合登录模块的全部用例，不包括订单模块",
+        "仅将刚才查到的这三条用例优先级改为P2，其他字段不变。",
+        "纠正刚才数量，是查到的这两条登录用例。仅将这两条用例优先级改为P2，其他字段保持不变。",
+        "继续修改用例 CASE-1BF7F1，仅将标题改为“登录验收指定用例”，保留上一轮优先级和其他内容。",
+        "先不修改用例。解释一下等价类划分，并举一个例子。"
+      ],
+      "cleaned_up": true
+    },
+    {
+      "scenario": "qa_three_turns",
+      "rerun_in_followup": false,
+      "assertions": "连续问答继承8–20位规则及边界，第三轮翻译，无资产变更",
+      "status": "passed",
+      "evidence": "artifacts/deep-dialogue-acceptance/verified/qa-doubao-seed-2.0-lite.json",
+      "seconds": 150.06,
+      "sha256": "35bf9a415a5f4eb9565a19636787ff7f761ceebc532a26271842196927f9f401",
+      "error": null,
+      "review": null,
+      "point_counts": [],
+      "generated_count": 0,
+      "committed_count": 0,
+      "explicit_job_retry_count": 0,
+      "prompts": [
+        "解释一下等价类划分，用登录密码长度为8到20个字符举例。只回答，不生成或修改用例。",
+        "沿用刚才的长度规则，边界值应该选哪些？只解释，不保存到用例。",
+        "把上一条回答简要翻译成英文，不改动任何用例。"
+      ],
+      "cleaned_up": true
+    },
+    {
+      "scenario": "subset",
+      "rerun_in_followup": true,
+      "assertions": "2个测试点只选1个，恰好1条用例，关联仅为选中点",
+      "status": "passed",
+      "evidence": "artifacts/deep-dialogue-acceptance/final-1/subset-doubao-seed-2.0-lite.json",
+      "seconds": 127.7,
+      "sha256": "0655b6e4306019ed33ea0b5f9d3557d40b88ea3f9e8f1d194eed44303f83a409",
+      "error": null,
+      "review": null,
+      "point_counts": [
+        2
+      ],
+      "generated_count": 1,
+      "committed_count": 0,
+      "explicit_job_retry_count": 0,
+      "prompts": [
+        "为账号系统规划两个测试点并生成两条用例：正确密码登录成功、错误密码登录失败；仅覆盖这两种场景。"
+      ],
+      "cleaned_up": true
+    },
+    {
+      "scenario": "independent_quantities",
+      "rerun_in_followup": true,
+      "assertions": "2点4条，普通/管理员×正确/错误密码，条件有用户原文依据",
+      "status": "passed",
+      "evidence": "artifacts/deep-dialogue-acceptance/grounded-1/quantities-doubao-seed-2.0-lite.json",
+      "seconds": 142.11,
+      "sha256": "76cd0d0daf1d92a9004c98533464f06dd6d9a3226c1e55c7a8929b45006c8950",
+      "error": null,
+      "review": {
+        "passed": true,
+        "review": "逐条核对普通账号/管理员账号与正确密码/错误密码的四种组合；条件来自用户原文，无新增账号状态规则。"
+      },
+      "point_counts": [
+        2
+      ],
+      "generated_count": 4,
+      "committed_count": 0,
+      "explicit_job_retry_count": 0,
+      "prompts": [
+        "为账号系统规划两个测试点：正确密码登录成功、错误密码登录失败。基于这两个测试点总共生成四条用例，每个测试点分别覆盖普通账号、管理员账号，两种账号均适用相同登录规则。测试点严格两个，用例严格四条。"
+      ],
+      "cleaned_up": true
+    },
+    {
+      "scenario": "quantity_clarification",
+      "rerun_in_followup": true,
+      "assertions": "先询问缺失账号类型，补充后原2点不变生成4条",
+      "status": "passed",
+      "evidence": "artifacts/deep-dialogue-acceptance/final-1/allocation_clarification-doubao-seed-2.0-lite.json",
+      "seconds": 135.74,
+      "sha256": "2c96fe27794b642860e20ff381851698939946add3b4668e963050d579edc7d0",
+      "error": null,
+      "review": {
+        "passed": true,
+        "review": "缺少账号类型时返回具体阻塞问题，未产生候选；提交普通账号/管理员账号补充后生成四条正确/错误密码组合。人工逐条核对没有未授权账号状态。"
+      },
+      "point_counts": [
+        2
+      ],
+      "generated_count": 4,
+      "committed_count": 0,
+      "explicit_job_retry_count": 0,
+      "prompts": [
+        "为账号系统规划两个测试点：正确密码登录成功、错误密码登录失败。后续严格生成四条用例，每个点需要覆盖两种账号类型；具体账号类型尚未确定，稍后补充。请不要自行假设账号类型。"
+      ],
+      "cleaned_up": true
+    },
+    {
+      "scenario": "partial_retry",
+      "rerun_in_followup": true,
+      "assertions": "3次注入失败后只补缺失点，成功候选不变，重复启动409",
+      "status": "passed",
+      "evidence": "artifacts/deep-dialogue-acceptance/final-2/retry-doubao-seed-2.0-lite.json",
+      "seconds": 132.36,
+      "sha256": "0252a7f12ff54401900ca5e70803931c13edc90dbab6a3725d789a5e56d83742",
+      "error": null,
+      "review": null,
+      "point_counts": [
+        2
+      ],
+      "generated_count": 2,
+      "committed_count": 0,
+      "explicit_job_retry_count": 0,
+      "prompts": [
+        "为账号系统规划两个测试点并生成两条用例：正确密码登录成功、错误密码登录失败；仅覆盖这两种场景。",
+        "重试未完成的生成，只补齐失败的测试点，已经成功的用例保持不变。"
+      ],
+      "cleaned_up": true
+    },
+    {
+      "scenario": "allocated_retry",
+      "rerun_in_followup": true,
+      "assertions": "首次槽位4失败，重试只调用4，成功1/2/3及分配检查点复用，无重复候选",
+      "status": "passed",
+      "evidence": "artifacts/deep-dialogue-acceptance/final-3/allocation_retry-doubao-seed-2.0-lite.json",
+      "seconds": 194.2,
+      "sha256": "e0f8b6425fa4597d7a7c32484ef396841c1b549e5ce392d7371ed13b67052256",
+      "error": null,
+      "review": {
+        "passed": true,
+        "review": "账号类型来自用户原文，仅普通/管理员两类。实际调用首次[1,2,3,4,4,4]，恢复后[4]；原成功3条未重调，分配未重算，最终4条均关联原2点。具体UI提示仍属于生成候选的人工作业审阅范围。"
+      },
+      "point_counts": [
+        2
+      ],
+      "generated_count": 4,
+      "committed_count": 0,
+      "explicit_job_retry_count": 0,
+      "prompts": [
+        "为账号系统规划两个测试点：正确密码登录成功、错误密码登录失败。基于这两个测试点总共生成四条用例，每个测试点分别覆盖普通账号、管理员账号，两种账号均适用相同登录规则。测试点严格两个，用例严格四条。"
+      ],
+      "cleaned_up": true,
+      "retry_calls": {
+        "failed_slots": [
+          4,
+          4,
+          4
+        ],
+        "first_execution_slots": [
+          1,
+          2,
+          3,
+          4,
+          4,
+          4
+        ],
+        "retry_slots": [
+          4
+        ]
+      }
+    },
+    {
+      "scenario": "fewer_cases_than_points",
+      "rerun_in_followup": true,
+      "assertions": "严格4点2条，每条覆盖对应2点，全部4点均有实际用例关联",
+      "status": "passed",
+      "evidence": "artifacts/deep-dialogue-acceptance/final-4/quantities_fewer-doubao-seed-2.0-lite.json",
+      "seconds": 151.64,
+      "sha256": "dd84abc7e46978e8f3572aa8eb377b59af8a5b6f98edbaf9237c1ebb443f5d80",
+      "error": null,
+      "review": {
+        "passed": true,
+        "review": "四个测试点逐项对应首页、成功会话、拒绝登录、不建立会话。两个用例各关联两个正确测试点；实际步骤和预期覆盖对应断言，没有删掉测试点来凑数量。"
+      },
+      "point_counts": [
+        4
+      ],
+      "generated_count": 2,
+      "committed_count": 0,
+      "explicit_job_retry_count": 0,
+      "prompts": [
+        "为账号系统严格规划四个测试点：正确密码登录进入首页、成功登录建立会话、错误密码登录被拒绝、失败登录不建立会话。严格生成两条用例：一条正确密码成功登录同时验证首页和会话，另一条错误密码失败登录同时验证拒绝和未建立会话；四个点均须覆盖。"
+      ],
+      "cleaned_up": true
+    },
+    {
+      "scenario": "subset_with_multiple_cases",
+      "rerun_in_followup": true,
+      "assertions": "原2点4条，只选1点后生成其对应的2条，不扩大范围",
+      "status": "passed",
+      "evidence": "artifacts/deep-dialogue-acceptance/final-5/subset_quantities-doubao-seed-2.0-lite.json",
+      "seconds": 177.77,
+      "sha256": "3db802d263428898d1e9551f5d20bde5176aa11a38338cb33643dbe09c235ed2",
+      "error": null,
+      "review": {
+        "passed": true,
+        "review": "实际生成2条，均为选中点的普通账号/管理员账号变体；另一个未选测试点未生成。阶段数量解释为2，已确认测试点集合保持不变。"
+      },
+      "point_counts": [
+        2
+      ],
+      "generated_count": 2,
+      "committed_count": 0,
+      "explicit_job_retry_count": 0,
+      "prompts": [
+        "为账号系统规划两个测试点：正确密码登录成功、错误密码登录失败。基于这两个测试点总共生成四条用例，每个测试点分别覆盖普通账号、管理员账号，两种账号均适用相同登录规则。测试点严格两个，用例严格四条。"
+      ],
+      "cleaned_up": true
+    }
+  ],
+  "regression": {
+    "api": {
+      "passed": 836,
+      "log": "/tmp/continuation-api-complete.log"
+    },
+    "agent": {
+      "passed": 512,
+      "log": "/tmp/final-agent-all.log"
+    },
+    "frontend_unit": {
+      "passed": 70,
+      "log": "/tmp/continuation-web-unit.log"
+    },
+    "frontend_typecheck": "passed",
+    "new_stage_projection_tests": 5,
+    "static_checks": "git diff --check / Ruff F passed"
+  },
+  "fixes": [
+    "模型分配独立用例场景，测试点数与用例数不再绑定1:1；覆盖和引用由程序校验。",
+    "用例差异条件必须引用用户原文或当前需求文档，独立审核不能替代原文检查；禁止凭空增加账号状态。",
+    "缺少区分条件时进入等待补充，答案进入后续模型上下文，保持原测试点。",
+    "明确测试点数量从上限改为精确数量；批次少生成、重复和最终去重导致数量变化均不能成功提交。",
+    "实际勾选范围进入数量解释，不能把未选点的预算强加到已选点。",
+    "独立数量场景部分失败时不提交不完整候选集；同任务重试复用成功检查点和场景分配。",
+    "同一HTTP请求内缓存相同输入的策略解释，避免重复调用和同轮判断不一致；上下文不同或新请求重新解释。"
+  ],
+  "negative_evidence": [
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/continuation-1/quantities-doubao-seed-2.0-lite.json",
+      "kind": "quantities",
+      "error": null,
+      "manual_review": {
+        "passed": false,
+        "structural_assertions_passed": true,
+        "semantic_review": "未激活账号正确密码登录成功、已锁定账号错误密码场景来自模型新增条件，原始需求未提供这些业务状态。数量正确不足以通过。",
+        "supersedes_automatic_pass": true,
+        "fix": "增加独立场景依据审核，失败最多修复一次，仍失败不生成。"
+      }
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/continuation-2/allocation_retry-doubao-seed-2.0-lite.json",
+      "kind": "allocation_retry",
+      "error": "",
+      "manual_review": {}
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/continuation-2/candidate-doubao-seed-2.0-lite.json",
+      "kind": "candidate",
+      "error": "intent UNRESOLVED != KNOWLEDGE_QA",
+      "manual_review": {}
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/continuation-3/allocation_retry-doubao-seed-2.0-lite.json",
+      "kind": "allocation_retry",
+      "error": null,
+      "manual_review": {
+        "passed": false,
+        "review": "槽位重试机制通过，但模型新增个人实名/企业认证条件，业务内容不通过；后续已添加原文引用约束。"
+      }
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/grounded-2/allocation_clarification-doubao-seed-2.0-lite.json",
+      "kind": "allocation_clarification",
+      "error": "case_allocation_duplicate_variant",
+      "manual_review": {}
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/final-2/quantities_fewer-doubao-seed-2.0-lite.json",
+      "kind": "quantities_fewer",
+      "error": "expected 1 points, got 3",
+      "manual_review": {}
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/final-3/quantities_fewer-doubao-seed-2.0-lite.json",
+      "kind": "quantities_fewer",
+      "error": "intent UNRESOLVED != CASE_GENERATE",
+      "manual_review": {}
+    },
+    {
+      "evidence": "artifacts/deep-dialogue-acceptance/final-4/subset_quantities-doubao-seed-2.0-lite.json",
+      "kind": "subset_quantities",
+      "error": "job c8402a5e-4e56-4574-9eea-4f8296985b13 did not complete after bounded retry: {'event': 'generation.awaiting_input', 'job_id': 'c8402a5e-4e56-4574-9eea-4f8296985b13', 'status': 'awaiting_input', 'progress': 25, 'questions': [{'id': 'case_allocation_conditions', 'question': '为保持现有测试点并生成2条不同用例，请补充各条用例应覆盖的具体条件或路径。', 'impact': '保持原测试点与数量要求，补充条件后继续生成；不编造业务规则。', 'blocking': True}]}",
+      "manual_review": {}
+    }
+  ],
+  "important_corrections": [
+    "continuation-1/quantities 自动数量断言通过，但人工发现未激活账号登录成功等无依据状态，判定内容不通过。",
+    "continuation-3/allocation_retry 重试机制通过，但个人实名/企业认证条件未给出，内容判定不通过。",
+    "continuation-2/allocation_retry 因运行时修改代码导致新模块与旧进程阶段表不一致，属于无效执行；已重新启动完整测试。",
+    "final-2/quantities_fewer 的脚本期望误设为1已修正；但实际只生成3点仍违反用户明确4点，作为真实产品缺陷修复。"
+  ],
+  "limitations": [
+    "模型端曾出现超时/连接失败，历史失败保留；重跑通过不是首轮准确率或零失败承诺。",
+    "本轮默认模型组合，不代表所有可选模型均独立通过。",
+    "范围为矩阵列出的合成场景；四项未受本轮修改影响的既有通过证据标为rerun_in_followup=false。",
+    "源代码在当前工作区，未提交或部署；旧Docker服务不代表当前代码。"
+  ],
+  "previous_report": "docs/test-reports/generation-modes-deep-acceptance-2026-10-24.json",
+  "implementation_hashes": {
+    "apps/agent/src/casepilot_agent/case_allocation.py": "4ee4a55ec70f82131d93b35ecdd655d3686346f8f35548c951c1493bdde2df43",
+    "apps/agent/src/casepilot_agent/planning.py": "32b1d469751129aaae895b2effba4a07d863a6de8d9e71dc6d4b4012a9f96403",
+    "apps/agent/src/casepilot_agent/quantity.py": "dab80c933fbed32e42f04769e9c867aee43284d9b3aa370b96655742524b7f2c",
+    "apps/agent/src/casepilot_agent/compact_generation.py": "5e4aed6a8dcdd1da277dbe46685d6d1ca9d95a9cc4203bb01d1ed358cce141a7",
+    "apps/agent/src/casepilot_agent/pipeline.py": "4e4c7417b586852a1b2e0cedfee512acaf2dff95956c2fcef643c21cf7dd6661",
+    "apps/agent/src/casepilot_agent/tasks.py": "f8e6965adcd0dcd8db4473fd2a4208d1c2c647c6b386cf4e81344511961dbeee",
+    "apps/api/src/casepilot_api/generation_strategy.py": "5cc9ee4da559dbc7ce576d48ea399aab5dcfbee8e07e456b0bff873c640826ff",
+    "apps/api/src/casepilot_api/main.py": "2a627b1577ff0b500482d8a25719df568ff7467e6fdec2c899b7efb047f5375b",
+    "apps/api/src/casepilot_api/conversations.py": "ca997f522e4f21722aa9532808423929ac8c30ce380982df923802ce708b38a8",
+    "apps/api/src/casepilot_api/generation.py": "5112fdef19d8d9de5281e4af267267feeec8c5abc02104807c98154021a273b0",
+    "apps/web/components/case-workbench.tsx": "c8596ff01c5dd26a97ac3514cb1bbb4c53c93a93e1602f0f32a44616400456ba",
+    "apps/web/lib/casepilot-api.ts": "21267879300f5bca6cad5598827c3e88c3580c5a85df2ba6d80bc0b0c44447bd",
+    "scripts/qa/deep_dialogue_acceptance.py": "1d388c744a49ae8fbbaeb957ddd91d372a0d26ac4af452a8cf0e6bb8cac67993"
+  }
+}

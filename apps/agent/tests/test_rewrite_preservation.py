@@ -34,6 +34,9 @@ class Provider:
         self.calls = []
 
     def complete(self, *, payload, result_type, **kwargs):
+        if kwargs.get("stage") == "rewrite.constraints_validated":
+            from semantic_validation_fixture import constraint_report
+            return constraint_report(payload), UsageMetadata(model="fixture")
         self.calls.append(deepcopy(payload))
         changes = (
             self.repaired
@@ -320,18 +323,21 @@ def test_reference_rewrite_allows_explicitly_requested_setup_reexecution():
     assert result.quality.passed
 
 
-def test_reference_rewrite_completes_boundary_on_business_result_action():
+def test_reference_rewrite_model_repairs_boundary_on_business_result_action():
     request = boundary_reference_request()
     result = GenerationPipeline(Provider({"step_updates": [
         {"step_index": 0, "action": "记录已有验证码签发时刻并推进服务端时钟至300秒"},
+    ]}, repaired={"step_updates": [
+        {"step_index": 0, "action": "记录已有验证码签发时刻并推进服务端时钟至300秒"},
+        {"step_index": 1, "action": "在300秒边界条件下，使用该验证码发起登录请求"},
     ]})).rewrite_many({"one": request})["one"]
     assert result.quality.passed
-    assert result.quality.repair_rounds == 0
+    assert result.quality.repair_rounds == 1
     assert result.proposed.steps[1].action.startswith("在300秒边界条件下，")
     assert result.proposed.steps[1].expected == request.test_case.steps[1].expected
 
 
-def test_reference_rewrite_completes_selected_recording_action_without_old_boundary():
+def test_reference_rewrite_model_repairs_selected_recording_action_without_old_boundary():
     request = boundary_reference_request().model_copy(update={
         "context": {
             "approved_reference_assets": [{"key": "excel:book:2", "kind": "excel"}],
@@ -344,10 +350,13 @@ def test_reference_rewrite_completes_selected_recording_action_without_old_bound
     provider = Provider({"step_updates": [{
         "step_index": 1,
         "action": "在300秒边界条件下使用该验证码发起登录请求",
-    }]})
+    }]}, repaired={"step_updates": [
+        {"step_index": 0, "action": "记录签发时刻并推进服务端时钟至300秒"},
+        {"step_index": 1, "action": "在300秒边界条件下使用该验证码发起登录请求"},
+    ]})
     result = GenerationPipeline(provider).rewrite_many({"one": request})["one"]
     assert result.quality.passed
-    assert result.quality.repair_rounds == 0
+    assert result.quality.repair_rounds == 1
     assert "记录签发时刻" in result.proposed.steps[0].action
     assert "420" not in "\n".join(step.action for step in result.proposed.steps)
 

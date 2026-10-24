@@ -19,7 +19,7 @@ class Store:
             "id": uuid4(),
             "status": "queued",
             "input_payload": {
-                "prompt": "为登录生成12条测试用例",
+                "prompt": "为登录生成12个测试点",
                 "model_id": "auto",
                 "conversation_id": str(uuid4()),
             },
@@ -81,6 +81,9 @@ def test_draft_persists_before_streaming_and_only_finalizes_complete_plan(monkey
 
     class Provider:
         def complete(self, *, stage, payload, **kwargs):
+            if stage == "output_quantity.interpreted":
+                from casepilot_agent.quantity import OutputQuantity
+                return OutputQuantity(test_point_count=12), UsageMetadata(model="fixture")
             calls.append(stage)
             if stage == "requirement.analyzed":
                 result = RequirementAnalysis(
@@ -139,6 +142,9 @@ def test_invalid_point_checkpoint_is_regenerated_without_repeating_valid_batches
 
     class Provider:
         def complete(self, *, stage, payload, **kwargs):
+            if stage == "output_quantity.interpreted":
+                from casepilot_agent.quantity import OutputQuantity
+                return OutputQuantity(test_point_count=12), UsageMetadata(model="fixture")
             calls.append((stage, payload.get('batch_index')))
             if stage == 'requirement.analyzed':
                 result = RequirementAnalysis(summary='登录', test_object='登录',
@@ -183,6 +189,9 @@ def test_single_batch_extracts_features_without_another_model_pass(monkeypatch):
     calls = []
     class Provider:
         def complete(self, *, stage, payload, **kwargs):
+            if stage == "output_quantity.interpreted":
+                from casepilot_agent.quantity import OutputQuantity
+                return OutputQuantity(test_point_count=12), UsageMetadata(model="fixture")
             calls.append(stage)
             if stage == "requirement.analyzed":
                 result = PlanningAnalysis(summary="登录", test_object="登录", test_object_specified=True,

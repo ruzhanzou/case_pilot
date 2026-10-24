@@ -46,6 +46,14 @@ class RewriteProvider:
     changes = {}
 
     def complete(self, *, payload, result_type, **kwargs):
+        if kwargs.get("stage") == "rewrite.constraints_validated":
+            from casepilot_agent.contracts import QualityIssue, QualityReport, RewriteCaseDraft, RewriteRequest
+            from casepilot_agent.rewrite_guards import preservation_error, reference_rewrite_error
+            request = RewriteRequest(test_case=payload["original"], instruction=payload["instruction"], context=payload.get("context", {}))
+            proposed = RewriteCaseDraft.model_validate(payload["proposed"])
+            error = preservation_error(request, proposed) or reference_rewrite_error(request, proposed)
+            return QualityReport(passed=not error, score=0 if error else 100,
+                issues=[QualityIssue(code="fixture_constraint", message=error)] if error else []), UsageMetadata(model="acceptance")
         return result_type.model_validate(
             {
                 "items": [
@@ -230,6 +238,9 @@ async def test_planning_add_edit_delete_rounds_persist_history_and_select_latest
         deletion_only = False
 
         def complete(self, *, stage, payload, result_type, **kwargs):
+            if stage == "output_quantity.interpreted":
+                from casepilot_agent.quantity import OutputQuantity
+                return OutputQuantity(test_point_count={"稳定性": 3, "安全": 2, "修订稳定性": 1}.get(self.label)), UsageMetadata(model="acceptance")
             if stage == "requirement.analyzed":
                 result = PlanningAnalysis(
                     summary="登录",

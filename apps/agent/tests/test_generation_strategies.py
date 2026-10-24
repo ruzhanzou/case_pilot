@@ -63,6 +63,9 @@ def test_strategy_pauses_before_planning_or_generates_without_asset_search(
 
     class Provider:
         def complete(self, *, stage, payload, result_type, **kwargs):
+            if stage == "output_quantity.interpreted":
+                from casepilot_agent.quantity import OutputQuantity
+                return OutputQuantity(), UsageMetadata(model="fixture")
             stages.append(stage)
             if stage in {"requirement.analyzed", "requirement.extracted"}:
                 if mode in {"select", "select_and_generate"} and not resume:

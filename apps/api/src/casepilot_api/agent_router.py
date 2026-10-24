@@ -7,7 +7,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from casepilot_api.case_scope import PREVIOUS_QUERY_REFERENCE, requested_new_module
 
 IntentName = Literal[
     "CASE_GENERATE",
@@ -87,6 +86,11 @@ class IntentOperationDraft(BaseModel):
     changes: list[str] = Field(default_factory=list, max_length=20)
     constraints: list[str] = Field(default_factory=list, max_length=20)
     clarification_questions: list[str] = Field(default_factory=list, max_length=5)
+    clarification_kind: Literal["none", "scope", "requirements", "other"] = "none"
+    uses_selected_targets: bool = False
+    resume_operation_id: str | None = None
+    speech_act: Literal["request", "question", "negation", "quotation", "unclear"] = "request"
+    query_presentation: Literal["cases", "inventory", "session_summary"] = "cases"
     routing_source: Literal["rules", "semantic", "explicit", "fallback"] = "rules"
 
     @field_validator("depends_on", mode="before")
@@ -238,254 +242,40 @@ def _validate_model_plan(
     has_targets: bool,
     phase: str,
 ) -> IntentPlanDraft:
-    # Source lookup belongs to generation unless the user requests a separate result.
-    queries = [op for op in plan.operations if op.intent == "CASE_QUERY"]
-    generations = [op for op in plan.operations if op.intent == "CASE_GENERATE"]
-    if (len(plan.operations) == 2 and len(queries) == len(generations) == 1
-            and re.search(r"复用|参考历史|历史用例.*(?:生成|补充)|回归", content)
-            and re.search(r"历史|资产|参考", queries[0].instruction)
-            and not re.search(r"单独|独立|分别|列出|展示|显示|查询结果|先查.*再", content)):
-        generation = generations[0]
-        generation.instruction = content
-        generation.depends_on = None
-        generation.reason_codes.append("REUSE_LOOKUP_WITHIN_GENERATION")
-        plan.operations = [generation]
-    # A user's own review is a delivery preference, not an additional agent task.
-    remapped: dict[int, int | None] = {}
-    kept = []
-    for index, operation in enumerate(plan.operations):
-        dependency = (
-            remapped.get(operation.depends_on) if operation.depends_on is not None else None
-        )
-        if (
-            operation.intent == "CASE_GENERATE"
-            and re.search(r"测试规划|测试说明", operation.action_evidence)
-            and not re.search(r"用例|候选", operation.action_evidence)
-            and any(
-                other.intent == "CASE_GENERATE"
-                and re.search(r"用例|候选", other.action_evidence)
-                for other in plan.operations if other is not operation
-            )
-        ):
-            # Planning and its confirmation are already part of generation.
-            # Keep independent generation requests, but remove this duplicate phase.
-            remapped[index] = dependency
-            continue
-        if operation.intent == "CASE_REVIEW" and re.search(
-            r"供我(?:审阅|审核|确认)|我来(?:审阅|审核)|for me to review",
-            operation.action_evidence,
-            re.I,
-        ):
-            remapped[index] = dependency
-            continue
-        operation.depends_on = dependency
-        remapped[index] = len(kept)
-        kept.append(operation)
-    if not kept:
-        kept = [
-            IntentOperationDraft(
-                intent="KNOWLEDGE_QA",
-                instruction=content,
-                confidence=1.0,
-                reason_codes=["HUMAN_REVIEW_PREFERENCE"],
-                routing_source="semantic",
-            )
-        ]
-    plan.operations = kept
-    # Validate against the user's words, never a provider-authored paraphrase.
+    # Interpret semantics in the model; enforce provenance and confirmation here.
     for operation in plan.operations:
-        evidence_parts = [
-            part.strip()
-            for part in re.split(r"[，,、；;]|\.{2,}|…+", operation.action_evidence)
-            if part.strip()
-        ]
-        literal_parts = [_literal_action_span(content, part) for part in evidence_parts]
-        evidence_valid = bool(evidence_parts) and all(part is not None for part in literal_parts)
-        if evidence_valid:
-            evidence_parts = [part for part in literal_parts if part is not None]
-            operation.action_evidence = '，'.join(evidence_parts)
-        clauses = re.split(r"[。；;，,]|然后|随后|接着", content)
-        matches = [clause for clause in clauses if evidence_parts and evidence_parts[0] in clause]
-        evidence_clause = next(
-            (clause for clause in matches if not NEGATED_WRITE.search(clause)),
-            matches[0] if matches else content,
-        )
-        primary = re.split(r"[，,]|(?:但|同时)(?:不要|保留)", evidence_clause, maxsplit=1)[0]
-        primary_directive = _without_quoted_literals(primary)
         operation.routing_source = "semantic"
-        operation.instruction = operation.instruction.strip() or content.strip()
-        if operation.action_evidence and not evidence_valid:
+        if operation.speech_act in {"question", "negation", "quotation"}:
+            operation.intent = "KNOWLEDGE_QA"
+            operation.requires_confirmation = False
+            operation.target_kind = "none"
+            operation.target_text = ""
+            operation.clarification_questions = []
+        elif operation.speech_act == "unclear":
+            operation.intent = "UNRESOLVED"
+            operation.resume_operation_id = None
+            operation.reason_codes.append("SPEECH_ACT_UNCLEAR")
+        operation.instruction = (content.strip() if len(plan.operations) == 1
+                                 else operation.instruction.strip() or content.strip())
+        # Informational replies authorize no asset operation. Do not reject a
+        # question or quotation because its action citation was paraphrased.
+        if operation.intent in {"KNOWLEDGE_QA", "SMALL_TALK"}:
+            operation.action_evidence = ""
+        evidence = operation.action_evidence
+        evidence_parts = [part.strip() for part in re.split(r"\.{2,}|…+", evidence) if part.strip()]
+        literal_parts = [_literal_action_span(content, part) for part in evidence_parts]
+        if evidence and (not literal_parts or any(part is None for part in literal_parts)):
             operation.intent = "UNRESOLVED"
             operation.reason_codes.append("ACTION_EVIDENCE_NOT_IN_REQUEST")
-        if operation.intent in {"CASE_GENERATE", "CASE_MODIFY", "CASE_DELETE"}:
-            if INFORMATION_QUESTION.search(primary_directive) or NEGATED_WRITE.search(primary_directive):
-                operation.intent = "KNOWLEDGE_QA"
-                operation.reason_codes.append("QUESTION_OR_NEGATED_ACTION")
-            elif not operation.action_evidence and not WRITE_SIGNAL.search(content):
-                operation.intent = "UNRESOLVED"
-                operation.reason_codes.append("WRITE_ACTION_NOT_EXPLICIT")
-        if (
-            operation.intent == "CASE_GENERATE"
-            and evidence_valid
-            and re.search(r"^(?:(?:请|帮我|麻烦)\s*)*(?:重写|改写)", primary.strip())
-            and re.search(r"用例|候选", primary)
-            and not re.search(r"重新生成|生成.{0,8}(?:新|一套)|全新|新版|新用例", primary)
-        ):
-            operation.intent = "CASE_MODIFY"
-            operation.reason_codes.append("EXPLICIT_CASE_REWRITE")
-        # A scope can quote several non-adjacent literal spans (for example a
-        # module and a preservation clause). Keep every span, including exclusions.
-        if operation.target_text and operation.target_text not in content:
-            scope_parts = [part.strip() for part in re.split(
-                r"[，,、；;]|\.{2,}|…+", operation.target_text
-            ) if part.strip()]
-            literal_parts = []
-            for part in scope_parts:
-                significant = re.sub(r"[\s「」“”\"'‘’]", "", part)
-                quote_spacing = r"[\s「」“”\"'‘’]*"
-                pattern = (
-                    quote_spacing
-                    + quote_spacing.join(re.escape(char) for char in significant)
-                    + quote_spacing
-                )
-                match = re.search(pattern, content) if significant else None
-                if match is None:
-                    break
-                literal_parts.append(match.group().strip())
-            if scope_parts and len(literal_parts) == len(scope_parts):
-                operation.target_text = "，".join(literal_parts)
-        else:
-            literal_parts = []
-            scope_parts = []
-        if (
-            operation.intent not in {"KNOWLEDGE_QA", "SMALL_TALK"}
-            and operation.target_text
-            and operation.target_text not in content
-            and not (scope_parts and len(literal_parts) == len(scope_parts))
-            and not (has_targets and operation.target_kind == "previous_result")
-        ):
-            explicit_new_module = requested_new_module(operation.action_evidence) if (
-                operation.intent == "CASE_GENERATE" and evidence_valid
-            ) else ""
-            explicit_collection_query = re.fullmatch(
-                r"(?:查询|列出|查看)\s*((?:当前|整个|本)(?:用例)?集合(?:中|里|的)?"
-                r"(?:全部|所有)(?:\s*\d+\s*条)?用例)", evidence_clause.strip()
-            ) if operation.intent == "CASE_QUERY" and not re.search(
-                r"排除|除了|除外|不含|不包括|仅|只看", content
-            ) else None
-            explicit_case_keys = re.findall(r"\b[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+\b", operation.action_evidence) if (
-                evidence_valid and operation.target_kind == "case" and not re.search(r"排除|除了|除外|不含|不包括", content)
-            ) else []
-            explicit_candidates = (evidence_valid and phase == "candidate_review"
-                                   and operation.target_kind in {"case", "module", "condition", "previous_result"}
-                                   and re.search(r"(?:剩余|未纳入|待审阅|全部|所有|查到的).{0,12}候选", operation.action_evidence))
-            explicit_generated_modules = re.search(
-                r"(?:分为|划分为)\s*(?:[「“\"][^」”\"]+[」”\"]\s*[、，,]?\s*){2,}(?:[一二三四五六七八九十\d]+个)?模块",
-                content,
-            ) if operation.intent == "CASE_GENERATE" and evidence_valid and len(plan.operations) == 1 else None
-            explicit_test_object = re.search(
-                r"(?:为|针对|围绕)\s*([^，,。；;\n]+?)\s*(?:生成|设计|编写|创建)",
-                content,
-            ) if (operation.intent == "CASE_GENERATE" and evidence_valid
-                  and len(plan.operations) == 1) else None
-            explicit_query_reference = PREVIOUS_QUERY_REFERENCE.search(content) if (
-                  operation.intent in {"CASE_MODIFY", "CASE_DELETE"} and evidence_valid
-                  and len(plan.operations) == 1) else None
-            if explicit_generated_modules:
-                # New module names need not already exist; preserve the exact
-                # user declaration instead of a model's combined/paraphrased name.
-                operation.target_text = explicit_generated_modules.group()
-                operation.target_kind = "module"
-                operation.clarification_questions = []
-                operation.reason_codes.append("EXPLICIT_GENERATED_MODULES")
-            elif (operation.intent == "CASE_QUERY" and evidence_valid and len(plan.operations) == 1
-                  and re.search(r"(?:关于|有关|涉及).+用例", content)):
-                # Read-only queries can resolve the original literal clause
-                # directly; do not let a model paraphrase erase its conditions.
-                operation.target_text = evidence_clause
-                operation.clarification_questions = []
-                operation.reason_codes.append("LITERAL_QUERY_SCOPE")
-            elif explicit_query_reference:
-                # Let scope resolution bind the latest completed query, even
-                # when the provider paraphrases its target as explicit cases.
-                operation.target_text = explicit_query_reference.group()
-                operation.target_kind = "condition"
-                operation.instruction = content
-                operation.clarification_questions = []
-                operation.reason_codes.append("LITERAL_PREVIOUS_QUERY_SCOPE")
-            elif explicit_candidates:
-                operation.target_text = operation.action_evidence
-                operation.clarification_questions = []
-                operation.reason_codes.append("EXPLICIT_PENDING_CANDIDATE_SCOPE")
-            elif explicit_case_keys:
-                operation.target_text = "，".join(explicit_case_keys)
-                operation.clarification_questions = []
-                operation.reason_codes.append("EXPLICIT_CASE_KEY_SCOPE")
-            elif explicit_new_module and explicit_new_module in content:
-                # A new module has no existing cases to resolve. Its name comes
-                # from the user's validated action span, not the model's paraphrase.
-                operation.target_text = explicit_new_module
-                operation.target_kind = "module"
-                operation.clarification_questions = []
-                operation.reason_codes.append("EXPLICIT_NEW_MODULE_SCOPE")
-            elif explicit_test_object:
-                # A new test object need not name a pre-existing module or case.
-                operation.target_text = explicit_test_object.group(1).strip()
-                operation.target_kind = "none"
-                operation.clarification_questions = []
-                operation.reason_codes.append("EXPLICIT_GENERATION_OBJECT")
-            elif explicit_collection_query:
-                operation.target_text = explicit_collection_query.group(1)
-                operation.target_kind = "condition"
-                operation.clarification_questions = []
-                operation.reason_codes.append("EXPLICIT_COLLECTION_QUERY_SCOPE")
-            else:
-                operation.target_text = ""
-                operation.clarification_questions = ["请指定要处理的模块名称或用例编号。"]
-                operation.reason_codes.append("TARGET_EVIDENCE_NOT_IN_REQUEST")
-        if operation.intent in {"CASE_MODIFY", "CASE_DELETE"} and (
-            not has_targets and operation.target_kind == "none"
-        ):
-            explicit_collection = re.search(
-                r"(?:当前|整个|本)(?:用例)?集合(?:中|里|的)?(?:全部|所有)(?:\s*\d+\s*条)?用例",
-                operation.instruction,
-            )
-            if explicit_collection and not re.search(r"排除|除了|除外|不含|不包括", operation.instruction):
-                operation.target_kind = "condition"
-                operation.target_text = explicit_collection.group(0)
-                operation.clarification_questions = []
-            else:
-                operation.clarification_questions = ["请指定要处理的模块名称、用例编号或选中用例。"]
-        operation.requires_confirmation = operation.intent in {"CASE_MODIFY", "CASE_DELETE", "UNRESOLVED"}
+        elif literal_parts:
+            operation.action_evidence = "，".join(literal_parts)
+        if operation.intent in {"CASE_GENERATE", "CASE_MODIFY", "CASE_DELETE"} and not evidence:
+            operation.intent = "UNRESOLVED"
+            operation.reason_codes.append("WRITE_ACTION_NOT_EXPLICIT")
+        operation.requires_confirmation |= operation.intent in {
+            "CASE_MODIFY", "CASE_DELETE", "UNRESOLVED"
+        }
         operation.action = DEFAULT_ACTIONS[operation.intent]
-    # A shared edit over several explicit case keys is one reviewable batch.
-    # Do not coalesce heterogeneous edits, ambiguous scopes or ordered workflows.
-    operations = plan.operations
-    first = operations[0]
-    if (
-        len(operations) > 1
-        and first.changes
-        and not re.search(
-            r"然后|随后|接着|依次|分别|\b(?:then|after|sequentially)\b", content, re.I,
-        )
-        and all(
-            op.intent == "CASE_MODIFY"
-            and op.target_kind == "case"
-            and not op.clarification_questions
-            and re.fullmatch(r"[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+", op.target_text)
-            and op.target_text in content
-            and op.changes == first.changes
-            and op.constraints == first.constraints
-            for op in operations
-        )
-        and len({op.target_text for op in operations}) == len(operations)
-    ):
-        first.target_text = "、".join(op.target_text for op in operations)
-        first.instruction = content
-        first.depends_on = None
-        first.confidence = min(op.confidence for op in operations)
-        first.reason_codes.append("SHARED_CASE_EDIT_BATCH")
-        plan.operations = [first]
     return IntentPlanDraft(operations=plan.operations)
 
 
@@ -574,6 +364,7 @@ def sdk_plan(
     conversation_memory: list[dict[str, str]] | None = None,
     active_operations: list[dict] | None = None,
     attachment_context: dict | None = None,
+    validation_feedback: str | None = None,
 ) -> IntentPlanDraft:
     if not api_key:
         raise ValueError("agent_api_key_required")
@@ -594,6 +385,11 @@ def sdk_plan(
             "将用户消息拆成最多8个按文本顺序执行的操作。"
             "识别生成、修改、删除、查询、评审CASE_REVIEW、查冗余CASE_DEDUP、覆盖分析COVERAGE_ANALYZE、知识问答、闲聊；无法可靠判断时输出UNRESOLVED。"
             "判断用户真正请求的目标，而不是仅根据消息中出现的动词分类。"
+            "先填写speech_act：request为实际请求执行；question是询问方法/解释；"
+            "negation为否定执行；quotation为翻译或讨论引用文本；unclear为不能确定。"
+            "例如不要重写登录模块用例、不要将用例CASE-1的标题改为成功，都必须speech_act=negation，"
+            "intent=KNOWLEDGE_QA，而不是CASE_MODIFY。不要把否定词丢弃后执行后半句。"
+            "但修改优先级、不改标题是request，保留约束不是对整个修改的否定。"
             "KNOWLEDGE_QA也包含翻译、解释、总结、润色等只返回文本的通用请求。"
             "待翻译的数字、引文、上一条回答都是文本内容，不是待查找的用例编号；"
             "例如翻译1234、把上一条回答翻译成英文，应输出KNOWLEDGE_QA、"
@@ -608,16 +404,27 @@ def sdk_plan(
             "为每项输出action_evidence（当前消息的原文动作片段）、target_text（当前消息原文范围片段）、"
             "action_evidence只取一个连续原文片段，不要合并多个动词。"
             "changes（要修改的内容）、constraints（保留、不改、排除等约束）、clarification_questions（缺失必要信息才提问）。"
+            "clarification_kind标注缺失信息类型：none无需澄清，scope仅缺资产范围，"
+            "requirements缺修改方向，other为其他问题；范围选择器可结合完整资产目录解决scope。"
             "target_text只包含作用范围与排除条件，不包含拟修改的内容。修改后的P0不是筛选原用例的条件。"
             "instruction完整保留该操作的目标、修改内容和约束。不要将保留约束拆成操作。"
             "对多个用例执行相同修改时只输出一个CASE_MODIFY操作，target_text保留所有编号，不要按用例拆任务。"
             "生成前提供测试规划并等待确认属于同一个CASE_GENERATE任务，不要拆成两个生成操作。"
+            "选用已有用例组成新集合属于CASE_GENERATE的select模式，即使用户明确不生成新用例、"
+            "要求先展示资产供选择，也必须保持CASE_GENERATE。只查看或查询现有用例而不组成集合才是CASE_QUERY。"
+            "测试点、功能点、测试规划、测试说明不是候选用例或正式用例。"
+            "对测试点/规划进行增加、删除、修改都属于CASE_GENERATE，action=BRIEF_UPDATE；"
+            "仅对候选或正式用例的字段进行修改才属于CASE_MODIFY。"
+            "例如在现有测试规划上增加一个退出登录测试点，原有两个保持不变，"
+            "必须为CASE_GENERATE/BRIEF_UPDATE；从规划删除指定测试点也一样，不能CASE_DELETE。"
             "用户要求参考历史用例或Excel，复用核心并补充回归，或针对相似需求生成一套新版用例，"
             "整体属于一个CASE_GENERATE任务，历史用例是参考材料，按变更修改是生成策略，查询历史用例只是生成的准备步骤，不要额外拆成CASE_QUERY；只有用户明确要求独立查看查询结果时才拆分，"
             "不要额外拆成CASE_MODIFY来覆盖原资产；只有明确另行要求修改正式原用例时才拆分。"
             "供我审阅、等我确认是用户自己确认结果的交付要求，绝不能拆成AI评审任务。"
             "明确请求修改且附带不要改其他字段时仍是修改。修改和重写会在对话区由用户确认后执行。"
             "重写登录模块用例、改写已有候选属于CASE_MODIFY，不是CASE_GENERATE；"
+            "但明确要求生成一套新版、新一套候选时属于CASE_GENERATE，交付新的一套候选，不覆盖现有资产。"
+            "例如重写登录模块用例并生成一套新版应为CASE_GENERATE；仅重写登录模块用例才为CASE_MODIFY。"
             "没有改动方向时保留CASE_MODIFY并追问方向，不能启动新用例生成。"
             "对于只有优化一下、重写一下而未提供改动方向的请求，询问需要修改哪些内容或希望达到什么效果；"
             "已有明确修改要求时不重复提问，把修改目标与保留要求分别写入changes和constraints。"
@@ -625,6 +432,17 @@ def sdk_plan(
             "不要因路由输入没有正文而要求用户粘贴或重新上传；保留引用要求，交给执行阶段核对规则。"
             "附件可用不代表规则充分，不要自行编造附件内容；用户没有指定修改方向时仍需澄清。"
             "selected_targets只是可用上下文，只有当前消息明确指向选中/当前用例时才引用，不能继承旧目标。"
+            "uses_selected_targets明确标注本次是否引用当前选择；涉及别的模块或新对象时false。"
+            "当用户是在回答active_operations中awaiting_target任务的澄清问题、补充范围或修改要求，"
+            "resume_operation_id填写该任务的原始id；独立新任务或多意图请求必须null。"
+            "只有列表中status严格为awaiting_target的任务才可续接。已完成规划的增删改是CASE_GENERATE/BRIEF_UPDATE，"
+            "resume_operation_id必须null；不得引用历史消息中的旧任务或awaiting_confirmation任务。"
+            "续接任务的intent保持原任务类型，不得把另一个新任务附到旧任务。"
+            "继续修改已生成的候选或已有修改建议属于新一轮CASE_MODIFY，resume_operation_id=null；"
+            "通过target_kind=previous_result或当前明确编号定位，不把上一轮已完成任务当作待澄清任务。"
+            "allowed_resume_operations为空时，所有resume_operation_id必须为null。"
+            "query_presentation：列出用例用cases，查询数量或各模块统计用inventory，"
+            "要求汇总本次会话新增/改写/删除结果用session_summary。"
             "若selected_targets提供previous_result且用户说这一版不满意、保留刚才修改、再调整，"
             "这是对已有方案的CASE_MODIFY，target_kind=previous_result，不必再次询问目标。"
             "范围不明时保留已识别的业务intent并输出具体澄清问题，不要猜测目标。"
@@ -642,7 +460,12 @@ def sdk_plan(
             "selected_targets": target_context,
             "recent_messages": (conversation_memory or [])[-12:],
             "active_operations": active_operations or [],
+            "allowed_resume_operations": [
+                {"id": item["id"], "intent": item["intent"]}
+                for item in active_operations or [] if item.get("status") == "awaiting_target"
+            ],
             "available_attachments": attachment_context or {},
+            "validation_feedback": validation_feedback,
         },
         ensure_ascii=False,
     )
@@ -667,77 +490,69 @@ def plan_intents(
     tracing_enabled: bool,
 ) -> IntentPlanDraft:
     content = normalize_routing_text(content)
-    fallback = deterministic_plan(content, classify, has_targets=has_targets)
     if provider == "mock":
-        return fallback
-    # A complete, literal command referring to saved query results does not
-    # need an external model to rediscover its action. Scope resolution still
-    # checks ownership, empty results and counts; deletion still needs review.
-    if re.fullmatch(
-        r"(?:请)?(?:删除|移除)\s*" + PREVIOUS_QUERY_REFERENCE.pattern + r"[。.!！]?",
-        content,
-    ):
-        return IntentPlanDraft(operations=[IntentOperationDraft(
-            intent="CASE_DELETE", action="CASE_DELETE_PREPARE", instruction=content,
-            confidence=1.0, target_kind="previous_result", requires_confirmation=True,
-            target_text=PREVIOUS_QUERY_REFERENCE.search(content).group(),
-            action_evidence=content, reason_codes=["EXPLICIT_PREVIOUS_QUERY_DELETE"],
-            routing_source="rules",
-        )])
+        return deterministic_plan(content, classify, has_targets=has_targets)
+    from agents.exceptions import ModelBehaviorError
+    from pydantic import ValidationError
+
+    deadline = perf_counter() + timeout_seconds
+    feedback = None
     try:
-        model_plan = sdk_plan(
-            content,
-            phase=phase,
-            target_context=target_context,
-            conversation_memory=conversation_memory or [],
-            active_operations=active_operations or [],
-            attachment_context=attachment_context or {},
-            model_name=model_name,
-            base_url=base_url,
-            api_key=api_key,
-            timeout_seconds=timeout_seconds,
-            tracing_enabled=tracing_enabled,
-        )
-        validated = _validate_model_plan(
-            content,
-            model_plan,
-            has_targets=has_targets,
-            phase=phase,
-        )
-        if (
-            len(fallback.operations) == len(validated.operations) == 1
-            and fallback.operations[0].intent in {"CASE_DEDUP", "COVERAGE_ANALYZE"}
-            and validated.operations[0].intent == "CASE_REVIEW"
-        ):
-            # Preserve explicit analysis intent when the model picks a generic review.
-            validated.operations[0].intent = fallback.operations[0].intent
-            validated.operations[0].action = fallback.operations[0].action
-        return validated
+        for attempt in range(2):
+            remaining = timeout_seconds if attempt == 0 else deadline - perf_counter()
+            if remaining <= 0:
+                raise TimeoutError("intent_routing_budget_exhausted")
+            try:
+                model_plan = sdk_plan(
+                    content, phase=phase, target_context=target_context,
+                    conversation_memory=conversation_memory or [],
+                    active_operations=active_operations or [],
+                    attachment_context=attachment_context or {},
+                    model_name=model_name, base_url=base_url, api_key=api_key,
+                    timeout_seconds=remaining, tracing_enabled=tracing_enabled,
+                    **({"validation_feedback": feedback} if feedback else {}),
+                )
+            except (ModelBehaviorError, ValidationError):
+                if attempt:
+                    raise
+                feedback = "上次响应不符合JSON结构。重新理解原请求并输出完整合法JSON，所有字符串必须正确使用双引号；不得省略任何必填字段。"
+                continue
+            validated = _validate_model_plan(
+                content, model_plan, has_targets=has_targets, phase=phase,
+            )
+            resumable = {
+                str(item["id"]): item["intent"]
+                for item in active_operations or []
+                if item.get("status") == "awaiting_target"
+            }
+            if any(
+                op.resume_operation_id
+                and (len(validated.operations) != 1
+                     or resumable.get(op.resume_operation_id) != op.intent)
+                for op in validated.operations
+            ):
+                if attempt:
+                    raise ValueError("invalid_model_resume_reference")
+                feedback = (
+                    "上次resume_operation_id不是可续接任务。只能引用active_operations中"
+                    "status=awaiting_target且intent相同的id。已完成规划的增删改应为"
+                    "CASE_GENERATE/BRIEF_UPDATE并设置resume_operation_id=null。"
+                    "继续修改已生成候选或建议是新一轮CASE_MODIFY，resume_operation_id=null。"
+                    "本轮允许续接的id与intent映射为：" + json.dumps(resumable, ensure_ascii=False) +
+                    "；空映射表示只能输出null。重新理解完整请求。"
+                )
+                continue
+            if attempt or not any(
+                "ACTION_EVIDENCE_NOT_IN_REQUEST" in op.reason_codes for op in validated.operations
+            ):
+                return validated
+            feedback = (
+                "上次action_evidence不是原文连续片段。请重新理解用户意图并返回完整原文动作句，"
+                "不要省略范围、数量、否定词，不要改写或拼接；其他字段也须忠实于原文。"
+            )
+        raise RuntimeError("intent_routing_repair_exhausted")
     except Exception as error:
         logger.warning("agent_router_failed", exc_info=error)
-        # A query reference ("刚才查询到的") is not necessarily a query
-        # action. Never turn a failed mutation classification into a successful
-        # read-only answer merely because its object contains a query keyword.
-        reliable_fallback = not _has_explicit_write_request(content) and all(
-            not needs_intent_confirmation(item.intent, item.confidence)
-            and item.intent in {"CASE_QUERY", "KNOWLEDGE_QA", "SMALL_TALK"}
-            for item in fallback.operations
-        )
-        reliable_write_fallback = len(fallback.operations) == 1 and _has_explicit_write_request(content) and all(
-            not needs_intent_confirmation(item.intent, item.confidence)
-            and item.intent in {"CASE_GENERATE", "CASE_MODIFY", "CASE_DELETE"}
-            for item in fallback.operations
-        )
-        if reliable_fallback or reliable_write_fallback:
-            for item in fallback.operations:
-                item.routing_source = "fallback"
-                item.reason_codes = [
-                    "MODEL_FAILED",
-                    "EXPLICIT_WRITE_RULE_FALLBACK" if reliable_write_fallback else "SAFE_RULE_FALLBACK",
-                ]
-                if reliable_write_fallback:
-                    item.requires_confirmation = True
-            return fallback
         return IntentPlanDraft(
             operations=[
                 IntentOperationDraft(
@@ -746,7 +561,7 @@ def plan_intents(
                     instruction=content.strip(),
                     confidence=0.0,
                     requires_confirmation=True,
-                    reason_codes=["MODEL_FAILED", "AMBIGUOUS_RULE_FALLBACK"],
+                    reason_codes=["MODEL_FAILED", "SEMANTIC_ROUTING_UNAVAILABLE"],
                 )
             ]
         )
@@ -805,7 +620,10 @@ class CaseScopeDecision(BaseModel):
     clarification: str
     reference: Literal['none', 'selection', 'previous_query', 'previous_proposal']
     referenced_case_keys: list[str]
-    requested_count: int | None
+    requested_count: int | None = Field(description=(
+        "用户明确提到的本次已有目标总数，包括这两条/那二十二条等指代中的数量。"
+        "未指定或只说全部时为null；不要根据目录命中数量推算。"
+    ))
 
 
 def select_case_scope(instruction: str, cases: list[dict], context: dict, *, intent: str,
@@ -858,6 +676,7 @@ def select_case_scope(instruction: str, cases: list[dict], context: dict, *, int
             'referenced_case_keys只包含作为对象明确引用的编号，不能包含赋值或搜索关键词中的编号；'
             '缺失编号、含糊对象或存在冲突必须ambiguous=true并说明需要澄清什么，不能默默漏掉。'
             'requested_count是用户限定已有目标数量的完整整数（包括中文数字），没有数量则null。新增/生成数量不是已有目标数量，必须设为null。'
+            '这两条、那二十二条也明确指定数量，分别返回2、22；不能因目标是历史查询结果而省略数量。'
             '只返回空列表代表明确无匹配，不要回退到全量。创建全新用例无需选择已有用例，返回空列表即可。'
             '目录同时含正式用例和候选。候选审阅阶段默认操作候选，除非明确要求正式用例或二者。'
             '查询汇总按用户所说的正式/候选范围选择，不得遗漏。'

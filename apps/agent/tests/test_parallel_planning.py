@@ -292,3 +292,33 @@ def test_only_verified_unambiguous_rule_labels_normalize_feature_names():
     assert source_rule_name(feature, batch) is None  # Conflicting definitions must survive.
     feature.requirement_refs = ['RULE-1', 'RULE-2']
     assert source_rule_name(feature, batch) is None
+
+
+def test_explicit_point_quantity_rejects_short_batches():
+    def complete(stage, instruction, payload, result_type):
+        if stage == 'feature.generated': return features(2)
+        return points(payload)  # Only two, although user explicitly requested four.
+    with pytest.raises(ValueError, match='planning_point_batch_size_invalid'):
+        build_planning(RequirementAnalysis(summary='四个测试点'), {}, complete, target_count=4)
+
+
+def test_one_point_can_cover_multiple_features_without_inflating_quantity():
+    def complete(stage, instruction, payload, result_type):
+        if stage == 'feature.generated': return features(6)
+        assert payload['batch_count'] == 1
+        result = points(payload, fill_budget=True)
+        result.test_points[0].feature_point_ids = [f['id'] for f in payload['feature_points']['feature_points']]
+        return result
+    result = build_planning(RequirementAnalysis(summary='只要一个测试点'), {}, complete, target_count=1)
+    assert len(result['test_points']) == 1
+    assert set(result['test_points'][0]['feature_point_ids']) == {f['id'] for f in result['feature_points']}
+
+
+def test_final_deduplication_cannot_silently_shrink_explicit_quantity():
+    def complete(stage, instruction, payload, result_type):
+        if stage == 'feature.generated': return features(1)
+        result = points(payload, fill_budget=True)
+        result.test_points[1] = result.test_points[0].model_copy(deep=True)
+        return result
+    with pytest.raises(ValueError, match='planning_duplicate_test_point'):
+        build_planning(RequirementAnalysis(summary='两个不同测试点'), {}, complete, target_count=2)

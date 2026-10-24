@@ -18,6 +18,7 @@ from sqlalchemy import String, and_, cast, delete, exists, or_, select, update
 from casepilot_agent.case_analysis import (
     CaseAnalysisReport,
     analysis_batches,
+    complete_analysis_batch,
     constrain_fragment_findings,
     cross_batch_comparisons,
     equivalent_analysis_cases,
@@ -52,7 +53,6 @@ from casepilot_agent.pipeline import (
     enforce_test_object_clarification,
     extract_explicit_test_object,
     rebase_rewrite_candidate,
-    requested_case_count,
 )
 from casepilot_agent.planning import (
     PlanningAnalysis,
@@ -329,6 +329,10 @@ def dispatch_task_outbox() -> dict[str, int]:
 
 
 STAGE_PROGRESS = {
+    "output_quantity.interpreted": 14,
+    "test_case.allocated": 60,
+    "test_case.allocation_reviewed": 62,
+    "reuse.permissions_interpreted": 26,
     "knowledge.searching": 3,
     "documents.reading": 5,
     "cases.searching": 23,
@@ -343,6 +347,7 @@ STAGE_PROGRESS = {
     "test_point.generated": 52,
     "test_case.generated": 72,
     "test_case.grounded": 76,
+    "test_case.semantics_checked": 74,
     "enhancement.completed": 86,
     "quality.completed": 96,
 }
@@ -973,6 +978,7 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
             "select_and_generate",
         } and not payload.get("asset_selection_confirmed")
         stage_input = {
+            "planning_contract_version": "revision-action-v2",
             "prompt": str(payload["prompt"]),
             "context": context,
             "current_test_brief": payload.get("current_test_brief"),
@@ -1001,9 +1007,13 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
             "planning_update_mode默认merge：增加、补充、修改均为增量，未提及的旧测试点由系统保留。"
             "只有用户明确要求放弃原规划、替换全部范围或从头重新规划时才选择replace。"
             "增量模式feature_points仅输出本次新增或修改的功能，不重复输出未改动的旧功能。"
+            "本轮只删除测试点或功能时planning_revision_action必须delete_only，feature_points必须为空；"
+            "其余保留的功能和测试点由系统原样保留，不得重新规划或补充。"
+            "包含新增或替换场景时planning_revision_action才用upsert。"
             "若明确修改或删除旧功能，在superseded_feature_ids列出current_test_brief.planning中"
             "被替代的精确功能ID；仅修改或删除个别测试点时用superseded_test_point_ids，"
-            "并在feature_points描述替代场景。未涉及删除或替代时两列表必须为空，不能因本轮未提及而删除。"
+            "仅需要新增或替换时才在feature_points描述替代场景；仅删除时不输出任何功能。"
+            "未涉及删除或替代时两列表必须为空，不能因本轮未提及而删除。"
             "先判断用户是否明确指定测试对象，写入 test_object 和 "
             "test_object_specified。若缺少测试对象，只提出一个测试对象澄清项；"
             "角色、流程、规则、约束、风险等其他内容均由你结合上下文分析，"
@@ -1544,11 +1554,8 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                     },
                 )
 
-            count = requested_point_count(str(payload["prompt"])) or requested_case_count(
-                GenerationRequest(
-                    prompt=str(payload["prompt"]), markdown_content=requirement.summary
-                )
-            )
+            count = requested_point_count(str(payload["prompt"]), complete_plan,
+                                          payload.get("conversation_memory", []))
             if payload.get("asset_selection_confirmed") and previous_planning.get("test_points"):
                 # Asset comparison must not silently replan already reviewed coverage.
                 content["planning"] = previous_planning
@@ -2085,7 +2092,8 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
             store.complete_job_message(
                 connection,
                 job,
-                content="尚未明确测试对象，请补充后再生成用例。",
+                content="\n".join(q.question for q in awaiting.requirement.open_questions[:3])
+                or "请补充必要信息后继续生成用例。",
                 status="awaiting_clarification",
                 metadata_values={
                     "job_id": job_id,
@@ -2759,9 +2767,8 @@ def answer_knowledge_question(job_id: str) -> dict[str, Any]:
                 batches.extend(bridge_batches)
                 publish_analysis_progress(store, parsed_job_id, 0, len(batches))
                 for batch in batches:
-                    ensure_not_cancelled(store, parsed_job_id)
-                    report, batch_usage = provider.complete(
-                        stage="cases.analyzed",
+                    report, batch_usage = complete_analysis_batch(
+                        provider, before_call=lambda: ensure_not_cancelled(store, parsed_job_id),
                         instruction=(
                             "你是用例评审员。本任务只检查，不修改任何资产。"
                             "按analysis_kind执行：CASE_REVIEW检查步骤、预期、可执行性及一致性；"
@@ -2803,7 +2810,6 @@ def answer_knowledge_question(job_id: str) -> dict[str, Any]:
                             "representative_case_count": len(analysis_context),
                             "planned_batch_count": len(batches),
                         },
-                        result_type=CaseAnalysisReport,
                         model_id=str(payload.get("model_id", "auto")),
                     )
                     # Validate each batch against only the cases it saw.

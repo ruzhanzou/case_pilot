@@ -19,13 +19,17 @@ from casepilot_agent.pipeline import (
     validate_generation,
 )
 from casepilot_agent.providers.mock import MockProvider
+from casepilot_agent.quantity import OutputQuantity
+from unittest.mock import Mock
 from casepilot_agent.tasks import KNOWLEDGE_ANSWER_INSTRUCTION
 
 
-def executor(provider: MockProvider, stages: list[str] | None = None):
+def executor(provider: MockProvider, stages: list[str] | None = None, quantity=None):
     def execute(stage, instruction, payload, result_type, model_id):
         if stages is not None:
             stages.append(stage)
+        if stage == "output_quantity.interpreted" and quantity is not None:
+            return OutputQuantity(case_count=quantity)
         return provider.complete(
             stage=stage,
             instruction=instruction,
@@ -58,6 +62,7 @@ def test_login_generation_has_traceable_objects_and_real_stage_order() -> None:
     assert result.test_cases[0].test_point_ids == [result.test_points[0].id]
     assert result.quality.passed
     assert stages == [
+        "output_quantity.interpreted",
         "requirement.analyzed",
         "feature.generated",
         "test_point.generated",
@@ -418,10 +423,10 @@ def test_pipeline_repairs_missing_features_with_compact_delta_payload() -> None:
         ("密码8到20位，30分钟后锁定", None),
     ],
 )
-def test_requested_case_count_ignores_business_thresholds(prompt, count):
+def test_requested_case_count_delegates_budget_to_model(prompt, count):
     from casepilot_agent.pipeline import requested_case_count
 
-    assert requested_case_count(GenerationRequest(prompt=prompt)) == count
+    assert requested_case_count(GenerationRequest(prompt=prompt), Mock(return_value=OutputQuantity(case_count=count))) == count
 
 
 def test_large_generation_batches_preserve_exact_quantity_and_unique_cases():
@@ -430,6 +435,8 @@ def test_large_generation_batches_preserve_exact_quantity_and_unique_cases():
     batches = []
 
     def execute(stage, instruction, payload, result_type, model_id):
+        if stage == "output_quantity.interpreted":
+            return OutputQuantity(case_count=100)
         if stage == "test_point.generated":
             assert payload["requested_case_count"] is None
             assert payload["final_case_count"] == 100
@@ -467,7 +474,7 @@ def test_requested_quantity_mismatch_does_not_publish_partial_success():
             GenerationRequest(prompt="为登录生成100条测试用例"),
             context={},
             answers={},
-            execute_stage=executor(provider),
+            execute_stage=executor(provider, quantity=100),
         )
 
 
@@ -487,7 +494,7 @@ def test_total_quantity_wins_over_per_module_brief_quantity():
             GenerationRequest(
                 prompt="生成电商测试用例",
                 markdown_content="每个模块生成10条测试用例，共100条",
-            )
+            ), Mock(return_value=OutputQuantity(case_count=100))
         )
         == 100
     )
@@ -498,7 +505,7 @@ def test_explicit_candidate_quantity_wins_over_expanded_brief() -> None:
     assert requested_case_count(GenerationRequest(
         prompt="为登录模块生成恰好2条新的候选用例，链接有效期10分钟",
         markdown_content="覆盖正常、异常、边界，共6条用例",
-    )) == 2
+    ), Mock(return_value=OutputQuantity(case_count=2))) == 2
 
 
 def test_repeated_rewrite_diff_keeps_prior_draft_changes_until_apply():
@@ -578,6 +585,8 @@ def test_exact_assignment_does_not_swallow_semantic_changes(extra):
     from unittest.mock import Mock
 
     provider = Mock()
+    from casepilot_agent.contracts import QualityReport, UsageMetadata
+    provider.complete.return_value = (QualityReport(passed=True, score=100), UsageMetadata(model="fixture"))
     original = MockProvider().generate(GenerationRequest(prompt="登录")).test_cases[0]
     request = RewriteRequest(
         test_case=original, instruction=f"把当前用例标题改为「弱网登录校验」，{extra}"
@@ -620,6 +629,8 @@ def test_single_semantic_rewrite_recomputes_diff_from_actual_candidate():
     candidate = MockProvider().rewrite(request)
     candidate.diff = []
     provider = Mock()
+    from casepilot_agent.contracts import QualityReport, UsageMetadata
+    provider.complete.return_value = (QualityReport(passed=True, score=100), UsageMetadata(model="fixture"))
     provider.rewrite.return_value = candidate
     result = GenerationPipeline(provider).rewrite(request)
     assert result.diff
@@ -636,6 +647,8 @@ def test_single_semantic_rewrite_rejects_changed_system_fields(field, value):
     candidate = MockProvider().rewrite(request)
     candidate.proposed = candidate.proposed.model_copy(update={field: value})
     provider = Mock()
+    from casepilot_agent.contracts import QualityReport, UsageMetadata
+    provider.complete.return_value = (QualityReport(passed=True, score=100), UsageMetadata(model="fixture"))
     provider.rewrite.return_value = candidate
     with pytest.raises(ValueError, match="改写不能改变系统字段"):
         GenerationPipeline(provider).rewrite(request)

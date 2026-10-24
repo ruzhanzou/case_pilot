@@ -13,6 +13,7 @@ from casepilot_api.schemas import ConversationMessageCreate
 @pytest.mark.parametrize('intent', ['CASE_MODIFY', 'CASE_DELETE', 'CASE_QUERY', 'CASE_REVIEW'])
 def test_text_retry_uses_latest_failed_operation_and_ignores_ui_selection(monkeypatch, intent):
     db = Mock()
+    db.scalars.return_value = []
     conversation = SimpleNamespace(id=uuid4())
     operation = SimpleNamespace(id=uuid4(), intent=intent, status='failed')
     db.scalar.return_value = operation
@@ -29,6 +30,7 @@ def test_text_retry_uses_latest_failed_operation_and_ignores_ui_selection(monkey
 @pytest.mark.parametrize('status', ['completed', 'running', 'awaiting_confirmation', 'cancelled'])
 def test_text_retry_does_not_revive_older_failure(monkeypatch, status):
     db = Mock()
+    db.scalars.return_value = []
     db.scalar.return_value = SimpleNamespace(intent='CASE_QUERY', status=status)
     resume = Mock()
     monkeypatch.setattr(conversations, 'resume_conversation_operation', resume)
@@ -49,6 +51,7 @@ def test_message_retry_resumes_only_current_failed_operation(monkeypatch, stale)
     operation = SimpleNamespace(id=op_id, conversation_id=cid, status='failed',
                                 related_job_id=uuid4() if stale else job_id)
     db = Mock()
+    db.scalars.return_value = []
     db.get.side_effect = [failed, job, operation]
     monkeypatch.setattr(conversations, '_ensure_conversation', lambda *args: SimpleNamespace(id=cid))
     monkeypatch.setattr(conversations, '_require_idle_conversation', lambda *args: None)
@@ -71,6 +74,7 @@ def test_named_operation_retry_commands(content):
 
 def test_named_retry_does_not_resume_different_operation(monkeypatch):
     db = Mock()
+    db.scalars.return_value = []
     db.scalar.return_value = SimpleNamespace(intent='CASE_MODIFY', status='failed')
     resume = Mock()
     monkeypatch.setattr(conversations, 'resume_conversation_operation', resume)
@@ -83,6 +87,7 @@ def test_named_retry_does_not_resume_different_operation(monkeypatch):
 
 def test_retry_compound_request_resumes_failed_predecessor(monkeypatch):
     db = Mock()
+    db.scalars.return_value = []
     queued = SimpleNamespace(status='queued', message_id=uuid4(), sequence=2)
     failed = SimpleNamespace(id=uuid4(), status='failed', intent='CASE_QUERY')
     db.scalar.side_effect = [queued, failed]
@@ -97,6 +102,7 @@ def test_retry_compound_request_resumes_failed_predecessor(monkeypatch):
 def test_natural_retry_forwards_explicit_attachments(monkeypatch):
     document, source = uuid4(), uuid4()
     db = Mock()
+    db.scalars.return_value = []
     db.scalar.return_value = SimpleNamespace(id=uuid4(), intent='CASE_MODIFY', status='failed')
     resume = Mock(return_value=Mock())
     monkeypatch.setattr(conversations, 'resume_conversation_operation', resume)

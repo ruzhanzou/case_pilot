@@ -32,6 +32,45 @@ class CaseAnalysisReport(BaseModel):
     limitations: list[str] = Field(default_factory=list)
 
 
+
+def complete_analysis_batch(provider, *, instruction, payload, model_id, before_call=None):
+    """Use short exact references and one bounded repair for invalid references."""
+    from casepilot_agent.contracts import UsageMetadata
+
+    cases = payload["cases"]
+    aliases = {f"c{index}": str(item["ref"]) for index, item in enumerate(cases)}
+    allowed = set(aliases.values())
+    request = {**payload, "cases": [
+        {**item, "ref": f"c{index}"} for index, item in enumerate(cases)
+    ]}
+    usage = UsageMetadata(model="")
+    for attempt in range(2):
+        if before_call:
+            before_call()
+        report, call_usage = provider.complete(
+            stage="cases.analyzed",
+            instruction=instruction + " findings.case_refs必须逐字复制本批输入ref（如c0），"
+                "不能填写标题、用例显示编号或编造引用。validation_feedback只纠正引用，不扩大评审范围。",
+            payload=request, result_type=CaseAnalysisReport, model_id=model_id,
+        )
+        usage.model = call_usage.model
+        usage.latency_ms += call_usage.latency_ms
+        for key, value in call_usage.token_usage.items():
+            usage.token_usage[key] = usage.token_usage.get(key, 0) + value
+        unknown = sorted({ref for finding in report.findings for ref in finding.case_refs
+                          if ref not in aliases and ref not in allowed})
+        if not unknown:
+            for finding in report.findings:
+                finding.case_refs = list(dict.fromkeys(aliases.get(ref, ref) for ref in finding.case_refs))
+            return report, usage
+        if attempt:
+            raise ValueError("analysis_unknown_case_reference")
+        request = {**request, "validation_feedback": {
+            "unknown_references": unknown, "allowed_references": list(aliases),
+            "previous_report": report.model_dump(mode="json"),
+        }}
+    raise AssertionError("unreachable_analysis_retry")
+
 def exact_duplicate_findings(case_context: list[dict]) -> list[CaseFinding]:
     """Compare full business content across every batch without model truncation.
 
