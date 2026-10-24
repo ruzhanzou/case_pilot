@@ -203,6 +203,8 @@ test('N2 vague rewrite clarifies then concrete followup can be discarded', async
   const turn = await send(page, `仅把用例 ${s.original[1].case_key} 的标题改为「澄清后登录校验」，其他字段和用例不变`);
   const change = await ready(page, turn); expect(change.items.map(i => i.ref)).toEqual([s.original[1].id]);
   expect(change.items[0].proposed_snapshot.title).toBe('澄清后登录校验');
+  const taskActions = page.locator('details.case-task-context').filter({ hasText: '任务操作' }).last();
+  if (!(await taskActions.evaluate(element => (element as HTMLDetailsElement).open))) await taskActions.locator('summary').click();
   await page.getByRole('button', { name: '放弃当前任务', exact: true }).click();
   await expect(page.locator('.principle-composer textarea')).toBeEnabled(); expect(await s.read()).toEqual(s.original);
   await evidence(page, info, { vague, change, after: await s.read() });
@@ -212,7 +214,8 @@ test('S2 stop a running rewrite after reload then accept new dialogue', async ({
   const s = await setup(page);
   const turn = await send(page, `重写用例 ${s.original[1].case_key} 的测试步骤：明确输入正确用户名和密码、提交请求、检查登录成功，其他字段不变`);
   expect(turn.action.job_id).toBeTruthy();
-  const composer = page.locator('.principle-composer textarea'); await expect(composer).toBeDisabled();
+  const composer = page.locator('.principle-composer textarea'); await expect(composer).toBeEnabled();
+  await expect(composer).toHaveAttribute('placeholder', '可输入调整要求，暂停当前任务后继续…');
   const blocked = await page.request.post(`${api}/conversations/${turn.conversation_id}/messages`, { data: { content: '查询用例' } });
   expect(blocked.status()).toBe(409);
   await page.reload(); await page.getByRole('button', { name: '结束任务', exact: true }).click();
