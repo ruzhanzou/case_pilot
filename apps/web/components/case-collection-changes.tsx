@@ -121,9 +121,10 @@ function ReviewValue({ value, label, field }: { value: unknown; label: string; f
   const { pick } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const text = field === "source_refs" ? sourceRefText(value) : formatValue(value);
+  const empty = value === null || value === undefined || value === "" || (Array.isArray(value) && value.length === 0);
   const long = text.length > 400 || text.split("\n").length > 6;
   return <>
-    <pre role="region" aria-label={label} tabIndex={long ? 0 : undefined} style={expanded ? { maxHeight: "none" } : undefined}>{text}</pre>
+    <pre role="region" aria-label={label} tabIndex={long ? 0 : undefined} style={expanded ? { maxHeight: "none" } : undefined}>{empty ? pick("(Empty)", "（无内容）") : text}</pre>
     {long && <button type="button" aria-expanded={expanded} aria-label={`${expanded ? pick("Collapse content", "收起内容") : pick("Expand full content", "展开完整内容")} · ${label}`} onClick={() => setExpanded(!expanded)}>{expanded ? pick("Collapse content", "收起内容") : pick("Expand full content", "展开完整内容")}</button>}
   </>;
 }

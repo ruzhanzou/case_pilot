@@ -881,6 +881,30 @@ test('NL-CLEAR-PRECONDITIONS explicit field clearing preserves the case and ever
   expect(saved.filter((item:any) => item.id !== target.id)).toEqual(journal.original.filter((item:any) => item.id !== target.id));
 });
 
+test('NL-EMPTY-FIELD-DISPLAY an applied cleared field has an explicit empty value after reload', async ({ page }) => {
+  test.skip(!process.env.CASEPILOT_EMPTY_FIELD_EVIDENCE || !process.env.CASEPILOT_TEST_EMAIL, 'Requires an isolated completed clear-field fixture');
+  const fixture = JSON.parse(readFileSync(process.env.CASEPILOT_EMPTY_FIELD_EVIDENCE!, 'utf8'));
+  journal.collection = fixture.collection;
+  const login = await page.request.post(`${api}/auth/login`, { data: { email: process.env.CASEPILOT_TEST_EMAIL, password: 'CasePilot123!' } });
+  expect(login.ok()).toBeTruthy();
+  await page.addInitScript(() => localStorage.setItem('casepilot.locale.v1', 'zh-CN'));
+  const cid = fixture.turns.find((turn:any) => turn.response)?.response.conversation_id;
+  const before = await get(page, `/conversations/${cid}`);
+  const baseline = await get(page, `/collections/${fixture.collection.id}/test-cases`);
+  await page.goto(`/workbench/collections/${fixture.collection.id}`);
+  const empty = page.getByRole('region', { name: '建议内容 · 前置条件', exact: true });
+  await expect(empty).toHaveText('（无内容）');
+  await expect(page.getByRole('region', { name: '原内容 · 前置条件', exact: true })).not.toHaveText('（无内容）');
+  await expect(page.locator('.collection-changes__after')).toContainText('已应用结果');
+  await page.reload();
+  await expect(empty).toHaveText('（无内容）');
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  expect(await get(page, `/collections/${fixture.collection.id}/test-cases`)).toEqual(baseline);
+  const after = await get(page, `/conversations/${cid}`);
+  expect(after.messages).toEqual(before.messages);
+  expect(after.operation_history).toEqual(before.operation_history);
+});
+
 test('NL-PROPOSAL-RETRACT title withdrawal after reload preserves only the revised priority', async ({ page }) => {
   const s = await setup(page), target = s.byKey('TC-LOGIN-01');
   const first = await ready(page, await send(page, '把用例 TC-LOGIN-01 的标题改为“临时登录标题”，优先级改成P0，其他字段保持不变。', true, 2));
