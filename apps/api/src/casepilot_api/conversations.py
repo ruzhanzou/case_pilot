@@ -4339,7 +4339,7 @@ def _retry_generation_from_text(
             if _is_generation_retry(payload.content):
                 raise HTTPException(status_code=409, detail="message_not_retryable")
             return None
-        retry_details = interpret_generation_choice(payload.content, settings,
+        retry_details = interpret_generation_choice(payload.content, settings, retry_only=True,
             conversation_memory=[{"role": m.role, "content": m.content} for m in reversed(recent)])
         if not retry_details.retry_requested:
             return None

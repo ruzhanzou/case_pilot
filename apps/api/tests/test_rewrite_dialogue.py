@@ -559,3 +559,40 @@ async def test_new_query_scope_outage_does_not_persist_a_spurious_task(draft, mo
     final = (await client.get(f'/api/v1/conversations/{workspace}')).json()
     assert sum(m['role'] == 'user' and m['content'] == content for m in final['messages']) == 1
     assert not dispatched
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('entry', ['resume', 'message'])
+async def test_conflict_retry_builds_fresh_preview_before_dispatch(draft, entry):
+    client, workspace, oid, cases, dispatched = draft
+    confirmed = await client.post(f'/api/v1/conversation-operations/{oid}/resume', json={'confirm_modification': True})
+    assert confirmed.status_code == 202, confirmed.text
+    assert len(dispatched) == 1
+    with get_session_factory()() as db:
+        operation = db.get(ConversationOperation, UUID(oid))
+        operation.status = 'failed'
+        operation.result = {**operation.result, 'change_set_status': 'conflict'}
+        job = db.get(GenerationJob, operation.related_job_id)
+        job.status = 'completed'
+        db.commit()
+    changed = await client.patch(f"/api/v1/test-cases/{cases[0]['id']}", json={
+        **cases[0], 'base_revision_id': cases[0]['current_revision_id'], 'title': '人工修改保留',
+    })
+    assert changed.status_code == 200, changed.text
+    endpoint = (f'/api/v1/conversation-operations/{oid}/resume' if entry == 'resume'
+                else f'/api/v1/conversations/{workspace}/messages')
+    response = await client.post(endpoint, json={} if entry == 'resume' else {'content': '重试修改任务'})
+    assert response.status_code == 202, response.text
+    assert response.json()['assistant_message']['metadata']['modification_confirmation']
+    assert not response.json()['action'].get('job_id')
+    assert len(dispatched) == 1
+    with get_session_factory()() as db:
+        operation = db.get(ConversationOperation, UUID(oid))
+        assert operation.status == 'awaiting_target'
+        preview = operation.payload['modification_confirmation']
+        target = next(item for item in preview['cases'] if item['ref'] == cases[0]['id'])
+        assert target['snapshot']['title'] == '人工修改保留'
+    accepted = await client.post(f'/api/v1/conversation-operations/{oid}/resume', json={'confirm_modification': True})
+    assert accepted.status_code == 202, accepted.text
+    assert accepted.json()['action']['job_id']
+    assert len(dispatched) == 2

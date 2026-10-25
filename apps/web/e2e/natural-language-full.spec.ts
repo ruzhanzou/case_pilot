@@ -257,7 +257,7 @@ test('NL-REV-01 confirmation starts suggestions without formal mutation', async 
   const change = await ready(page, confirmed); expect(change.items).toHaveLength(2);
   expect(await s.read()).toEqual(journal.original);
 });
-test('NL-REV-04 stale selected revision cannot overwrite manual edits', async ({ page }) => {
+for (const retry of [false, true]) test(`${retry ? 'NL-CONFLICT-RETRY' : 'NL-REV-04'} stale revision is protected${retry ? ' and retry requires a fresh preview' : ''}`, async ({ page }) => {
   const s = await setup(page), a = s.byKey('TC-LOGIN-01');
   const change = await ready(page, await send(page, prompt('NL-REV-04')[0]));
   const manual = await page.request.patch(`${api}/test-cases/${a.id}`, {data:{...a,base_revision_id:a.current_revision_id,title:'人工编辑必须保留'}});
@@ -276,6 +276,25 @@ test('NL-REV-04 stale selected revision cannot overwrite manual edits', async ({
   const saved = await s.read();
   expect(saved.find((c:any) => c.id === a.id)).toEqual(edited);
   expect(saved.filter((c:any) => c.id !== a.id)).toEqual(journal.original.filter((c:any) => c.id !== a.id));
+  if (retry) {
+    journal.retryBaseline = saved;
+    const preview = await send(page, '刚才失败的修改任务再做一遍。', false, 2);
+    expect(preview.assistant_message.metadata.modification_confirmation).toBeTruthy();
+    expect(preview.assistant_message.target_case_ids).toEqual([a.id]);
+    expect(preview.action.job_id).toBeFalsy();
+    expect(await s.read()).toEqual(saved);
+    const retried = await ready(page, await send(page, '确认修改。', true, 2));
+    expect(retried.id).not.toBe(change.id);
+    expect(retried.items[0].base_revision_id).toBe(edited.current_revision_id);
+    expect(retried.items[0].base_snapshot.title).toBe(edited.title);
+    expect(retried.items[0].quality?.passed).not.toBe(false);
+    await apply(page); await page.reload();
+    await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+    const final = await s.read(), target = final.find((c:any) => c.id === a.id);
+    expect(target.priority).toBe('P0');
+    unchangedExcept(edited, target, ['priority']);
+    expect(final.filter((c:any) => c.id !== a.id)).toEqual(saved.filter((c:any) => c.id !== a.id));
+  }
 });
 test('NL-REV-05 replay cannot add duplicate revisions', async ({ page }) => {
   const s = await setup(page), a = s.byKey('TC-LOGIN-01');

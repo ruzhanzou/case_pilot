@@ -34,6 +34,7 @@ def offline_generation_interpretation(monkeypatch):
         collection_catalog=None,
         explicit_collection_only=False,
         current_collection_id=None,
+        retry_only=False,
     ):
         choice = interpret_generation_choice(
             content, SimpleNamespace(agent_provider="mock"), case_ids

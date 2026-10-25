@@ -133,5 +133,6 @@ def test_live_semantic_retry_still_resumes_failed_task(monkeypatch, queued_succe
         ConversationMessageCreate(content='刚才没成功的那一步再做一遍'),
     )
     interpreter.assert_called_once()
+    assert interpreter.call_args.kwargs["retry_only"] is True
     assert resume.call_args.args[0] == failed.id
     assert db.add.call_args.args[0].message_metadata['retry_operation_id'] == str(failed.id)

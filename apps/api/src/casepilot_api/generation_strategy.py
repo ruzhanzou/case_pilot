@@ -144,7 +144,7 @@ def asset_choice_from_text(content: str, case_ids: list[str]) -> list[str] | Non
 
 def _interpret_generation_choice(content, settings, case_ids=None, conversation_memory=None,
                                 collection_catalog=None, explicit_collection_only=False,
-                                current_collection_id=None):
+                                current_collection_id=None, retry_only=False):
     """Interpret strategy and selection without interpreting numeric text locally."""
     import json
     from typing import Literal
@@ -165,7 +165,14 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
             "仅named时填写：用户本轮明确指定目标集合的连续原文片段。不得抄目录名称或改写原话。"
         ))
 
-    class Choice(CollectionReference):
+    class RetryChoice(BaseModel):
+        retry_requested: bool = False
+        retry_kind: Literal[
+            "CASE_GENERATE", "CASE_MODIFY", "CASE_DELETE", "CASE_QUERY", "CASE_REVIEW",
+            "CASE_DEDUP", "COVERAGE_ANALYZE", "KNOWLEDGE_QA", "SMALL_TALK"
+        ] | None = None
+
+    class Choice(CollectionReference, RetryChoice):
         strategy: Literal["generate", "select", "select_and_generate"] = "generate"
         strategy_change_requested: bool = Field(default=False, description="仅当前用户明确要求切换生成策略、搜索或选择历史用例资产时为true；编辑测试规划、保留测试点、复用登录会话均为false。")
         strategy_question: bool = False
@@ -184,11 +191,6 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
         new_module: str = ""
         create_empty_module: bool = False
         rewrite_existing_assets: bool = False
-        retry_requested: bool = False
-        retry_kind: Literal[
-            "CASE_GENERATE", "CASE_MODIFY", "CASE_DELETE", "CASE_QUERY", "CASE_REVIEW",
-            "CASE_DEDUP", "COVERAGE_ANALYZE", "KNOWLEDGE_QA", "SMALL_TALK"
-        ] | None = None
         selected_ids: list[str] | None = None
         ambiguous: bool = False
         requested_count: int | None = Field(default=None, ge=0)
@@ -212,11 +214,16 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
         "例如目录有订单集合，用户说为订单业务增加用例，继续维护当前集合，"
         "target_collection_id必须是null；只有说在订单集合操作才选对应ID。"
     )
+    retry_instructions = (
+        "retry_requested仅当用户要求重试刚才失败或未完成的任务；解释重试、否定重试都不是重试。"
+        "简短确认只有紧接助手明确询问是否重试才算重试。新任务或追加修改不算重试。"
+        "retry_kind只填写用户指明的任务类型，未指明则null，不能从资料或旧任务猜测。"
+    )
     # Collection gates need no generation, retry, or numeric-selection decisions.
     collection_only = collection_catalog is not None and case_ids is None and not conversation_memory
     agent = Agent(
-        name="Collection reference" if collection_only else "Generation and asset choice",
-        instructions=collection_instructions if collection_only else (
+        name="Task retry" if retry_only else "Collection reference" if collection_only else "Generation and asset choice",
+        instructions=retry_instructions if retry_only else collection_instructions if collection_only else (
             "理解当前用户的生成策略和已展示资产的选择。默认generate。"
             "用例太少、17个case增加到30个、继续补充用例属于continue_cases=true，brief_action=none；"
             "不要把增加用例数量理解为修改测试点数量。明确修改测试点或需求时continue_cases=false。"
@@ -235,9 +242,6 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
             "rewrite_existing_assets表示明确要求依据参考资产改写已有候选，"
             "不包括重新规划、只增加测试点或生成全新用例。"
             "历史仅作理解上下文，不把过去已撤销的指令当当前授权。"
-            "retry_requested仅当用户要求重试刚才失败或未完成的任务；解释重试、否定重试都不是重试。"
-            "简短确认只有紧接助手明确询问是否重试才算重试。新任务或追加修改不算重试。"
-            "retry_kind只填写用户指明的任务类型，未指明则null，不能从资料或旧任务猜测。"
             "Referencing historical cases to add new scenarios is select_and_generate, even without available_ids."
             "明确只搜索或选取已有用例为select；参考已有资产生成、改写或补齐为select_and_generate。"
             "解释概念、引用示例、业务本身复用会话等不授权搜索资产；strategy_question标明策略问答。"
@@ -249,9 +253,9 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
             "Never replace the user's requested count with the number of available IDs. "
             "If the user says use these three but only two IDs exist, return requested_count=3, "
             "ambiguous=true and selected_ids=null."
-        ) + collection_instructions,
+        ) + collection_instructions + retry_instructions,
         model=OpenAIChatCompletionsModel(model=settings.routing_model, openai_client=client),
-        output_type=CollectionReference if collection_only else Choice,
+        output_type=RetryChoice if retry_only else CollectionReference if collection_only else Choice,
     )
     result = _run_routing_agent(Runner, agent, json.dumps(
             {"message": content, "available_ids": case_ids or [],
@@ -259,9 +263,9 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
              "collection_catalog": collection_catalog or [],
              "explicit_collection_only": explicit_collection_only,
              "current_collection_id": current_collection_id}, ensure_ascii=False),
-            stage="collection_reference" if collection_only else "generation_choice",
+            stage="retry_intent" if retry_only else "collection_reference" if collection_only else "generation_choice",
             model_name=settings.routing_model, client=client)
-    if collection_only:
+    if collection_only or retry_only:
         result = Choice.model_validate(result.model_dump())
     result.confirms_brief = result.confirms_brief and result.brief_action == "confirm"
     if (result.target_collection_id is not None
@@ -286,22 +290,22 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
 
 def interpret_generation_choice(content, settings, case_ids=None, conversation_memory=None,
                                 collection_catalog=None, explicit_collection_only=False,
-                                current_collection_id=None):
+                                current_collection_id=None, retry_only=False):
     """Reuse identical interpretations only within the current HTTP request."""
     if settings.agent_provider == "mock":
         return _interpret_generation_choice(content, settings, case_ids, conversation_memory,
                                             collection_catalog, explicit_collection_only,
-                                            current_collection_id)
+                                            current_collection_id, retry_only)
     cache = choice_request_cache.get()
     key = json.dumps([content, case_ids, conversation_memory, collection_catalog,
-                      explicit_collection_only, current_collection_id,
+                      explicit_collection_only, current_collection_id, retry_only,
                       settings.agent_provider, settings.routing_model],
                      ensure_ascii=False, sort_keys=True)
     if cache is not None and key in cache:
         return cache[key].model_copy(deep=True)
     result = _interpret_generation_choice(content, settings, case_ids, conversation_memory,
                                          collection_catalog, explicit_collection_only,
-                                            current_collection_id)
+                                            current_collection_id, retry_only)
     if cache is not None:
         cache[key] = result.model_copy(deep=True)
     return result

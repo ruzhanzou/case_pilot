@@ -123,10 +123,12 @@ def test_identical_choices_are_shared_only_inside_one_request(monkeypatch):
         module.interpret_generation_choice('只选这一条', settings, ['b'])
         module.interpret_generation_choice('只选这一条', settings, ['a'], [{'role':'user','content':'新上下文'}])
         assert call.call_count == 3
+        module.interpret_generation_choice('只选这一条', settings, ['a'], retry_only=True)
+        assert call.call_count == 4
     finally:
         module.choice_request_cache.reset(token)
     module.interpret_generation_choice('只选这一条', settings, ['a'])
-    assert call.call_count == 4
+    assert call.call_count == 5
 
 
 @pytest.mark.parametrize('reference,evidence,target,valid,expected', [
@@ -189,3 +191,25 @@ def test_collection_only_interpretation_omits_unrelated_generation_decisions(mon
     result = interpret_generation_choice('查询当前集合', settings, case_ids=case_ids, collection_catalog=catalog)
     assert result.target_collection_id is None
     assert result.strategy == 'generate'
+
+
+@pytest.mark.parametrize('requested,kind', [(False, None), (True, None), (True, 'CASE_MODIFY')])
+def test_retry_interpretation_only_requests_retry_decisions(monkeypatch, requested, kind):
+    from types import SimpleNamespace
+    from agents import Runner
+    from casepilot_api.config import get_settings
+    from casepilot_api.generation_strategy import interpret_generation_choice
+    import json
+
+    def run(agent, prompt, **kwargs):
+        assert set(agent.output_type.model_fields) == {'retry_requested', 'retry_kind'}
+        assert 'brief_action' not in agent.instructions
+        assert json.loads(prompt)['conversation_memory'] == [{'role': 'assistant', 'content': '修改失败'}]
+        return SimpleNamespace(final_output=agent.output_type(retry_requested=requested, retry_kind=kind))
+
+    monkeypatch.setattr(Runner, 'run_sync', run)
+    settings = get_settings().model_copy(update={'agent_provider': 'openai_compatible', 'agent_api_key': 'fixture'})
+    result = interpret_generation_choice('再做一遍', settings, retry_only=True,
+        conversation_memory=[{'role': 'assistant', 'content': '修改失败'}])
+    assert result.retry_requested is requested
+    assert result.retry_kind == kind
