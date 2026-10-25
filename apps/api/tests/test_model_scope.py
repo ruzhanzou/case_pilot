@@ -3,6 +3,7 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from casepilot_api import conversations
 from casepilot_api.agent_router import CaseScopeDecision
@@ -95,9 +96,10 @@ def test_scope_timeout_does_not_start_another_full_wait(scope, monkeypatch):
     monkeypatch.setattr(conversations, "monotonic", lambda: next(times))
     selector.side_effect = TimeoutError()
     payload = ConversationMessageCreate(content="修改登录步骤")
-    result, error = conversations._resolve_model_scope(db, conversation, payload, "CASE_MODIFY")
-    assert result is payload
-    assert "本次没有修改" in error
+    with pytest.raises(HTTPException) as error:
+        conversations._resolve_model_scope(db, conversation, payload, "CASE_MODIFY")
+    assert error.value.status_code == 503
+    assert "未执行" in error.value.detail
     assert selector.call_count == 1
 
 
@@ -188,10 +190,12 @@ def test_relative_scope_receives_selection_in_display_order(scope):
 def test_model_failure_never_falls_back_to_all_cases(scope):
     db, conversation, _, selector = scope
     selector.side_effect = TimeoutError()
-    _, error = conversations._resolve_action_scope(
-        db, conversation, ConversationMessageCreate(content="删除全部"), "CASE_DELETE"
-    )
-    assert "没有修改或删除" in error
+    with pytest.raises(HTTPException) as error:
+        conversations._resolve_action_scope(
+            db, conversation, ConversationMessageCreate(content="删除全部"), "CASE_DELETE"
+        )
+    assert error.value.status_code == 503
+    assert "未执行" in error.value.detail
 
 
 @pytest.mark.parametrize(

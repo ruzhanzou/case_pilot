@@ -1737,8 +1737,13 @@ def _resolve_model_scope(db, conversation, payload, intent):
                     "真实缺失的编号必须澄清。"
                 ),
             }}
-    except Exception:
-        return payload, "用例范围分析暂时未完成，请重试；本次没有修改或删除用例。"
+    except Exception as error:
+        logging.getLogger(__name__).warning("scope_interpretation_failed error_type=%s", type(error).__name__)
+        # A failed interpretation is not evidence of an ambiguous user scope.
+        # Let the request roll back instead of persisting a new clarification.
+        raise HTTPException(status_code=503, detail=(
+            "用例范围分析暂时未完成，未执行本次操作；请重试，原草稿已保留。"
+        )) from error
     if decision.ambiguous:
         return payload, decision.clarification or "请补充需要选择的用例范围。"
     ids = set(decision.ids)
@@ -5293,7 +5298,11 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
                 tracing_enabled=settings.agent_tracing_enabled)
         except Exception as exc:
             logging.getLogger(__name__).warning("rewrite_reply_failed error_type=%s", type(exc).__name__)
-            reply = RewriteReply(action="clarify", clarification="暂时无法准确理解这次补充，请重试；当前用例没有改动。")
+            # Keep the last preview and input intact when the model fails; only
+            # a successful ambiguous interpretation may replace it with a question.
+            raise HTTPException(status_code=503, detail=(
+                "修改要求暂时未能解析，未执行本次操作；请重试，原草稿已保留。"
+            )) from exc
     if text:
         db.add(ConversationMessage(conversation_id=conversation.id, role="user", content=text,
             intent=operation.intent, intent_confidence=1.0, status="completed",

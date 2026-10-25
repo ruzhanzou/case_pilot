@@ -460,3 +460,88 @@ async def test_confirmed_rewrite_does_not_repeat_collection_or_generation_models
         job = db.get(GenerationJob, UUID(response.json()["action"]["job_id"]))
         assert {item["ref"] for item in job.input_payload["case_context"]} == {c["id"] for c in cases}
         assert "预期结果保持不变" in job.input_payload["prompt"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('entry', ['message', 'idempotent_message', 'resume'])
+@pytest.mark.parametrize('stage', ['reply', 'scope'])
+@pytest.mark.parametrize('failure', ['connection', 'invalid_output'])
+async def test_interpretation_outage_keeps_preview_and_retry_updates_same_draft(
+        draft, monkeypatch, entry, stage, failure):
+    import httpx
+    from agents import ModelBehaviorError
+    from openai import APIConnectionError
+    from casepilot_api.agent_router import CaseScopeDecision, IntentOperationDraft, IntentPlanDraft
+
+    client, workspace, oid, cases, dispatched = draft
+    monkeypatch.setattr(conversations.settings, 'agent_provider', 'openai_compatible')
+    monkeypatch.setattr(conversations, '_retry_generation_from_text', lambda *a: None)
+    content = '只改第一条，优先级改为P2，其他字段不变'
+    monkeypatch.setattr(conversations, 'plan_intents', lambda *a, **k: IntentPlanDraft(operations=[
+        IntentOperationDraft(intent='CASE_MODIFY', instruction=content, confidence=1,
+                             resume_operation_id=oid)]))
+    reply = Mock(return_value=RewriteReply(action='update', scope_action='replace',
+        scope_instruction='登录模块第一条', requirements='优先级P2，其他字段不变'))
+    selector = Mock(return_value=CaseScopeDecision(ids=[cases[0]['id']], ambiguous=False,
+        clarification='', reference='none', referenced_case_keys=[], requested_count=1))
+    monkeypatch.setattr(conversations, 'interpret_rewrite_reply', reply)
+    monkeypatch.setattr(conversations, 'select_case_scope', selector)
+    broken = reply if stage == 'reply' else selector
+    broken.side_effect = (APIConnectionError(request=httpx.Request('POST', 'https://model.invalid'))
+                          if failure == 'connection' else ModelBehaviorError('invalid model output'))
+    endpoint = (f'/api/v1/conversation-operations/{oid}/resume' if entry == 'resume'
+                else f'/api/v1/conversations/{workspace}/messages')
+    payload = {'content': content}
+    if entry == 'idempotent_message':
+        payload['client_request_id'] = str(uuid4())
+    before = (await client.get(f'/api/v1/conversations/{workspace}')).json()
+    response = await client.post(endpoint, json=payload)
+    assert response.status_code == 503, response.text
+    after = (await client.get(f'/api/v1/conversations/{workspace}')).json()
+    assert after['operation_plan'] == before['operation_plan']
+    assert after['messages'] == before['messages']
+    assert not dispatched
+    broken.side_effect = None
+    retried = await client.post(endpoint, json=payload)
+    assert retried.status_code == 202, retried.text
+    assert retried.json()['assistant_message']['metadata']['operation_id'] == oid
+    assert retried.json()['assistant_message']['metadata']['modification_confirmation']
+    assert retried.json()['assistant_message']['target_case_ids'] == [cases[0]['id']]
+    final = (await client.get(f'/api/v1/conversations/{workspace}')).json()
+    assert sum(m['role'] == 'user' and m['content'] == content for m in final['messages']) == 1
+    assert not dispatched
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('idempotent', [False, True])
+async def test_new_query_scope_outage_does_not_persist_a_spurious_task(draft, monkeypatch, idempotent):
+    from casepilot_api.agent_router import CaseScopeDecision, IntentOperationDraft, IntentPlanDraft
+
+    client, workspace, oid, cases, dispatched = draft
+    monkeypatch.setattr(conversations.settings, 'agent_provider', 'openai_compatible')
+    monkeypatch.setattr(conversations, '_retry_generation_from_text', lambda *a: None)
+    content = '先查询登录模块，原修改不要执行'
+    monkeypatch.setattr(conversations, 'plan_intents', lambda *a, **k: IntentPlanDraft(operations=[
+        IntentOperationDraft(intent='CASE_QUERY', instruction=content, confidence=1)]))
+    selector = Mock(side_effect=TimeoutError('scope unavailable'))
+    monkeypatch.setattr(conversations, 'select_case_scope', selector)
+    endpoint = f'/api/v1/conversations/{workspace}/messages'
+    payload = {'content': content}
+    if idempotent:
+        payload['client_request_id'] = str(uuid4())
+    before = (await client.get(f'/api/v1/conversations/{workspace}')).json()
+    response = await client.post(endpoint, json=payload)
+    assert response.status_code == 503, response.text
+    after = (await client.get(f'/api/v1/conversations/{workspace}')).json()
+    assert after['operation_plan'] == before['operation_plan']
+    assert after['messages'] == before['messages']
+    selector.side_effect = None
+    selector.return_value = CaseScopeDecision(ids=[c['id'] for c in cases], ambiguous=False,
+        clarification='', reference='none', referenced_case_keys=[], requested_count=None)
+    retried = await client.post(endpoint, json=payload)
+    assert retried.status_code == 202, retried.text
+    assert retried.json()['action']['type'] == 'case_query'
+    assert set(retried.json()['assistant_message']['target_case_ids']) == {c['id'] for c in cases}
+    final = (await client.get(f'/api/v1/conversations/{workspace}')).json()
+    assert sum(m['role'] == 'user' and m['content'] == content for m in final['messages']) == 1
+    assert not dispatched
