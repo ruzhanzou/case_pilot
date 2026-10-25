@@ -81,7 +81,7 @@ async function send(page: Page, content: string, confirm = true, serviceRetries 
     (journal.serviceFailures ??= []).push({ content, status: response.status(), body, ms: Date.now() - started });
     await expect(input).toBeEnabled();
     await expect(input).toHaveValue(content);
-    expect(await get(page, `/collections/${journal.collection.id}/test-cases`)).toEqual(journal.original);
+    expect(await get(page, `/collections/${journal.collection.id}/test-cases`)).toEqual(journal.retryBaseline ?? journal.original);
     // Exercise the user-visible retry on the same draft; other failures are never retried.
     return send(page, originalContent, confirm, serviceRetries - 1);
   }
@@ -446,4 +446,72 @@ for (const recovery of [false, true]) test(`${recovery ? 'NL-TASK-SWITCH-SERVICE
   expect(changed.priority).toBe('P2');
   unchangedExcept(login, changed, ['priority']);
   expect(saved.filter((c: any) => c.id !== login.id)).toEqual(journal.original.filter((c: any) => c.id !== login.id));
+});
+
+for (const acceptFirst of [true, false]) test(`NL-PARTIAL-${acceptFirst ? 'ACCEPT' : 'DISCARD'} remaining suggestions exclude reviewed cases`, async ({ page }) => {
+  const s = await setup(page), a = s.byKey('TC-LOGIN-01'), b = s.byKey('TC-LOGIN-02');
+  const initial = await ready(page, await send(page, '把登录模块全部用例的优先级改成P0，其他字段不变。', true, 2));
+  expect(new Set(initial.items.map((item: any) => item.ref))).toEqual(new Set([a.id, b.id]));
+  expect(await s.read()).toEqual(journal.original);
+  const row = page.locator('.collection-changes__items > details').filter({ hasText: a.case_key });
+  await row.locator('summary').click();
+  const reviewed = page.waitForResponse(r => r.request().method() === 'POST' && /\/case-change-sets\/[^/]+\/apply$/.test(new URL(r.url()).pathname));
+  await row.getByRole('button', { name: acceptFirst ? '采纳此用例' : '丢弃此建议', exact: true }).click();
+  const response = await reviewed; expect(response.ok(), await response.text()).toBeTruthy();
+  const partial = await s.read(), reviewedA = partial.find((c: any) => c.id === a.id);
+  if (acceptFirst) { expect(reviewedA.priority).toBe('P0'); unchangedExcept(a, reviewedA, ['priority']); }
+  else expect(reviewedA).toEqual(a);
+  expect(partial.filter((c: any) => c.id !== a.id)).toEqual(journal.original.filter((c: any) => c.id !== a.id));
+  journal.partialReview = { acceptFirst, cases: partial };
+  journal.retryBaseline = partial;
+  await page.reload();
+  const preview = await send(page, '只把剩下尚未审阅的建议改成P2，已经采纳或丢弃的不要再改，其他字段不变。', false, 2);
+  expect(preview.intent).toBe('CASE_MODIFY');
+  expect(preview.action.job_id).toBeFalsy();
+  expect(preview.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  expect(preview.assistant_message.target_case_ids).toEqual([b.id]);
+  expect(await s.read()).toEqual(partial);
+  const final = await ready(page, await send(page, '确认剩余建议的修改。', true, 2));
+  expect(final.items.find((item: any) => item.ref === b.id).quality?.passed, JSON.stringify(final)).not.toBe(false);
+  expect(final.items.filter((item: any) => !['applied', 'rejected'].includes(item.status)).map((item: any) => item.ref)).toEqual([b.id]);
+  await apply(page); await page.reload();
+  const saved = await s.read(), changedB = saved.find((c: any) => c.id === b.id);
+  expect(changedB.priority).toBe('P2'); unchangedExcept(b, changedB, ['priority']);
+  expect(saved.filter((c: any) => c.id !== b.id)).toEqual(partial.filter((c: any) => c.id !== b.id));
+});
+
+test('NL-PARTIAL-RECOVERY retries an existing incomplete result without changing accepted cases', async ({ page }) => {
+  test.skip(!process.env.CASEPILOT_PARTIAL_EVIDENCE || !process.env.CASEPILOT_TEST_EMAIL, 'Requires an isolated incomplete partial-review fixture');
+  journal = JSON.parse(readFileSync(process.env.CASEPILOT_PARTIAL_EVIDENCE!, 'utf8'));
+  journal.resumedFromStatus = journal.status;
+  journal.recoveryStartedAt = new Date().toISOString();
+  journal.errors = [];
+  const login = await page.request.post(`${api}/auth/login`, { data: {
+    email: process.env.CASEPILOT_TEST_EMAIL, password: 'CasePilot123!',
+  }});
+  expect(login.ok()).toBeTruthy();
+  await page.addInitScript(() => localStorage.setItem('casepilot.locale.v1', 'zh-CN'));
+  const read = () => get(page, `/collections/${journal.collection.id}/test-cases`);
+  expect(await read()).toEqual(journal.partialReview.cases);
+  const b = journal.original.find((c: any) => c.case_key === journal.keyMap['TC-LOGIN-02']);
+  const prior = journal.proposals.at(-1);
+  const incomplete = await get(page, `/case-change-sets/${prior.id}`);
+  expect(incomplete.items.find((item: any) => item.ref === b.id).quality.passed).toBe(false);
+  await page.goto(`/workbench/collections/${journal.collection.id}`);
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled({ timeout: 60000 });
+  const notice = page.getByTestId('active-mutation-task-notice');
+  if (await notice.isVisible()) await notice.getByRole('button', { name: '前往工作区审阅', exact: true }).click();
+  await expect(page.locator('.collection-changes__review')).toContainText('不能作为本轮结果采纳');
+  await page.getByRole('button', { name: '填写重试指令', exact: true }).click();
+  const retryText = await page.locator('.principle-composer textarea').inputValue();
+  expect(retryText).toContain(b.id);
+  const final = await ready(page, await send(page, retryText, true, 2));
+  const item = final.items.find((i: any) => i.ref === b.id);
+  expect(item.quality?.passed, JSON.stringify(final)).not.toBe(false);
+  expect(item.proposed_snapshot.priority).toBe('P2');
+  expect(await read()).toEqual(journal.partialReview.cases);
+  await apply(page); await page.reload();
+  const saved = await read(), changedB = saved.find((c: any) => c.id === b.id);
+  expect(changedB.priority).toBe('P2'); unchangedExcept(b, changedB, ['priority']);
+  expect(saved.filter((c: any) => c.id !== b.id)).toEqual(journal.partialReview.cases.filter((c: any) => c.id !== b.id));
 });
