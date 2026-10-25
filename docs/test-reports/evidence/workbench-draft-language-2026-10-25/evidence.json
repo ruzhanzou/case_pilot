@@ -1,0 +1,1169 @@
+{
+  "turns": [
+    {
+      "content": "把用例 TC-LOGIN-01-1792940069633 的标题改成“Login / OTP — v2”，其他字段保持不变。",
+      "response": {
+        "conversation_id": "66674573-493d-4128-bacf-6b62217d71ef",
+        "user_message": {
+          "id": "07438fc2-19c0-49b1-8440-6f893fe2fa64",
+          "role": "user",
+          "content": "把用例 TC-LOGIN-01-1792940069633 的标题改成“Login / OTP — v2”，其他字段保持不变。",
+          "intent": "CASE_MODIFY",
+          "intent_confidence": 1,
+          "status": "completed",
+          "target_case_ids": [],
+          "related_job_id": null,
+          "citations": [],
+          "metadata": {
+            "request": {
+              "scope": "current",
+              "content": "把用例 TC-LOGIN-01-1792940069633 的标题改成“Login / OTP — v2”，其他字段保持不变。",
+              "targets": [],
+              "model_id": "doubao-seed-2.0-lite",
+              "document_ids": [],
+              "target_scope": "inferred",
+              "intent_override": null,
+              "target_case_ids": [],
+              "client_request_id": "21384844-c90c-470a-8417-1d9bc7faa620",
+              "generation_strategy": null,
+              "inherit_attachments": true,
+              "source_operation_id": null,
+              "use_space_knowledge": false,
+              "knowledge_source_ids": [],
+              "source_collection_ids": [],
+              "target_candidate_snapshots": []
+            },
+            "submission_request_id": "21384844-c90c-470a-8417-1d9bc7faa620"
+          },
+          "created_at": "2026-10-25T14:54:53.222997Z"
+        },
+        "assistant_message": {
+          "id": "1d153e4d-4d14-4612-9189-f8d787a35fd3",
+          "role": "assistant",
+          "content": "请确认本轮修改：共 1 条用例。\n- TC-LOGIN-01-1792940069633：短信登录\n\n修改要求：\n把用例 TC-LOGIN-01-1792940069633 的标题改成“Login / OTP — v2”，其他字段保持不变。\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "intent": "CASE_MODIFY",
+          "intent_confidence": 1,
+          "status": "awaiting_clarification",
+          "target_case_ids": [
+            "92e8ce4f-2bde-4aef-bf80-32facdceadc4"
+          ],
+          "related_job_id": null,
+          "citations": [],
+          "metadata": {
+            "operation_id": "59cb0a3d-53de-4e08-9bb6-0949ebd894a9",
+            "source_message_id": "07438fc2-19c0-49b1-8440-6f893fe2fa64",
+            "source_operation_id": null,
+            "modification_confirmation": true
+          },
+          "created_at": "2026-10-25T14:55:16.035095Z"
+        },
+        "intent": "CASE_MODIFY",
+        "intent_confidence": 1,
+        "requires_intent_confirmation": false,
+        "action": {
+          "type": "clarification"
+        },
+        "operation_plan": {
+          "status": "paused",
+          "source_message_id": "07438fc2-19c0-49b1-8440-6f893fe2fa64",
+          "current_operation_id": "59cb0a3d-53de-4e08-9bb6-0949ebd894a9",
+          "operations": [
+            {
+              "source_message_id": "07438fc2-19c0-49b1-8440-6f893fe2fa64",
+              "completed_at": null,
+              "id": "59cb0a3d-53de-4e08-9bb6-0949ebd894a9",
+              "sequence": 0,
+              "intent": "CASE_MODIFY",
+              "confidence": 1,
+              "status": "awaiting_target",
+              "target": {
+                "kind": "case",
+                "selectors": [],
+                "case_ids": [
+                  "92e8ce4f-2bde-4aef-bf80-32facdceadc4"
+                ],
+                "candidate_refs": [],
+                "resolved": true
+              },
+              "payload": {
+                "plan": {
+                  "version": 2,
+                  "intent": "CASE_MODIFY",
+                  "action": "CHANGESET_PREPARE",
+                  "instruction": "把用例 TC-LOGIN-01-1792940069633 的标题改成“Login / OTP — v2”，其他字段保持不变。",
+                  "confidence": 1,
+                  "target_kind": "case",
+                  "requires_confirmation": true,
+                  "reason_codes": [
+                    "modify_case_title"
+                  ],
+                  "depends_on": null,
+                  "target_text": "TC-LOGIN-01-1792940069633",
+                  "action_evidence": "把用例 TC-LOGIN-01-1792940069633 的标题改成",
+                  "changes": [
+                    "标题改为“Login / OTP — v2”"
+                  ],
+                  "constraints": [
+                    "其他字段保持不变"
+                  ],
+                  "clarification_questions": [],
+                  "clarification_kind": "none",
+                  "uses_selected_targets": false,
+                  "resume_operation_id": null,
+                  "speech_act": "request",
+                  "query_presentation": "cases",
+                  "routing_source": "semantic"
+                },
+                "instruction": "把用例 TC-LOGIN-01-1792940069633 的标题改成“Login / OTP — v2”，其他字段保持不变。",
+                "action": "CHANGESET_PREPARE",
+                "reason_codes": [
+                  "modify_case_title"
+                ],
+                "depends_on": null,
+                "predecessor_job_id": null,
+                "source_operation_id": null,
+                "task_id": "59cb0a3d-53de-4e08-9bb6-0949ebd894a9",
+                "task_intent": "CASE_MODIFY",
+                "task_revision": 1,
+                "asset_reference_sources": [],
+                "asset_reference_target_scope": null,
+                "modification_confirmation": {
+                  "instruction": "把用例 TC-LOGIN-01-1792940069633 的标题改成“Login / OTP — v2”，其他字段保持不变。",
+                  "cases": [
+                    {
+                      "ref": "92e8ce4f-2bde-4aef-bf80-32facdceadc4",
+                      "target_type": "formal",
+                      "snapshot": {
+                        "id": "92e8ce4f-2bde-4aef-bf80-32facdceadc4",
+                        "case_key": "TC-LOGIN-01-1792940069633",
+                        "collection_ids": [
+                          "631dbb10-49f3-4e29-9317-71853d04d687"
+                        ],
+                        "current_revision_id": "b1621f63-907b-4d9d-8336-89bbff4d49b8",
+                        "revision_number": 1,
+                        "title": "短信登录",
+                        "description": "",
+                        "module": "登录/短信",
+                        "priority": "P1",
+                        "case_type": "功能",
+                        "tags": [],
+                        "preconditions": [
+                          "手机号已注册且账号启用；准备有效的未使用验证码"
+                        ],
+                        "steps": [
+                          {
+                            "id": "ebfc19d2-c1ce-4523-8e75-432247e6a00b",
+                            "action": "输入短信验证码并提交",
+                            "expected": "登录成功并建立会话"
+                          }
+                        ],
+                        "source": "人工创建",
+                        "source_refs": [
+                          {
+                            "source_id": null,
+                            "document_id": null,
+                            "chunk_id": null,
+                            "label": "人工创建",
+                            "locator": "",
+                            "excerpt": ""
+                          }
+                        ],
+                        "execution_level": "L0",
+                        "test_domains": [],
+                        "automation_type": "manual",
+                        "automation_cases": [],
+                        "creator": null,
+                        "test_targets": [],
+                        "created_at": "2026-10-25T14:54:29.737323Z"
+                      }
+                    }
+                  ]
+                },
+                "rewrite_draft": {
+                  "version": 1,
+                  "scope_instruction": "TC-LOGIN-01-1792940069633",
+                  "requirements": "把用例 TC-LOGIN-01-1792940069633 的标题改成“Login / OTP — v2”，其他字段保持不变。",
+                  "requirements_ready": true,
+                  "scope_resolved": true,
+                  "phase": "preview"
+                }
+              },
+              "result": {
+                "scope_versions": {
+                  "92e8ce4f-2bde-4aef-bf80-32facdceadc4": "b1621f63-907b-4d9d-8336-89bbff4d49b8"
+                },
+                "scope_modules": [
+                  "登录/短信"
+                ],
+                "scope_count": 1
+              },
+              "requires_confirmation": true,
+              "related_job_id": null,
+              "related_change_set_id": null,
+              "error_code": null,
+              "created_at": "2026-10-25T14:54:53.227319Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "content": "再把优先级改为P0，刚才指定的标题也保留，其余字段不要改。",
+      "response": {
+        "conversation_id": "66674573-493d-4128-bacf-6b62217d71ef",
+        "user_message": {
+          "id": "07438fc2-19c0-49b1-8440-6f893fe2fa64",
+          "role": "user",
+          "content": "把用例 TC-LOGIN-01-1792940069633 的标题改成“Login / OTP — v2”，其他字段保持不变。",
+          "intent": "CASE_MODIFY",
+          "intent_confidence": 1,
+          "status": "completed",
+          "target_case_ids": [],
+          "related_job_id": null,
+          "citations": [],
+          "metadata": {
+            "request": {
+              "scope": "current",
+              "content": "把用例 TC-LOGIN-01-1792940069633 的标题改成“Login / OTP — v2”，其他字段保持不变。",
+              "targets": [],
+              "model_id": "doubao-seed-2.0-lite",
+              "document_ids": [],
+              "target_scope": "inferred",
+              "intent_override": null,
+              "target_case_ids": [],
+              "client_request_id": "21384844-c90c-470a-8417-1d9bc7faa620",
+              "generation_strategy": null,
+              "inherit_attachments": true,
+              "source_operation_id": null,
+              "use_space_knowledge": false,
+              "knowledge_source_ids": [],
+              "source_collection_ids": [],
+              "target_candidate_snapshots": []
+            },
+            "submission_request_id": "e0d11f67-6ec8-4ff4-81b1-188b10a490fa"
+          },
+          "created_at": "2026-10-25T14:54:53.222997Z"
+        },
+        "assistant_message": {
+          "id": "b8e9f778-4075-4b66-8934-13c0bc2288dc",
+          "role": "assistant",
+          "content": "请确认本轮修改：共 1 条用例。\n- TC-LOGIN-01-1792940069633：短信登录\n\n修改要求：\n将用例TC-LOGIN-01-1792940069633的优先级改为P0，保留已修改的标题“Login / OTP — v2”，其余字段保持不变。\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "intent": "CASE_MODIFY",
+          "intent_confidence": 1,
+          "status": "awaiting_clarification",
+          "target_case_ids": [
+            "92e8ce4f-2bde-4aef-bf80-32facdceadc4"
+          ],
+          "related_job_id": null,
+          "citations": [],
+          "metadata": {
+            "operation_id": "59cb0a3d-53de-4e08-9bb6-0949ebd894a9",
+            "source_message_id": "07438fc2-19c0-49b1-8440-6f893fe2fa64",
+            "source_operation_id": null,
+            "modification_confirmation": true
+          },
+          "created_at": "2026-10-25T14:56:12.502376Z"
+        },
+        "intent": "CASE_MODIFY",
+        "intent_confidence": 1,
+        "requires_intent_confirmation": false,
+        "action": {
+          "type": "clarification"
+        },
+        "operation_plan": {
+          "status": "paused",
+          "source_message_id": "07438fc2-19c0-49b1-8440-6f893fe2fa64",
+          "current_operation_id": "59cb0a3d-53de-4e08-9bb6-0949ebd894a9",
+          "operations": [
+            {
+              "source_message_id": "07438fc2-19c0-49b1-8440-6f893fe2fa64",
+              "completed_at": null,
+              "id": "59cb0a3d-53de-4e08-9bb6-0949ebd894a9",
+              "sequence": 0,
+              "intent": "CASE_MODIFY",
+              "confidence": 1,
+              "status": "awaiting_target",
+              "target": {
+                "kind": "case",
+                "case_ids": [
+                  "92e8ce4f-2bde-4aef-bf80-32facdceadc4"
+                ],
+                "resolved": true,
+                "selectors": [],
+                "candidate_refs": []
+              },
+              "payload": {
+                "plan": {
+                  "action": "CHANGESET_PREPARE",
+                  "intent": "CASE_MODIFY",
+                  "changes": [
+                    "标题改为“Login / OTP — v2”"
+                  ],
+                  "version": 2,
+                  "confidence": 1,
+                  "depends_on": null,
+                  "speech_act": "request",
+                  "constraints": [
+                    "其他字段保持不变"
+                  ],
+                  "instruction": "把用例 TC-LOGIN-01-1792940069633 的标题改成“Login / OTP — v2”，其他字段保持不变。",
+                  "target_kind": "case",
+                  "target_text": "TC-LOGIN-01-1792940069633",
+                  "reason_codes": [
+                    "modify_case_title"
+                  ],
+                  "routing_source": "semantic",
+                  "action_evidence": "把用例 TC-LOGIN-01-1792940069633 的标题改成",
+                  "clarification_kind": "none",
+                  "query_presentation": "cases",
+                  "resume_operation_id": null,
+                  "requires_confirmation": true,
+                  "uses_selected_targets": false,
+                  "clarification_questions": []
+                },
+                "action": "CHANGESET_PREPARE",
+                "task_id": "59cb0a3d-53de-4e08-9bb6-0949ebd894a9",
+                "depends_on": null,
+                "instruction": "将用例TC-LOGIN-01-1792940069633的优先级改为P0，保留已修改的标题“Login / OTP — v2”，其余字段保持不变。",
+                "task_intent": "CASE_MODIFY",
+                "reason_codes": [
+                  "modify_case_title"
+                ],
+                "rewrite_draft": {
+                  "phase": "preview",
+                  "version": 1,
+                  "requirements": "将用例TC-LOGIN-01-1792940069633的优先级改为P0，保留已修改的标题“Login / OTP — v2”，其余字段保持不变。",
+                  "scope_resolved": true,
+                  "scope_instruction": "TC-LOGIN-01-1792940069633",
+                  "requirements_ready": true
+                },
+                "task_revision": 1,
+                "predecessor_job_id": null,
+                "source_operation_id": null,
+                "asset_reference_sources": [],
+                "modification_confirmation": {
+                  "instruction": "将用例TC-LOGIN-01-1792940069633的优先级改为P0，保留已修改的标题“Login / OTP — v2”，其余字段保持不变。",
+                  "cases": [
+                    {
+                      "ref": "92e8ce4f-2bde-4aef-bf80-32facdceadc4",
+                      "target_type": "formal",
+                      "snapshot": {
+                        "id": "92e8ce4f-2bde-4aef-bf80-32facdceadc4",
+                        "case_key": "TC-LOGIN-01-1792940069633",
+                        "collection_ids": [
+                          "631dbb10-49f3-4e29-9317-71853d04d687"
+                        ],
+                        "current_revision_id": "b1621f63-907b-4d9d-8336-89bbff4d49b8",
+                        "revision_number": 1,
+                        "title": "短信登录",
+                        "description": "",
+                        "module": "登录/短信",
+                        "priority": "P1",
+                        "case_type": "功能",
+                        "tags": [],
+                        "preconditions": [
+                          "手机号已注册且账号启用；准备有效的未使用验证码"
+                        ],
+                        "steps": [
+                          {
+                            "id": "ebfc19d2-c1ce-4523-8e75-432247e6a00b",
+                            "action": "输入短信验证码并提交",
+                            "expected": "登录成功并建立会话"
+                          }
+                        ],
+                        "source": "人工创建",
+                        "source_refs": [
+                          {
+                            "source_id": null,
+                            "document_id": null,
+                            "chunk_id": null,
+                            "label": "人工创建",
+                            "locator": "",
+                            "excerpt": ""
+                          }
+                        ],
+                        "execution_level": "L0",
+                        "test_domains": [],
+                        "automation_type": "manual",
+                        "automation_cases": [],
+                        "creator": null,
+                        "test_targets": [],
+                        "created_at": "2026-10-25T14:54:29.737323Z"
+                      }
+                    }
+                  ]
+                },
+                "asset_reference_target_scope": null
+              },
+              "result": {
+                "scope_count": 1,
+                "scope_modules": [
+                  "登录/短信"
+                ],
+                "scope_versions": {
+                  "92e8ce4f-2bde-4aef-bf80-32facdceadc4": "b1621f63-907b-4d9d-8336-89bbff4d49b8"
+                }
+              },
+              "requires_confirmation": true,
+              "related_job_id": null,
+              "related_change_set_id": null,
+              "error_code": null,
+              "created_at": "2026-10-25T14:54:53.227319Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "content": "确认修改。",
+      "response": {
+        "conversation_id": "66674573-493d-4128-bacf-6b62217d71ef",
+        "user_message": {
+          "id": "07438fc2-19c0-49b1-8440-6f893fe2fa64",
+          "role": "user",
+          "content": "把用例 TC-LOGIN-01-1792940069633 的标题改成“Login / OTP — v2”，其他字段保持不变。",
+          "intent": "CASE_MODIFY",
+          "intent_confidence": 1,
+          "status": "completed",
+          "target_case_ids": [],
+          "related_job_id": null,
+          "citations": [],
+          "metadata": {
+            "request": {
+              "scope": "current",
+              "content": "把用例 TC-LOGIN-01-1792940069633 的标题改成“Login / OTP — v2”，其他字段保持不变。",
+              "targets": [],
+              "model_id": "doubao-seed-2.0-lite",
+              "document_ids": [],
+              "target_scope": "inferred",
+              "intent_override": null,
+              "target_case_ids": [],
+              "client_request_id": "21384844-c90c-470a-8417-1d9bc7faa620",
+              "generation_strategy": null,
+              "inherit_attachments": true,
+              "source_operation_id": null,
+              "use_space_knowledge": false,
+              "knowledge_source_ids": [],
+              "source_collection_ids": [],
+              "target_candidate_snapshots": []
+            },
+            "submission_request_id": "6d3ce8f6-db44-43ad-b21d-91813f83cd76"
+          },
+          "created_at": "2026-10-25T14:54:53.222997Z"
+        },
+        "assistant_message": {
+          "id": "3ea7eeef-20fc-44e0-837c-a09ac9b34acd",
+          "role": "assistant",
+          "content": "正在为 1 条用例生成字段差异。",
+          "intent": "CASE_MODIFY",
+          "intent_confidence": 1,
+          "status": "running",
+          "target_case_ids": [
+            "92e8ce4f-2bde-4aef-bf80-32facdceadc4"
+          ],
+          "related_job_id": "a0abd636-406b-49ee-a7f7-f9a047bfe58d",
+          "citations": [],
+          "metadata": {
+            "operation_id": "59cb0a3d-53de-4e08-9bb6-0949ebd894a9",
+            "change_set_id": "ecfab671-1790-4525-99f6-5dccaf271068",
+            "task_revision": 1,
+            "task_case_count": 1,
+            "source_message_id": "07438fc2-19c0-49b1-8440-6f893fe2fa64",
+            "source_operation_id": null
+          },
+          "created_at": "2026-10-25T14:56:48.197586Z"
+        },
+        "intent": "CASE_MODIFY",
+        "intent_confidence": 1,
+        "requires_intent_confirmation": false,
+        "action": {
+          "type": "change_set",
+          "job_id": "a0abd636-406b-49ee-a7f7-f9a047bfe58d",
+          "change_set_id": "ecfab671-1790-4525-99f6-5dccaf271068"
+        },
+        "operation_plan": {
+          "status": "running",
+          "source_message_id": "07438fc2-19c0-49b1-8440-6f893fe2fa64",
+          "current_operation_id": "59cb0a3d-53de-4e08-9bb6-0949ebd894a9",
+          "operations": [
+            {
+              "source_message_id": "07438fc2-19c0-49b1-8440-6f893fe2fa64",
+              "completed_at": null,
+              "id": "59cb0a3d-53de-4e08-9bb6-0949ebd894a9",
+              "sequence": 0,
+              "intent": "CASE_MODIFY",
+              "confidence": 1,
+              "status": "running",
+              "target": {
+                "kind": "case",
+                "case_ids": [
+                  "92e8ce4f-2bde-4aef-bf80-32facdceadc4"
+                ],
+                "resolved": true,
+                "selectors": [],
+                "candidate_refs": []
+              },
+              "payload": {
+                "plan": {
+                  "action": "CHANGESET_PREPARE",
+                  "intent": "CASE_MODIFY",
+                  "changes": [
+                    "标题改为“Login / OTP — v2”"
+                  ],
+                  "version": 2,
+                  "confidence": 1,
+                  "depends_on": null,
+                  "speech_act": "request",
+                  "constraints": [
+                    "其他字段保持不变"
+                  ],
+                  "instruction": "把用例 TC-LOGIN-01-1792940069633 的标题改成“Login / OTP — v2”，其他字段保持不变。",
+                  "target_kind": "case",
+                  "target_text": "TC-LOGIN-01-1792940069633",
+                  "reason_codes": [
+                    "modify_case_title"
+                  ],
+                  "routing_source": "semantic",
+                  "action_evidence": "把用例 TC-LOGIN-01-1792940069633 的标题改成",
+                  "clarification_kind": "none",
+                  "query_presentation": "cases",
+                  "resume_operation_id": null,
+                  "requires_confirmation": true,
+                  "uses_selected_targets": false,
+                  "clarification_questions": []
+                },
+                "action": "CHANGESET_PREPARE",
+                "task_id": "59cb0a3d-53de-4e08-9bb6-0949ebd894a9",
+                "depends_on": null,
+                "instruction": "将用例TC-LOGIN-01-1792940069633的优先级改为P0，保留已修改的标题“Login / OTP — v2”，其余字段保持不变。",
+                "task_intent": "CASE_MODIFY",
+                "reason_codes": [
+                  "modify_case_title"
+                ],
+                "rewrite_draft": {
+                  "phase": "executing",
+                  "version": 1,
+                  "requirements": "将用例TC-LOGIN-01-1792940069633的优先级改为P0，保留已修改的标题“Login / OTP — v2”，其余字段保持不变。",
+                  "scope_resolved": true,
+                  "scope_instruction": "TC-LOGIN-01-1792940069633",
+                  "requirements_ready": true
+                },
+                "task_revision": 1,
+                "predecessor_job_id": null,
+                "source_operation_id": null,
+                "asset_reference_sources": [],
+                "modification_confirmation": null,
+                "asset_reference_target_scope": null,
+                "last_confirmed_modification": {
+                  "instruction": "将用例TC-LOGIN-01-1792940069633的优先级改为P0，保留已修改的标题“Login / OTP — v2”，其余字段保持不变。",
+                  "cases": [
+                    {
+                      "ref": "92e8ce4f-2bde-4aef-bf80-32facdceadc4",
+                      "target_type": "formal",
+                      "snapshot": {
+                        "id": "92e8ce4f-2bde-4aef-bf80-32facdceadc4",
+                        "case_key": "TC-LOGIN-01-1792940069633",
+                        "collection_ids": [
+                          "631dbb10-49f3-4e29-9317-71853d04d687"
+                        ],
+                        "current_revision_id": "b1621f63-907b-4d9d-8336-89bbff4d49b8",
+                        "revision_number": 1,
+                        "title": "短信登录",
+                        "description": "",
+                        "module": "登录/短信",
+                        "priority": "P1",
+                        "case_type": "功能",
+                        "tags": [],
+                        "preconditions": [
+                          "手机号已注册且账号启用；准备有效的未使用验证码"
+                        ],
+                        "steps": [
+                          {
+                            "id": "ebfc19d2-c1ce-4523-8e75-432247e6a00b",
+                            "action": "输入短信验证码并提交",
+                            "expected": "登录成功并建立会话"
+                          }
+                        ],
+                        "source": "人工创建",
+                        "source_refs": [
+                          {
+                            "source_id": null,
+                            "document_id": null,
+                            "chunk_id": null,
+                            "label": "人工创建",
+                            "locator": "",
+                            "excerpt": ""
+                          }
+                        ],
+                        "execution_level": "L0",
+                        "test_domains": [],
+                        "automation_type": "manual",
+                        "automation_cases": [],
+                        "creator": null,
+                        "test_targets": [],
+                        "created_at": "2026-10-25T14:54:29.737323Z"
+                      }
+                    }
+                  ]
+                }
+              },
+              "result": {
+                "scope_count": 1,
+                "scope_modules": [
+                  "登录/短信"
+                ],
+                "scope_versions": {
+                  "92e8ce4f-2bde-4aef-bf80-32facdceadc4": "b1621f63-907b-4d9d-8336-89bbff4d49b8"
+                }
+              },
+              "requires_confirmation": true,
+              "related_job_id": "a0abd636-406b-49ee-a7f7-f9a047bfe58d",
+              "related_change_set_id": "ecfab671-1790-4525-99f6-5dccaf271068",
+              "error_code": null,
+              "created_at": "2026-10-25T14:54:53.227319Z"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "timings": [
+    {
+      "kind": "message_response",
+      "ms": 43912
+    },
+    {
+      "kind": "message_response",
+      "ms": 55186
+    },
+    {
+      "kind": "message_response",
+      "ms": 34458
+    },
+    {
+      "kind": "proposal_wait_after_response",
+      "ms": 22541
+    },
+    {
+      "kind": "apply_response",
+      "ms": 1837
+    }
+  ],
+  "startedAt": "2026-10-25T14:54:29.283Z",
+  "collection": {
+    "id": "631dbb10-49f3-4e29-9317-71853d04d687",
+    "space_id": "ca6c218a-a831-4aa2-b845-f6b2cd8c9ef7",
+    "name": "NL评测-NL-DRAFT-LANGUAGE-1792940069542",
+    "description": "",
+    "mind_map_notes": [],
+    "case_count": 0,
+    "lifecycle_status": "empty",
+    "creator": {
+      "id": "17e4169c-f0dc-4922-8ce4-57cb569b8c96",
+      "display_name": "自然语言验收",
+      "email": "nl-1792940069289-uc1pbf54r9@casepilot.test"
+    },
+    "test_target": null,
+    "created_at": "2026-10-25T14:54:29.678246Z"
+  },
+  "keyMap": {
+    "TC-LOGIN-01": "TC-LOGIN-01-1792940069633",
+    "TC-LOGIN-02": "TC-LOGIN-02-1792940069633",
+    "TC-PAY-01": "TC-PAY-01-1792940069633",
+    "TC-REFUND-01": "TC-REFUND-01-1792940069633"
+  },
+  "original": [
+    {
+      "id": "92e8ce4f-2bde-4aef-bf80-32facdceadc4",
+      "case_key": "TC-LOGIN-01-1792940069633",
+      "collection_ids": [
+        "631dbb10-49f3-4e29-9317-71853d04d687"
+      ],
+      "current_revision_id": "b1621f63-907b-4d9d-8336-89bbff4d49b8",
+      "revision_number": 1,
+      "title": "短信登录",
+      "description": "",
+      "module": "登录/短信",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "手机号已注册且账号启用；准备有效的未使用验证码"
+      ],
+      "steps": [
+        {
+          "id": "ebfc19d2-c1ce-4523-8e75-432247e6a00b",
+          "action": "输入短信验证码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "17e4169c-f0dc-4922-8ce4-57cb569b8c96",
+        "display_name": "自然语言验收",
+        "email": "nl-1792940069289-uc1pbf54r9@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T14:54:29.737323Z"
+    },
+    {
+      "id": "6a7f1262-9d25-416c-acfa-ba0f89fe0417",
+      "case_key": "TC-LOGIN-02-1792940069633",
+      "collection_ids": [
+        "631dbb10-49f3-4e29-9317-71853d04d687"
+      ],
+      "current_revision_id": "41822580-9cbb-4e9d-b56e-758bb280af95",
+      "revision_number": 1,
+      "title": "密码登录",
+      "description": "",
+      "module": "登录/密码",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "账号已注册且启用；准备正确密码"
+      ],
+      "steps": [
+        {
+          "id": "b42c14e6-04bc-4ddf-8b33-44aef9448358",
+          "action": "输入账号及正确密码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "17e4169c-f0dc-4922-8ce4-57cb569b8c96",
+        "display_name": "自然语言验收",
+        "email": "nl-1792940069289-uc1pbf54r9@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T14:54:29.789513Z"
+    },
+    {
+      "id": "414a7acf-c37c-41b5-93e8-ffe54a0c4786",
+      "case_key": "TC-PAY-01-1792940069633",
+      "collection_ids": [
+        "631dbb10-49f3-4e29-9317-71853d04d687"
+      ],
+      "current_revision_id": "02d3613c-faa6-4466-b099-1adad5e42e23",
+      "revision_number": 1,
+      "title": "支付成功",
+      "description": "",
+      "module": "支付/付款",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备待支付订单和可用支付账户"
+      ],
+      "steps": [
+        {
+          "id": "83bd616e-55e0-4025-a255-b7115a3db80e",
+          "action": "完成订单支付",
+          "expected": "订单为已支付；仅有一条成功支付记录"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "17e4169c-f0dc-4922-8ce4-57cb569b8c96",
+        "display_name": "自然语言验收",
+        "email": "nl-1792940069289-uc1pbf54r9@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T14:54:29.830167Z"
+    },
+    {
+      "id": "8c6623c7-0c22-4556-af93-b6e6aeb9fff0",
+      "case_key": "TC-REFUND-01-1792940069633",
+      "collection_ids": [
+        "631dbb10-49f3-4e29-9317-71853d04d687"
+      ],
+      "current_revision_id": "55570071-193f-46e5-bc41-b27311d60000",
+      "revision_number": 1,
+      "title": "退款成功",
+      "description": "",
+      "module": "支付/退款",
+      "priority": "P2",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备一笔允许全额退款的已支付订单"
+      ],
+      "steps": [
+        {
+          "id": "6026d59c-22be-42be-aef0-a4ec380b6ed9",
+          "action": "提交全额退款并等待处理完成",
+          "expected": "退款状态成功，退款金额等于原支付金额"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "17e4169c-f0dc-4922-8ce4-57cb569b8c96",
+        "display_name": "自然语言验收",
+        "email": "nl-1792940069289-uc1pbf54r9@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T14:54:29.870678Z"
+    }
+  ],
+  "proposals": [
+    {
+      "id": "ecfab671-1790-4525-99f6-5dccaf271068",
+      "conversation_id": "66674573-493d-4128-bacf-6b62217d71ef",
+      "generation_job_id": "a0abd636-406b-49ee-a7f7-f9a047bfe58d",
+      "instruction": "将用例TC-LOGIN-01-1792940069633的优先级改为P0，保留已修改的标题“Login / OTP — v2”，其余字段保持不变。",
+      "scope": "current",
+      "status": "ready",
+      "items": [
+        {
+          "ref": "92e8ce4f-2bde-4aef-bf80-32facdceadc4",
+          "reason": "按照用户要求，保留指定标题，将用例优先级修改为P0，其余字段保持不变",
+          "status": "ready",
+          "quality": {
+            "score": 90,
+            "issues": [
+              {
+                "code": "manual_review_required",
+                "message": "已完成本地基础校验，业务预期与修改内容请人工审阅后采纳。",
+                "severity": "warning",
+                "object_id": null
+              }
+            ],
+            "passed": true,
+            "repair_rounds": 0,
+            "grounding_status": "unverified",
+            "structural_passed": true
+          },
+          "field_diff": [
+            {
+              "after": "Login / OTP — v2",
+              "field": "title",
+              "before": "短信登录"
+            },
+            {
+              "after": "P0",
+              "field": "priority",
+              "before": "P1"
+            }
+          ],
+          "target_type": "formal",
+          "test_case_id": "92e8ce4f-2bde-4aef-bf80-32facdceadc4",
+          "base_snapshot": {
+            "id": "TC-LOGIN-01-1792940069633",
+            "tags": [],
+            "steps": [
+              {
+                "id": "ebfc19d2-c1ce-4523-8e75-432247e6a00b",
+                "action": "输入短信验证码并提交",
+                "expected": "登录成功并建立会话"
+              }
+            ],
+            "title": "短信登录",
+            "module": "登录/短信",
+            "status": "pending",
+            "case_key": "TC-LOGIN-01-1792940069633",
+            "priority": "P1",
+            "automated": false,
+            "case_type": "功能",
+            "source_refs": [
+              {
+                "label": "人工创建",
+                "excerpt": ""
+              }
+            ],
+            "preconditions": [
+              "手机号已注册且账号启用；准备有效的未使用验证码"
+            ],
+            "test_point_ids": [],
+            "revision_number": 1
+          },
+          "base_revision_id": "b1621f63-907b-4d9d-8336-89bbff4d49b8",
+          "proposal_version": 1,
+          "previous_snapshot": null,
+          "proposed_snapshot": {
+            "id": "TC-LOGIN-01-1792940069633",
+            "tags": [],
+            "steps": [
+              {
+                "action": "输入短信验证码并提交",
+                "expected": "登录成功并建立会话"
+              }
+            ],
+            "title": "Login / OTP — v2",
+            "module": "登录/短信",
+            "status": "pending",
+            "priority": "P0",
+            "automated": false,
+            "case_type": "功能",
+            "source_refs": [
+              {
+                "label": "人工创建",
+                "excerpt": "",
+                "locator": "",
+                "chunk_id": null,
+                "source_id": null,
+                "document_id": null
+              }
+            ],
+            "preconditions": [
+              "手机号已注册且账号启用；准备有效的未使用验证码"
+            ],
+            "test_point_ids": []
+          },
+          "candidate_revision_id": "3fe4ed4f-a709-4410-b035-97db9abbf487",
+          "previous_change_set_id": null
+        }
+      ],
+      "created_at": "2026-10-25T14:56:48.194838Z",
+      "applied_at": null
+    }
+  ],
+  "status": "passed",
+  "errors": [],
+  "final": [
+    {
+      "id": "92e8ce4f-2bde-4aef-bf80-32facdceadc4",
+      "case_key": "TC-LOGIN-01-1792940069633",
+      "collection_ids": [
+        "631dbb10-49f3-4e29-9317-71853d04d687"
+      ],
+      "current_revision_id": "7c6eb85f-451b-468c-96e5-913c5645569a",
+      "revision_number": 2,
+      "title": "Login / OTP — v2",
+      "description": "",
+      "module": "登录/短信",
+      "priority": "P0",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "手机号已注册且账号启用；准备有效的未使用验证码"
+      ],
+      "steps": [
+        {
+          "id": "ebfc19d2-c1ce-4523-8e75-432247e6a00b",
+          "action": "输入短信验证码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "17e4169c-f0dc-4922-8ce4-57cb569b8c96",
+        "display_name": "自然语言验收",
+        "email": "nl-1792940069289-uc1pbf54r9@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T14:54:29.737323Z"
+    },
+    {
+      "id": "6a7f1262-9d25-416c-acfa-ba0f89fe0417",
+      "case_key": "TC-LOGIN-02-1792940069633",
+      "collection_ids": [
+        "631dbb10-49f3-4e29-9317-71853d04d687"
+      ],
+      "current_revision_id": "41822580-9cbb-4e9d-b56e-758bb280af95",
+      "revision_number": 1,
+      "title": "密码登录",
+      "description": "",
+      "module": "登录/密码",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "账号已注册且启用；准备正确密码"
+      ],
+      "steps": [
+        {
+          "id": "b42c14e6-04bc-4ddf-8b33-44aef9448358",
+          "action": "输入账号及正确密码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "17e4169c-f0dc-4922-8ce4-57cb569b8c96",
+        "display_name": "自然语言验收",
+        "email": "nl-1792940069289-uc1pbf54r9@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T14:54:29.789513Z"
+    },
+    {
+      "id": "414a7acf-c37c-41b5-93e8-ffe54a0c4786",
+      "case_key": "TC-PAY-01-1792940069633",
+      "collection_ids": [
+        "631dbb10-49f3-4e29-9317-71853d04d687"
+      ],
+      "current_revision_id": "02d3613c-faa6-4466-b099-1adad5e42e23",
+      "revision_number": 1,
+      "title": "支付成功",
+      "description": "",
+      "module": "支付/付款",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备待支付订单和可用支付账户"
+      ],
+      "steps": [
+        {
+          "id": "83bd616e-55e0-4025-a255-b7115a3db80e",
+          "action": "完成订单支付",
+          "expected": "订单为已支付；仅有一条成功支付记录"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "17e4169c-f0dc-4922-8ce4-57cb569b8c96",
+        "display_name": "自然语言验收",
+        "email": "nl-1792940069289-uc1pbf54r9@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T14:54:29.830167Z"
+    },
+    {
+      "id": "8c6623c7-0c22-4556-af93-b6e6aeb9fff0",
+      "case_key": "TC-REFUND-01-1792940069633",
+      "collection_ids": [
+        "631dbb10-49f3-4e29-9317-71853d04d687"
+      ],
+      "current_revision_id": "55570071-193f-46e5-bc41-b27311d60000",
+      "revision_number": 1,
+      "title": "退款成功",
+      "description": "",
+      "module": "支付/退款",
+      "priority": "P2",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备一笔允许全额退款的已支付订单"
+      ],
+      "steps": [
+        {
+          "id": "6026d59c-22be-42be-aef0-a4ec380b6ed9",
+          "action": "提交全额退款并等待处理完成",
+          "expected": "退款状态成功，退款金额等于原支付金额"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "17e4169c-f0dc-4922-8ce4-57cb569b8c96",
+        "display_name": "自然语言验收",
+        "email": "nl-1792940069289-uc1pbf54r9@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T14:54:29.870678Z"
+    }
+  ]
+}

@@ -598,3 +598,35 @@ test('NL-DRAFT-CANCEL-NEW field negation preserves draft then cancellation permi
   unchangedExcept(payment, saved.find((c:any) => c.id === payment.id), ['priority']);
   expect(saved.filter((c:any) => c.id !== payment.id)).toEqual(journal.original.filter((c:any) => c.id !== payment.id));
 });
+
+test('NL-DRAFT-LANGUAGE Chinese preview preserves literal English title through refinement and adoption', async ({ page }) => {
+  const s = await setup(page), target = s.byKey('TC-LOGIN-01');
+  const title = 'Login / OTP — v2';
+  const submit = (text: string, confirm = false) => send(page, text, confirm, 2);
+  const initial = await submit(`把用例 TC-LOGIN-01 的标题改成“${title}”，其他字段保持不变。`);
+  const operationId = initial.assistant_message.metadata.operation_id;
+  expect(initial.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  await page.reload();
+  const revised = await submit('再把优先级改为P0，刚才指定的标题也保留，其余字段不要改。');
+  expect(revised.assistant_message.metadata.operation_id).toBe(operationId);
+  expect(revised.assistant_message.target_case_ids).toEqual([target.id]);
+  expect(revised.action.job_id).toBeFalsy();
+  const state = await get(page, `/conversations/${revised.conversation_id}`);
+  const operation = state.operation_plan.operations.find((o:any) => o.id === operationId);
+  const requirements = operation.payload.rewrite_draft.requirements;
+  expect(requirements).toMatch(/[\u4e00-\u9fff]/);
+  expect(requirements).toContain(title);
+  expect(requirements).toContain('P0');
+  expect(revised.assistant_message.content).toContain(requirements);
+  expect(await s.read()).toEqual(journal.original);
+  await page.reload();
+  const change = await ready(page, await submit('确认修改。', true));
+  expect(change.items.map((item:any) => item.ref)).toEqual([target.id]);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read(), changed = saved.find((c:any) => c.id === target.id);
+  expect(changed.title).toBe(title);
+  expect(changed.priority).toBe('P0');
+  unchangedExcept(target, changed, ['title', 'priority']);
+  expect(saved.filter((c:any) => c.id !== target.id)).toEqual(journal.original.filter((c:any) => c.id !== target.id));
+});

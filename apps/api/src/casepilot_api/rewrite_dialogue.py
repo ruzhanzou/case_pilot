@@ -13,7 +13,9 @@ class RewriteReply(BaseModel):
     scope_action: Literal["preserve", "replace"] = "preserve"
     scope_instruction: str = Field(default="", max_length=4000)
     # Complete replacement, including retained constraints; not appended history.
-    requirements: str = Field(default="", max_length=8000)
+    requirements: str = Field(default="", max_length=8000, description=(
+        "完整的最新修改要求，使用用户的对话语言；用户指定的字段值、编号、引用内容逐字保留，不翻译。"
+    ))
     requirements_ready: bool = True
     clarification: str = Field(default="", max_length=1000)
     confidence: float = Field(default=1, ge=0, le=1)
@@ -66,6 +68,12 @@ def interpret_rewrite_reply(content: str, state: dict, *, provider: str, model_n
             "追加目标（把某条也加进来）是当前已选范围与新增对象的并集，新增对象不必满足原范围的模块限制；"
             "将其写为当前已选范围加上指定对象，不重复套用旧模块条件或将旧范围数量误写为新总数量。"
             "requirements返回完整的最新修改要求，保留未撤销约束，替换被纠正的旧值，不拼接聊天历史。"
+            "requirements、scope_instruction和clarification会直接展示给用户，使用本轮用户的对话语言；"
+            "中文对话用中文解释，即使旧草稿曾被整理为英文也应恢复中文说明。"
+            "简短编号、P0等字段值本身不代表用户切换语言；此时沿用对话语言。"
+            "解释语言不改变实际修改内容：用户指定的标题、步骤文本、错误消息、代码、编号和引用值逐字保留，"
+            "不可擅自翻译、大小写转换或改动标点。只有用户明确要求翻译某字段时才翻译该字段。"
+            "例如中文要求标题为Login / OTP，再改优先级P0，应返回中文修改说明并原样保留Login / OTP。"
             "回复操作细节等简短方向时，结合草稿理解为丰富步骤的操作细节，action=update且scope_action=preserve。"
             "即使用例范围尚未确定，也先记录已明确的修改要求；范围由后续选择流程确认，不要重复询问已回答的方向。"
             "范围已确认且回复只修改字段值时，默认作用于当前范围全部用例，不再询问哪条；"
