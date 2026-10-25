@@ -359,12 +359,12 @@ def preservation_error(request, proposed) -> str | None:
         before = [(s.action, s.expected) for s in original.steps]
         after = [(s.action, s.expected) for s in proposed.steps]
         if not contains_in_order(before, after):
-            return "补充操作遗漏或覆盖了原步骤/校验点；请使用append_steps追加，保留全部原步骤"
+            return "补充操作遗漏或覆盖了原步骤/校验点；请使用insert_steps按位置插入或append_steps末尾追加，保留全部原步骤"
         for field in ("preconditions", "tags", "source_refs"):
             if not contains_in_order(getattr(original, field), getattr(proposed, field)):
                 return f"补充操作遗漏原{field}；请保留原条目并追加"
     if not permits_step_removal(instruction) and (
         len(new_actions) < len(actions) or len(proposed.steps) < len(original.steps)
     ):
-        return "未经要求不得减少原步骤；请使用step_updates局部修改或append_steps追加"
+        return "未经要求不得减少原步骤；请使用step_updates局部修改、insert_steps按位置插入或append_steps末尾追加"
     return None

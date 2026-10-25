@@ -796,6 +796,9 @@ class GenerationPipeline:
         execute_stage: StageExecutor,
         on_batch=None,
     ) -> GenerationResult:
+        # Quantity resolution records a budget; keep that transient state local
+        # so a paused request is not mistaken for a confirmed plan on resume.
+        request = request.model_copy(deep=True)
         if request.confirmed_plan:
             test_object = (request.test_object.strip()
                            or str(answers.get(TEST_OBJECT_QUESTION_ID) or "").strip())
@@ -1106,12 +1109,15 @@ class GenerationPipeline:
                         "禁止输出source_refs或抄写来源正文、文档ID；服务器按索引恢复原始来源。"
                         "ref是服务端目标标识，必须逐字保留。"
                         "每条changes只包含instruction要求且实际变化的字段及其新值；未修改字段必须省略。"
-                        "允许字段：title,module,priority,case_type,tags,preconditions,steps,expected_updates,step_updates,append_steps,source_ref_indexes。"
+                        "允许字段：title,module,priority,case_type,tags,preconditions,steps,expected_updates,step_updates,append_steps,insert_steps,source_ref_indexes。"
                         "仅修改预期时使用expected_updates，每项含从0开始的step_index及新expected；不返回steps。"
                         "保留操作步骤时禁止返回steps，必须用expected_updates逐项修正预期；服务器保留全部action。"
-                        "新增步骤优先用append_steps，仅返回要追加的步骤；系统自动保留全部旧步骤。"
+                        "只在末尾追加步骤时使用append_steps；要求指定位置插入时必须用insert_steps。"
+                        "insert_steps每项含before_step_index和steps；索引按修改前原步骤从0开始，插入到该原步骤之前。"
+                        "在第2步后插入就是before_step_index=2，在第1步前插入为0；末尾索引等于原步骤总数。"
+                        "多个插入位置均基于原步骤，不能随前一次插入移动索引；相同位置按返回顺序插入。系统保留全部旧步骤。"
                         "修改现有步骤优先用step_updates，每项含step_index和要改的action或expected；未改字段省略。"
-                        "参考资产改写且未要求拆分、删除或合并步骤时，禁止返回完整steps，必须使用step_updates或append_steps。"
+                        "参考资产改写且未要求拆分、删除或合并步骤时，禁止返回完整steps，必须使用step_updates、insert_steps或append_steps。"
                         "参考Excel的一行可能包含多项操作，不能把当前候选的多个步骤合并成参考表的一行；保留当前步骤结构及预期对应关系。"
                         "step_updates和expected_updates不能修改同一步骤，不能与完整steps同时返回。"
                         "要求预期结果保持不变时，禁止修改任何旧expected；拆分步骤也须完整保留原校验点。"
@@ -1143,7 +1149,7 @@ class GenerationPipeline:
                 batch_results = {}
                 allowed = {"title", "module", "priority", "case_type", "tags",
                            "preconditions", "steps", "expected_updates", "step_updates",
-                           "append_steps", "source_refs"}
+                           "append_steps", "insert_steps", "source_refs"}
                 for raw in batch.items:
                     ref = raw.get("ref") if isinstance(raw, dict) else raw.ref
                     try:
@@ -1166,7 +1172,8 @@ class GenerationPipeline:
                     expected_updates = changes.pop("expected_updates", None)
                     step_updates = changes.pop("step_updates", None)
                     append_steps = changes.pop("append_steps", None)
-                    if any(value is not None for value in (expected_updates, step_updates, append_steps)):
+                    insert_steps = changes.pop("insert_steps", None)
+                    if any(value is not None for value in (expected_updates, step_updates, append_steps, insert_steps)):
                         updates = (expected_updates or []) + (step_updates or [])
                         if "steps" in changes or len({u["step_index"] for u in updates}) != len(updates):
                             invalid[item.ref] = "步骤增量不能重复索引或同时覆盖完整steps"
@@ -1179,7 +1186,18 @@ class GenerationPipeline:
                             for field in ("action", "expected"):
                                 if field in update and update[field] is not None:
                                     steps[update["step_index"]][field] = update[field]
-                        changes["steps"] = steps + (append_steps or [])
+                        if any(insertion["before_step_index"] > len(steps) for insertion in insert_steps or []):
+                            invalid[item.ref] = "步骤插入位置越界，请使用原步骤0至总数之间的索引"
+                            continue
+                        insertions = {}
+                        for insertion in insert_steps or []:
+                            insertions.setdefault(insertion["before_step_index"], []).extend(insertion["steps"])
+                        combined = []
+                        for index, step in enumerate(steps):
+                            combined.extend(insertions.get(index, []))
+                            combined.append(step)
+                        combined.extend(insertions.get(len(steps), []))
+                        changes["steps"] = combined + (append_steps or [])
                     try:
                         proposed = RewriteCaseDraft.model_validate({
                             **original.model_dump(mode="json"), **changes,

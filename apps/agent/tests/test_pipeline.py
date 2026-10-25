@@ -120,6 +120,7 @@ def test_pipeline_pauses_for_blocking_question_and_resumes_with_answer() -> None
     question = caught.value.requirement.open_questions[0]
     assert question.blocking
     assert question.id == "Q-TEST-OBJECT"
+    assert request.confirmed_plan == {}
 
     result = pipeline.run(
         request,

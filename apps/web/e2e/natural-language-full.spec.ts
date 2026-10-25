@@ -103,7 +103,7 @@ async function send(page: Page, content: string, confirm = true, serviceRetries 
 async function ready(page: Page, turn: any) {
   expect(turn.action.change_set_id, JSON.stringify(turn.action)).toBeTruthy(); const start = Date.now();
   const path = `/case-change-sets/${turn.action.change_set_id}`;
-  await expect.poll(async () => { const c = await get(page, path); if (c.status === 'failed') throw new Error(JSON.stringify(c)); return c.status; }, { timeout: 480000 }).toBe('ready');
+  await expect.poll(async () => { const c = await get(page, path); if (!['generating', 'ready'].includes(c.status)) throw new Error(JSON.stringify(c)); return c.status; }, { timeout: 480000 }).toBe('ready');
   journal.timings.push({ kind: 'proposal_wait_after_response', ms: Date.now() - start });
   await expect(page.locator('.principle-composer textarea')).toBeEnabled({ timeout: 60000 });
   const notice = page.getByTestId('active-mutation-task-notice');
@@ -786,6 +786,40 @@ test('NL-NUMERIC-STEP business thresholds and step ordinal never expand the case
   expect(actual[1].expected.startsWith(before[1].expected)).toBe(true);
   expect(actual[1].expected).toContain(clause);
   expect(actual.filter((_:any, i:number) => i !== 1)).toEqual(before.filter((_:any, i:number) => i !== 1));
+  unchangedExcept(target, changed, ['steps']);
+  expect(saved.filter((c:any) => c.id !== target.id)).toEqual(journal.original.filter((c:any) => c.id !== target.id));
+});
+
+for (const remove of [true, false]) test(`NL-STEP-${remove ? 'REMOVE' : 'INSERT'} edits a step without deleting or generating a case`, async ({ page }) => {
+  const s = await setup(page, false, false, stepFixture), target = s.byKey('TC-LOGIN-01');
+  const instruction = remove
+    ? '删除 TC-LOGIN-01 的第2步，仅删除这一步，保留这条用例和其余步骤、字段，其他用例不变。'
+    : '在 TC-LOGIN-01 第2步后新增一步：操作为“刷新登录页面”，预期为“仍显示登录状态”。不要新建用例，原有步骤和其他字段不变。';
+  const preview = await send(page, instruction, false, 2);
+  expect(preview.intent).toBe('CASE_MODIFY');
+  expect(preview.operation_plan.operations.map((o:any) => o.intent)).toEqual(['CASE_MODIFY']);
+  expect(preview.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  expect(preview.assistant_message.target_case_ids).toEqual([target.id]);
+  expect(preview.action.job_id).toBeFalsy();
+  expect(await s.read()).toEqual(journal.original);
+  const pending = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/resume'));
+  await page.getByRole('button', { name: '确认修改并生成建议', exact: true }).last().click();
+  const response = await pending, body = observedBodies.get(response.url()) ?? await response.text();
+  expect(response.ok(), body).toBeTruthy();
+  const confirmed = JSON.parse(body); journal.turns.push({ confirmation: confirmed });
+  const change = await ready(page, confirmed);
+  expect(change.items.map((item:any) => item.ref)).toEqual([target.id]);
+  expect(change.items[0].field_diff.map((diff:any) => diff.field)).toEqual(['steps']);
+  expect(change.items[0].quality?.passed).not.toBe(false);
+  expect(await s.read()).toEqual(journal.original);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read(), changed = saved.find((c:any) => c.id === target.id);
+  const pairs = (c:any) => c.steps.map((step:any) => ({ action: step.action, expected: step.expected }));
+  const expected = pairs(target);
+  if (remove) expected.splice(1, 1);
+  else expected.splice(2, 0, { action: '刷新登录页面', expected: '仍显示登录状态' });
+  expect(pairs(changed)).toEqual(expected);
   unchangedExcept(target, changed, ['steps']);
   expect(saved.filter((c:any) => c.id !== target.id)).toEqual(journal.original.filter((c:any) => c.id !== target.id));
 });

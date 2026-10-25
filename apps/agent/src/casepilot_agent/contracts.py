@@ -328,6 +328,12 @@ class StepUpdate(BaseModel):
     expected: str | None = None
 
 
+class StepInsertion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    before_step_index: int = Field(ge=0, description="原步骤的0起始索引，插入在它之前；0表示开头，原步骤总数表示末尾。")
+    steps: list[TestStep] = Field(min_length=1)
+
+
 class RewriteFields(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str | None = None
@@ -340,6 +346,7 @@ class RewriteFields(BaseModel):
     expected_updates: list[ExpectedUpdate] | None = None
     step_updates: list[StepUpdate] | None = None
     append_steps: list[TestStep] | None = None
+    insert_steps: list[StepInsertion] | None = None
     source_ref_indexes: list[int] | None = None
 
 

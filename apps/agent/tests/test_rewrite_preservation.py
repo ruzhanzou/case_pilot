@@ -390,3 +390,72 @@ def test_reference_rewrite_repairs_full_source_row_to_local_step_update():
     assert [s.expected for s in result.proposed.steps] == [
         s.expected for s in request.test_case.steps]
     assert result.proposed.test_point_ids == request.test_case.test_point_ids
+
+
+@pytest.mark.parametrize('position', [0, 1, 2, 3])
+def test_positioned_step_insertions_preserve_original_pairs(position):
+    inserted = {'action': '刷新登录页面', 'expected': '仍显示登录状态'}
+    provider = Provider({'insert_steps': [{'before_step_index': position, 'steps': [inserted]}]})
+    result = GenerationPipeline(provider).rewrite_many({
+        'one': RewriteRequest(test_case=original(), instruction='在指定位置新增步骤，原有步骤和其他字段保持不变')
+    })['one']
+    assert result.quality.passed
+    expected = [step.model_dump(mode='json') for step in original().steps]
+    expected[position:position] = [inserted]
+    assert [step.model_dump(mode='json') for step in result.proposed.steps] == expected
+    assert result.proposed.model_dump(exclude={'steps'}) == original().model_dump(exclude={'steps'})
+    assert len(provider.calls) == 1
+
+
+@pytest.mark.parametrize('position', [-1, 4])
+def test_out_of_range_step_insertion_keeps_original(position):
+    provider = Provider({'insert_steps': [{'before_step_index': position,
+                                          'steps': [{'action': '新增', 'expected': '结果'}]}]})
+    result = GenerationPipeline(provider).rewrite_many({
+        'one': RewriteRequest(test_case=original(), instruction='新增一步，其他内容不变')
+    })['one']
+    assert not result.quality.passed
+    assert result.proposed == original()
+    assert result.diff == []
+
+
+def test_multiple_insertions_are_relative_to_original_positions():
+    def addition(action):
+        return {'action': action, 'expected': action + '预期'}
+    provider = Provider({'insert_steps': [
+        {'before_step_index': 2, 'steps': [addition('后部')]},
+        {'before_step_index': 0, 'steps': [addition('开始')]},
+        {'before_step_index': 2, 'steps': [addition('后部第二项')]},
+    ]})
+    result = GenerationPipeline(provider).rewrite_many({
+        'one': RewriteRequest(test_case=original(), instruction='按指定位置补充步骤，保留全部原有步骤')
+    })['one']
+    assert result.quality.passed
+    assert [step.action for step in result.proposed.steps] == [
+        '开始', '原操作0', '原操作1', '后部', '后部第二项', '原操作2']
+
+
+def test_insertion_and_update_use_original_step_indices():
+    provider = Provider({
+        'insert_steps': [{'before_step_index': 0, 'steps': [{'action': '开始', 'expected': '开始结果'}]}],
+        'step_updates': [{'step_index': 1, 'action': '修改原第二步'}],
+    })
+    result = GenerationPipeline(provider).rewrite_many({
+        'one': RewriteRequest(test_case=original(), instruction='在开头插入一步，并修改原第二步的动作')
+    })['one']
+    assert result.quality.passed
+    assert [step.action for step in result.proposed.steps] == ['开始', '原操作0', '修改原第二步', '原操作2']
+    assert result.proposed.steps[2].expected == original().steps[1].expected
+
+
+def test_full_steps_cannot_be_combined_with_insertions():
+    provider = Provider({
+        'steps': [step.model_dump() for step in original().steps],
+        'insert_steps': [{'before_step_index': 1, 'steps': [{'action': '新增', 'expected': '结果'}]}],
+    })
+    result = GenerationPipeline(provider).rewrite_many({
+        'one': RewriteRequest(test_case=original(), instruction='在第一步后插入一步')
+    })['one']
+    assert not result.quality.passed
+    assert result.proposed == original()
+    assert result.diff == []
