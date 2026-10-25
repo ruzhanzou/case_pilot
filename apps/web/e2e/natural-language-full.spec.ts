@@ -875,3 +875,41 @@ test('NL-SCOPE-LABEL saved proposal scope is readable across revision navigation
   expect(after.operation_history).toEqual(before.operation_history);
   expect(after.messages).toEqual(before.messages);
 });
+
+test('NL-SCOPE-UNION-EXCLUDE cross-module addition then exclusion replaces the confirmed scope', async ({ page }) => {
+  const s = await setup(page), a = s.byKey('TC-LOGIN-01'), b = s.byKey('TC-LOGIN-02'), payment = s.byKey('TC-PAY-01');
+  const first = await send(page, '把登录模块的两条用例优先级改成P0，其他字段保持不变。', false, 2);
+  const operationId = first.assistant_message.metadata.operation_id;
+  const checkPreview = async (turn:any, ids:string[]) => {
+    expect(turn.intent).toBe('CASE_MODIFY');
+    expect(turn.assistant_message.metadata.operation_id).toBe(operationId);
+    expect(turn.assistant_message.metadata.modification_confirmation).toBeTruthy();
+    expect(new Set(turn.assistant_message.target_case_ids)).toEqual(new Set(ids));
+    expect(turn.action.job_id).toBeFalsy();
+    expect(await s.read()).toEqual(journal.original);
+  };
+  await checkPreview(first, [a.id, b.id]);
+  await page.reload();
+  const expanded = await send(page, '把 TC-PAY-01 也加进这次修改范围，原来两条继续保留，都是优先级P0，其他字段不变。', false, 2);
+  await checkPreview(expanded, [a.id, b.id, payment.id]);
+  const narrowed = await send(page, '排除 TC-LOGIN-01，这条保持不变；其余两条优先级改成P2，其他字段不变。', false, 2);
+  await checkPreview(narrowed, [b.id, payment.id]);
+  await page.reload();
+  const final = await ready(page, await send(page, '确认按最后的范围和要求修改。', true, 2));
+  expect(new Set(final.items.map((item:any) => item.ref))).toEqual(new Set([b.id, payment.id]));
+  for (const item of final.items) {
+    expect(item.field_diff.map((diff:any) => diff.field)).toEqual(['priority']);
+    expect(item.proposed_snapshot.priority).toBe('P2');
+    expect(item.quality?.passed).not.toBe(false);
+  }
+  expect(await s.read()).toEqual(journal.original);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read();
+  for (const target of [b, payment]) {
+    const changed = saved.find((item:any) => item.id === target.id);
+    expect(changed.priority).toBe('P2');
+    unchangedExcept(target, changed, ['priority']);
+  }
+  expect(saved.filter((item:any) => ![b.id, payment.id].includes(item.id))).toEqual(journal.original.filter((item:any) => ![b.id, payment.id].includes(item.id)));
+});
