@@ -1,0 +1,29 @@
+{
+  "operations": [
+    {
+      "intent": "CASE_QUERY",
+      "action": "CASE_SEARCH",
+      "instruction": "先查询支付模块的用例，只查询，原来的登录修改先不要执行。",
+      "confidence": 1.0,
+      "target_kind": "module",
+      "requires_confirmation": false,
+      "reason_codes": [
+        "explicit_user_query_request"
+      ],
+      "depends_on": null,
+      "target_text": "支付模块",
+      "action_evidence": "先查询支付模块的用例",
+      "changes": [],
+      "constraints": [
+        "原来的登录修改先不要执行"
+      ],
+      "clarification_questions": [],
+      "clarification_kind": "none",
+      "uses_selected_targets": false,
+      "resume_operation_id": null,
+      "speech_act": "request",
+      "query_presentation": "cases",
+      "routing_source": "semantic"
+    }
+  ]
+}

@@ -69,6 +69,7 @@ async function setup(page: Page, long = false, empty = false, transform: (item: 
   return { read: () => get(page, `/collections/${journal.collection.id}/test-cases`), byKey: (key: string) => journal.original.find((c: any) => c.case_key === journal.keyMap[key]) };
 }
 async function send(page: Page, content: string, confirm = true, serviceRetries = 0): Promise<any> {
+  const originalContent = content;
   for (const [alias, key] of Object.entries(journal.keyMap ?? {})) content = content.replaceAll(alias, String(key));
   const input = page.locator('.principle-composer textarea'); await expect(input).toBeEnabled({ timeout: 480000 });
   await input.fill(content); const started = Date.now();
@@ -82,7 +83,7 @@ async function send(page: Page, content: string, confirm = true, serviceRetries 
     await expect(input).toHaveValue(content);
     expect(await get(page, `/collections/${journal.collection.id}/test-cases`)).toEqual(journal.original);
     // Exercise the user-visible retry on the same draft; other failures are never retried.
-    return send(page, content, confirm, serviceRetries - 1);
+    return send(page, originalContent, confirm, serviceRetries - 1);
   }
   expect(response.ok(), body).toBeTruthy();
   let turn = JSON.parse(body); journal.turns.push({ content, response: turn });
@@ -219,17 +220,19 @@ for (const id of ['NL-MUL-01','NL-MUL-10']) test(`${id} accumulated pending chan
   expect(changed.revision_number).toBe(a.revision_number + 1);
   expect(s.after.filter((c: any) => c.id !== a.id)).toEqual(journal.original.filter((c: any) => c.id !== a.id));
 });
-test('NL-MUL-02 clarification preserves pending proposal and hides stale completion banner', async ({ page }) => {
+for (const recovery of [false, true]) test(`${recovery ? 'NL-MUL-02-SERVICE-RECOVERY' : 'NL-MUL-02'} clarification preserves pending proposal and hides stale completion banner`, async ({ page }) => {
+  const submit = (content: string) => send(page, content, true, recovery ? 2 : 0);
   const s = await setup(page), turns = prompt('NL-MUL-02'), a = s.byKey('TC-LOGIN-01');
-  await ready(page, await send(page, turns[0]));
-  const clarification = await send(page, turns[1]);
+  await ready(page, await submit(turns[0]));
+  const clarification = await submit(turns[1]);
   expect(clarification.action.job_id).toBeFalsy();
   await expect(page.locator('.principle-rewrite-status').filter({hasText:'改写完成，等待审阅'})).toHaveCount(0);
   expect(await s.read()).toEqual(journal.original);
-  await ready(page, await send(page, turns[2])); await apply(page);
-  const changed = (await s.read()).find((c: any) => c.id === a.id);
+  await ready(page, await submit(turns[2])); await apply(page);
+  const saved = await s.read(), changed = saved.find((c: any) => c.id === a.id);
   expect(changed.title).toBe('累计标题'); expect(changed.priority).toBe('P0');
-  expect(changed.revision_number).toBe(a.revision_number + 1);
+  unchangedExcept(a, changed, ['title', 'priority']);
+  expect(saved.filter((c: any) => c.id !== a.id)).toEqual(journal.original.filter((c: any) => c.id !== a.id));
 });
 test('NL-REV-01 confirmation starts suggestions without formal mutation', async ({ page }) => {
   const s = await setup(page);
@@ -410,4 +413,37 @@ test('NL-COLLECTION-EXPLICIT named other collection retains the conversation bou
   expect(state.collection_id).toBe(journal.collection.id);
   expect(await s.read()).toEqual(journal.original);
   await expect(page.locator('.principle-messages')).toContainText('请新建对话后继续');
+});
+
+for (const recovery of [false, true]) test(`${recovery ? 'NL-TASK-SWITCH-SERVICE-RECOVERY' : 'NL-TASK-SWITCH'} query another module then resume the original draft`, async ({ page }) => {
+  const submit = (content: string, confirm = true) => send(page, content, confirm, recovery ? 2 : 0);
+  const s = await setup(page), login = s.byKey('TC-LOGIN-01');
+  const paymentIds = [s.byKey('TC-PAY-01').id, s.byKey('TC-REFUND-01').id];
+  const preview = await submit('把用例 TC-LOGIN-01 的优先级改为P0，其他字段不变。', false);
+  expect(preview.assistant_message.target_case_ids).toEqual([login.id]);
+  expect(preview.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  const originalOperation = preview.assistant_message.metadata.operation_id;
+  expect(preview.action.job_id).toBeFalsy();
+  const query = await submit('先查询支付模块的用例，只查询，原来的登录修改先不要执行。', false);
+  expect(query.intent).toBe('CASE_QUERY');
+  expect(query.operation_plan.operations).toHaveLength(1);
+  expect(new Set(query.assistant_message.target_case_ids)).toEqual(new Set(paymentIds));
+  expect(query.action.job_id).toBeFalsy();
+  expect(await s.read()).toEqual(journal.original);
+  await page.reload();
+  const resumed = await submit('回到刚才登录用例 TC-LOGIN-01 的修改，把优先级改成P2，其他字段不变。', false);
+  expect(resumed.intent).toBe('CASE_MODIFY');
+  expect(resumed.assistant_message.metadata.operation_id).toBe(originalOperation);
+  expect(resumed.assistant_message.target_case_ids).toEqual([login.id]);
+  expect(resumed.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  expect(resumed.action.job_id).toBeFalsy();
+  const change = await ready(page, await submit('确认这条登录用例的修改。'));
+  expect(change.items.map((item: any) => item.ref)).toEqual([login.id]);
+  expect(await s.read()).toEqual(journal.original);
+  await apply(page);
+  await page.reload();
+  const saved = await s.read(), changed = saved.find((c: any) => c.id === login.id);
+  expect(changed.priority).toBe('P2');
+  unchangedExcept(login, changed, ['priority']);
+  expect(saved.filter((c: any) => c.id !== login.id)).toEqual(journal.original.filter((c: any) => c.id !== login.id));
 });

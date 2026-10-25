@@ -1,0 +1,49 @@
+[
+  {
+    "attempt": false,
+    "operations": [
+      {
+        "intent": "CASE_QUERY",
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "action_evidence": "先查询支付模块的用例"
+      },
+      {
+        "intent": "CASE_MODIFY",
+        "resume_operation_id": "ed734de2-801d-4777-a316-0653595d408e",
+        "speech_act": "negation",
+        "action_evidence": "原来的登录修改先不要执行"
+      }
+    ]
+  },
+  {
+    "result": {
+      "operations": [
+        {
+          "intent": "UNRESOLVED",
+          "action": "CLARIFY_INTENT",
+          "instruction": "先查询支付模块的用例，只查询，原来的登录修改先不要执行。",
+          "confidence": 0.0,
+          "target_kind": "none",
+          "requires_confirmation": true,
+          "reason_codes": [
+            "MODEL_FAILED",
+            "SEMANTIC_ROUTING_UNAVAILABLE"
+          ],
+          "depends_on": null,
+          "target_text": "",
+          "action_evidence": "",
+          "changes": [],
+          "constraints": [],
+          "clarification_questions": [],
+          "clarification_kind": "none",
+          "uses_selected_targets": false,
+          "resume_operation_id": null,
+          "speech_act": "request",
+          "query_presentation": "cases",
+          "routing_source": "rules"
+        }
+      ]
+    }
+  }
+]

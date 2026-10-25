@@ -247,6 +247,7 @@ def _validate_model_plan(
         operation.routing_source = "semantic"
         if operation.speech_act in {"question", "negation", "quotation"}:
             operation.intent = "KNOWLEDGE_QA"
+            operation.resume_operation_id = None
             operation.requires_confirmation = False
             operation.target_kind = "none"
             operation.target_text = ""
@@ -392,6 +393,9 @@ def sdk_plan(
             "例如不要重写登录模块用例、不要将用例CASE-1的标题改为成功，都必须speech_act=negation，"
             "intent=KNOWLEDGE_QA，而不是CASE_MODIFY。不要把否定词丢弃后执行后半句。"
             "但修改优先级、不改标题是request，保留约束不是对整个修改的否定。"
+            "一句话明确请求新操作并要求旧任务暂不执行时，后半句是保留旧任务的约束，不另建说明、取消或续接操作。"
+            "例如先查询支付模块，只查询，原来的登录修改先不要执行：仅一个CASE_QUERY，"
+            "speech_act=request，resume_operation_id=null；把旧任务暂不执行写入constraints。"
             "KNOWLEDGE_QA也包含翻译、解释、总结、润色等只返回文本的通用请求。"
             "待翻译的数字、引文、上一条回答都是文本内容，不是待查找的用例编号；"
             "例如翻译1234、把上一条回答翻译成英文，应输出KNOWLEDGE_QA、"

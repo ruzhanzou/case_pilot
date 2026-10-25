@@ -317,3 +317,26 @@ def test_clarification_evidence_repair_does_not_misdiagnose_valid_resume(monkeyp
     op = result.operations[0]
     assert op.intent == ('CASE_MODIFY' if repaired else 'UNRESOLVED')
     assert op.resume_operation_id == ('pending-modification' if repaired else None)
+
+
+@pytest.mark.parametrize("speech_act", ["negation", "question", "quotation"])
+def test_nonexecuting_clause_cannot_resume_a_mutation_task(monkeypatch, speech_act):
+    content = "先查询支付模块，原登录修改先不要执行"
+    model = Mock(return_value=router.IntentPlanDraft(operations=[
+        router.IntentOperationDraft(intent="CASE_QUERY", instruction="先查询支付模块",
+            confidence=1, action_evidence="先查询支付模块"),
+        router.IntentOperationDraft(intent="CASE_MODIFY", instruction="原登录修改先不要执行",
+            confidence=1, speech_act=speech_act, action_evidence="原登录修改先不要执行",
+            resume_operation_id="pending-edit"),
+    ]))
+    monkeypatch.setattr(router, "sdk_plan", model)
+    result = router.plan_intents(content, Mock(side_effect=AssertionError("No rule fallback")),
+        has_targets=True, phase="maintenance", target_context=[], provider="openai_compatible",
+        active_operations=[{"id": "pending-edit", "intent": "CASE_MODIFY", "status": "awaiting_target"}],
+        model_name="fixture", base_url="https://example.test", api_key="fixture",
+        timeout_seconds=10, tracing_enabled=False)
+    assert model.call_count == 1
+    assert result.operations[0].intent == "CASE_QUERY"
+    assert result.operations[1].intent == "KNOWLEDGE_QA"
+    assert result.operations[1].resume_operation_id is None
+    assert not result.operations[1].requires_confirmation
