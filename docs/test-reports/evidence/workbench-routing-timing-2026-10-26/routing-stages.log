@@ -1,0 +1,9 @@
+INFO:casepilot_api.agent_router:routing_stage stage=intent model=doubao-seed-2.0-lite outcome=ok duration_seconds=13.910
+WARNING:casepilot_api.agent_router:routing_stage stage=collection_reference model=doubao-seed-2.0-lite outcome=ok duration_seconds=26.737
+WARNING:casepilot_api.agent_router:routing_stage stage=scope model=doubao-seed-2.0-lite outcome=ok duration_seconds=27.798
+INFO:casepilot_api.agent_router:routing_stage stage=intent model=doubao-seed-2.0-lite outcome=ok duration_seconds=16.831
+INFO:casepilot_api.agent_router:routing_stage stage=rewrite_reply model=doubao-seed-2.0-lite outcome=ok duration_seconds=10.400
+INFO:casepilot_api.agent_router:routing_stage stage=collection_reference model=doubao-seed-2.0-lite outcome=ok duration_seconds=18.244
+INFO:casepilot_api.agent_router:routing_stage stage=scope model=doubao-seed-2.0-lite outcome=ok duration_seconds=12.423
+INFO:casepilot_api.agent_router:routing_stage stage=intent model=doubao-seed-2.0-lite outcome=ok duration_seconds=19.769
+INFO:casepilot_api.agent_router:routing_stage stage=rewrite_reply model=doubao-seed-2.0-lite outcome=ok duration_seconds=14.177
