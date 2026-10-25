@@ -855,6 +855,34 @@ for (const remove of [true, false]) test(`NL-STEP-${remove ? 'REMOVE' : 'INSERT'
   expect(saved.filter((c:any) => c.id !== target.id)).toEqual(journal.original.filter((c:any) => c.id !== target.id));
 });
 
+test('NL-MOVE-MODULE moving a case changes only its module without switching collections', async ({ page }) => {
+  const s = await setup(page), target = s.byKey('TC-LOGIN-01');
+  const destination = '账号中心/短信登录';
+  const preview = await send(page, `把 TC-LOGIN-01 移到“${destination}”模块，保留原用例编号和全部内容，只调整所属模块，不复制也不删除。`, false, 2);
+  expect(preview.intent).toBe('CASE_MODIFY');
+  expect(preview.operation_plan.operations.map((op:any) => op.intent)).toEqual(['CASE_MODIFY']);
+  expect(preview.assistant_message.target_case_ids).toEqual([target.id]);
+  expect(preview.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  expect(preview.action.job_id).toBeFalsy();
+  expect((await get(page, `/conversations/${preview.conversation_id}`)).collection_id).toBe(journal.collection.id);
+  expect(await s.read()).toEqual(journal.original);
+  await page.reload();
+  const change = await ready(page, await send(page, '确认移动。', true, 2));
+  expect(change.items.map((item:any) => item.ref)).toEqual([target.id]);
+  expect(change.items[0].field_diff.map((diff:any) => diff.field)).toEqual(['module']);
+  expect(change.items[0].proposed_snapshot.module).toBe(destination);
+  expect(change.items[0].quality?.passed).not.toBe(false);
+  expect(await s.read()).toEqual(journal.original);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read(), changed = saved.find((item:any) => item.id === target.id);
+  expect(saved).toHaveLength(journal.original.length);
+  expect(changed.module).toBe(destination);
+  unchangedExcept(target, changed, ['module']);
+  expect(saved.filter((item:any) => item.id !== target.id)).toEqual(journal.original.filter((item:any) => item.id !== target.id));
+  expect((await get(page, `/conversations/${preview.conversation_id}`)).collection_id).toBe(journal.collection.id);
+});
+
 test('NL-STEP-SWAP step ordinals reorder action and expected pairs without changing case scope', async ({ page }) => {
   const s = await setup(page, false, false, stepFixture), target = s.byKey('TC-LOGIN-01');
   const pairs = (item:any) => item.steps.map((step:any) => ({ action: step.action, expected: step.expected }));
