@@ -986,6 +986,10 @@ test('NL-INVALID-PRIORITY clarifies unsupported P9 then accepts an explicit corr
   const corrected = await send(page, '刚才写错了，改成P2，还是同一条用例，其他字段不变。', false, 2);
   expect(corrected.assistant_message.target_case_ids).toEqual([target.id]);
   expect(corrected.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  const correctedOperation = corrected.operation_plan.operations.find((o:any) => o.id === corrected.assistant_message.metadata.operation_id);
+  expect(correctedOperation.payload.rewrite_draft.requirements).toMatch(/[\u4e00-\u9fff]/);
+  expect(correctedOperation.payload.rewrite_draft.requirements).toContain('P2');
+  expect(correctedOperation.payload.rewrite_draft.requirements).not.toContain('P9');
   expect(corrected.action.job_id).toBeFalsy();
   expect(await s.read()).toEqual(journal.original);
   const change = await ready(page, await send(page, '确认最新方案。', true, 2));

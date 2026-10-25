@@ -12,13 +12,13 @@ from casepilot_api.model_client import managed_model_client
 class RewriteReply(BaseModel):
     action: Literal["confirm", "update", "cancel", "clarify"]
     scope_action: Literal["preserve", "replace"] = "preserve"
-    scope_instruction: str = Field(default="", max_length=4000)
+    scope_instruction: str = Field(default="", max_length=4000, description="完整的新范围条件；解释沿用用户对话语言，编号和引用值原样保留。")
     # Complete replacement, including retained constraints; not appended history.
     requirements: str = Field(default="", max_length=8000, description=(
         "完整的最新修改要求，使用用户的对话语言；用户指定的字段值、编号、引用内容逐字保留，不翻译。"
     ))
     requirements_ready: bool = True
-    clarification: str = Field(default="", max_length=1000)
+    clarification: str = Field(default="", max_length=1000, description="用用户对话语言提出一个具体问题，不翻译用户指定的字段原值。")
     confidence: float = Field(default=1, ge=0, le=1)
     additional_intents: list[Literal["CASE_DELETE", "CASE_GENERATE", "OTHER_TASK"]] = Field(
         default_factory=list,
@@ -101,6 +101,12 @@ def interpret_rewrite_reply(content: str, state: dict, *, provider: str, model_n
             "先删掉编号X再改其余，明确要求删除整条用例：additional_intents含CASE_DELETE，action=clarify；"
             "不能偷换成范围排除X。仅本轮不改X、范围排除X才是正常范围更新。删除重复步骤是改写字段，不是删除用例。"
             "若仍缺修改方向则requirements_ready=false。没有可靠依据时clarify，不猜测范围，不替用户确认。"
+            "输出示例（仅示范规则，实际目标和值必须来自当前输入）："
+            "旧要求为把TC-A优先级改P9，本轮为刚才写错了，改成P2，还是同一条，其他字段不变："
+            '返回action=update、scope_action=preserve、priority_assignment=P2，requirements为“把TC-A的优先级改为P2，其他字段保持不变。”。'
+            "旧要求为Set the title to Login / OTP — v2, keep other fields unchanged，本轮为再把优先级改P0，标题也保留："
+            'requirements为“标题改为Login / OTP — v2，优先级改为P0，其余字段保持不变。”，不能返回英文修改说明或把标题翻译成中文。'
+            "这些示例不授权添加用户未提出的要求；旧要求被否定时必须撤销，不能照抄示例。"
             "JSON Schema: " + json.dumps(SemanticRewriteReply.model_json_schema(), ensure_ascii=False)
         ),
         model=OpenAIChatCompletionsModel(model=model_name, openai_client=client),

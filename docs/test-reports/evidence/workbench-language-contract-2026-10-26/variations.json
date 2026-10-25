@@ -1,0 +1,38 @@
+[
+  {
+    "name": "zh_mixed",
+    "input": "不是最高优先级，调整为P1；标题仍然用之前指定的英文，其他字段保持原样。",
+    "draft_requirements": "Set title to Sign in / OTP – build 7 and priority to P0; leave other fields unchanged.",
+    "reply": {
+      "action": "update",
+      "scope_action": "preserve",
+      "scope_instruction": "TC-EXAMPLE-2",
+      "requirements": "标题保留为Sign in / OTP – build 7，优先级调整为P1，其他字段保持不变。",
+      "requirements_ready": true,
+      "clarification": "",
+      "confidence": 1.0,
+      "additional_intents": [],
+      "priority_assignment": "P1"
+    },
+    "seconds": 11.167,
+    "errors": []
+  },
+  {
+    "name": "en_mixed",
+    "input": "Use P2 instead, keep the exact title and all other fields unchanged.",
+    "draft_requirements": "Set title to Checkout / 3DS – beta and priority to P0; leave other fields unchanged.",
+    "reply": {
+      "action": "update",
+      "scope_action": "preserve",
+      "scope_instruction": "TC-EXAMPLE-2",
+      "requirements": "Keep the exact title Checkout / 3DS – beta, change priority to P2, keep all other fields unchanged.",
+      "requirements_ready": true,
+      "clarification": "",
+      "confidence": 1.0,
+      "additional_intents": [],
+      "priority_assignment": "P2"
+    },
+    "seconds": 14.179,
+    "errors": []
+  }
+]
