@@ -447,6 +447,37 @@ for (const recovery of [false, true]) test(`${recovery ? 'NL-COUNT-SERVICE-RECOV
   expect(saved.filter((c:any) => c.id !== ids[0])).toEqual(journal.original.filter((c:any) => c.id !== ids[0]));
 });
 
+test('NL-NEGATED-PRIORITY query exclusion survives reload and references only the matching case', async ({ page }) => {
+  const s = await setup(page, false, false, item => {
+    if (item.case_key === 'TC-LOGIN-01') item.priority = 'P0';
+  });
+  const target = s.byKey('TC-LOGIN-02');
+  const query = await send(page, '查询登录模块中优先级不是P0的用例，只查询不修改。', false, 2);
+  expect(query.intent).toBe('CASE_QUERY');
+  expect(query.assistant_message.target_case_ids).toEqual([target.id]);
+  expect(query.action.job_id).toBeFalsy();
+  expect(await s.read()).toEqual(journal.original);
+  await page.reload();
+  const preview = await send(page, '把刚查出的这一条优先级改为P2，其他字段不变。', false, 2);
+  expect(preview.intent).toBe('CASE_MODIFY');
+  expect(preview.assistant_message.target_case_ids).toEqual([target.id]);
+  expect(preview.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  expect(preview.action.job_id).toBeFalsy();
+  expect(await s.read()).toEqual(journal.original);
+  await page.reload();
+  const change = await ready(page, await send(page, '确认修改。', true, 2));
+  expect(change.items.map((item:any) => item.ref)).toEqual([target.id]);
+  expect(change.items[0].field_diff.map((diff:any) => diff.field)).toEqual(['priority']);
+  expect(change.items[0].quality?.passed).not.toBe(false);
+  expect(await s.read()).toEqual(journal.original);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read(), changed = saved.find((item:any) => item.id === target.id);
+  expect(changed.priority).toBe('P2');
+  unchangedExcept(target, changed, ['priority']);
+  expect(saved.filter((item:any) => item.id !== target.id)).toEqual(journal.original.filter((item:any) => item.id !== target.id));
+});
+
 test('NL-COLLECTION-EXPLICIT named other collection retains the conversation boundary', async ({ page }) => {
   const s = await setup(page);
   const collections = await get(page, `/spaces/${journal.collection.space_id}/collections`);
