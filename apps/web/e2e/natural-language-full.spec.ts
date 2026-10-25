@@ -1018,3 +1018,40 @@ test('NL-PRIORITY-LITERAL P9 in a title is literal text rather than a priority a
   unchangedExcept(target, changed, ['title']);
   expect(saved.filter((item:any) => item.id !== target.id)).toEqual(journal.original.filter((item:any) => item.id !== target.id));
 });
+
+test('NL-COUNT-SHORTAGE Chinese quantity mismatch clarifies then resumes with available matching cases', async ({ page }) => {
+  const s = await setup(page), targets = [s.byKey('TC-LOGIN-01'), s.byKey('TC-LOGIN-02')];
+  const first = await send(page, '把登录模块的三条用例优先级改为P0，其他字段保持不变。', false, 2);
+  const operationId = first.assistant_message.metadata.operation_id;
+  expect(first.intent).toBe('CASE_MODIFY');
+  expect(first.action.job_id).toBeFalsy();
+  expect(first.action.change_set_id).toBeFalsy();
+  expect(first.assistant_message.metadata.modification_confirmation).toBeFalsy();
+  expect(first.assistant_message.status).toBe('awaiting_clarification');
+  expect(await s.read()).toEqual(journal.original);
+  await page.reload();
+  const corrected = await send(page, '那就改登录模块实际有的两条，不要拿支付或退款的用例凑数，其他要求照旧。', false, 2);
+  expect(corrected.assistant_message.metadata.operation_id).toBe(operationId);
+  expect(corrected.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  expect(new Set(corrected.assistant_message.target_case_ids)).toEqual(new Set(targets.map(c => c.id)));
+  expect(corrected.action.job_id).toBeFalsy();
+  expect(await s.read()).toEqual(journal.original);
+  await page.reload();
+  const change = await ready(page, await send(page, '确认这个范围和修改要求。', true, 2));
+  expect(new Set(change.items.map((item:any) => item.ref))).toEqual(new Set(targets.map(c => c.id)));
+  for (const item of change.items) {
+    expect(item.field_diff.map((diff:any) => diff.field)).toEqual(['priority']);
+    expect(item.proposed_snapshot.priority).toBe('P0');
+    expect(item.quality?.passed).not.toBe(false);
+  }
+  expect(await s.read()).toEqual(journal.original);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read(), ids = targets.map(c => c.id);
+  for (const target of targets) {
+    const changed = saved.find((item:any) => item.id === target.id);
+    expect(changed.priority).toBe('P0');
+    unchangedExcept(target, changed, ['priority']);
+  }
+  expect(saved.filter((item:any) => !ids.includes(item.id))).toEqual(journal.original.filter((item:any) => !ids.includes(item.id)));
+});
