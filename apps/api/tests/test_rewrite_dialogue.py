@@ -335,7 +335,7 @@ async def test_legacy_pending_task_recovers_original_explicit_targets(draft, mon
         operation = db.get(ConversationOperation, UUID(oid))
         operation.target = {'resolved': False, 'case_ids': [], 'candidate_refs': []}
         operation.payload = {**operation.payload, 'instruction': '步骤太简单，丰富以下',
-            'modification_confirmation': None, 'plan': {}}
+            'modification_confirmation': None, 'rewrite_draft': None, 'plan': {}}
         message = db.get(ConversationMessage, operation.message_id)
         message.message_metadata = {**message.message_metadata, 'request': {
             **message.message_metadata['request'], 'content': '步骤太简单，丰富以下',
@@ -349,3 +349,110 @@ async def test_legacy_pending_task_recovers_original_explicit_targets(draft, mon
     assert result.json()['assistant_message']['target_case_ids'] == [cases[1]['id']]
     assert result.json()['assistant_message']['metadata']['modification_confirmation']
     assert not dispatched
+
+
+@pytest.mark.asyncio
+async def test_failed_scope_persists_clarification_and_blocks_confirmation(draft, monkeypatch):
+    client, workspace, oid, cases, dispatched = draft
+    monkeypatch.setattr(conversations, 'interpret_rewrite_reply', lambda *a, **k: RewriteReply(
+        action='update', scope_action='replace', scope_instruction='只改三条'))
+    monkeypatch.setattr(conversations, '_resolve_action_scope',
+                        lambda db, conv, payload, *a, **k: (payload, '数量不一致'))
+    endpoint = f'/api/v1/conversation-operations/{oid}/resume'
+    response = await client.post(endpoint, json={'content': '只改三条'})
+    assert response.status_code == 202
+    restored = (await client.get(f'/api/v1/conversations/{workspace}')).json()
+    operation = next(o for o in restored['operation_plan']['operations'] if o['id'] == oid)
+    state = operation['payload']['rewrite_draft']
+    assert state['phase'] == 'clarifying'
+    assert state['clarification'] == '数量不一致'
+    assert not operation['payload']['modification_confirmation']
+    monkeypatch.setattr(conversations, 'interpret_rewrite_reply',
+                        lambda *a, **k: RewriteReply(action='confirm'))
+    response = await client.post(endpoint, json={'content': '确认'})
+    assert response.status_code == 202
+    assert not response.json()['action'].get('job_id')
+    assert not dispatched
+
+
+@pytest.mark.asyncio
+async def test_stale_preview_cannot_restore_missing_requirements(draft):
+    client, _, oid, _, dispatched = draft
+    with get_session_factory()() as db:
+        operation = db.get(ConversationOperation, UUID(oid))
+        operation.payload = {**operation.payload, 'rewrite_draft': {
+            **operation.payload['rewrite_draft'], 'requirements_ready': False}}
+        db.commit()
+    response = await client.post(f'/api/v1/conversation-operations/{oid}/resume',
+                                 json={'confirm_modification': True})
+    assert response.status_code == 202
+    assert not response.json()['action'].get('job_id')
+    assert not dispatched
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("idempotent", [False, True])
+@pytest.mark.parametrize("failure", ["unavailable_plan", "connection"])
+async def test_routing_outage_preserves_draft_and_retries_without_new_task(draft, monkeypatch, idempotent, failure):
+    from casepilot_api.agent_router import IntentOperationDraft, IntentPlanDraft
+
+    client, workspace, oid, cases, dispatched = draft
+    monkeypatch.setattr(conversations.settings, "agent_provider", "openai_compatible")
+    monkeypatch.setattr(conversations, "_retry_generation_from_text", lambda *a: None)
+    content = "优先级改成P2，其他字段不变"
+    planner = Mock(return_value=IntentPlanDraft(operations=[IntentOperationDraft(
+        intent="UNRESOLVED", instruction=content, confidence=0,
+        reason_codes=["MODEL_FAILED", "SEMANTIC_ROUTING_UNAVAILABLE"],
+        requires_confirmation=True,
+    )]))
+    monkeypatch.setattr(conversations, "plan_intents", planner)
+    if failure == "connection":
+        import httpx
+        from openai import APIConnectionError
+
+        monkeypatch.setattr(conversations, "_retry_generation_from_text", Mock(side_effect=
+            APIConnectionError(request=httpx.Request("POST", "https://model.invalid"))))
+    before = (await client.get(f"/api/v1/conversations/{workspace}")).json()
+    payload = {"content": content}
+    if idempotent:
+        payload["client_request_id"] = str(uuid4())
+    response = await client.post(f"/api/v1/conversations/{workspace}/messages", json=payload)
+    assert response.status_code == 503
+    assert "未执行" in response.json()["detail"]
+    after = (await client.get(f"/api/v1/conversations/{workspace}")).json()
+    assert after["operation_plan"] == before["operation_plan"]
+    assert after["messages"] == before["messages"]
+    assert not dispatched
+
+    monkeypatch.setattr(conversations, "_retry_generation_from_text", lambda *a: None)
+    planner.return_value = IntentPlanDraft(operations=[IntentOperationDraft(
+        intent="CASE_MODIFY", instruction=content, confidence=1,
+        resume_operation_id=oid, uses_selected_targets=False,
+    )])
+    monkeypatch.setattr(conversations, "interpret_rewrite_reply", lambda *a, **k: RewriteReply(
+        action="update", requirements=content,
+    ))
+    response = await client.post(f"/api/v1/conversations/{workspace}/messages", json=payload)
+    assert response.status_code == 202, response.text
+    assert response.json()["assistant_message"]["metadata"]["operation_id"] == oid
+    final = (await client.get(f"/api/v1/conversations/{workspace}")).json()
+    assert len(final["operation_plan"]["operations"]) == len(before["operation_plan"]["operations"])
+    assert sum(m["role"] == "user" and m["content"] == content for m in final["messages"]) == 1
+    assert not dispatched
+
+
+@pytest.mark.asyncio
+async def test_confirmed_rewrite_does_not_infer_generation_test_object(draft, monkeypatch):
+    client, workspace, oid, cases, dispatched = draft
+    infer = Mock(side_effect=AssertionError("rewrite must not infer a generation test object"))
+    monkeypatch.setattr(conversations, "_test_object_from_memory", infer)
+    monkeypatch.setattr(conversations, "interpret_rewrite_reply", lambda *a, **k: RewriteReply(action="confirm"))
+    response = await client.post(f"/api/v1/conversation-operations/{oid}/resume", json={"content": "确认"})
+    assert response.status_code == 202, response.text
+    assert response.json()["action"]["job_id"]
+    assert len(dispatched) == 1
+    infer.assert_not_called()
+    with get_session_factory()() as db:
+        job = db.get(GenerationJob, UUID(response.json()["action"]["job_id"]))
+        assert {item["ref"] for item in job.input_payload["case_context"]} == {c["id"] for c in cases}
+        assert "预期结果保持不变" in job.input_payload["prompt"]

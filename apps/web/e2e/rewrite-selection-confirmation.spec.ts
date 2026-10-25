@@ -20,7 +20,7 @@ async function setup(page: Page, count = 2, previousTask = false, unresolvedCurr
     else if (path.endsWith('/spaces/space/collections')) data = [collection];
     else if (path.endsWith('/collections/alpha')) data = collection;
     else if (path.endsWith('/collections/alpha/test-cases')) data = cases;
-    else if (path.endsWith('/resume')) {
+    else if (path.endsWith('/resume') || path.endsWith('/conversations/workspace/messages')) {
       calls.push(route.request().postDataJSON());
       data = { conversation_id: 'workspace', user_message: user, assistant_message: assistant, intent: 'CASE_MODIFY', action: { type: 'clarification' }, operation_plan: { operations } };
     } else if (path.includes('/conversations/') || path.includes('/workspaces/') || path.endsWith('/workspace')) {
@@ -116,4 +116,34 @@ test('an unresolved task does not inherit the earlier completed operation scope'
   await expect.poll(() => s.calls.length).toBe(1);
   expect(s.calls[0].confirm_modification).toBe(false);
   expect(s.calls[0].targets).toEqual([{ kind: 'case', case_ids: ['case1'], candidate_refs: [] }]);
+});
+
+test('model outage preserves correction and selection through reload and retry', async ({ page }) => {
+  const s = await setup(page);
+  const composer = page.locator('.principle-composer textarea');
+  const correction = '只改第一条，优先级改成P2，保留标题和步骤';
+  let unavailable = true;
+  const failedBodies: Array<Record<string, unknown>> = [];
+  await page.route('**/api/v1/conversations/workspace/messages', async route => {
+    if (!unavailable) { await route.fallback(); return; }
+    failedBodies.push(route.request().postDataJSON());
+    await route.fulfill({ status: 503, json: { detail: '模型服务暂时不可用，未执行本次操作，请稍后重试。' } });
+  });
+  await composer.fill(correction);
+  await page.locator('.principle-composer button[type=submit]').click();
+  await expect(page.getByRole('alert')).toContainText('未执行本次操作');
+  await expect(composer).toBeEnabled();
+  await expect(composer).toHaveValue(correction);
+  expect(failedBodies.length).toBeGreaterThan(0);
+  expect(s.calls).toHaveLength(0);
+  await page.reload();
+  await expect(composer).toHaveValue(correction);
+  await expect(s.checks.nth(0)).toBeChecked();
+  await expect(s.checks.nth(1)).toBeChecked();
+  unavailable = false;
+  await page.locator('.principle-composer button[type=submit]').click();
+  await expect.poll(() => s.calls.length).toBe(1);
+  expect(s.calls[0].content).toBe(correction);
+  expect(s.calls[0].targets).toEqual(failedBodies[0].targets);
+  await expect(composer).toBeEnabled();
 });

@@ -1,0 +1,916 @@
+{
+  "turns": [
+    {
+      "content": "检查当前集合重复冗余用例，说明重复依据和独有覆盖，只检查不修改。",
+      "response": {
+        "conversation_id": "f840839c-ac80-4d98-af50-f83b7b11fe21",
+        "user_message": {
+          "id": "481f1fb5-f543-430e-bcab-eaf3333f5309",
+          "role": "user",
+          "content": "检查当前集合重复冗余用例，说明重复依据和独有覆盖，只检查不修改。",
+          "intent": "CASE_DEDUP",
+          "intent_confidence": 1,
+          "status": "completed",
+          "target_case_ids": [],
+          "related_job_id": null,
+          "citations": [],
+          "metadata": {
+            "request": {
+              "scope": "current",
+              "content": "检查当前集合重复冗余用例，说明重复依据和独有覆盖，只检查不修改。",
+              "targets": [],
+              "model_id": "doubao-seed-2.0-lite",
+              "document_ids": [],
+              "target_scope": "inferred",
+              "intent_override": null,
+              "target_case_ids": [],
+              "client_request_id": "b7254dc7-2747-4a87-8688-df229db14ed9",
+              "generation_strategy": null,
+              "inherit_attachments": true,
+              "source_operation_id": null,
+              "use_space_knowledge": false,
+              "knowledge_source_ids": [],
+              "source_collection_ids": [],
+              "target_candidate_snapshots": []
+            },
+            "submission_request_id": "b7254dc7-2747-4a87-8688-df229db14ed9"
+          },
+          "created_at": "2026-10-25T12:35:36.299207Z"
+        },
+        "assistant_message": {
+          "id": "d0f8a749-e684-4b98-8a20-a6470c349662",
+          "role": "assistant",
+          "content": "本次检查 4 条用例。\n执行步骤：读取用例与需求依据 → 检查问题并记录用例引用 → 汇总建议。\n检查过程不会修改用例。",
+          "intent": "CASE_DEDUP",
+          "intent_confidence": 1,
+          "status": "running",
+          "target_case_ids": [
+            "08c1fa85-fbd1-47e5-848a-82b1f042cea0",
+            "c2e7e541-81d0-4439-8f7a-cfaf0b637636",
+            "74d51284-23de-46e7-934b-b1037e6788ce",
+            "7963f75f-65d7-443d-8ed2-1a57f5986f5f"
+          ],
+          "related_job_id": "580eefaf-043d-445c-a304-0e93e577a662",
+          "citations": [],
+          "metadata": {
+            "operation_id": "65c50b84-7c71-4a53-96ef-5632cc4daebb",
+            "target_count": 4,
+            "analysis_kind": "CASE_DEDUP",
+            "hidden_progress": false,
+            "source_message_id": "481f1fb5-f543-430e-bcab-eaf3333f5309",
+            "source_operation_id": null
+          },
+          "created_at": "2026-10-25T12:36:10.200328Z"
+        },
+        "intent": "CASE_DEDUP",
+        "intent_confidence": 1,
+        "requires_intent_confirmation": false,
+        "action": {
+          "type": "knowledge_qa",
+          "job_id": "580eefaf-043d-445c-a304-0e93e577a662"
+        },
+        "operation_plan": {
+          "status": "running",
+          "source_message_id": "481f1fb5-f543-430e-bcab-eaf3333f5309",
+          "current_operation_id": "65c50b84-7c71-4a53-96ef-5632cc4daebb",
+          "operations": [
+            {
+              "source_message_id": "481f1fb5-f543-430e-bcab-eaf3333f5309",
+              "completed_at": null,
+              "id": "65c50b84-7c71-4a53-96ef-5632cc4daebb",
+              "sequence": 0,
+              "intent": "CASE_DEDUP",
+              "confidence": 1,
+              "status": "running",
+              "target": {
+                "kind": "none",
+                "selectors": [],
+                "case_ids": [
+                  "08c1fa85-fbd1-47e5-848a-82b1f042cea0",
+                  "c2e7e541-81d0-4439-8f7a-cfaf0b637636",
+                  "74d51284-23de-46e7-934b-b1037e6788ce",
+                  "7963f75f-65d7-443d-8ed2-1a57f5986f5f"
+                ],
+                "candidate_refs": [],
+                "resolved": true
+              },
+              "payload": {
+                "plan": {
+                  "version": 2,
+                  "intent": "CASE_DEDUP",
+                  "action": "CASE_DEDUP",
+                  "instruction": "检查当前集合重复冗余用例，说明重复依据和独有覆盖，只检查不修改。",
+                  "confidence": 1,
+                  "target_kind": "none",
+                  "requires_confirmation": false,
+                  "reason_codes": [
+                    "check_redundant_cases",
+                    "provide_duplication_basis",
+                    "show_unique_coverage"
+                  ],
+                  "depends_on": null,
+                  "target_text": "当前集合",
+                  "action_evidence": "检查当前集合重复冗余用例",
+                  "changes": [],
+                  "constraints": [
+                    "只检查不修改"
+                  ],
+                  "clarification_questions": [],
+                  "clarification_kind": "none",
+                  "uses_selected_targets": false,
+                  "resume_operation_id": null,
+                  "speech_act": "request",
+                  "query_presentation": "cases",
+                  "routing_source": "semantic"
+                },
+                "instruction": "检查当前集合重复冗余用例，说明重复依据和独有覆盖，只检查不修改。",
+                "action": "CASE_DEDUP",
+                "reason_codes": [
+                  "check_redundant_cases",
+                  "provide_duplication_basis",
+                  "show_unique_coverage"
+                ],
+                "depends_on": null,
+                "predecessor_job_id": null,
+                "source_operation_id": null
+              },
+              "result": {
+                "scope_versions": {
+                  "08c1fa85-fbd1-47e5-848a-82b1f042cea0": "11ac6fbb-33b4-4562-b148-d376ac9450cc",
+                  "c2e7e541-81d0-4439-8f7a-cfaf0b637636": "5cb40e42-af6f-4703-9350-c484651224ff",
+                  "74d51284-23de-46e7-934b-b1037e6788ce": "af5504a4-c0b4-424a-bd70-07522b8fb02b",
+                  "7963f75f-65d7-443d-8ed2-1a57f5986f5f": "e2ee5936-59d0-44b1-bf8a-0ffb52cb1296"
+                },
+                "scope_modules": [
+                  "支付/付款",
+                  "支付/退款",
+                  "登录/密码",
+                  "登录/短信"
+                ],
+                "scope_count": 4
+              },
+              "requires_confirmation": false,
+              "related_job_id": "580eefaf-043d-445c-a304-0e93e577a662",
+              "related_change_set_id": null,
+              "error_code": null,
+              "created_at": "2026-10-25T12:35:36.302969Z"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "timings": [
+    {
+      "kind": "message_response",
+      "ms": 50999
+    }
+  ],
+  "startedAt": "2026-10-25T12:35:16.827Z",
+  "collection": {
+    "id": "6af69ad5-bf51-46ae-94cb-6ad4fa01ed84",
+    "space_id": "f436a10c-4671-4e05-8500-eb52db5b12ec",
+    "name": "NL评测-NL-ANALYSIS-CASE_DEDUP-1792931717058",
+    "description": "",
+    "mind_map_notes": [],
+    "case_count": 0,
+    "lifecycle_status": "empty",
+    "creator": {
+      "id": "5cfd9856-6165-4f62-a13e-13eba2fbb78c",
+      "display_name": "自然语言验收",
+      "email": "nl-1792931716833-ekt3w84bbwt@casepilot.test"
+    },
+    "test_target": null,
+    "created_at": "2026-10-25T12:35:17.141197Z"
+  },
+  "keyMap": {
+    "TC-LOGIN-01": "TC-LOGIN-01-1792931717153",
+    "TC-LOGIN-02": "TC-LOGIN-02-1792931717153",
+    "TC-PAY-01": "TC-PAY-01-1792931717153",
+    "TC-REFUND-01": "TC-REFUND-01-1792931717153"
+  },
+  "original": [
+    {
+      "id": "08c1fa85-fbd1-47e5-848a-82b1f042cea0",
+      "case_key": "TC-LOGIN-01-1792931717153",
+      "collection_ids": [
+        "6af69ad5-bf51-46ae-94cb-6ad4fa01ed84"
+      ],
+      "current_revision_id": "11ac6fbb-33b4-4562-b148-d376ac9450cc",
+      "revision_number": 1,
+      "title": "短信登录",
+      "description": "",
+      "module": "登录/短信",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "手机号已注册且账号启用；准备有效的未使用验证码"
+      ],
+      "steps": [
+        {
+          "id": "31c5d3b0-cffd-4a58-9af0-814c821f46cf",
+          "action": "输入短信验证码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "5cfd9856-6165-4f62-a13e-13eba2fbb78c",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931716833-ekt3w84bbwt@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:35:17.203645Z"
+    },
+    {
+      "id": "c2e7e541-81d0-4439-8f7a-cfaf0b637636",
+      "case_key": "TC-LOGIN-02-1792931717153",
+      "collection_ids": [
+        "6af69ad5-bf51-46ae-94cb-6ad4fa01ed84"
+      ],
+      "current_revision_id": "5cb40e42-af6f-4703-9350-c484651224ff",
+      "revision_number": 1,
+      "title": "密码登录",
+      "description": "",
+      "module": "登录/密码",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "账号已注册且启用；准备正确密码"
+      ],
+      "steps": [
+        {
+          "id": "56ce2410-c719-48c9-b380-edb0467d633e",
+          "action": "输入账号及正确密码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "5cfd9856-6165-4f62-a13e-13eba2fbb78c",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931716833-ekt3w84bbwt@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:35:17.269165Z"
+    },
+    {
+      "id": "74d51284-23de-46e7-934b-b1037e6788ce",
+      "case_key": "TC-PAY-01-1792931717153",
+      "collection_ids": [
+        "6af69ad5-bf51-46ae-94cb-6ad4fa01ed84"
+      ],
+      "current_revision_id": "af5504a4-c0b4-424a-bd70-07522b8fb02b",
+      "revision_number": 1,
+      "title": "支付成功",
+      "description": "",
+      "module": "支付/付款",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备待支付订单和可用支付账户"
+      ],
+      "steps": [
+        {
+          "id": "97d019d3-ce2f-4b3e-bab6-db8d5da36f26",
+          "action": "完成订单支付",
+          "expected": "订单为已支付；仅有一条成功支付记录"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "5cfd9856-6165-4f62-a13e-13eba2fbb78c",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931716833-ekt3w84bbwt@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:35:17.317543Z"
+    },
+    {
+      "id": "7963f75f-65d7-443d-8ed2-1a57f5986f5f",
+      "case_key": "TC-REFUND-01-1792931717153",
+      "collection_ids": [
+        "6af69ad5-bf51-46ae-94cb-6ad4fa01ed84"
+      ],
+      "current_revision_id": "e2ee5936-59d0-44b1-bf8a-0ffb52cb1296",
+      "revision_number": 1,
+      "title": "退款成功",
+      "description": "",
+      "module": "支付/退款",
+      "priority": "P2",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备一笔允许全额退款的已支付订单"
+      ],
+      "steps": [
+        {
+          "id": "91f361ef-3f0e-44b5-b582-2a6684496e2e",
+          "action": "提交全额退款并等待处理完成",
+          "expected": "退款状态成功，退款金额等于原支付金额"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "5cfd9856-6165-4f62-a13e-13eba2fbb78c",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931716833-ekt3w84bbwt@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:35:17.368243Z"
+    }
+  ],
+  "analysis": {
+    "id": "f840839c-ac80-4d98-af50-f83b7b11fe21",
+    "space_id": "f436a10c-4671-4e05-8500-eb52db5b12ec",
+    "collection_id": "6af69ad5-bf51-46ae-94cb-6ad4fa01ed84",
+    "title": "检查当前集合重复冗余用例，说明重复依据和独有覆盖，只检查不修改",
+    "status": "active",
+    "context": {
+      "phase": "maintenance",
+      "filters": {},
+      "model_id": "doubao-seed-2.0-lite",
+      "chat_width": 360,
+      "draft_text": "",
+      "active_view": "plan",
+      "last_intent": "CASE_DEDUP",
+      "document_ids": [],
+      "search_query": "",
+      "active_job_id": "580eefaf-043d-445c-a304-0e93e577a662",
+      "inspector_width": 360,
+      "selected_case_id": "08c1fa85-fbd1-47e5-848a-82b1f042cea0",
+      "selected_targets": [],
+      "title_initialized": true,
+      "use_space_knowledge": true,
+      "knowledge_source_ids": [],
+      "selected_brief_version": null,
+      "pending_attachments": [],
+      "selected_asset_provenance": {}
+    },
+    "messages": [
+      {
+        "id": "481f1fb5-f543-430e-bcab-eaf3333f5309",
+        "role": "user",
+        "content": "检查当前集合重复冗余用例，说明重复依据和独有覆盖，只检查不修改。",
+        "intent": "CASE_DEDUP",
+        "intent_confidence": 1,
+        "status": "completed",
+        "target_case_ids": [],
+        "related_job_id": null,
+        "citations": [],
+        "metadata": {
+          "request": {
+            "scope": "current",
+            "content": "检查当前集合重复冗余用例，说明重复依据和独有覆盖，只检查不修改。",
+            "targets": [],
+            "model_id": "doubao-seed-2.0-lite",
+            "document_ids": [],
+            "target_scope": "inferred",
+            "intent_override": null,
+            "target_case_ids": [],
+            "client_request_id": "b7254dc7-2747-4a87-8688-df229db14ed9",
+            "generation_strategy": null,
+            "inherit_attachments": true,
+            "source_operation_id": null,
+            "use_space_knowledge": false,
+            "knowledge_source_ids": [],
+            "source_collection_ids": [],
+            "target_candidate_snapshots": []
+          },
+          "submission_request_id": "b7254dc7-2747-4a87-8688-df229db14ed9"
+        },
+        "created_at": "2026-10-25T12:35:36.299207Z"
+      },
+      {
+        "id": "d0f8a749-e684-4b98-8a20-a6470c349662",
+        "role": "assistant",
+        "content": "已检查 4 条用例。\n本次已完成全部4个用例的去重检查，未发现存在完全重复或部分重叠的冗余用例，所有用例均覆盖了各自独有的功能验证点。\n\n检查限制：\n未提供明确需求依据，无法验证是否存在隐性冗余覆盖\n关系检查范围：6/6 对用例已覆盖，其中完全相同审阅内容 0 对直接核对，其余通过完整代表内容送审（跨批次 0 对）。模型判断仍需结合业务复核。\n\n以上为检查建议，尚未修改用例。",
+        "intent": "CASE_DEDUP",
+        "intent_confidence": 1,
+        "status": "completed",
+        "target_case_ids": [
+          "08c1fa85-fbd1-47e5-848a-82b1f042cea0",
+          "c2e7e541-81d0-4439-8f7a-cfaf0b637636",
+          "74d51284-23de-46e7-934b-b1037e6788ce",
+          "7963f75f-65d7-443d-8ed2-1a57f5986f5f"
+        ],
+        "related_job_id": "580eefaf-043d-445c-a304-0e93e577a662",
+        "citations": [],
+        "metadata": {
+          "model": "doubao-seed-2.0-lite",
+          "assumptions": [],
+          "token_usage": {
+            "input_tokens": 2385,
+            "total_tokens": 2975,
+            "output_tokens": 590
+          },
+          "operation_id": "65c50b84-7c71-4a53-96ef-5632cc4daebb",
+          "target_count": 4,
+          "analysis_kind": "CASE_DEDUP",
+          "evidence_count": 0,
+          "retrieval_mode": "none",
+          "analysis_report": {
+            "summary": "本次已完成全部4个用例的去重检查，未发现存在完全重复或部分重叠的冗余用例，所有用例均覆盖了各自独有的功能验证点。",
+            "findings": [],
+            "limitations": [
+              "未提供明确需求依据，无法验证是否存在隐性冗余覆盖",
+              "关系检查范围：6/6 对用例已覆盖，其中完全相同审阅内容 0 对直接核对，其余通过完整代表内容送审（跨批次 0 对）。模型判断仍需结合业务复核。"
+            ]
+          },
+          "hidden_progress": false,
+          "source_message_id": "481f1fb5-f543-430e-bcab-eaf3333f5309",
+          "checked_case_count": 4,
+          "retrieval_performed": false,
+          "source_operation_id": null,
+          "model_interaction_performed": true
+        },
+        "created_at": "2026-10-25T12:36:10.200328Z"
+      }
+    ],
+    "planning_case_links": [],
+    "test_briefs": [],
+    "candidates": [],
+    "workflow_runs": [
+      {
+        "job_id": "580eefaf-043d-445c-a304-0e93e577a662",
+        "message_id": "d0f8a749-e684-4b98-8a20-a6470c349662",
+        "operation": "knowledge_qa",
+        "status": "completed",
+        "current_stage": "completed",
+        "progress": 100,
+        "error_code": null,
+        "stages": [
+          {
+            "stage": "context.prepared",
+            "attempt": 1,
+            "status": "completed",
+            "progress": 10,
+            "model": "none:retrieval",
+            "latency_ms": 0,
+            "created_at": "2026-10-25T12:36:10.704871Z"
+          },
+          {
+            "stage": "knowledge.answered",
+            "attempt": 1,
+            "status": "completed",
+            "progress": 96,
+            "model": "doubao-seed-2.0-lite",
+            "latency_ms": 14259,
+            "created_at": "2026-10-25T12:36:25.037051Z"
+          }
+        ],
+        "created_at": "2026-10-25T12:36:10.197661Z",
+        "updated_at": "2026-10-25T12:36:25.037051Z"
+      }
+    ],
+    "operation_plan": {
+      "status": "completed",
+      "source_message_id": "481f1fb5-f543-430e-bcab-eaf3333f5309",
+      "current_operation_id": null,
+      "operations": [
+        {
+          "source_message_id": "481f1fb5-f543-430e-bcab-eaf3333f5309",
+          "completed_at": "2026-10-25T12:36:25.042779Z",
+          "id": "65c50b84-7c71-4a53-96ef-5632cc4daebb",
+          "sequence": 0,
+          "intent": "CASE_DEDUP",
+          "confidence": 1,
+          "status": "completed",
+          "target": {
+            "kind": "none",
+            "case_ids": [
+              "08c1fa85-fbd1-47e5-848a-82b1f042cea0",
+              "c2e7e541-81d0-4439-8f7a-cfaf0b637636",
+              "74d51284-23de-46e7-934b-b1037e6788ce",
+              "7963f75f-65d7-443d-8ed2-1a57f5986f5f"
+            ],
+            "resolved": true,
+            "selectors": [],
+            "candidate_refs": []
+          },
+          "payload": {
+            "plan": {
+              "action": "CASE_DEDUP",
+              "intent": "CASE_DEDUP",
+              "changes": [],
+              "version": 2,
+              "confidence": 1,
+              "depends_on": null,
+              "speech_act": "request",
+              "constraints": [
+                "只检查不修改"
+              ],
+              "instruction": "检查当前集合重复冗余用例，说明重复依据和独有覆盖，只检查不修改。",
+              "target_kind": "none",
+              "target_text": "当前集合",
+              "reason_codes": [
+                "check_redundant_cases",
+                "provide_duplication_basis",
+                "show_unique_coverage"
+              ],
+              "routing_source": "semantic",
+              "action_evidence": "检查当前集合重复冗余用例",
+              "clarification_kind": "none",
+              "query_presentation": "cases",
+              "resume_operation_id": null,
+              "requires_confirmation": false,
+              "uses_selected_targets": false,
+              "clarification_questions": []
+            },
+            "action": "CASE_DEDUP",
+            "depends_on": null,
+            "instruction": "检查当前集合重复冗余用例，说明重复依据和独有覆盖，只检查不修改。",
+            "reason_codes": [
+              "check_redundant_cases",
+              "provide_duplication_basis",
+              "show_unique_coverage"
+            ],
+            "predecessor_job_id": null,
+            "source_operation_id": null
+          },
+          "result": {
+            "answer": "已检查 4 条用例。\n本次已完成全部4个用例的去重检查，未发现存在完全重复或部分重叠的冗余用例，所有用例均覆盖了各自独有的功能验证点。\n\n检查限制：\n未提供明确需求依据，无法验证是否存在隐性冗余覆盖\n关系检查范围：6/6 对用例已覆盖，其中完全相同审阅内容 0 对直接核对，其余通过完整代表内容送审（跨批次 0 对）。模型判断仍需结合业务复核。\n\n以上为检查建议，尚未修改用例。",
+            "citations": [],
+            "assumptions": [],
+            "scope_count": 4,
+            "candidate_ids": [],
+            "scope_modules": [
+              "支付/付款",
+              "支付/退款",
+              "登录/密码",
+              "登录/短信"
+            ],
+            "scope_versions": {
+              "08c1fa85-fbd1-47e5-848a-82b1f042cea0": "11ac6fbb-33b4-4562-b148-d376ac9450cc",
+              "74d51284-23de-46e7-934b-b1037e6788ce": "af5504a4-c0b4-424a-bd70-07522b8fb02b",
+              "7963f75f-65d7-443d-8ed2-1a57f5986f5f": "e2ee5936-59d0-44b1-bf8a-0ffb52cb1296",
+              "c2e7e541-81d0-4439-8f7a-cfaf0b637636": "5cb40e42-af6f-4703-9350-c484651224ff"
+            },
+            "analysis_report": {
+              "summary": "本次已完成全部4个用例的去重检查，未发现存在完全重复或部分重叠的冗余用例，所有用例均覆盖了各自独有的功能验证点。",
+              "findings": [],
+              "limitations": [
+                "未提供明确需求依据，无法验证是否存在隐性冗余覆盖",
+                "关系检查范围：6/6 对用例已覆盖，其中完全相同审阅内容 0 对直接核对，其余通过完整代表内容送审（跨批次 0 对）。模型判断仍需结合业务复核。"
+              ]
+            }
+          },
+          "requires_confirmation": false,
+          "related_job_id": "580eefaf-043d-445c-a304-0e93e577a662",
+          "related_change_set_id": null,
+          "error_code": null,
+          "created_at": "2026-10-25T12:35:36.302969Z"
+        }
+      ]
+    },
+    "operation_history": [
+      {
+        "source_message_id": "481f1fb5-f543-430e-bcab-eaf3333f5309",
+        "completed_at": "2026-10-25T12:36:25.042779Z",
+        "id": "65c50b84-7c71-4a53-96ef-5632cc4daebb",
+        "sequence": 0,
+        "intent": "CASE_DEDUP",
+        "confidence": 1,
+        "status": "completed",
+        "target": {
+          "kind": "none",
+          "case_ids": [
+            "08c1fa85-fbd1-47e5-848a-82b1f042cea0",
+            "c2e7e541-81d0-4439-8f7a-cfaf0b637636",
+            "74d51284-23de-46e7-934b-b1037e6788ce",
+            "7963f75f-65d7-443d-8ed2-1a57f5986f5f"
+          ],
+          "resolved": true,
+          "selectors": [],
+          "candidate_refs": []
+        },
+        "payload": {
+          "plan": {
+            "action": "CASE_DEDUP",
+            "intent": "CASE_DEDUP",
+            "changes": [],
+            "version": 2,
+            "confidence": 1,
+            "depends_on": null,
+            "speech_act": "request",
+            "constraints": [
+              "只检查不修改"
+            ],
+            "instruction": "检查当前集合重复冗余用例，说明重复依据和独有覆盖，只检查不修改。",
+            "target_kind": "none",
+            "target_text": "当前集合",
+            "reason_codes": [
+              "check_redundant_cases",
+              "provide_duplication_basis",
+              "show_unique_coverage"
+            ],
+            "routing_source": "semantic",
+            "action_evidence": "检查当前集合重复冗余用例",
+            "clarification_kind": "none",
+            "query_presentation": "cases",
+            "resume_operation_id": null,
+            "requires_confirmation": false,
+            "uses_selected_targets": false,
+            "clarification_questions": []
+          },
+          "action": "CASE_DEDUP",
+          "depends_on": null,
+          "instruction": "检查当前集合重复冗余用例，说明重复依据和独有覆盖，只检查不修改。",
+          "reason_codes": [
+            "check_redundant_cases",
+            "provide_duplication_basis",
+            "show_unique_coverage"
+          ],
+          "predecessor_job_id": null,
+          "source_operation_id": null
+        },
+        "result": {
+          "answer": "已检查 4 条用例。\n本次已完成全部4个用例的去重检查，未发现存在完全重复或部分重叠的冗余用例，所有用例均覆盖了各自独有的功能验证点。\n\n检查限制：\n未提供明确需求依据，无法验证是否存在隐性冗余覆盖\n关系检查范围：6/6 对用例已覆盖，其中完全相同审阅内容 0 对直接核对，其余通过完整代表内容送审（跨批次 0 对）。模型判断仍需结合业务复核。\n\n以上为检查建议，尚未修改用例。",
+          "citations": [],
+          "assumptions": [],
+          "scope_count": 4,
+          "candidate_ids": [],
+          "scope_modules": [
+            "支付/付款",
+            "支付/退款",
+            "登录/密码",
+            "登录/短信"
+          ],
+          "scope_versions": {
+            "08c1fa85-fbd1-47e5-848a-82b1f042cea0": "11ac6fbb-33b4-4562-b148-d376ac9450cc",
+            "74d51284-23de-46e7-934b-b1037e6788ce": "af5504a4-c0b4-424a-bd70-07522b8fb02b",
+            "7963f75f-65d7-443d-8ed2-1a57f5986f5f": "e2ee5936-59d0-44b1-bf8a-0ffb52cb1296",
+            "c2e7e541-81d0-4439-8f7a-cfaf0b637636": "5cb40e42-af6f-4703-9350-c484651224ff"
+          },
+          "analysis_report": {
+            "summary": "本次已完成全部4个用例的去重检查，未发现存在完全重复或部分重叠的冗余用例，所有用例均覆盖了各自独有的功能验证点。",
+            "findings": [],
+            "limitations": [
+              "未提供明确需求依据，无法验证是否存在隐性冗余覆盖",
+              "关系检查范围：6/6 对用例已覆盖，其中完全相同审阅内容 0 对直接核对，其余通过完整代表内容送审（跨批次 0 对）。模型判断仍需结合业务复核。"
+            ]
+          }
+        },
+        "requires_confirmation": false,
+        "related_job_id": "580eefaf-043d-445c-a304-0e93e577a662",
+        "related_change_set_id": null,
+        "error_code": null,
+        "created_at": "2026-10-25T12:35:36.302969Z"
+      }
+    ],
+    "candidate_history": [],
+    "created_at": "2026-10-25T12:35:18.921883Z",
+    "updated_at": "2026-10-25T12:36:10.309744Z"
+  },
+  "status": "passed",
+  "errors": [],
+  "final": [
+    {
+      "id": "08c1fa85-fbd1-47e5-848a-82b1f042cea0",
+      "case_key": "TC-LOGIN-01-1792931717153",
+      "collection_ids": [
+        "6af69ad5-bf51-46ae-94cb-6ad4fa01ed84"
+      ],
+      "current_revision_id": "11ac6fbb-33b4-4562-b148-d376ac9450cc",
+      "revision_number": 1,
+      "title": "短信登录",
+      "description": "",
+      "module": "登录/短信",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "手机号已注册且账号启用；准备有效的未使用验证码"
+      ],
+      "steps": [
+        {
+          "id": "31c5d3b0-cffd-4a58-9af0-814c821f46cf",
+          "action": "输入短信验证码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "5cfd9856-6165-4f62-a13e-13eba2fbb78c",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931716833-ekt3w84bbwt@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:35:17.203645Z"
+    },
+    {
+      "id": "c2e7e541-81d0-4439-8f7a-cfaf0b637636",
+      "case_key": "TC-LOGIN-02-1792931717153",
+      "collection_ids": [
+        "6af69ad5-bf51-46ae-94cb-6ad4fa01ed84"
+      ],
+      "current_revision_id": "5cb40e42-af6f-4703-9350-c484651224ff",
+      "revision_number": 1,
+      "title": "密码登录",
+      "description": "",
+      "module": "登录/密码",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "账号已注册且启用；准备正确密码"
+      ],
+      "steps": [
+        {
+          "id": "56ce2410-c719-48c9-b380-edb0467d633e",
+          "action": "输入账号及正确密码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "5cfd9856-6165-4f62-a13e-13eba2fbb78c",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931716833-ekt3w84bbwt@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:35:17.269165Z"
+    },
+    {
+      "id": "74d51284-23de-46e7-934b-b1037e6788ce",
+      "case_key": "TC-PAY-01-1792931717153",
+      "collection_ids": [
+        "6af69ad5-bf51-46ae-94cb-6ad4fa01ed84"
+      ],
+      "current_revision_id": "af5504a4-c0b4-424a-bd70-07522b8fb02b",
+      "revision_number": 1,
+      "title": "支付成功",
+      "description": "",
+      "module": "支付/付款",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备待支付订单和可用支付账户"
+      ],
+      "steps": [
+        {
+          "id": "97d019d3-ce2f-4b3e-bab6-db8d5da36f26",
+          "action": "完成订单支付",
+          "expected": "订单为已支付；仅有一条成功支付记录"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "5cfd9856-6165-4f62-a13e-13eba2fbb78c",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931716833-ekt3w84bbwt@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:35:17.317543Z"
+    },
+    {
+      "id": "7963f75f-65d7-443d-8ed2-1a57f5986f5f",
+      "case_key": "TC-REFUND-01-1792931717153",
+      "collection_ids": [
+        "6af69ad5-bf51-46ae-94cb-6ad4fa01ed84"
+      ],
+      "current_revision_id": "e2ee5936-59d0-44b1-bf8a-0ffb52cb1296",
+      "revision_number": 1,
+      "title": "退款成功",
+      "description": "",
+      "module": "支付/退款",
+      "priority": "P2",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备一笔允许全额退款的已支付订单"
+      ],
+      "steps": [
+        {
+          "id": "91f361ef-3f0e-44b5-b582-2a6684496e2e",
+          "action": "提交全额退款并等待处理完成",
+          "expected": "退款状态成功，退款金额等于原支付金额"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "5cfd9856-6165-4f62-a13e-13eba2fbb78c",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931716833-ekt3w84bbwt@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:35:17.368243Z"
+    }
+  ]
+}

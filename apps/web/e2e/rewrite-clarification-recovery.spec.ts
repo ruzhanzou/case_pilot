@@ -21,7 +21,8 @@ for (const selected of [true, false]) {
       else if (path.endsWith('/spaces/space/collections')) data = [collection];
       else if (path.endsWith('/collections/alpha')) data = collection;
       else if (path.endsWith('/collections/alpha/test-cases')) data = [{ ...snapshot, id: 'case0', case_key: 'TC-1', current_revision_id: 'rev', revision_number: 1 }];
-      else if (path.endsWith('/conversation-operations/operation/resume')) {
+      // Ordinary replies use semantic routing; explicit task replies use resume.
+      else if (path.endsWith('/conversations/workspace/messages') || path.endsWith('/conversation-operations/operation/resume')) {
         request = route.request().postDataJSON();
         data = { conversation_id: 'workspace', user_message: user, assistant_message: assistant(), intent: 'CASE_MODIFY', action: { type: 'clarification' }, operation_plan: { operations: [operation] } };
       } else if (path.includes('/conversations/') || path.includes('/workspaces/') || path.endsWith('/workspace')) {

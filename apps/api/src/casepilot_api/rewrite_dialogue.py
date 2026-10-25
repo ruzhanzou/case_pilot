@@ -101,3 +101,29 @@ def interpret_rewrite_reply(content: str, state: dict, *, provider: str, model_n
     with managed_model_client(client):
         return Runner.run_sync(agent, json.dumps({"reply": content, "draft": context},
                               ensure_ascii=False, default=str), max_turns=1).final_output
+
+
+def rewrite_transition(state: dict, reply: RewriteReply, *, has_preview: bool,
+                       selection_changed: bool) -> tuple[str, str]:
+    """Pure execution gate: interpretation never authorizes an incomplete draft.
+
+    Returns cancel, clarify, update, or confirm. Every update invalidates the
+    previous preview, including a confirmation accompanied by a new selection.
+    """
+    if reply.confidence < 0.85:
+        return "clarify", reply.clarification or "这次回复是调整范围、修改要求，还是确认当前方案？请补充说明。"
+    if reply.action == "cancel":
+        return "cancel", ""
+    if reply.action == "clarify":
+        return "clarify", reply.clarification or "请说明需要调整的范围或修改要求。"
+    if reply.action == "confirm":
+        if state.get("clarification"):
+            return "clarify", state["clarification"]
+        if selection_changed:
+            return "update", ""
+        if not (has_preview and state.get("scope_resolved")
+                and state.get("requirements_ready") and reply.requirements_ready
+                and str(state.get("requirements") or "").strip()):
+            return "clarify", "当前方案还未确定，请先补充用例范围和修改要求。"
+        return "confirm", ""
+    return "update", ""

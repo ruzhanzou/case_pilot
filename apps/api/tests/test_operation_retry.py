@@ -112,3 +112,26 @@ def test_natural_retry_forwards_explicit_attachments(monkeypatch):
     supplement = resume.call_args.args[1]
     assert supplement.document_ids == [document]
     assert supplement.knowledge_source_ids == [source]
+
+
+@pytest.mark.parametrize('queued_successor', [False, True])
+def test_live_semantic_retry_still_resumes_failed_task(monkeypatch, queued_successor):
+    monkeypatch.setattr(conversations.settings, 'agent_provider', 'openai_compatible')
+    failed = SimpleNamespace(id=uuid4(), status='failed', intent='CASE_MODIFY')
+    queued = SimpleNamespace(id=uuid4(), status='queued', intent='CASE_REVIEW',
+                             message_id=uuid4(), sequence=1)
+    db = Mock()
+    db.scalar.side_effect = [queued, failed] if queued_successor else [failed]
+    db.scalars.return_value = [SimpleNamespace(role='assistant', content='修改失败')]
+    interpreter = Mock(return_value=SimpleNamespace(retry_requested=True, retry_kind='CASE_MODIFY'))
+    monkeypatch.setattr(conversations, 'interpret_generation_choice', interpreter)
+    monkeypatch.setattr(conversations, '_message_view', lambda message: message)
+    resume = Mock(return_value=Mock())
+    monkeypatch.setattr(conversations, 'resume_conversation_operation', resume)
+    conversations._retry_generation_from_text(
+        db, Mock(), SimpleNamespace(id=uuid4()),
+        ConversationMessageCreate(content='刚才没成功的那一步再做一遍'),
+    )
+    interpreter.assert_called_once()
+    assert resume.call_args.args[0] == failed.id
+    assert db.add.call_args.args[0].message_metadata['retry_operation_id'] == str(failed.id)

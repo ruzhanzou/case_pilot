@@ -76,7 +76,7 @@ export function CaseTaskWorkspace({ tasks, selectedId, displayedVersion, onSelec
             {plan?.target_text && <p>{pick("Requested scope", "请求范围")}：{plan.target_text}</p>}
             {!!plan?.constraints?.length && <p>{pick("Preserve", "保留约束")}：{plan.constraints.join("；")}</p>}
             {!historical && !hasLiveResults && (task.waitingOn || isRunning || task.status.startsWith("awaiting_") && task.status !== "awaiting_confirmation" || ["failed", "cancelled"].includes(task.status)) && <div className="case-task-running" role="status"><p>{needsDetails
-              ? pick("Confirm the affected cases and requirements in the conversation. Suggestions will appear here.", "请在对话区确认影响范围和修改要求，变更建议将在这里展示。")
+              ? task.message.content || pick("Confirm the affected cases and requirements in the conversation. Suggestions will appear here.", "请在对话区确认影响范围和修改要求，变更建议将在这里展示。")
               : failed
                 ? pick("This task did not complete, so there are no changes to review. Retry it in the conversation.", "本次任务未完成，没有可审阅的变更。请在对话区重试。")
                 : cancelled

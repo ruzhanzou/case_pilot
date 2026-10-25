@@ -1,0 +1,918 @@
+{
+  "turns": [
+    {
+      "content": "检查当前集合登录用例的遗漏，只分析不生成或修改。需求：禁用账号不得登录，连续5次密码错误锁定30分钟。",
+      "response": {
+        "conversation_id": "81e64105-3376-4c08-889b-da94b5bbf734",
+        "user_message": {
+          "id": "213379d1-7879-41b4-83a2-eb0c752b50cc",
+          "role": "user",
+          "content": "检查当前集合登录用例的遗漏，只分析不生成或修改。需求：禁用账号不得登录，连续5次密码错误锁定30分钟。",
+          "intent": "COVERAGE_ANALYZE",
+          "intent_confidence": 0.98,
+          "status": "completed",
+          "target_case_ids": [],
+          "related_job_id": null,
+          "citations": [],
+          "metadata": {
+            "request": {
+              "scope": "current",
+              "content": "检查当前集合登录用例的遗漏，只分析不生成或修改。需求：禁用账号不得登录，连续5次密码错误锁定30分钟。",
+              "targets": [],
+              "model_id": "doubao-seed-2.0-lite",
+              "document_ids": [],
+              "target_scope": "inferred",
+              "intent_override": null,
+              "target_case_ids": [],
+              "client_request_id": "68a5f150-9abe-4269-a342-3fb3e5af9aca",
+              "generation_strategy": null,
+              "inherit_attachments": true,
+              "source_operation_id": null,
+              "use_space_knowledge": false,
+              "knowledge_source_ids": [],
+              "source_collection_ids": [],
+              "target_candidate_snapshots": []
+            },
+            "submission_request_id": "68a5f150-9abe-4269-a342-3fb3e5af9aca"
+          },
+          "created_at": "2026-10-25T12:33:44.754753Z"
+        },
+        "assistant_message": {
+          "id": "ce621bda-cf42-4e05-8c74-0b946c9b7321",
+          "role": "assistant",
+          "content": "本次检查 2 条用例。\n执行步骤：读取用例与需求依据 → 检查问题并记录用例引用 → 汇总建议。\n检查过程不会修改用例。",
+          "intent": "COVERAGE_ANALYZE",
+          "intent_confidence": 0.98,
+          "status": "running",
+          "target_case_ids": [
+            "d85c72bd-f253-407e-b34b-9baf4b4b6a98",
+            "942ce699-e4ba-411c-b7a2-f90716b5cfec"
+          ],
+          "related_job_id": "8158376e-11c9-4d5c-9889-cb3fe01293e1",
+          "citations": [],
+          "metadata": {
+            "operation_id": "6233ab3b-b488-4f0c-ace6-1a19067576a8",
+            "target_count": 2,
+            "analysis_kind": "COVERAGE_ANALYZE",
+            "hidden_progress": false,
+            "source_message_id": "213379d1-7879-41b4-83a2-eb0c752b50cc",
+            "source_operation_id": null
+          },
+          "created_at": "2026-10-25T12:34:29.866202Z"
+        },
+        "intent": "COVERAGE_ANALYZE",
+        "intent_confidence": 0.98,
+        "requires_intent_confirmation": false,
+        "action": {
+          "type": "knowledge_qa",
+          "job_id": "8158376e-11c9-4d5c-9889-cb3fe01293e1"
+        },
+        "operation_plan": {
+          "status": "running",
+          "source_message_id": "213379d1-7879-41b4-83a2-eb0c752b50cc",
+          "current_operation_id": "6233ab3b-b488-4f0c-ace6-1a19067576a8",
+          "operations": [
+            {
+              "source_message_id": "213379d1-7879-41b4-83a2-eb0c752b50cc",
+              "completed_at": null,
+              "id": "6233ab3b-b488-4f0c-ace6-1a19067576a8",
+              "sequence": 0,
+              "intent": "COVERAGE_ANALYZE",
+              "confidence": 0.98,
+              "status": "running",
+              "target": {
+                "kind": "case",
+                "selectors": [],
+                "case_ids": [
+                  "d85c72bd-f253-407e-b34b-9baf4b4b6a98",
+                  "942ce699-e4ba-411c-b7a2-f90716b5cfec"
+                ],
+                "candidate_refs": [],
+                "resolved": true
+              },
+              "payload": {
+                "plan": {
+                  "version": 2,
+                  "intent": "COVERAGE_ANALYZE",
+                  "action": "COVERAGE_ANALYZE",
+                  "instruction": "检查当前集合登录用例的遗漏，只分析不生成或修改。需求：禁用账号不得登录，连续5次密码错误锁定30分钟。",
+                  "confidence": 0.98,
+                  "target_kind": "case",
+                  "requires_confirmation": false,
+                  "reason_codes": [
+                    "用户请求分析现有登录用例的覆盖遗漏"
+                  ],
+                  "depends_on": null,
+                  "target_text": "当前集合登录用例",
+                  "action_evidence": "检查当前集合登录用例的遗漏",
+                  "changes": [],
+                  "constraints": [
+                    "只分析不生成或修改"
+                  ],
+                  "clarification_questions": [],
+                  "clarification_kind": "none",
+                  "uses_selected_targets": false,
+                  "resume_operation_id": null,
+                  "speech_act": "request",
+                  "query_presentation": "cases",
+                  "routing_source": "semantic"
+                },
+                "instruction": "检查当前集合登录用例的遗漏，只分析不生成或修改。需求：禁用账号不得登录，连续5次密码错误锁定30分钟。",
+                "action": "COVERAGE_ANALYZE",
+                "reason_codes": [
+                  "用户请求分析现有登录用例的覆盖遗漏"
+                ],
+                "depends_on": null,
+                "predecessor_job_id": null,
+                "source_operation_id": null
+              },
+              "result": {
+                "scope_versions": {
+                  "d85c72bd-f253-407e-b34b-9baf4b4b6a98": "fd5f2cf4-821c-4ebf-ba79-794b6e10cbee",
+                  "942ce699-e4ba-411c-b7a2-f90716b5cfec": "fc5f8529-f2ad-4a3d-a54c-473638f02d77"
+                },
+                "scope_modules": [
+                  "登录/密码",
+                  "登录/短信"
+                ],
+                "scope_count": 2
+              },
+              "requires_confirmation": false,
+              "related_job_id": "8158376e-11c9-4d5c-9889-cb3fe01293e1",
+              "related_change_set_id": null,
+              "error_code": null,
+              "created_at": "2026-10-25T12:33:44.756576Z"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "timings": [
+    {
+      "kind": "message_response",
+      "ms": 59706
+    }
+  ],
+  "startedAt": "2026-10-25T12:33:28.482Z",
+  "collection": {
+    "id": "34b8e94c-d5a8-4488-af8d-257c0a8e9800",
+    "space_id": "24d22481-ffc0-4958-9d00-95ac4a1e3432",
+    "name": "NL评测-NL-ANALYSIS-COVERAGE_ANALYZE-1792931608694",
+    "description": "",
+    "mind_map_notes": [],
+    "case_count": 0,
+    "lifecycle_status": "empty",
+    "creator": {
+      "id": "e6d9876a-d048-4900-8944-ce5fe8906a89",
+      "display_name": "自然语言验收",
+      "email": "nl-1792931608487-q8ugqyo8m7a@casepilot.test"
+    },
+    "test_target": null,
+    "created_at": "2026-10-25T12:33:28.732909Z"
+  },
+  "keyMap": {
+    "TC-LOGIN-01": "TC-LOGIN-01-1792931608733",
+    "TC-LOGIN-02": "TC-LOGIN-02-1792931608733",
+    "TC-PAY-01": "TC-PAY-01-1792931608733",
+    "TC-REFUND-01": "TC-REFUND-01-1792931608733"
+  },
+  "original": [
+    {
+      "id": "d85c72bd-f253-407e-b34b-9baf4b4b6a98",
+      "case_key": "TC-LOGIN-01-1792931608733",
+      "collection_ids": [
+        "34b8e94c-d5a8-4488-af8d-257c0a8e9800"
+      ],
+      "current_revision_id": "fd5f2cf4-821c-4ebf-ba79-794b6e10cbee",
+      "revision_number": 1,
+      "title": "短信登录",
+      "description": "",
+      "module": "登录/短信",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "手机号已注册且账号启用；准备有效的未使用验证码"
+      ],
+      "steps": [
+        {
+          "id": "d48b3c05-92e9-4548-988a-f55408f3f13b",
+          "action": "输入短信验证码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "e6d9876a-d048-4900-8944-ce5fe8906a89",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931608487-q8ugqyo8m7a@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:33:28.783167Z"
+    },
+    {
+      "id": "942ce699-e4ba-411c-b7a2-f90716b5cfec",
+      "case_key": "TC-LOGIN-02-1792931608733",
+      "collection_ids": [
+        "34b8e94c-d5a8-4488-af8d-257c0a8e9800"
+      ],
+      "current_revision_id": "fc5f8529-f2ad-4a3d-a54c-473638f02d77",
+      "revision_number": 1,
+      "title": "密码登录",
+      "description": "",
+      "module": "登录/密码",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "账号已注册且启用；准备正确密码"
+      ],
+      "steps": [
+        {
+          "id": "8938444b-277c-4ea3-aa89-92306b508b0f",
+          "action": "输入账号及正确密码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "e6d9876a-d048-4900-8944-ce5fe8906a89",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931608487-q8ugqyo8m7a@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:33:28.828831Z"
+    },
+    {
+      "id": "91bcc805-7a7e-4c1a-939f-76ae5c565d24",
+      "case_key": "TC-PAY-01-1792931608733",
+      "collection_ids": [
+        "34b8e94c-d5a8-4488-af8d-257c0a8e9800"
+      ],
+      "current_revision_id": "39dd4684-83e0-4883-8e94-8d2dcef4df7e",
+      "revision_number": 1,
+      "title": "支付成功",
+      "description": "",
+      "module": "支付/付款",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备待支付订单和可用支付账户"
+      ],
+      "steps": [
+        {
+          "id": "79305a12-b971-4800-bd27-021b0967dea9",
+          "action": "完成订单支付",
+          "expected": "订单为已支付；仅有一条成功支付记录"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "e6d9876a-d048-4900-8944-ce5fe8906a89",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931608487-q8ugqyo8m7a@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:33:28.871132Z"
+    },
+    {
+      "id": "9466ab5f-2696-48e0-9d97-6f3d29342d3c",
+      "case_key": "TC-REFUND-01-1792931608733",
+      "collection_ids": [
+        "34b8e94c-d5a8-4488-af8d-257c0a8e9800"
+      ],
+      "current_revision_id": "18a9eb13-6c96-45c6-ac71-403d9d0855b3",
+      "revision_number": 1,
+      "title": "退款成功",
+      "description": "",
+      "module": "支付/退款",
+      "priority": "P2",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备一笔允许全额退款的已支付订单"
+      ],
+      "steps": [
+        {
+          "id": "acaace2d-0c0f-48df-8531-415df6eacdf9",
+          "action": "提交全额退款并等待处理完成",
+          "expected": "退款状态成功，退款金额等于原支付金额"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "e6d9876a-d048-4900-8944-ce5fe8906a89",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931608487-q8ugqyo8m7a@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:33:28.918082Z"
+    }
+  ],
+  "analysis": {
+    "id": "81e64105-3376-4c08-889b-da94b5bbf734",
+    "space_id": "24d22481-ffc0-4958-9d00-95ac4a1e3432",
+    "collection_id": "34b8e94c-d5a8-4488-af8d-257c0a8e9800",
+    "title": "检查当前集合登录用例的遗漏，只分析不用例设计",
+    "status": "active",
+    "context": {
+      "phase": "maintenance",
+      "filters": {},
+      "model_id": "doubao-seed-2.0-lite",
+      "chat_width": 360,
+      "draft_text": "",
+      "active_view": "plan",
+      "last_intent": "COVERAGE_ANALYZE",
+      "document_ids": [],
+      "search_query": "",
+      "active_job_id": "8158376e-11c9-4d5c-9889-cb3fe01293e1",
+      "inspector_width": 360,
+      "selected_case_id": "d85c72bd-f253-407e-b34b-9baf4b4b6a98",
+      "selected_targets": [],
+      "title_initialized": true,
+      "use_space_knowledge": true,
+      "knowledge_source_ids": [],
+      "selected_brief_version": null,
+      "pending_attachments": [],
+      "selected_asset_provenance": {}
+    },
+    "messages": [
+      {
+        "id": "213379d1-7879-41b4-83a2-eb0c752b50cc",
+        "role": "user",
+        "content": "检查当前集合登录用例的遗漏，只分析不生成或修改。需求：禁用账号不得登录，连续5次密码错误锁定30分钟。",
+        "intent": "COVERAGE_ANALYZE",
+        "intent_confidence": 0.98,
+        "status": "completed",
+        "target_case_ids": [],
+        "related_job_id": null,
+        "citations": [],
+        "metadata": {
+          "request": {
+            "scope": "current",
+            "content": "检查当前集合登录用例的遗漏，只分析不生成或修改。需求：禁用账号不得登录，连续5次密码错误锁定30分钟。",
+            "targets": [],
+            "model_id": "doubao-seed-2.0-lite",
+            "document_ids": [],
+            "target_scope": "inferred",
+            "intent_override": null,
+            "target_case_ids": [],
+            "client_request_id": "68a5f150-9abe-4269-a342-3fb3e5af9aca",
+            "generation_strategy": null,
+            "inherit_attachments": true,
+            "source_operation_id": null,
+            "use_space_knowledge": false,
+            "knowledge_source_ids": [],
+            "source_collection_ids": [],
+            "target_candidate_snapshots": []
+          },
+          "submission_request_id": "68a5f150-9abe-4269-a342-3fb3e5af9aca"
+        },
+        "created_at": "2026-10-25T12:33:44.754753Z"
+      },
+      {
+        "id": "ce621bda-cf42-4e05-8c74-0b946c9b7321",
+        "role": "assistant",
+        "content": "已检查 2 条用例。\n当前提供的2个登录用例均未覆盖需求明确要求的「禁用账号不得登录」「连续5次密码错误锁定30分钟」两个验证点，存在覆盖缺口。\n\n1. [high] 需求验证点未覆盖\n用例：TC-LOGIN-01-1792931608733, TC-LOGIN-02-1792931608733\n依据：需求明确要求验证两个功能点：1. 禁用账号不得登录；2. 连续5次密码错误锁定30分钟。当前的短信登录用例c0和密码登录用例c1均未设计对这两个功能点的验证，未覆盖对应需求。\n建议：补充针对「禁用账号登录验证」和「连续密码错误锁定规则验证」的测试用例，覆盖缺失的需求验证点。\n\n以上为检查建议，尚未修改用例。",
+        "intent": "COVERAGE_ANALYZE",
+        "intent_confidence": 0.98,
+        "status": "completed",
+        "target_case_ids": [
+          "d85c72bd-f253-407e-b34b-9baf4b4b6a98",
+          "942ce699-e4ba-411c-b7a2-f90716b5cfec"
+        ],
+        "related_job_id": "8158376e-11c9-4d5c-9889-cb3fe01293e1",
+        "citations": [],
+        "metadata": {
+          "model": "doubao-seed-2.0-lite",
+          "assumptions": [],
+          "token_usage": {
+            "input_tokens": 2037,
+            "total_tokens": 2972,
+            "output_tokens": 935
+          },
+          "operation_id": "6233ab3b-b488-4f0c-ace6-1a19067576a8",
+          "target_count": 2,
+          "analysis_kind": "COVERAGE_ANALYZE",
+          "evidence_count": 0,
+          "retrieval_mode": "none",
+          "analysis_report": {
+            "summary": "当前提供的2个登录用例均未覆盖需求明确要求的「禁用账号不得登录」「连续5次密码错误锁定30分钟」两个验证点，存在覆盖缺口。",
+            "findings": [
+              {
+                "basis": "potential",
+                "title": "需求验证点未覆盖",
+                "evidence": "需求明确要求验证两个功能点：1. 禁用账号不得登录；2. 连续5次密码错误锁定30分钟。当前的短信登录用例c0和密码登录用例c1均未设计对这两个功能点的验证，未覆盖对应需求。",
+                "severity": "high",
+                "case_refs": [
+                  "d85c72bd-f253-407e-b34b-9baf4b4b6a98",
+                  "942ce699-e4ba-411c-b7a2-f90716b5cfec"
+                ],
+                "relationship": "coverage",
+                "recommendation": "补充针对「禁用账号登录验证」和「连续密码错误锁定规则验证」的测试用例，覆盖缺失的需求验证点。",
+                "unique_coverage": [],
+                "requirement_refs": []
+              }
+            ],
+            "limitations": []
+          },
+          "hidden_progress": false,
+          "source_message_id": "213379d1-7879-41b4-83a2-eb0c752b50cc",
+          "checked_case_count": 2,
+          "retrieval_performed": false,
+          "source_operation_id": null,
+          "model_interaction_performed": true
+        },
+        "created_at": "2026-10-25T12:34:29.866202Z"
+      }
+    ],
+    "planning_case_links": [],
+    "test_briefs": [],
+    "candidates": [],
+    "workflow_runs": [
+      {
+        "job_id": "8158376e-11c9-4d5c-9889-cb3fe01293e1",
+        "message_id": "ce621bda-cf42-4e05-8c74-0b946c9b7321",
+        "operation": "knowledge_qa",
+        "status": "completed",
+        "current_stage": "completed",
+        "progress": 100,
+        "error_code": null,
+        "stages": [
+          {
+            "stage": "context.prepared",
+            "attempt": 1,
+            "status": "completed",
+            "progress": 10,
+            "model": "none:retrieval",
+            "latency_ms": 0,
+            "created_at": "2026-10-25T12:34:30.676531Z"
+          },
+          {
+            "stage": "knowledge.answered",
+            "attempt": 1,
+            "status": "completed",
+            "progress": 96,
+            "model": "doubao-seed-2.0-lite",
+            "latency_ms": 18402,
+            "created_at": "2026-10-25T12:34:49.144405Z"
+          }
+        ],
+        "created_at": "2026-10-25T12:34:29.862550Z",
+        "updated_at": "2026-10-25T12:34:49.144405Z"
+      }
+    ],
+    "operation_plan": {
+      "status": "completed",
+      "source_message_id": "213379d1-7879-41b4-83a2-eb0c752b50cc",
+      "current_operation_id": null,
+      "operations": [
+        {
+          "source_message_id": "213379d1-7879-41b4-83a2-eb0c752b50cc",
+          "completed_at": "2026-10-25T12:34:49.149700Z",
+          "id": "6233ab3b-b488-4f0c-ace6-1a19067576a8",
+          "sequence": 0,
+          "intent": "COVERAGE_ANALYZE",
+          "confidence": 0.98,
+          "status": "completed",
+          "target": {
+            "kind": "case",
+            "case_ids": [
+              "d85c72bd-f253-407e-b34b-9baf4b4b6a98",
+              "942ce699-e4ba-411c-b7a2-f90716b5cfec"
+            ],
+            "resolved": true,
+            "selectors": [],
+            "candidate_refs": []
+          },
+          "payload": {
+            "plan": {
+              "action": "COVERAGE_ANALYZE",
+              "intent": "COVERAGE_ANALYZE",
+              "changes": [],
+              "version": 2,
+              "confidence": 0.98,
+              "depends_on": null,
+              "speech_act": "request",
+              "constraints": [
+                "只分析不生成或修改"
+              ],
+              "instruction": "检查当前集合登录用例的遗漏，只分析不生成或修改。需求：禁用账号不得登录，连续5次密码错误锁定30分钟。",
+              "target_kind": "case",
+              "target_text": "当前集合登录用例",
+              "reason_codes": [
+                "用户请求分析现有登录用例的覆盖遗漏"
+              ],
+              "routing_source": "semantic",
+              "action_evidence": "检查当前集合登录用例的遗漏",
+              "clarification_kind": "none",
+              "query_presentation": "cases",
+              "resume_operation_id": null,
+              "requires_confirmation": false,
+              "uses_selected_targets": false,
+              "clarification_questions": []
+            },
+            "action": "COVERAGE_ANALYZE",
+            "depends_on": null,
+            "instruction": "检查当前集合登录用例的遗漏，只分析不生成或修改。需求：禁用账号不得登录，连续5次密码错误锁定30分钟。",
+            "reason_codes": [
+              "用户请求分析现有登录用例的覆盖遗漏"
+            ],
+            "predecessor_job_id": null,
+            "source_operation_id": null
+          },
+          "result": {
+            "answer": "已检查 2 条用例。\n当前提供的2个登录用例均未覆盖需求明确要求的「禁用账号不得登录」「连续5次密码错误锁定30分钟」两个验证点，存在覆盖缺口。\n\n1. [high] 需求验证点未覆盖\n用例：TC-LOGIN-01-1792931608733, TC-LOGIN-02-1792931608733\n依据：需求明确要求验证两个功能点：1. 禁用账号不得登录；2. 连续5次密码错误锁定30分钟。当前的短信登录用例c0和密码登录用例c1均未设计对这两个功能点的验证，未覆盖对应需求。\n建议：补充针对「禁用账号登录验证」和「连续密码错误锁定规则验证」的测试用例，覆盖缺失的需求验证点。\n\n以上为检查建议，尚未修改用例。",
+            "citations": [],
+            "assumptions": [],
+            "scope_count": 2,
+            "candidate_ids": [],
+            "scope_modules": [
+              "登录/密码",
+              "登录/短信"
+            ],
+            "scope_versions": {
+              "942ce699-e4ba-411c-b7a2-f90716b5cfec": "fc5f8529-f2ad-4a3d-a54c-473638f02d77",
+              "d85c72bd-f253-407e-b34b-9baf4b4b6a98": "fd5f2cf4-821c-4ebf-ba79-794b6e10cbee"
+            },
+            "analysis_report": {
+              "summary": "当前提供的2个登录用例均未覆盖需求明确要求的「禁用账号不得登录」「连续5次密码错误锁定30分钟」两个验证点，存在覆盖缺口。",
+              "findings": [
+                {
+                  "basis": "potential",
+                  "title": "需求验证点未覆盖",
+                  "evidence": "需求明确要求验证两个功能点：1. 禁用账号不得登录；2. 连续5次密码错误锁定30分钟。当前的短信登录用例c0和密码登录用例c1均未设计对这两个功能点的验证，未覆盖对应需求。",
+                  "severity": "high",
+                  "case_refs": [
+                    "d85c72bd-f253-407e-b34b-9baf4b4b6a98",
+                    "942ce699-e4ba-411c-b7a2-f90716b5cfec"
+                  ],
+                  "relationship": "coverage",
+                  "recommendation": "补充针对「禁用账号登录验证」和「连续密码错误锁定规则验证」的测试用例，覆盖缺失的需求验证点。",
+                  "unique_coverage": [],
+                  "requirement_refs": []
+                }
+              ],
+              "limitations": []
+            }
+          },
+          "requires_confirmation": false,
+          "related_job_id": "8158376e-11c9-4d5c-9889-cb3fe01293e1",
+          "related_change_set_id": null,
+          "error_code": null,
+          "created_at": "2026-10-25T12:33:44.756576Z"
+        }
+      ]
+    },
+    "operation_history": [
+      {
+        "source_message_id": "213379d1-7879-41b4-83a2-eb0c752b50cc",
+        "completed_at": "2026-10-25T12:34:49.149700Z",
+        "id": "6233ab3b-b488-4f0c-ace6-1a19067576a8",
+        "sequence": 0,
+        "intent": "COVERAGE_ANALYZE",
+        "confidence": 0.98,
+        "status": "completed",
+        "target": {
+          "kind": "case",
+          "case_ids": [
+            "d85c72bd-f253-407e-b34b-9baf4b4b6a98",
+            "942ce699-e4ba-411c-b7a2-f90716b5cfec"
+          ],
+          "resolved": true,
+          "selectors": [],
+          "candidate_refs": []
+        },
+        "payload": {
+          "plan": {
+            "action": "COVERAGE_ANALYZE",
+            "intent": "COVERAGE_ANALYZE",
+            "changes": [],
+            "version": 2,
+            "confidence": 0.98,
+            "depends_on": null,
+            "speech_act": "request",
+            "constraints": [
+              "只分析不生成或修改"
+            ],
+            "instruction": "检查当前集合登录用例的遗漏，只分析不生成或修改。需求：禁用账号不得登录，连续5次密码错误锁定30分钟。",
+            "target_kind": "case",
+            "target_text": "当前集合登录用例",
+            "reason_codes": [
+              "用户请求分析现有登录用例的覆盖遗漏"
+            ],
+            "routing_source": "semantic",
+            "action_evidence": "检查当前集合登录用例的遗漏",
+            "clarification_kind": "none",
+            "query_presentation": "cases",
+            "resume_operation_id": null,
+            "requires_confirmation": false,
+            "uses_selected_targets": false,
+            "clarification_questions": []
+          },
+          "action": "COVERAGE_ANALYZE",
+          "depends_on": null,
+          "instruction": "检查当前集合登录用例的遗漏，只分析不生成或修改。需求：禁用账号不得登录，连续5次密码错误锁定30分钟。",
+          "reason_codes": [
+            "用户请求分析现有登录用例的覆盖遗漏"
+          ],
+          "predecessor_job_id": null,
+          "source_operation_id": null
+        },
+        "result": {
+          "answer": "已检查 2 条用例。\n当前提供的2个登录用例均未覆盖需求明确要求的「禁用账号不得登录」「连续5次密码错误锁定30分钟」两个验证点，存在覆盖缺口。\n\n1. [high] 需求验证点未覆盖\n用例：TC-LOGIN-01-1792931608733, TC-LOGIN-02-1792931608733\n依据：需求明确要求验证两个功能点：1. 禁用账号不得登录；2. 连续5次密码错误锁定30分钟。当前的短信登录用例c0和密码登录用例c1均未设计对这两个功能点的验证，未覆盖对应需求。\n建议：补充针对「禁用账号登录验证」和「连续密码错误锁定规则验证」的测试用例，覆盖缺失的需求验证点。\n\n以上为检查建议，尚未修改用例。",
+          "citations": [],
+          "assumptions": [],
+          "scope_count": 2,
+          "candidate_ids": [],
+          "scope_modules": [
+            "登录/密码",
+            "登录/短信"
+          ],
+          "scope_versions": {
+            "942ce699-e4ba-411c-b7a2-f90716b5cfec": "fc5f8529-f2ad-4a3d-a54c-473638f02d77",
+            "d85c72bd-f253-407e-b34b-9baf4b4b6a98": "fd5f2cf4-821c-4ebf-ba79-794b6e10cbee"
+          },
+          "analysis_report": {
+            "summary": "当前提供的2个登录用例均未覆盖需求明确要求的「禁用账号不得登录」「连续5次密码错误锁定30分钟」两个验证点，存在覆盖缺口。",
+            "findings": [
+              {
+                "basis": "potential",
+                "title": "需求验证点未覆盖",
+                "evidence": "需求明确要求验证两个功能点：1. 禁用账号不得登录；2. 连续5次密码错误锁定30分钟。当前的短信登录用例c0和密码登录用例c1均未设计对这两个功能点的验证，未覆盖对应需求。",
+                "severity": "high",
+                "case_refs": [
+                  "d85c72bd-f253-407e-b34b-9baf4b4b6a98",
+                  "942ce699-e4ba-411c-b7a2-f90716b5cfec"
+                ],
+                "relationship": "coverage",
+                "recommendation": "补充针对「禁用账号登录验证」和「连续密码错误锁定规则验证」的测试用例，覆盖缺失的需求验证点。",
+                "unique_coverage": [],
+                "requirement_refs": []
+              }
+            ],
+            "limitations": []
+          }
+        },
+        "requires_confirmation": false,
+        "related_job_id": "8158376e-11c9-4d5c-9889-cb3fe01293e1",
+        "related_change_set_id": null,
+        "error_code": null,
+        "created_at": "2026-10-25T12:33:44.756576Z"
+      }
+    ],
+    "candidate_history": [],
+    "created_at": "2026-10-25T12:33:30.082117Z",
+    "updated_at": "2026-10-25T12:34:29.952769Z"
+  },
+  "status": "passed",
+  "errors": [],
+  "final": [
+    {
+      "id": "d85c72bd-f253-407e-b34b-9baf4b4b6a98",
+      "case_key": "TC-LOGIN-01-1792931608733",
+      "collection_ids": [
+        "34b8e94c-d5a8-4488-af8d-257c0a8e9800"
+      ],
+      "current_revision_id": "fd5f2cf4-821c-4ebf-ba79-794b6e10cbee",
+      "revision_number": 1,
+      "title": "短信登录",
+      "description": "",
+      "module": "登录/短信",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "手机号已注册且账号启用；准备有效的未使用验证码"
+      ],
+      "steps": [
+        {
+          "id": "d48b3c05-92e9-4548-988a-f55408f3f13b",
+          "action": "输入短信验证码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "e6d9876a-d048-4900-8944-ce5fe8906a89",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931608487-q8ugqyo8m7a@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:33:28.783167Z"
+    },
+    {
+      "id": "942ce699-e4ba-411c-b7a2-f90716b5cfec",
+      "case_key": "TC-LOGIN-02-1792931608733",
+      "collection_ids": [
+        "34b8e94c-d5a8-4488-af8d-257c0a8e9800"
+      ],
+      "current_revision_id": "fc5f8529-f2ad-4a3d-a54c-473638f02d77",
+      "revision_number": 1,
+      "title": "密码登录",
+      "description": "",
+      "module": "登录/密码",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "账号已注册且启用；准备正确密码"
+      ],
+      "steps": [
+        {
+          "id": "8938444b-277c-4ea3-aa89-92306b508b0f",
+          "action": "输入账号及正确密码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "e6d9876a-d048-4900-8944-ce5fe8906a89",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931608487-q8ugqyo8m7a@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:33:28.828831Z"
+    },
+    {
+      "id": "91bcc805-7a7e-4c1a-939f-76ae5c565d24",
+      "case_key": "TC-PAY-01-1792931608733",
+      "collection_ids": [
+        "34b8e94c-d5a8-4488-af8d-257c0a8e9800"
+      ],
+      "current_revision_id": "39dd4684-83e0-4883-8e94-8d2dcef4df7e",
+      "revision_number": 1,
+      "title": "支付成功",
+      "description": "",
+      "module": "支付/付款",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备待支付订单和可用支付账户"
+      ],
+      "steps": [
+        {
+          "id": "79305a12-b971-4800-bd27-021b0967dea9",
+          "action": "完成订单支付",
+          "expected": "订单为已支付；仅有一条成功支付记录"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "e6d9876a-d048-4900-8944-ce5fe8906a89",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931608487-q8ugqyo8m7a@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:33:28.871132Z"
+    },
+    {
+      "id": "9466ab5f-2696-48e0-9d97-6f3d29342d3c",
+      "case_key": "TC-REFUND-01-1792931608733",
+      "collection_ids": [
+        "34b8e94c-d5a8-4488-af8d-257c0a8e9800"
+      ],
+      "current_revision_id": "18a9eb13-6c96-45c6-ac71-403d9d0855b3",
+      "revision_number": 1,
+      "title": "退款成功",
+      "description": "",
+      "module": "支付/退款",
+      "priority": "P2",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备一笔允许全额退款的已支付订单"
+      ],
+      "steps": [
+        {
+          "id": "acaace2d-0c0f-48df-8531-415df6eacdf9",
+          "action": "提交全额退款并等待处理完成",
+          "expected": "退款状态成功，退款金额等于原支付金额"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "e6d9876a-d048-4900-8944-ce5fe8906a89",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931608487-q8ugqyo8m7a@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:33:28.918082Z"
+    }
+  ]
+}

@@ -33,6 +33,7 @@ def offline_generation_interpretation(monkeypatch):
         conversation_memory=None,
         collection_catalog=None,
         explicit_collection_only=False,
+        current_collection_id=None,
     ):
         choice = interpret_generation_choice(
             content, SimpleNamespace(agent_provider="mock"), case_ids

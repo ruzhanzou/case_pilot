@@ -1,0 +1,136 @@
+[
+  {
+    "content": "改成P2",
+    "expected_intent": "CASE_MODIFY",
+    "expected_resume": true,
+    "passed": true,
+    "actual": [
+      {
+        "intent": "CASE_MODIFY",
+        "action": "CHANGESET_PREPARE",
+        "instruction": "改成P2",
+        "confidence": 1.0,
+        "target_kind": "module",
+        "requires_confirmation": true,
+        "reason_codes": [
+          "resume_awaiting_target_task",
+          "modify_case_priority"
+        ],
+        "depends_on": null,
+        "target_text": "登录模块用例",
+        "action_evidence": "改成P2",
+        "changes": [
+          "优先级修改为P2"
+        ],
+        "constraints": [
+          "标题保持不变"
+        ],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": "b2129ce7-da46-4de0-a4c0-83d3651b6311",
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "content": "只改前两条，优先级P1",
+    "expected_intent": "CASE_MODIFY",
+    "expected_resume": true,
+    "passed": true,
+    "actual": [
+      {
+        "intent": "CASE_MODIFY",
+        "action": "CHANGESET_PREPARE",
+        "instruction": "只改前两条，优先级P1",
+        "confidence": 1.0,
+        "target_kind": "module",
+        "requires_confirmation": true,
+        "reason_codes": [
+          "resume_awaiting_target_task",
+          "supplement_modification_requirements"
+        ],
+        "depends_on": null,
+        "target_text": "登录模块前两条用例",
+        "action_evidence": "只改前两条，优先级P1",
+        "changes": [
+          "优先级修改为P1"
+        ],
+        "constraints": [
+          "标题保持不变"
+        ],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": "b2129ce7-da46-4de0-a4c0-83d3651b6311",
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "content": "先查询支付模块的用例",
+    "expected_intent": "CASE_QUERY",
+    "expected_resume": false,
+    "passed": true,
+    "actual": [
+      {
+        "intent": "CASE_QUERY",
+        "action": "CASE_SEARCH",
+        "instruction": "先查询支付模块的用例",
+        "confidence": 1.0,
+        "target_kind": "module",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "user_explicit_request_query_module_use_cases"
+        ],
+        "depends_on": null,
+        "target_text": "支付模块",
+        "action_evidence": "查询支付模块的用例",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "content": "解释一下等价类划分",
+    "expected_intent": "KNOWLEDGE_QA",
+    "expected_resume": false,
+    "passed": true,
+    "actual": [
+      {
+        "intent": "KNOWLEDGE_QA",
+        "action": "ANSWER_QUESTION",
+        "instruction": "解释一下等价类划分",
+        "confidence": 1.0,
+        "target_kind": "none",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "user_request_explanation_of_testing_concept"
+        ],
+        "depends_on": null,
+        "target_text": "",
+        "action_evidence": "",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "question",
+        "query_presentation": "cases",
+        "routing_source": "semantic"
+      }
+    ]
+  }
+]

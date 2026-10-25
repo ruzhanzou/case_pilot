@@ -8,12 +8,27 @@ test.setTimeout(900_000);
 const api = `${process.env.CASEPILOT_E2E_API_URL ?? "http://localhost:8000"}/api/v1`;
 const suite = JSON.parse(readFileSync(new URL('../../../docs/evaluations/casepilot-natural-language-eval-2026-10-09.json', import.meta.url), 'utf8'));
 let journal: any;
+const observedBodies = new Map<string, string>();
 // Redirect transport to an isolated real API when load tests occupy the main worker.
 // No response is mocked; streaming and persistence stay with the real services.
 test.beforeEach(async ({page}) => {
   const target = process.env.CASEPILOT_BROWSER_API_OVERRIDE;
   if (target) await page.route('http://localhost:8000/api/v1/**', route =>
     route.continue({url: route.request().url().replace('http://localhost:8000', target)}));
+  observedBodies.clear();
+  // Proxy real responses unchanged; Chrome may evict long-running response bodies
+  // from its inspector cache before Playwright can collect the acceptance journal.
+  await page.route('**/api/v1/**', async route => {
+    const request = route.request();
+    if (request.method() !== 'POST' || !/\/(messages|resume)$/.test(new URL(request.url()).pathname)) {
+      await route.fallback(); return;
+    }
+    const url = target ? request.url().replace('http://localhost:8000', target) : request.url();
+    const response = await route.fetch({ url, timeout: 180000 });
+    const body = await response.text();
+    observedBodies.set(request.url(), body);
+    await route.fulfill({ response, body });
+  });
 });
 
 test.beforeEach(() => { journal = { turns: [], timings: [], startedAt: new Date().toISOString() }; });
@@ -53,20 +68,30 @@ async function setup(page: Page, long = false, empty = false, transform: (item: 
   await expect(page.locator('.principle-composer textarea')).toBeEnabled({ timeout: 60000 });
   return { read: () => get(page, `/collections/${journal.collection.id}/test-cases`), byKey: (key: string) => journal.original.find((c: any) => c.case_key === journal.keyMap[key]) };
 }
-async function send(page: Page, content: string, confirm = true) {
+async function send(page: Page, content: string, confirm = true, serviceRetries = 0): Promise<any> {
   for (const [alias, key] of Object.entries(journal.keyMap ?? {})) content = content.replaceAll(alias, String(key));
   const input = page.locator('.principle-composer textarea'); await expect(input).toBeEnabled({ timeout: 480000 });
   await input.fill(content); const started = Date.now();
-  const pending = page.waitForResponse(r => r.request().method() === 'POST' && /\/(messages|resume)$/.test(new URL(r.url()).pathname), { timeout: 180000 });
+  const pending = page.waitForResponse(r => r.request().method() === 'POST' && /\/(messages|resume)$/.test(new URL(r.url()).pathname), { timeout: 180000 })
+    .then(async response => ({ response, body: observedBodies.get(response.url()) ?? await response.text() }));
   await page.locator('.principle-composer button[type=submit]').click();
-  const response = await pending; expect(response.ok(), await response.text()).toBeTruthy();
-  let turn = await response.json(); journal.turns.push({ content, response: turn });
+  const { response, body } = await pending;
+  if (response.status() === 503 && serviceRetries > 0) {
+    (journal.serviceFailures ??= []).push({ content, status: response.status(), body, ms: Date.now() - started });
+    await expect(input).toBeEnabled();
+    await expect(input).toHaveValue(content);
+    expect(await get(page, `/collections/${journal.collection.id}/test-cases`)).toEqual(journal.original);
+    // Exercise the user-visible retry on the same draft; other failures are never retried.
+    return send(page, content, confirm, serviceRetries - 1);
+  }
+  expect(response.ok(), body).toBeTruthy();
+  let turn = JSON.parse(body); journal.turns.push({ content, response: turn });
   journal.timings.push({ kind: 'message_response', ms: Date.now() - started });
   if (confirm && turn.assistant_message?.metadata.modification_confirmation) {
     expect(turn.action.job_id).toBeFalsy();
     const pending = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/resume'), { timeout: 180000 });
     await page.getByRole('button', { name: '确认修改并生成建议', exact: true }).last().click();
-    const response = await pending; expect(response.ok()).toBeTruthy(); turn = await response.json(); journal.turns.push({ confirmation: turn });
+    const response = await pending; expect(response.ok()).toBeTruthy(); turn = JSON.parse(observedBodies.get(response.url()) ?? await response.text()); journal.turns.push({ confirmation: turn });
   }
   return turn;
 }
@@ -258,4 +283,127 @@ test('NL-SEC-03 malicious case body is data and only title changes', async ({ pa
   expect(changed.title).toBe('正文隔离'); unchangedExcept(a,changed,['title']);
   expect(s.after).toHaveLength(4);
   expect(s.after.filter((c:any) => c.id !== a.id)).toEqual(journal.original.filter((c:any) => c.id !== a.id));
+});
+
+test('NL-DELETE-CANCEL-REPEAT cancellation preserves cases and fresh confirmation deletes only target', async ({ page }) => {
+  const s = await setup(page);
+  const target = s.byKey('TC-LOGIN-02');
+  const instruction = '删除用例 TC-LOGIN-02，其他用例保持不变。';
+  const review = page.locator('.collection-changes__review');
+  const first = await send(page, instruction);
+  expect(first.intent).toBe('CASE_DELETE');
+  const proposal = await ready(page, first);
+  expect(proposal.items.map((item: any) => item.ref)).toEqual([target.id]);
+  expect(await s.read()).toEqual(journal.original);
+  const reject = page.waitForResponse(r => r.request().method() === 'POST' && /\/case-change-sets\/[^/]+\/reject$/.test(new URL(r.url()).pathname));
+  await review.getByRole('button', { name: '取消变更', exact: true }).click();
+  expect((await reject).ok()).toBeTruthy();
+  expect(await s.read()).toEqual(journal.original);
+  const second = await send(page, instruction);
+  expect(second.intent).toBe('CASE_DELETE');
+  expect(second.action.change_set_id).not.toBe(first.action.change_set_id);
+  await ready(page, second);
+  expect(await s.read()).toEqual(journal.original);
+  const accepted = page.waitForResponse(r => r.request().method() === 'POST' && /\/case-change-sets\/[^/]+\/apply$/.test(new URL(r.url()).pathname));
+  await review.getByRole('button', { name: '确认删除已选用例', exact: true }).click();
+  expect((await accepted).ok()).toBeTruthy();
+  await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  expect(await s.read()).toEqual(journal.original.filter((item: any) => item.id !== target.id));
+});
+
+test('NL-IDENTIFIER-INTEGRITY missing suffix never selects the nearby existing case', async ({ page }) => {
+  const s = await setup(page);
+  const target = s.byKey('TC-LOGIN-02');
+  const missing = 'TC-LOGIN-02-NOTFOUND';
+  const first = await send(page, `删除用例 ${missing}，其他保持不变。`);
+  expect(first.intent).toBe('CASE_DELETE');
+  expect(first.action.type).toBe('clarification');
+  expect(first.action.change_set_id).toBeFalsy();
+  expect(first.action.job_id).toBeFalsy();
+  expect(await s.read()).toEqual(journal.original);
+  const corrected = await send(page, `不是用例 ${missing}，而是用例 TC-LOGIN-02，删除它，其他保持不变。`);
+  const proposal = await ready(page, corrected);
+  expect(proposal.items.map((item: any) => item.ref)).toEqual([target.id]);
+  expect(await s.read()).toEqual(journal.original);
+  await page.locator('.collection-changes__review').getByRole('button', { name: '取消变更', exact: true }).click();
+  await expect.poll(s.read).toEqual(journal.original);
+});
+
+for (const [intent, content] of [
+  ['CASE_REVIEW', '审阅当前集合用例质量，检查步骤与预期是否清晰可执行，只审阅不修改。'],
+  ['CASE_DEDUP', '检查当前集合重复冗余用例，说明重复依据和独有覆盖，只检查不修改。'],
+  ['COVERAGE_ANALYZE', '检查当前集合登录用例的遗漏，只分析不生成或修改。需求：禁用账号不得登录，连续5次密码错误锁定30分钟。'],
+] as const) test(`NL-ANALYSIS-${intent} result survives reload without mutation`, async ({ page }) => {
+  const s = await setup(page);
+  const turn = await send(page, content, false);
+  expect(turn.intent).toBe(intent);
+  expect(turn.operation_plan.operations.map((o:any) => o.intent)).toEqual([intent]);
+  expect(turn.action.change_set_id).toBeFalsy();
+  const cid = turn.conversation_id;
+  expect(cid).toBeTruthy();
+  const state = () => get(page, `/conversations/${cid}`);
+  await expect.poll(async () => {
+    const current = await state();
+    return current.messages.find((m:any) => m.id === turn.assistant_message.id)?.status;
+  }, { timeout: 420000, intervals: [2000, 4000] }).not.toMatch(/^(running|queued|streaming|pending)$/);
+  journal.analysis = await state();
+  expect(journal.analysis.messages.find((m:any) => m.id === turn.assistant_message.id)?.status).toBe('completed');
+  expect(await s.read()).toEqual(journal.original);
+  await expect(page.locator('.case-review-plan')).toBeVisible();
+  await expect(page.locator('.case-review-plan')).not.toBeEmpty();
+  await page.reload();
+  await expect(page.locator('.case-review-plan')).toBeVisible();
+  expect(await s.read()).toEqual(journal.original);
+});
+
+for (const recovery of [false, true]) test(`${recovery ? 'NL-COUNT-SERVICE-RECOVERY' : 'NL-COUNT-CORRECTION'} query two then narrow to first across reload`, async ({ page }) => {
+  const submit = (content: string, confirm = true) => send(page, content, confirm, recovery ? 2 : 0);
+  const s = await setup(page);
+  const query = await submit('查询当前集合的登录用例，只查询不修改。', false);
+  expect(query.intent).toBe('CASE_QUERY');
+  const ids = query.assistant_message.target_case_ids;
+  expect(ids).toHaveLength(2);
+  expect(new Set(ids)).toEqual(new Set([s.byKey('TC-LOGIN-01').id, s.byKey('TC-LOGIN-02').id]));
+  const preview = await submit('把刚才这两条的优先级改成P0，其他字段保持不变。', false);
+  expect(preview.action.job_id).toBeFalsy();
+  expect(preview.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  expect(new Set(preview.assistant_message.target_case_ids)).toEqual(new Set(ids));
+  expect(await s.read()).toEqual(journal.original);
+  const operationId = preview.assistant_message.metadata.operation_id;
+  await page.reload();
+  const revised = await submit('改一下，只改刚才两条里的第一条，优先级改成P2，其他字段不变。', false);
+  expect(revised.assistant_message.metadata.operation_id).toBe(operationId);
+  expect(revised.action.job_id).toBeFalsy();
+  expect(revised.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  expect(revised.assistant_message.target_case_ids).toEqual([ids[0]]);
+  expect(await s.read()).toEqual(journal.original);
+  await page.reload();
+  const final = await ready(page, await submit('确认，就按这个修改。'));
+  expect(final.items.map((item:any) => item.ref)).toEqual([ids[0]]);
+  expect(await s.read()).toEqual(journal.original);
+  await apply(page);
+  await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read();
+  const changed = saved.find((c:any) => c.id === ids[0]);
+  expect(changed.priority).toBe('P2');
+  unchangedExcept(journal.original.find((c:any) => c.id === ids[0]), changed, ['priority']);
+  expect(saved.filter((c:any) => c.id !== ids[0])).toEqual(journal.original.filter((c:any) => c.id !== ids[0]));
+});
+
+test('NL-COLLECTION-EXPLICIT named other collection retains the conversation boundary', async ({ page }) => {
+  const s = await setup(page);
+  const collections = await get(page, `/spaces/${journal.collection.space_id}/collections`);
+  const other = collections.find((c:any) => c.id !== journal.collection.id);
+  expect(other).toBeTruthy();
+  const turn = await send(page, `查询「${other.name}」集合里的用例，不是在当前集合查询。`, false);
+  expect(turn.intent).toBe('CASE_QUERY');
+  expect(turn.action.type).toBe('new_conversation_required');
+  expect(turn.action.requested_collection_id).toBe(other.id);
+  expect(turn.action.job_id).toBeFalsy();
+  const state = await get(page, `/conversations/${turn.conversation_id}`);
+  expect(state.collection_id).toBe(journal.collection.id);
+  expect(await s.read()).toEqual(journal.original);
+  await expect(page.locator('.principle-messages')).toContainText('请新建对话后继续');
 });

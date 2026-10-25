@@ -74,6 +74,7 @@ from casepilot_api.models import (
     WorkspaceTestBrief,
 )
 from casepilot_api.rewrite_dialogue import RewriteReply, interpret_rewrite_reply
+from casepilot_api.rewrite_state import reduce_draft, routing_draft_context, settle_draft
 from casepilot_api.schemas import (
     SOURCE_REF_EXCERPT_MAX_LENGTH,
     CaseChangeSetApplyView,
@@ -1319,8 +1320,21 @@ def _collection_candidates(
     if settings.agent_provider != "mock":
         if not candidates:
             return candidates, None
-        choice = interpret_generation_choice(content, settings, collection_catalog=candidates,
-                                              explicit_collection_only=explicit_only)
+        from openai import APIConnectionError, InternalServerError, RateLimitError
+
+        try:
+            choice = interpret_generation_choice(content, settings, collection_catalog=candidates,
+                                                  explicit_collection_only=explicit_only,
+                                                  current_collection_id=str(conversation.collection_id)
+                                                  if getattr(conversation, "collection_id", None) else None)
+        except (APIConnectionError, InternalServerError, RateLimitError) as error:
+            # Do not guess the current collection when target interpretation is unavailable.
+            raise HTTPException(
+                status_code=503, detail="模型服务暂时不可用，未执行本次操作，请稍后重试。"
+            ) from error
+        except ValueError as error:
+            # A missing/invalid citation is a model failure, not permission to switch.
+            raise HTTPException(status_code=503, detail="集合识别暂时未完成，未执行本次操作，请重试。") from error
         return candidates, UUID(choice.target_collection_id) if choice.target_collection_id else None
     matches = [
         item.id
@@ -1633,6 +1647,16 @@ def _resolve_model_scope(db, conversation, payload, intent):
         return payload.model_copy(update={
             "targets": [], "target_case_ids": [], "target_candidate_snapshots": [],
         }), None
+    # A model may omit or silently normalize a mistyped reference. Explicitly
+    # labelled identifiers must exist verbatim before any semantic selection.
+    from casepilot_api.case_scope import explicit_target_keys
+
+    known_target_keys = {str(case.get("case_key", "")).casefold() for case in catalog}
+    known_target_keys.update(str(case["id"]).casefold() for case in catalog)
+    missing_keys = [key for key in explicit_target_keys(payload.content)
+                    if key.casefold() not in known_target_keys]
+    if missing_keys:
+        return payload, "指定编号不存在，请检查完整编号：" + "、".join(missing_keys)
     allowed = {str(case["id"]) for case in catalog}
     ref_ids = {str(case.get("case_key", "")): str(case["id"]) for case in catalog}
     # The expansion helper defaults to the collection for legacy callers. That
@@ -2528,6 +2552,14 @@ def _start_action(
         if not confirm_modification or pending != confirmation:
             operation.payload = {
                 **dict(operation.payload), "modification_confirmation": confirmation,
+                "rewrite_draft": settle_draft({
+                    **dict(operation.payload).get("rewrite_draft", {}),
+                    "version": 1,
+                    "scope_instruction": str(dict(operation.payload).get("rewrite_draft", {}).get(
+                        "scope_instruction") or plan.get("target_text") or payload.content),
+                    "requirements": payload.content,
+                    "requirements_ready": bool(payload.content.strip()),
+                }, scope_resolved=bool(case_context), confirmation=confirmation, dispatched=False),
             }
             if not case_context:
                 content = "请指定要修改的模块、用例编号或选中用例。"
@@ -2562,7 +2594,11 @@ def _start_action(
         for source in asset_references:
             _validate_reuse_source(db, conversation, account, source)
     conversation_memory = _agent_conversation_memory(db, conversation.id)
-    provided_test_object = _test_object_from_memory(conversation_memory)
+    # Only generation planning consumes a newly inferred test object. Existing
+    # asset edits/analyses already have their resolved scope and persisted brief.
+    provided_test_object = (
+        _test_object_from_memory(conversation_memory) if intent == "CASE_GENERATE" else ""
+    )
     input_payload = {
         "prompt": payload.content.strip(),
         "markdown_content": payload.content.strip(),
@@ -4270,6 +4306,10 @@ def _retry_generation_from_text(
 ) -> ConversationTurnView | None:
     if payload.intent_override or payload.source_operation_id:
         return None
+    latest_operation_query = select(ConversationOperation).where(
+        ConversationOperation.conversation_id == conversation.id,
+    ).order_by(ConversationOperation.created_at.desc(),
+               ConversationOperation.sequence.desc()).limit(1)
     retry_details = None
     if settings.agent_provider != "mock":
         recent = list(db.scalars(select(ConversationMessage).where(
@@ -4277,6 +4317,15 @@ def _retry_generation_from_text(
         ).order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc()).limit(2)))
         # A new conversation has no task to retry. Avoid an extra model round trip.
         if not recent:
+            return None
+        latest_operation = db.scalar(latest_operation_query)
+        # Retry interpretation is useful only when the current task can retry.
+        # Ordinary replies to a healthy non-generation task go straight to the
+        # intent/draft interpreter; generation may have missing completed slots.
+        if (latest_operation is not None and latest_operation.intent != "CASE_GENERATE"
+                and latest_operation.status not in {"failed", "queued"}):
+            if _is_generation_retry(payload.content):
+                raise HTTPException(status_code=409, detail="message_not_retryable")
             return None
         retry_details = interpret_generation_choice(payload.content, settings,
             conversation_memory=[{"role": m.role, "content": m.content} for m in reversed(recent)])
@@ -4298,10 +4347,7 @@ def _retry_generation_from_text(
                 or not _is_generation_retry(recent[1].content)
                 or not re.search(r"(?:是否|要不要|确认|要).*重试|retry.*\?", recent[0].content, re.I)):
                 return None
-    latest_operation = db.scalar(select(ConversationOperation).where(
-        ConversationOperation.conversation_id == conversation.id,
-    ).order_by(ConversationOperation.created_at.desc(),
-               ConversationOperation.sequence.desc()).limit(1))
+        latest_operation = db.scalar(latest_operation_query)
     # A compound request may end in queued steps blocked by an earlier failure.
     # Retry that failed predecessor, never skip ahead to the queued mutation.
     if latest_operation is not None and latest_operation.status == "queued":
@@ -4404,6 +4450,17 @@ def _retry_generation_from_text(
     )
 
 
+def _send_message_with_model_error_handling(conversation_id, payload, account, db):
+    from openai import APIConnectionError, InternalServerError, RateLimitError
+
+    try:
+        return _send_message(conversation_id, payload, account, db)
+    except (APIConnectionError, InternalServerError, RateLimitError) as error:
+        raise HTTPException(
+            status_code=503, detail="模型服务暂时不可用，未执行本次操作，请稍后重试。"
+        ) from error
+
+
 @router.post(
     "/conversations/{conversation_id}/messages",
     response_model=ConversationTurnView,
@@ -4416,7 +4473,7 @@ def send_message(
     db: DbSession,
 ) -> ConversationTurnView:
     if payload.client_request_id is None:
-        return _send_message(conversation_id, payload, account, db)
+        return _send_message_with_model_error_handling(conversation_id, payload, account, db)
     conversation = _ensure_conversation(db, account.id, conversation_id)
     fingerprint = sha256(json.dumps(payload.model_dump(mode="json", exclude={"client_request_id"}),
                                     sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -4431,7 +4488,7 @@ def send_message(
         return ConversationTurnView.model_validate(receipt.response)
     transaction = SubmissionTransaction(db)
     try:
-        turn = _send_message(conversation_id, payload, account, transaction)
+        turn = _send_message_with_model_error_handling(conversation_id, payload, account, transaction)
         user_message = db.get(ConversationMessage, turn.user_message.id)
         if user_message is None:
             raise RuntimeError("submission_user_message_missing")
@@ -4483,7 +4540,14 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
         _require_idle_conversation(db, conversation)
     # A strategy label is not authorization to cancel an active task.
     # Preserve the deterministic demo flow only for the mock provider.
-    generation_choice = interpret_generation_choice(payload.content, settings)
+    phase = str(dict(conversation.context).get("phase", "idle"))
+    # Live generation selects its strategy in _start_action. Only brief review
+    # needs it before routing to recognize confirmation; ordinary queries and
+    # rewrites must not pay for an unrelated model round trip.
+    generation_choice = (
+        interpret_generation_choice(payload.content, settings)
+        if settings.agent_provider == "mock" or phase == "brief_review" else None
+    )
     if settings.agent_provider == "mock" and generation_choice.strategy != "generate":
         active_id = dict(conversation.context).get("active_job_id")
         if active_id:
@@ -4504,7 +4568,7 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
             raise HTTPException(status_code=422, detail="previous_result_not_found")
         if source_operation.status not in {"completed", "awaiting_confirmation"}:
             raise HTTPException(status_code=409, detail="source_task_not_ready")
-    strategy = generation_choice.strategy
+    strategy = generation_choice.strategy if generation_choice else payload.generation_strategy
     strategy_update = {"generation_strategy": strategy}
     if settings.agent_provider == "mock" and not payload.intent_override:
         strategy_update.update(
@@ -4544,7 +4608,7 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
                     GenerationAssetConfirmRequest(version=pending_brief.version, case_ids=chosen), account, db)
     confirms_brief = (
         _looks_like_brief_confirmation(payload.content)
-        if settings.agent_provider == "mock" else generation_choice.confirms_brief
+        if settings.agent_provider == "mock" else bool(generation_choice and generation_choice.confirms_brief)
     )
     if phase == "brief_review" and confirms_brief:
         latest_brief = db.scalar(
@@ -4593,6 +4657,7 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
                 "status": item.status,
                 "target": dict(item.target),
                 "result": dict(item.result),
+                **routing_draft_context(dict(item.payload)),
             }
             for item in db.scalars(
                 select(ConversationOperation)
@@ -4628,6 +4693,13 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
                 tracing_enabled=settings.agent_tracing_enabled,
             ).operations
         ]
+    if any("SEMANTIC_ROUTING_UNAVAILABLE" in draft.get("reason_codes", [])
+           for draft in operation_drafts):
+        # Infrastructure failure is not an ambiguous user request. Leave the
+        # current draft and submission untouched so the same input can retry.
+        raise HTTPException(
+            status_code=503, detail="模型服务暂时不可用，未执行本次操作，请稍后重试。"
+        )
     resumed = _resume_model_selected_operation(db, account, conversation, payload, operation_drafts)
     if resumed is not None:
         return resumed
@@ -5185,7 +5257,7 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
         "requirements_ready": bool(pending or dict(operation.payload).get("plan", {}).get("changes")),
         "scope_resolved": bool(dict(operation.target).get("resolved")),
     })
-    if pending:
+    if pending and legacy_draft:
         state.update(requirements=_without_confirmation_supplements(pending["instruction"]),
                      requirements_ready=True, scope_resolved=True)
     # Auto-echoed UI selections are context; actual changed membership is a draft update.
@@ -5220,19 +5292,19 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
             intent=operation.intent, intent_confidence=1.0, status="completed",
             target_case_ids=[], citations=[],
             message_metadata={"operation_id": str(operation.id), "rewrite_reply": reply.action}))
-    if reply.action == "cancel" and reply.confidence >= 0.85:
+    reduction = reduce_draft(state, reply, confirmation=pending,
+                             selection_changed=selection_changed)
+    state, transition, clarification = reduction.state, reduction.action, reduction.clarification
+    if transition == "cancel":
+        operation.payload = {**dict(operation.payload), "rewrite_draft": state,
+                             "modification_confirmation": None}
         cancel_conversation_operation(operation.id, account, db)
         assistant = db.scalar(select(ConversationMessage).where(
             ConversationMessage.conversation_id == conversation.id,
             ConversationMessage.role == "assistant",
         ).order_by(ConversationMessage.created_at.desc()).limit(1))
         return _rewrite_reply_turn(db, conversation, operation, user_message, assistant, {"type": "cancelled"})
-    clarification = reply.clarification if reply.action == "clarify" else ""
-    if reply.confidence < 0.85:
-        clarification = clarification or "这次回复是调整范围、修改要求，还是确认当前方案？请补充说明。"
-    if reply.action == "confirm" and (not pending or state.get("clarification")):
-        clarification = state.get("clarification") or "当前方案还未确定，请先补充用例范围和修改要求。"
-    if clarification or reply.action == "clarify":
+    if transition == "clarify":
         state["clarification"] = clarification or "请说明需要调整的范围或修改要求。"
         operation.payload = {**dict(operation.payload), "rewrite_draft": state,
                              "modification_confirmation": None}
@@ -5243,22 +5315,14 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
         db.flush()
         return _rewrite_reply_turn(db, conversation, operation, user_message, assistant, {"type": "clarification"})
     scope_changed = reply.scope_action == "replace" or selection_changed
-    if reply.scope_action == "replace":
-        state["scope_instruction"] = reply.scope_instruction
-    if reply.requirements:
-        state["requirements"] = reply.requirements
-    state["requirements_ready"] = reply.requirements_ready
-    state.pop("clarification", None)
-    if scope_changed:
-        state["scope_resolved"] = False
-    confirm = reply.action == "confirm" and not scope_changed
-    if not confirm:
-        pending = None
-    elif pending:
+    confirm = transition == "confirm" and not scope_changed
+    pending = reduction.confirmation
+    if pending:
         pending = {**pending, "instruction": _without_confirmation_supplements(pending["instruction"])}
     operation.payload = {**dict(operation.payload), "rewrite_draft": state,
         "instruction": state["requirements"], "modification_confirmation": pending,
-        "plan": {**dict(operation.payload).get("plan", {}), "clarification_questions": []}}
+        "plan": {**dict(operation.payload).get("plan", {}),
+                 "target_text": state["scope_instruction"], "clarification_questions": []}}
     if not state["requirements_ready"]:
         # Resolve/save a changed selection even when direction is still missing.
         operation.payload = {**dict(operation.payload), "plan": {
@@ -5295,7 +5359,11 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
         "CASE_MODIFY", operation.confidence, operation.id,
         confirmed_targets=fixed_scope, confirm_modification=confirm)
     # Scope failures must never leave an executable stale preview.
-    state = {**state, "scope_resolved": bool(dict(operation.target).get("resolved"))}
+    state = settle_draft(state,
+        scope_resolved=bool(dict(operation.target).get("resolved")),
+        confirmation=dict(operation.payload).get("modification_confirmation"),
+        dispatched=bool(action.get("job_id")),
+        clarification=assistant.content if action.get("type") == "clarification" else "")
     operation.payload = {**dict(operation.payload), "rewrite_draft": state}
     return _rewrite_reply_turn(db, conversation, operation, user_message, assistant, action, task_name)
 

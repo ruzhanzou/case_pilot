@@ -275,7 +275,8 @@ def test_planning_revision_preserves_strategy_unless_model_detects_explicit_swit
     from casepilot_api.schemas import ConversationMessageCreate
     monkeypatch.setattr(conversations.settings, 'agent_provider', 'openai_compatible')
     choice = SimpleNamespace(strategy='select_and_generate', brief_action='revise',
-                             strategy_change_requested=explicit_change, rewrite_existing_assets=False)
+                             strategy_change_requested=explicit_change, rewrite_existing_assets=False,
+                             continue_cases=False)
     monkeypatch.setattr(conversations, 'interpret_generation_choice', lambda *a: choice)
     db = Mock()
     db.scalar.return_value = SimpleNamespace(content={'generation_strategy': current})

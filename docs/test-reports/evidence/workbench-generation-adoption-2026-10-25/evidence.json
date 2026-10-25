@@ -1,0 +1,573 @@
+{
+  "cid": "39c77d43-fb5e-4aa7-a9a6-4d1ee579ecc9",
+  "collectionId": "d209d38c-308e-442d-9ccc-a8c0745ba313",
+  "alreadyAdopted": true,
+  "candidates": [
+    {
+      "id": "c3a9b9dc-085b-4241-8c0d-f830b63c3299",
+      "generation_job_id": "e1dfa94e-0959-4ce5-9f00-be83dbf714e0",
+      "ref": "TC-TP-dddffc6f2cf25485-1",
+      "version": 1,
+      "position": 0,
+      "snapshot": {
+        "id": "TC-TP-dddffc6f2cf25485-1",
+        "tags": [],
+        "steps": [
+          {
+            "action": "在登录页输入正确的账号和正确密码，点击登录按钮",
+            "expected": "登录请求被系统接受，登录成功，系统成功建立用户登录会话，用户可访问受保护资源"
+          }
+        ],
+        "title": "已注册启用账号正确密码登录",
+        "module": "账号登录模块/R1-正确密码登录",
+        "status": "pending",
+        "priority": "P0",
+        "automated": false,
+        "case_type": "功能测试",
+        "source_refs": [
+          {
+            "label": "用户需求R1",
+            "excerpt": "已注册且启用账号使用正确密码登录成功并建立会话",
+            "locator": "",
+            "chunk_id": null,
+            "source_id": null,
+            "document_id": null
+          }
+        ],
+        "preconditions": [
+          "用户持有已注册且处于启用状态的账号",
+          "登录页面已加载完成"
+        ],
+        "test_point_ids": [
+          "TP-dddffc6f2cf25485"
+        ]
+      },
+      "included": true,
+      "status": "candidate",
+      "updated_at": "2026-10-25T12:14:05.194922Z"
+    },
+    {
+      "id": "e5227a0c-649a-454b-b0bd-ecfd4fc9b143",
+      "generation_job_id": "e1dfa94e-0959-4ce5-9f00-be83dbf714e0",
+      "ref": "TC-TP-2648a87d2cb7571a-1",
+      "version": 1,
+      "position": 1,
+      "snapshot": {
+        "id": "TC-TP-2648a87d2cb7571a-1",
+        "tags": [],
+        "steps": [
+          {
+            "action": "在登录页输入正确账号和错误密码，点击登录按钮",
+            "expected": "系统拒绝本次登录请求，不建立用户登录会话，用户无法访问受保护资源"
+          }
+        ],
+        "title": "已注册启用账号错误密码登录",
+        "module": "账号登录模块/R2-错误密码登录",
+        "status": "pending",
+        "priority": "P1",
+        "automated": false,
+        "case_type": "功能测试",
+        "source_refs": [
+          {
+            "label": "用户需求R2",
+            "excerpt": "错误密码不建立会话",
+            "locator": "",
+            "chunk_id": null,
+            "source_id": null,
+            "document_id": null
+          }
+        ],
+        "preconditions": [
+          "用户持有已注册且处于启用状态的账号",
+          "登录页面已加载完成"
+        ],
+        "test_point_ids": [
+          "TP-2648a87d2cb7571a"
+        ]
+      },
+      "included": true,
+      "status": "candidate",
+      "updated_at": "2026-10-25T12:14:05.194922Z"
+    },
+    {
+      "id": "4c27ce3f-2977-47a1-ac68-48d988a36160",
+      "generation_job_id": "e1dfa94e-0959-4ce5-9f00-be83dbf714e0",
+      "ref": "TC-TP-c6a62cf990f2598c-1",
+      "version": 1,
+      "position": 2,
+      "snapshot": {
+        "id": "TC-TP-c6a62cf990f2598c-1",
+        "tags": [],
+        "steps": [
+          {
+            "action": "在登录页输入正确账号和获取到的正确验证码，点击登录按钮",
+            "expected": "登录请求被系统接受，登录成功，系统成功建立用户登录会话，用户可访问受保护资源"
+          }
+        ],
+        "title": "签发后120秒内正确验证码登录",
+        "module": "账号登录模块/R3-有效期内正确验证码登录",
+        "status": "pending",
+        "priority": "P0",
+        "automated": false,
+        "case_type": "功能测试",
+        "source_refs": [
+          {
+            "label": "用户需求R3",
+            "excerpt": "正确短信验证码签发后t<120秒有效，可成功建立会话",
+            "locator": "",
+            "chunk_id": null,
+            "source_id": null,
+            "document_id": null
+          }
+        ],
+        "preconditions": [
+          "用户持有已注册账号",
+          "登录页面已加载完成",
+          "用户已申请获取该账号的短信验证码，获取后等待时长小于120秒"
+        ],
+        "test_point_ids": [
+          "TP-c6a62cf990f2598c"
+        ]
+      },
+      "included": true,
+      "status": "candidate",
+      "updated_at": "2026-10-25T12:14:05.194922Z"
+    },
+    {
+      "id": "0435ad63-7d82-46f6-be13-0c4a26fe4413",
+      "generation_job_id": "e1dfa94e-0959-4ce5-9f00-be83dbf714e0",
+      "ref": "TC-TP-b279eaa2e815505c-1",
+      "version": 1,
+      "position": 3,
+      "snapshot": {
+        "id": "TC-TP-b279eaa2e815505c-1",
+        "tags": [],
+        "steps": [
+          {
+            "action": "在登录页输入正确账号和已超时的正确验证码，点击登录按钮",
+            "expected": "系统提示验证码过期，拒绝本次登录请求，不建立用户登录会话，用户无法访问受保护资源"
+          }
+        ],
+        "title": "t≥120秒超时验证码登录验证",
+        "module": "账号登录模块/R4-超时验证码登录",
+        "status": "pending",
+        "priority": "P1",
+        "automated": false,
+        "case_type": "功能测试",
+        "source_refs": [
+          {
+            "label": "用户需求R4",
+            "excerpt": "t≥120秒验证码失效，提示过期且不建立会话",
+            "locator": "",
+            "chunk_id": null,
+            "source_id": null,
+            "document_id": null
+          }
+        ],
+        "preconditions": [
+          "用户持有已注册账号",
+          "登录页面已加载完成",
+          "用户已申请获取该账号的短信验证码，获取后等待时长大于等于120秒"
+        ],
+        "test_point_ids": [
+          "TP-b279eaa2e815505c"
+        ]
+      },
+      "included": true,
+      "status": "candidate",
+      "updated_at": "2026-10-25T12:14:05.194922Z"
+    },
+    {
+      "id": "6a3ffab8-321f-4cb9-9e53-feed421f50bc",
+      "generation_job_id": "e1dfa94e-0959-4ce5-9f00-be83dbf714e0",
+      "ref": "TC-TP-d3c70b1cc0705be8-1",
+      "version": 1,
+      "position": 4,
+      "snapshot": {
+        "id": "TC-TP-d3c70b1cc0705be8-1",
+        "tags": [],
+        "steps": [
+          {
+            "action": "在登录页输入相同账号和已经成功使用过的验证码，发起登录请求",
+            "expected": "系统拒绝本次登录请求，不建立新的登录会话，用户无法通过该验证码完成登录"
+          }
+        ],
+        "title": "已使用成功的验证码重复登录验证",
+        "module": "账号登录模块/R5-已使用验证码重复登录",
+        "status": "pending",
+        "priority": "P1",
+        "automated": false,
+        "case_type": "功能测试",
+        "source_refs": [
+          {
+            "label": "用户需求R5",
+            "excerpt": "成功使用的验证码不可再次使用，不建立新会话",
+            "locator": "",
+            "chunk_id": null,
+            "source_id": null,
+            "document_id": null
+          }
+        ],
+        "preconditions": [
+          "用户持有已注册账号",
+          "该账号的短信验证码已被成功用于登录并建立了会话",
+          "登录页面已加载完成"
+        ],
+        "test_point_ids": [
+          "TP-d3c70b1cc0705be8"
+        ]
+      },
+      "included": true,
+      "status": "candidate",
+      "updated_at": "2026-10-25T12:14:05.194922Z"
+    },
+    {
+      "id": "3476add0-3261-40f5-8aab-ac903d62d383",
+      "generation_job_id": "e1dfa94e-0959-4ce5-9f00-be83dbf714e0",
+      "ref": "TC-TP-bafac86b9b355d1a-1",
+      "version": 1,
+      "position": 5,
+      "snapshot": {
+        "id": "TC-TP-bafac86b9b355d1a-1",
+        "tags": [],
+        "steps": [
+          {
+            "action": "测试账号执行退出登录操作",
+            "expected": "退出登录操作成功完成"
+          },
+          {
+            "action": "使用退出登录前生成的旧访问令牌发起访问受保护资源的请求",
+            "expected": "系统拒绝该访问请求，不允许访问受保护资源"
+          }
+        ],
+        "title": "退出登录后旧令牌访问受保护资源验证",
+        "module": "账号登录模块/R6-退出后旧令牌访问",
+        "status": "pending",
+        "priority": "P0",
+        "automated": false,
+        "case_type": "权限测试",
+        "source_refs": [
+          {
+            "label": "用户需求R6",
+            "excerpt": "退出后旧令牌访问受保护资源被拒绝",
+            "locator": "",
+            "chunk_id": null,
+            "source_id": null,
+            "document_id": null
+          }
+        ],
+        "preconditions": [
+          "存在一个已注册且处于启用状态的测试账号",
+          "该测试账号已通过合法登录流程成功登录，并获取到有效的旧访问令牌",
+          "系统存在需要登录授权才能访问的受保护资源"
+        ],
+        "test_point_ids": [
+          "TP-bafac86b9b355d1a"
+        ]
+      },
+      "included": true,
+      "status": "candidate",
+      "updated_at": "2026-10-25T12:14:05.194922Z"
+    }
+  ],
+  "formal": [
+    {
+      "id": "4f52a386-fb0b-4987-a6b6-dc3c3d396219",
+      "case_key": "CP-42B28C71",
+      "collection_ids": [
+        "d209d38c-308e-442d-9ccc-a8c0745ba313"
+      ],
+      "current_revision_id": "68d521ef-ffa6-48b7-a432-7df30402c981",
+      "revision_number": 1,
+      "title": "已注册启用账号正确密码登录",
+      "description": "",
+      "module": "账号登录模块/R1-正确密码登录",
+      "priority": "P0",
+      "case_type": "功能测试",
+      "tags": [],
+      "preconditions": [
+        "用户持有已注册且处于启用状态的账号",
+        "登录页面已加载完成"
+      ],
+      "steps": [
+        {
+          "id": "cef1bf62-2c3c-4191-8f65-4d5785bf17e4",
+          "action": "在登录页输入正确的账号和正确密码，点击登录按钮",
+          "expected": "登录请求被系统接受，登录成功，系统成功建立用户登录会话，用户可访问受保护资源"
+        }
+      ],
+      "source": "用户需求R1",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "用户需求R1",
+          "locator": "",
+          "excerpt": "已注册且启用账号使用正确密码登录成功并建立会话"
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "801bf9ad-e5e5-49fd-86ca-6a6803b00386",
+        "display_name": "自然语言验收",
+        "email": "nl-1792930142220-p02tith8tl@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:19:08.488945Z"
+    },
+    {
+      "id": "f83b5969-f889-43fa-bb72-ba9447293c74",
+      "case_key": "CP-4F10730E",
+      "collection_ids": [
+        "d209d38c-308e-442d-9ccc-a8c0745ba313"
+      ],
+      "current_revision_id": "9402ad14-5b0b-428a-9ec0-c156b7d36220",
+      "revision_number": 1,
+      "title": "已注册启用账号错误密码登录",
+      "description": "",
+      "module": "账号登录模块/R2-错误密码登录",
+      "priority": "P1",
+      "case_type": "功能测试",
+      "tags": [],
+      "preconditions": [
+        "用户持有已注册且处于启用状态的账号",
+        "登录页面已加载完成"
+      ],
+      "steps": [
+        {
+          "id": "e78e2deb-c471-4d43-9ff6-c8c22654f2c1",
+          "action": "在登录页输入正确账号和错误密码，点击登录按钮",
+          "expected": "系统拒绝本次登录请求，不建立用户登录会话，用户无法访问受保护资源"
+        }
+      ],
+      "source": "用户需求R2",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "用户需求R2",
+          "locator": "",
+          "excerpt": "错误密码不建立会话"
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "801bf9ad-e5e5-49fd-86ca-6a6803b00386",
+        "display_name": "自然语言验收",
+        "email": "nl-1792930142220-p02tith8tl@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:19:08.506048Z"
+    },
+    {
+      "id": "ef8a503d-d68d-4ae9-89b5-447431031c9c",
+      "case_key": "CP-8A518442",
+      "collection_ids": [
+        "d209d38c-308e-442d-9ccc-a8c0745ba313"
+      ],
+      "current_revision_id": "d07adbd1-9b18-49e6-9c09-6480c06d7b38",
+      "revision_number": 1,
+      "title": "签发后120秒内正确验证码登录",
+      "description": "",
+      "module": "账号登录模块/R3-有效期内正确验证码登录",
+      "priority": "P0",
+      "case_type": "功能测试",
+      "tags": [],
+      "preconditions": [
+        "用户持有已注册账号",
+        "登录页面已加载完成",
+        "用户已申请获取该账号的短信验证码，获取后等待时长小于120秒"
+      ],
+      "steps": [
+        {
+          "id": "02e2c38a-2134-4484-8318-ef4f19ad1502",
+          "action": "在登录页输入正确账号和获取到的正确验证码，点击登录按钮",
+          "expected": "登录请求被系统接受，登录成功，系统成功建立用户登录会话，用户可访问受保护资源"
+        }
+      ],
+      "source": "用户需求R3",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "用户需求R3",
+          "locator": "",
+          "excerpt": "正确短信验证码签发后t<120秒有效，可成功建立会话"
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "801bf9ad-e5e5-49fd-86ca-6a6803b00386",
+        "display_name": "自然语言验收",
+        "email": "nl-1792930142220-p02tith8tl@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:19:08.528924Z"
+    },
+    {
+      "id": "670ea354-efa6-44bb-8793-c7948c256ef5",
+      "case_key": "CP-B7006120",
+      "collection_ids": [
+        "d209d38c-308e-442d-9ccc-a8c0745ba313"
+      ],
+      "current_revision_id": "1b7c4227-f4c0-411d-8e2e-3589ec69bf34",
+      "revision_number": 1,
+      "title": "t≥120秒超时验证码登录验证",
+      "description": "",
+      "module": "账号登录模块/R4-超时验证码登录",
+      "priority": "P1",
+      "case_type": "功能测试",
+      "tags": [],
+      "preconditions": [
+        "用户持有已注册账号",
+        "登录页面已加载完成",
+        "用户已申请获取该账号的短信验证码，获取后等待时长大于等于120秒"
+      ],
+      "steps": [
+        {
+          "id": "3c3e2d6f-6ab7-472a-acc5-92e2d4fe17fa",
+          "action": "在登录页输入正确账号和已超时的正确验证码，点击登录按钮",
+          "expected": "系统提示验证码过期，拒绝本次登录请求，不建立用户登录会话，用户无法访问受保护资源"
+        }
+      ],
+      "source": "用户需求R4",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "用户需求R4",
+          "locator": "",
+          "excerpt": "t≥120秒验证码失效，提示过期且不建立会话"
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "801bf9ad-e5e5-49fd-86ca-6a6803b00386",
+        "display_name": "自然语言验收",
+        "email": "nl-1792930142220-p02tith8tl@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:19:08.541848Z"
+    },
+    {
+      "id": "5e8da396-460a-4c98-a0d7-f5ee8a748abb",
+      "case_key": "CP-8AE6EA60",
+      "collection_ids": [
+        "d209d38c-308e-442d-9ccc-a8c0745ba313"
+      ],
+      "current_revision_id": "97c4bc28-1aab-4c11-99db-a85e968274f1",
+      "revision_number": 1,
+      "title": "已使用成功的验证码重复登录验证",
+      "description": "",
+      "module": "账号登录模块/R5-已使用验证码重复登录",
+      "priority": "P1",
+      "case_type": "功能测试",
+      "tags": [],
+      "preconditions": [
+        "用户持有已注册账号",
+        "该账号的短信验证码已被成功用于登录并建立了会话",
+        "登录页面已加载完成"
+      ],
+      "steps": [
+        {
+          "id": "b68789a1-ffea-4e90-90c0-0f79352a75b8",
+          "action": "在登录页输入相同账号和已经成功使用过的验证码，发起登录请求",
+          "expected": "系统拒绝本次登录请求，不建立新的登录会话，用户无法通过该验证码完成登录"
+        }
+      ],
+      "source": "用户需求R5",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "用户需求R5",
+          "locator": "",
+          "excerpt": "成功使用的验证码不可再次使用，不建立新会话"
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "801bf9ad-e5e5-49fd-86ca-6a6803b00386",
+        "display_name": "自然语言验收",
+        "email": "nl-1792930142220-p02tith8tl@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:19:08.556355Z"
+    },
+    {
+      "id": "9619f607-aca5-4111-aa9c-28803128002d",
+      "case_key": "CP-4F0C6E75",
+      "collection_ids": [
+        "d209d38c-308e-442d-9ccc-a8c0745ba313"
+      ],
+      "current_revision_id": "9e3fff71-89c0-4b67-aa7b-6004648bc29d",
+      "revision_number": 1,
+      "title": "退出登录后旧令牌访问受保护资源验证",
+      "description": "",
+      "module": "账号登录模块/R6-退出后旧令牌访问",
+      "priority": "P0",
+      "case_type": "权限测试",
+      "tags": [],
+      "preconditions": [
+        "存在一个已注册且处于启用状态的测试账号",
+        "该测试账号已通过合法登录流程成功登录，并获取到有效的旧访问令牌",
+        "系统存在需要登录授权才能访问的受保护资源"
+      ],
+      "steps": [
+        {
+          "id": "f07b8e50-be7b-4afe-94e3-f34fd634ae00",
+          "action": "测试账号执行退出登录操作",
+          "expected": "退出登录操作成功完成"
+        },
+        {
+          "id": "3ee8436c-4a1f-4001-85ae-891b5fc92f6f",
+          "action": "使用退出登录前生成的旧访问令牌发起访问受保护资源的请求",
+          "expected": "系统拒绝该访问请求，不允许访问受保护资源"
+        }
+      ],
+      "source": "用户需求R6",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "用户需求R6",
+          "locator": "",
+          "excerpt": "退出后旧令牌访问受保护资源被拒绝"
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "801bf9ad-e5e5-49fd-86ca-6a6803b00386",
+        "display_name": "自然语言验收",
+        "email": "nl-1792930142220-p02tith8tl@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:19:08.573119Z"
+    }
+  ],
+  "replayStatus": 409
+}

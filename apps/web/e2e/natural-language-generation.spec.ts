@@ -8,12 +8,27 @@ test.setTimeout(900_000);
 const api = `${process.env.CASEPILOT_E2E_API_URL ?? "http://localhost:8000"}/api/v1`;
 const suite = JSON.parse(readFileSync(new URL('../../../docs/evaluations/casepilot-natural-language-eval-2026-10-09.json', import.meta.url), 'utf8'));
 let journal: any;
+const observedBodies = new Map<string, string>();
 // Redirect transport to an isolated real API when load tests occupy the main worker.
 // No response is mocked; streaming and persistence stay with the real services.
 test.beforeEach(async ({page}) => {
   const target = process.env.CASEPILOT_BROWSER_API_OVERRIDE;
   if (target) await page.route('http://localhost:8000/api/v1/**', route =>
     route.continue({url: route.request().url().replace('http://localhost:8000', target)}));
+  observedBodies.clear();
+  // Proxy real responses unchanged; Chrome may evict long-running response bodies
+  // from its inspector cache before Playwright can collect the acceptance journal.
+  await page.route('**/api/v1/**', async route => {
+    const request = route.request();
+    if (request.method() !== 'POST' || !/\/(messages|resume)$/.test(new URL(request.url()).pathname)) {
+      await route.fallback(); return;
+    }
+    const url = target ? request.url().replace('http://localhost:8000', target) : request.url();
+    const response = await route.fetch({ url, timeout: 180000 });
+    const body = await response.text();
+    observedBodies.set(request.url(), body);
+    await route.fulfill({ response, body });
+  });
 });
 
 test.beforeEach(() => { journal = { turns: [], timings: [], startedAt: new Date().toISOString() }; });
@@ -58,14 +73,15 @@ async function send(page: Page, content: string, confirm = true) {
   await input.fill(content); const started = Date.now();
   const pending = page.waitForResponse(r => r.request().method() === 'POST' && /\/(messages|resume)$/.test(new URL(r.url()).pathname), { timeout: 180000 });
   await page.locator('.principle-composer button[type=submit]').click();
-  const response = await pending; expect(response.ok(), await response.text()).toBeTruthy();
-  let turn = await response.json(); journal.turns.push({ content, response: turn });
+  const response = await pending; const body = observedBodies.get(response.url()) ?? await response.text();
+  expect(response.ok(), body).toBeTruthy();
+  let turn = JSON.parse(body); journal.turns.push({ content, response: turn });
   journal.timings.push({ kind: 'message_response', ms: Date.now() - started });
   if (confirm && turn.assistant_message?.metadata.modification_confirmation) {
     expect(turn.action.job_id).toBeFalsy();
     const pending = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/resume'), { timeout: 180000 });
     await page.getByRole('button', { name: '确认修改并生成建议', exact: true }).last().click();
-    const response = await pending; expect(response.ok()).toBeTruthy(); turn = await response.json(); journal.turns.push({ confirmation: turn });
+    const response = await pending; expect(response.ok()).toBeTruthy(); turn = JSON.parse(observedBodies.get(response.url()) ?? await response.text()); journal.turns.push({ confirmation: turn });
   }
   return turn;
 }
@@ -107,7 +123,17 @@ function expectations(candidates: any[]) { return candidates.flatMap(c=>c.snapsh
 test('NL-GEN-02 missing object clarification resumes original task', async ({page})=>{
  const s=await setup(page,false,true);
  const first=await send(page,'帮我生成测试用例。');
- expect(first.action.job_id).toBeFalsy(); expect(first.assistant_message.content).toMatch(/对象|功能|需求|测试/);
+ if (first.action.job_id) {
+   const state = await settled(page, first);
+   journal.initialClarification = state;
+   expect(state.candidates).toHaveLength(0);
+   const brief = state.test_briefs.find((item:any) => item.source_operation_id === first.operation_plan?.current_operation_id) ?? state.test_briefs[0];
+   expect(brief.content.test_object).toBe('');
+   expect(brief.content.open_questions.some((q:any) => q.blocking && /对象|功能|需求|测试/.test(q.question))).toBe(true);
+ } else {
+   expect(first.assistant_message.content).toMatch(/对象|功能|需求|测试/);
+ }
+ expect(await s.read()).toHaveLength(0);
  const turn=await plan(page,'测试对象是账号登录（包含密码和验证码），按以下需求设计6条，每条规则一条：'+rules);
  expect(turn.conversation_id).toBe(first.conversation_id);
  await generate(page,turn,6);expect(await s.read()).toHaveLength(0);

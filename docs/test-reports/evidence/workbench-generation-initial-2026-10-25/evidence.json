@@ -1,0 +1,178 @@
+{
+  "turns": [
+    {
+      "content": "帮我生成测试用例。",
+      "response": {
+        "conversation_id": "f96e9d35-e82c-4497-849d-4bf0556bc268",
+        "user_message": {
+          "id": "ade16286-1e29-4ddc-bf10-bb561cf288d1",
+          "role": "user",
+          "content": "帮我生成测试用例。",
+          "intent": "CASE_GENERATE",
+          "intent_confidence": 1,
+          "status": "completed",
+          "target_case_ids": [],
+          "related_job_id": null,
+          "citations": [],
+          "metadata": {
+            "request": {
+              "scope": "current",
+              "content": "帮我生成测试用例。",
+              "targets": [],
+              "model_id": "doubao-seed-2.0-lite",
+              "document_ids": [],
+              "target_scope": "inferred",
+              "intent_override": null,
+              "target_case_ids": [],
+              "client_request_id": "5846e580-125a-4c7e-9b7c-be4aad1b622c",
+              "generation_strategy": null,
+              "inherit_attachments": true,
+              "source_operation_id": null,
+              "use_space_knowledge": false,
+              "knowledge_source_ids": [],
+              "source_collection_ids": [],
+              "target_candidate_snapshots": []
+            },
+            "submission_request_id": "5846e580-125a-4c7e-9b7c-be4aad1b622c"
+          },
+          "created_at": "2026-10-25T12:06:17.314189Z"
+        },
+        "assistant_message": {
+          "id": "4e0c1fe1-d562-47fc-81f0-297e137a8d79",
+          "role": "assistant",
+          "content": "",
+          "intent": "CASE_GENERATE",
+          "intent_confidence": 1,
+          "status": "running",
+          "target_case_ids": [],
+          "related_job_id": "ea4b2e7d-9995-4c9c-a1d9-72d7db490276",
+          "citations": [],
+          "metadata": {
+            "workflow": true,
+            "operation_id": "dc35fafc-1c6e-4fbe-8f97-4500d4203f48",
+            "brief_operation": "draft",
+            "source_message_id": "ade16286-1e29-4ddc-bf10-bb561cf288d1",
+            "source_operation_id": null
+          },
+          "created_at": "2026-10-25T12:06:51.833951Z"
+        },
+        "intent": "CASE_GENERATE",
+        "intent_confidence": 1,
+        "requires_intent_confirmation": false,
+        "action": {
+          "type": "test_brief",
+          "job_id": "ea4b2e7d-9995-4c9c-a1d9-72d7db490276"
+        },
+        "operation_plan": {
+          "status": "running",
+          "source_message_id": "ade16286-1e29-4ddc-bf10-bb561cf288d1",
+          "current_operation_id": "dc35fafc-1c6e-4fbe-8f97-4500d4203f48",
+          "operations": [
+            {
+              "source_message_id": "ade16286-1e29-4ddc-bf10-bb561cf288d1",
+              "completed_at": null,
+              "id": "dc35fafc-1c6e-4fbe-8f97-4500d4203f48",
+              "sequence": 0,
+              "intent": "CASE_GENERATE",
+              "confidence": 1,
+              "status": "running",
+              "target": {
+                "kind": "none",
+                "selectors": [],
+                "case_ids": [],
+                "candidate_refs": [],
+                "resolved": true
+              },
+              "payload": {
+                "plan": {
+                  "version": 2,
+                  "intent": "CASE_GENERATE",
+                  "action": "BRIEF_CREATE",
+                  "instruction": "帮我生成测试用例。",
+                  "confidence": 1,
+                  "target_kind": "none",
+                  "requires_confirmation": false,
+                  "reason_codes": [
+                    "user_request_generate_testcase"
+                  ],
+                  "depends_on": null,
+                  "target_text": "",
+                  "action_evidence": "帮我生成测试用例",
+                  "changes": [],
+                  "constraints": [],
+                  "clarification_questions": [
+                    "请问需要生成哪个功能/需求的测试用例？"
+                  ],
+                  "clarification_kind": "scope",
+                  "uses_selected_targets": false,
+                  "resume_operation_id": null,
+                  "speech_act": "request",
+                  "query_presentation": "cases",
+                  "routing_source": "semantic"
+                },
+                "instruction": "帮我生成测试用例。",
+                "action": "BRIEF_CREATE",
+                "reason_codes": [
+                  "user_request_generate_testcase"
+                ],
+                "depends_on": null,
+                "predecessor_job_id": null,
+                "source_operation_id": null,
+                "task_id": "dc35fafc-1c6e-4fbe-8f97-4500d4203f48",
+                "task_intent": "CASE_GENERATE",
+                "task_revision": 1,
+                "asset_reference_sources": [],
+                "asset_reference_target_scope": null
+              },
+              "result": {
+                "scope_versions": {},
+                "scope_modules": [],
+                "scope_count": 0
+              },
+              "requires_confirmation": false,
+              "related_job_id": "ea4b2e7d-9995-4c9c-a1d9-72d7db490276",
+              "related_change_set_id": null,
+              "error_code": null,
+              "created_at": "2026-10-25T12:06:17.323831Z"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "timings": [
+    {
+      "kind": "message_response",
+      "ms": 46495
+    }
+  ],
+  "startedAt": "2026-10-25T12:05:59.526Z",
+  "collection": {
+    "id": "cd631f98-6b8e-427c-8e90-b0a1aaf66d67",
+    "space_id": "c02487a3-b4fe-4ea2-a3ba-ec2315fd157e",
+    "name": "NL评测-NL-GEN-02-1792929959846",
+    "description": "",
+    "mind_map_notes": [],
+    "case_count": 0,
+    "lifecycle_status": "empty",
+    "creator": {
+      "id": "2aff8276-d667-44c5-8a8e-adaae4ce74b1",
+      "display_name": "自然语言验收",
+      "email": "nl-1792929959561-ldt1ly6arql@casepilot.test"
+    },
+    "test_target": null,
+    "created_at": "2026-10-25T12:05:59.867458Z"
+  },
+  "keyMap": {
+    "TC-LOGIN-01": "TC-LOGIN-01-1792929959886",
+    "TC-LOGIN-02": "TC-LOGIN-02-1792929959886",
+    "TC-PAY-01": "TC-PAY-01-1792929959886",
+    "TC-REFUND-01": "TC-REFUND-01-1792929959886"
+  },
+  "original": [],
+  "status": "failed",
+  "errors": [
+    "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeFalsy\u001b[2m()\u001b[22m\n\nReceived: \u001b[31m\"ea4b2e7d-9995-4c9c-a1d9-72d7db490276\"\u001b[39m"
+  ],
+  "final": []
+}

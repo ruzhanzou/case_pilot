@@ -1,0 +1,1060 @@
+{
+  "turns": [
+    {
+      "content": "审阅当前集合用例质量，检查步骤与预期是否清晰可执行，只审阅不修改。",
+      "response": {
+        "conversation_id": "3b9c1626-3dc5-43d6-9dac-8eb57b7719a7",
+        "user_message": {
+          "id": "09b8ede3-8845-4fd6-8a09-2392fde9c2f7",
+          "role": "user",
+          "content": "审阅当前集合用例质量，检查步骤与预期是否清晰可执行，只审阅不修改。",
+          "intent": "CASE_REVIEW",
+          "intent_confidence": 1,
+          "status": "completed",
+          "target_case_ids": [],
+          "related_job_id": null,
+          "citations": [],
+          "metadata": {
+            "request": {
+              "scope": "current",
+              "content": "审阅当前集合用例质量，检查步骤与预期是否清晰可执行，只审阅不修改。",
+              "targets": [],
+              "model_id": "doubao-seed-2.0-lite",
+              "document_ids": [],
+              "target_scope": "inferred",
+              "intent_override": null,
+              "target_case_ids": [],
+              "client_request_id": "1e6b874a-4b45-4ea4-81fd-d8448ebc37ea",
+              "generation_strategy": null,
+              "inherit_attachments": true,
+              "source_operation_id": null,
+              "use_space_knowledge": false,
+              "knowledge_source_ids": [],
+              "source_collection_ids": [],
+              "target_candidate_snapshots": []
+            },
+            "submission_request_id": "1e6b874a-4b45-4ea4-81fd-d8448ebc37ea"
+          },
+          "created_at": "2026-10-25T12:31:02.110443Z"
+        },
+        "assistant_message": {
+          "id": "fe72714d-c37a-485b-acc2-8a501ff33eaf",
+          "role": "assistant",
+          "content": "本次检查 4 条用例。\n执行步骤：读取用例与需求依据 → 检查问题并记录用例引用 → 汇总建议。\n检查过程不会修改用例。",
+          "intent": "CASE_REVIEW",
+          "intent_confidence": 1,
+          "status": "running",
+          "target_case_ids": [
+            "726c024a-e5f2-4544-944d-1d257df5ac57",
+            "b00b796e-72d7-4cbe-9931-512d2d65737c",
+            "2a0be4c3-a632-4253-b2d7-a2bdc68d0efb",
+            "22f05fff-0266-4196-aa09-65a680d58689"
+          ],
+          "related_job_id": "32708074-b5c1-4ff2-a21a-7bf0c1435ba6",
+          "citations": [],
+          "metadata": {
+            "operation_id": "56a8572d-5788-41df-a64e-2bfa6bf18f17",
+            "target_count": 4,
+            "analysis_kind": "CASE_REVIEW",
+            "hidden_progress": false,
+            "source_message_id": "09b8ede3-8845-4fd6-8a09-2392fde9c2f7",
+            "source_operation_id": null
+          },
+          "created_at": "2026-10-25T12:31:35.751895Z"
+        },
+        "intent": "CASE_REVIEW",
+        "intent_confidence": 1,
+        "requires_intent_confirmation": false,
+        "action": {
+          "type": "knowledge_qa",
+          "job_id": "32708074-b5c1-4ff2-a21a-7bf0c1435ba6"
+        },
+        "operation_plan": {
+          "status": "running",
+          "source_message_id": "09b8ede3-8845-4fd6-8a09-2392fde9c2f7",
+          "current_operation_id": "56a8572d-5788-41df-a64e-2bfa6bf18f17",
+          "operations": [
+            {
+              "source_message_id": "09b8ede3-8845-4fd6-8a09-2392fde9c2f7",
+              "completed_at": null,
+              "id": "56a8572d-5788-41df-a64e-2bfa6bf18f17",
+              "sequence": 0,
+              "intent": "CASE_REVIEW",
+              "confidence": 1,
+              "status": "running",
+              "target": {
+                "kind": "case",
+                "selectors": [],
+                "case_ids": [
+                  "726c024a-e5f2-4544-944d-1d257df5ac57",
+                  "b00b796e-72d7-4cbe-9931-512d2d65737c",
+                  "2a0be4c3-a632-4253-b2d7-a2bdc68d0efb",
+                  "22f05fff-0266-4196-aa09-65a680d58689"
+                ],
+                "candidate_refs": [],
+                "resolved": true
+              },
+              "payload": {
+                "plan": {
+                  "version": 2,
+                  "intent": "CASE_REVIEW",
+                  "action": "CASE_REVIEW",
+                  "instruction": "审阅当前集合用例质量，检查步骤与预期是否清晰可执行，只审阅不修改。",
+                  "confidence": 1,
+                  "target_kind": "case",
+                  "requires_confirmation": false,
+                  "reason_codes": [
+                    "USER_REQUEST_REVIEW_USECASE_QUALITY"
+                  ],
+                  "depends_on": null,
+                  "target_text": "当前集合用例",
+                  "action_evidence": "审阅当前集合用例质量",
+                  "changes": [],
+                  "constraints": [
+                    "只审阅不修改"
+                  ],
+                  "clarification_questions": [],
+                  "clarification_kind": "none",
+                  "uses_selected_targets": false,
+                  "resume_operation_id": null,
+                  "speech_act": "request",
+                  "query_presentation": "cases",
+                  "routing_source": "semantic"
+                },
+                "instruction": "审阅当前集合用例质量，检查步骤与预期是否清晰可执行，只审阅不修改。",
+                "action": "CASE_REVIEW",
+                "reason_codes": [
+                  "USER_REQUEST_REVIEW_USECASE_QUALITY"
+                ],
+                "depends_on": null,
+                "predecessor_job_id": null,
+                "source_operation_id": null
+              },
+              "result": {
+                "scope_versions": {
+                  "726c024a-e5f2-4544-944d-1d257df5ac57": "90fbdcf0-ce1b-4fa6-ad49-129eac49bf74",
+                  "b00b796e-72d7-4cbe-9931-512d2d65737c": "1704ba56-6c71-4a90-a9fd-3bb71411d0fc",
+                  "2a0be4c3-a632-4253-b2d7-a2bdc68d0efb": "fd43dc5d-155c-490b-8042-fe10f7981d32",
+                  "22f05fff-0266-4196-aa09-65a680d58689": "14def252-932e-4eee-a403-5ef7c27ab028"
+                },
+                "scope_modules": [
+                  "支付/付款",
+                  "支付/退款",
+                  "登录/密码",
+                  "登录/短信"
+                ],
+                "scope_count": 4
+              },
+              "requires_confirmation": false,
+              "related_job_id": "32708074-b5c1-4ff2-a21a-7bf0c1435ba6",
+              "related_change_set_id": null,
+              "error_code": null,
+              "created_at": "2026-10-25T12:31:02.114377Z"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "timings": [
+    {
+      "kind": "message_response",
+      "ms": 59290
+    }
+  ],
+  "startedAt": "2026-10-25T12:30:34.223Z",
+  "collection": {
+    "id": "7f91a6dd-618e-4d7a-92cd-ae9386ae27e8",
+    "space_id": "72a55092-42a5-407b-80cd-7ec64d708adb",
+    "name": "NL评测-NL-ANALYSIS-CASE_REVIEW-1792931434459",
+    "description": "",
+    "mind_map_notes": [],
+    "case_count": 0,
+    "lifecycle_status": "empty",
+    "creator": {
+      "id": "e093df38-591f-45ed-bb1a-d67784d859dc",
+      "display_name": "自然语言验收",
+      "email": "nl-1792931434230-ili7xe3u84f@casepilot.test"
+    },
+    "test_target": null,
+    "created_at": "2026-10-25T12:30:34.540902Z"
+  },
+  "keyMap": {
+    "TC-LOGIN-01": "TC-LOGIN-01-1792931434549",
+    "TC-LOGIN-02": "TC-LOGIN-02-1792931434549",
+    "TC-PAY-01": "TC-PAY-01-1792931434549",
+    "TC-REFUND-01": "TC-REFUND-01-1792931434549"
+  },
+  "original": [
+    {
+      "id": "726c024a-e5f2-4544-944d-1d257df5ac57",
+      "case_key": "TC-LOGIN-01-1792931434549",
+      "collection_ids": [
+        "7f91a6dd-618e-4d7a-92cd-ae9386ae27e8"
+      ],
+      "current_revision_id": "90fbdcf0-ce1b-4fa6-ad49-129eac49bf74",
+      "revision_number": 1,
+      "title": "短信登录",
+      "description": "",
+      "module": "登录/短信",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "手机号已注册且账号启用；准备有效的未使用验证码"
+      ],
+      "steps": [
+        {
+          "id": "d063d0d8-1d65-42fd-8a47-4bc7eaea48bf",
+          "action": "输入短信验证码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "e093df38-591f-45ed-bb1a-d67784d859dc",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931434230-ili7xe3u84f@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:30:34.602577Z"
+    },
+    {
+      "id": "b00b796e-72d7-4cbe-9931-512d2d65737c",
+      "case_key": "TC-LOGIN-02-1792931434549",
+      "collection_ids": [
+        "7f91a6dd-618e-4d7a-92cd-ae9386ae27e8"
+      ],
+      "current_revision_id": "1704ba56-6c71-4a90-a9fd-3bb71411d0fc",
+      "revision_number": 1,
+      "title": "密码登录",
+      "description": "",
+      "module": "登录/密码",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "账号已注册且启用；准备正确密码"
+      ],
+      "steps": [
+        {
+          "id": "32a32b77-13dd-4a8a-8c33-d23294fd98b7",
+          "action": "输入账号及正确密码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "e093df38-591f-45ed-bb1a-d67784d859dc",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931434230-ili7xe3u84f@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:30:34.662962Z"
+    },
+    {
+      "id": "2a0be4c3-a632-4253-b2d7-a2bdc68d0efb",
+      "case_key": "TC-PAY-01-1792931434549",
+      "collection_ids": [
+        "7f91a6dd-618e-4d7a-92cd-ae9386ae27e8"
+      ],
+      "current_revision_id": "fd43dc5d-155c-490b-8042-fe10f7981d32",
+      "revision_number": 1,
+      "title": "支付成功",
+      "description": "",
+      "module": "支付/付款",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备待支付订单和可用支付账户"
+      ],
+      "steps": [
+        {
+          "id": "93ac3049-bc00-4ace-82ab-ed7ac97d3af0",
+          "action": "完成订单支付",
+          "expected": "订单为已支付；仅有一条成功支付记录"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "e093df38-591f-45ed-bb1a-d67784d859dc",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931434230-ili7xe3u84f@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:30:34.708044Z"
+    },
+    {
+      "id": "22f05fff-0266-4196-aa09-65a680d58689",
+      "case_key": "TC-REFUND-01-1792931434549",
+      "collection_ids": [
+        "7f91a6dd-618e-4d7a-92cd-ae9386ae27e8"
+      ],
+      "current_revision_id": "14def252-932e-4eee-a403-5ef7c27ab028",
+      "revision_number": 1,
+      "title": "退款成功",
+      "description": "",
+      "module": "支付/退款",
+      "priority": "P2",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备一笔允许全额退款的已支付订单"
+      ],
+      "steps": [
+        {
+          "id": "97bdab0f-b90c-416f-b78d-5e7a3f5fafe1",
+          "action": "提交全额退款并等待处理完成",
+          "expected": "退款状态成功，退款金额等于原支付金额"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "e093df38-591f-45ed-bb1a-d67784d859dc",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931434230-ili7xe3u84f@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:30:34.751035Z"
+    }
+  ],
+  "analysis": {
+    "id": "3b9c1626-3dc5-43d6-9dac-8eb57b7719a7",
+    "space_id": "72a55092-42a5-407b-80cd-7ec64d708adb",
+    "collection_id": "7f91a6dd-618e-4d7a-92cd-ae9386ae27e8",
+    "title": "审阅当前集合用例质量，检查步骤与预期是否清晰可执行，只审阅不修改",
+    "status": "active",
+    "context": {
+      "phase": "maintenance",
+      "filters": {},
+      "model_id": "doubao-seed-2.0-lite",
+      "chat_width": 360,
+      "draft_text": "",
+      "active_view": "plan",
+      "last_intent": "CASE_REVIEW",
+      "document_ids": [],
+      "search_query": "",
+      "active_job_id": "32708074-b5c1-4ff2-a21a-7bf0c1435ba6",
+      "inspector_width": 360,
+      "selected_case_id": "726c024a-e5f2-4544-944d-1d257df5ac57",
+      "selected_targets": [],
+      "title_initialized": true,
+      "use_space_knowledge": true,
+      "knowledge_source_ids": [],
+      "selected_brief_version": null,
+      "pending_attachments": [],
+      "selected_asset_provenance": {}
+    },
+    "messages": [
+      {
+        "id": "09b8ede3-8845-4fd6-8a09-2392fde9c2f7",
+        "role": "user",
+        "content": "审阅当前集合用例质量，检查步骤与预期是否清晰可执行，只审阅不修改。",
+        "intent": "CASE_REVIEW",
+        "intent_confidence": 1,
+        "status": "completed",
+        "target_case_ids": [],
+        "related_job_id": null,
+        "citations": [],
+        "metadata": {
+          "request": {
+            "scope": "current",
+            "content": "审阅当前集合用例质量，检查步骤与预期是否清晰可执行，只审阅不修改。",
+            "targets": [],
+            "model_id": "doubao-seed-2.0-lite",
+            "document_ids": [],
+            "target_scope": "inferred",
+            "intent_override": null,
+            "target_case_ids": [],
+            "client_request_id": "1e6b874a-4b45-4ea4-81fd-d8448ebc37ea",
+            "generation_strategy": null,
+            "inherit_attachments": true,
+            "source_operation_id": null,
+            "use_space_knowledge": false,
+            "knowledge_source_ids": [],
+            "source_collection_ids": [],
+            "target_candidate_snapshots": []
+          },
+          "submission_request_id": "1e6b874a-4b45-4ea4-81fd-d8448ebc37ea"
+        },
+        "created_at": "2026-10-25T12:31:02.110443Z"
+      },
+      {
+        "id": "fe72714d-c37a-485b-acc2-8a501ff33eaf",
+        "role": "assistant",
+        "content": "已检查 4 条用例。\n本次按照CASE_REVIEW要求对4条提交的用例进行了质量审阅，检查步骤和预期的清晰度与可执行性，发现4条用例均存在步骤描述不完整、不清晰的质量问题。\n\n1. [medium] 用例步骤不完整，缺少必要前置操作步骤\n用例：TC-LOGIN-01-1792931434549\n依据：当前用例仅描述了输入验证码并提交的操作，缺少打开短信登录页面、输入已注册手机号等必要前置步骤，步骤不完整，无法独立执行\n建议：补充缺失的必要前置操作步骤，明确完整操作流程\n\n2. [medium] 用例步骤不完整，缺少必要前置操作步骤\n用例：TC-LOGIN-02-1792931434549\n依据：当前用例仅描述了输入账号及密码提交的操作，缺少打开密码登录页面等必要前置步骤，步骤不完整，无法独立执行\n建议：补充缺失的必要前置操作步骤，明确完整操作流程\n\n3. [medium] 用例步骤描述笼统模糊，缺少具体操作细节\n用例：TC-PAY-01-1792931434549\n依据：当前用例仅描述了'完成订单支付'，缺少从哪个入口进入支付页面、选择何种支付方式等必要操作细节，描述不清晰，无法独立执行\n建议：补充完整的具体操作步骤，明确操作路径和细节\n\n4. [low] 用例步骤不完整，缺少必要前置操作步骤\n用例：TC-REFUND-01-1792931434549\n依据：当前用例仅描述了提交全额退款并等待处理，缺少进入订单详情页、找到退款入口等必要前置步骤，步骤不完整，无法独立执行\n建议：补充缺失的必要前置操作步骤，明确完整操作流程\n\n检查限制：\n本次检查无对应需求文档作为依据，仅基于提交的用例内容进行判断\n\n以上为检查建议，尚未修改用例。",
+        "intent": "CASE_REVIEW",
+        "intent_confidence": 1,
+        "status": "completed",
+        "target_case_ids": [
+          "726c024a-e5f2-4544-944d-1d257df5ac57",
+          "b00b796e-72d7-4cbe-9931-512d2d65737c",
+          "2a0be4c3-a632-4253-b2d7-a2bdc68d0efb",
+          "22f05fff-0266-4196-aa09-65a680d58689"
+        ],
+        "related_job_id": "32708074-b5c1-4ff2-a21a-7bf0c1435ba6",
+        "citations": [],
+        "metadata": {
+          "model": "doubao-seed-2.0-lite",
+          "assumptions": [],
+          "token_usage": {
+            "input_tokens": 2381,
+            "total_tokens": 3666,
+            "output_tokens": 1285
+          },
+          "operation_id": "56a8572d-5788-41df-a64e-2bfa6bf18f17",
+          "target_count": 4,
+          "analysis_kind": "CASE_REVIEW",
+          "evidence_count": 0,
+          "retrieval_mode": "none",
+          "analysis_report": {
+            "summary": "本次按照CASE_REVIEW要求对4条提交的用例进行了质量审阅，检查步骤和预期的清晰度与可执行性，发现4条用例均存在步骤描述不完整、不清晰的质量问题。",
+            "findings": [
+              {
+                "basis": "potential",
+                "title": "用例步骤不完整，缺少必要前置操作步骤",
+                "evidence": "当前用例仅描述了输入验证码并提交的操作，缺少打开短信登录页面、输入已注册手机号等必要前置步骤，步骤不完整，无法独立执行",
+                "severity": "medium",
+                "case_refs": [
+                  "726c024a-e5f2-4544-944d-1d257df5ac57"
+                ],
+                "relationship": "quality",
+                "recommendation": "补充缺失的必要前置操作步骤，明确完整操作流程",
+                "unique_coverage": [],
+                "requirement_refs": []
+              },
+              {
+                "basis": "potential",
+                "title": "用例步骤不完整，缺少必要前置操作步骤",
+                "evidence": "当前用例仅描述了输入账号及密码提交的操作，缺少打开密码登录页面等必要前置步骤，步骤不完整，无法独立执行",
+                "severity": "medium",
+                "case_refs": [
+                  "b00b796e-72d7-4cbe-9931-512d2d65737c"
+                ],
+                "relationship": "quality",
+                "recommendation": "补充缺失的必要前置操作步骤，明确完整操作流程",
+                "unique_coverage": [],
+                "requirement_refs": []
+              },
+              {
+                "basis": "potential",
+                "title": "用例步骤描述笼统模糊，缺少具体操作细节",
+                "evidence": "当前用例仅描述了'完成订单支付'，缺少从哪个入口进入支付页面、选择何种支付方式等必要操作细节，描述不清晰，无法独立执行",
+                "severity": "medium",
+                "case_refs": [
+                  "2a0be4c3-a632-4253-b2d7-a2bdc68d0efb"
+                ],
+                "relationship": "quality",
+                "recommendation": "补充完整的具体操作步骤，明确操作路径和细节",
+                "unique_coverage": [],
+                "requirement_refs": []
+              },
+              {
+                "basis": "potential",
+                "title": "用例步骤不完整，缺少必要前置操作步骤",
+                "evidence": "当前用例仅描述了提交全额退款并等待处理，缺少进入订单详情页、找到退款入口等必要前置步骤，步骤不完整，无法独立执行",
+                "severity": "low",
+                "case_refs": [
+                  "22f05fff-0266-4196-aa09-65a680d58689"
+                ],
+                "relationship": "quality",
+                "recommendation": "补充缺失的必要前置操作步骤，明确完整操作流程",
+                "unique_coverage": [],
+                "requirement_refs": []
+              }
+            ],
+            "limitations": [
+              "本次检查无对应需求文档作为依据，仅基于提交的用例内容进行判断"
+            ]
+          },
+          "hidden_progress": false,
+          "source_message_id": "09b8ede3-8845-4fd6-8a09-2392fde9c2f7",
+          "checked_case_count": 4,
+          "retrieval_performed": false,
+          "source_operation_id": null,
+          "model_interaction_performed": true
+        },
+        "created_at": "2026-10-25T12:31:35.751895Z"
+      }
+    ],
+    "planning_case_links": [],
+    "test_briefs": [],
+    "candidates": [],
+    "workflow_runs": [
+      {
+        "job_id": "32708074-b5c1-4ff2-a21a-7bf0c1435ba6",
+        "message_id": "fe72714d-c37a-485b-acc2-8a501ff33eaf",
+        "operation": "knowledge_qa",
+        "status": "completed",
+        "current_stage": "completed",
+        "progress": 100,
+        "error_code": null,
+        "stages": [
+          {
+            "stage": "context.prepared",
+            "attempt": 1,
+            "status": "completed",
+            "progress": 10,
+            "model": "none:retrieval",
+            "latency_ms": 0,
+            "created_at": "2026-10-25T12:31:36.638873Z"
+          },
+          {
+            "stage": "knowledge.answered",
+            "attempt": 1,
+            "status": "completed",
+            "progress": 96,
+            "model": "doubao-seed-2.0-lite",
+            "latency_ms": 20759,
+            "created_at": "2026-10-25T12:31:57.464789Z"
+          }
+        ],
+        "created_at": "2026-10-25T12:31:35.748160Z",
+        "updated_at": "2026-10-25T12:31:57.464789Z"
+      }
+    ],
+    "operation_plan": {
+      "status": "completed",
+      "source_message_id": "09b8ede3-8845-4fd6-8a09-2392fde9c2f7",
+      "current_operation_id": null,
+      "operations": [
+        {
+          "source_message_id": "09b8ede3-8845-4fd6-8a09-2392fde9c2f7",
+          "completed_at": "2026-10-25T12:31:57.470886Z",
+          "id": "56a8572d-5788-41df-a64e-2bfa6bf18f17",
+          "sequence": 0,
+          "intent": "CASE_REVIEW",
+          "confidence": 1,
+          "status": "completed",
+          "target": {
+            "kind": "case",
+            "case_ids": [
+              "726c024a-e5f2-4544-944d-1d257df5ac57",
+              "b00b796e-72d7-4cbe-9931-512d2d65737c",
+              "2a0be4c3-a632-4253-b2d7-a2bdc68d0efb",
+              "22f05fff-0266-4196-aa09-65a680d58689"
+            ],
+            "resolved": true,
+            "selectors": [],
+            "candidate_refs": []
+          },
+          "payload": {
+            "plan": {
+              "action": "CASE_REVIEW",
+              "intent": "CASE_REVIEW",
+              "changes": [],
+              "version": 2,
+              "confidence": 1,
+              "depends_on": null,
+              "speech_act": "request",
+              "constraints": [
+                "只审阅不修改"
+              ],
+              "instruction": "审阅当前集合用例质量，检查步骤与预期是否清晰可执行，只审阅不修改。",
+              "target_kind": "case",
+              "target_text": "当前集合用例",
+              "reason_codes": [
+                "USER_REQUEST_REVIEW_USECASE_QUALITY"
+              ],
+              "routing_source": "semantic",
+              "action_evidence": "审阅当前集合用例质量",
+              "clarification_kind": "none",
+              "query_presentation": "cases",
+              "resume_operation_id": null,
+              "requires_confirmation": false,
+              "uses_selected_targets": false,
+              "clarification_questions": []
+            },
+            "action": "CASE_REVIEW",
+            "depends_on": null,
+            "instruction": "审阅当前集合用例质量，检查步骤与预期是否清晰可执行，只审阅不修改。",
+            "reason_codes": [
+              "USER_REQUEST_REVIEW_USECASE_QUALITY"
+            ],
+            "predecessor_job_id": null,
+            "source_operation_id": null
+          },
+          "result": {
+            "answer": "已检查 4 条用例。\n本次按照CASE_REVIEW要求对4条提交的用例进行了质量审阅，检查步骤和预期的清晰度与可执行性，发现4条用例均存在步骤描述不完整、不清晰的质量问题。\n\n1. [medium] 用例步骤不完整，缺少必要前置操作步骤\n用例：TC-LOGIN-01-1792931434549\n依据：当前用例仅描述了输入验证码并提交的操作，缺少打开短信登录页面、输入已注册手机号等必要前置步骤，步骤不完整，无法独立执行\n建议：补充缺失的必要前置操作步骤，明确完整操作流程\n\n2. [medium] 用例步骤不完整，缺少必要前置操作步骤\n用例：TC-LOGIN-02-1792931434549\n依据：当前用例仅描述了输入账号及密码提交的操作，缺少打开密码登录页面等必要前置步骤，步骤不完整，无法独立执行\n建议：补充缺失的必要前置操作步骤，明确完整操作流程\n\n3. [medium] 用例步骤描述笼统模糊，缺少具体操作细节\n用例：TC-PAY-01-1792931434549\n依据：当前用例仅描述了'完成订单支付'，缺少从哪个入口进入支付页面、选择何种支付方式等必要操作细节，描述不清晰，无法独立执行\n建议：补充完整的具体操作步骤，明确操作路径和细节\n\n4. [low] 用例步骤不完整，缺少必要前置操作步骤\n用例：TC-REFUND-01-1792931434549\n依据：当前用例仅描述了提交全额退款并等待处理，缺少进入订单详情页、找到退款入口等必要前置步骤，步骤不完整，无法独立执行\n建议：补充缺失的必要前置操作步骤，明确完整操作流程\n\n检查限制：\n本次检查无对应需求文档作为依据，仅基于提交的用例内容进行判断\n\n以上为检查建议，尚未修改用例。",
+            "citations": [],
+            "assumptions": [],
+            "scope_count": 4,
+            "candidate_ids": [],
+            "scope_modules": [
+              "支付/付款",
+              "支付/退款",
+              "登录/密码",
+              "登录/短信"
+            ],
+            "scope_versions": {
+              "22f05fff-0266-4196-aa09-65a680d58689": "14def252-932e-4eee-a403-5ef7c27ab028",
+              "2a0be4c3-a632-4253-b2d7-a2bdc68d0efb": "fd43dc5d-155c-490b-8042-fe10f7981d32",
+              "726c024a-e5f2-4544-944d-1d257df5ac57": "90fbdcf0-ce1b-4fa6-ad49-129eac49bf74",
+              "b00b796e-72d7-4cbe-9931-512d2d65737c": "1704ba56-6c71-4a90-a9fd-3bb71411d0fc"
+            },
+            "analysis_report": {
+              "summary": "本次按照CASE_REVIEW要求对4条提交的用例进行了质量审阅，检查步骤和预期的清晰度与可执行性，发现4条用例均存在步骤描述不完整、不清晰的质量问题。",
+              "findings": [
+                {
+                  "basis": "potential",
+                  "title": "用例步骤不完整，缺少必要前置操作步骤",
+                  "evidence": "当前用例仅描述了输入验证码并提交的操作，缺少打开短信登录页面、输入已注册手机号等必要前置步骤，步骤不完整，无法独立执行",
+                  "severity": "medium",
+                  "case_refs": [
+                    "726c024a-e5f2-4544-944d-1d257df5ac57"
+                  ],
+                  "relationship": "quality",
+                  "recommendation": "补充缺失的必要前置操作步骤，明确完整操作流程",
+                  "unique_coverage": [],
+                  "requirement_refs": []
+                },
+                {
+                  "basis": "potential",
+                  "title": "用例步骤不完整，缺少必要前置操作步骤",
+                  "evidence": "当前用例仅描述了输入账号及密码提交的操作，缺少打开密码登录页面等必要前置步骤，步骤不完整，无法独立执行",
+                  "severity": "medium",
+                  "case_refs": [
+                    "b00b796e-72d7-4cbe-9931-512d2d65737c"
+                  ],
+                  "relationship": "quality",
+                  "recommendation": "补充缺失的必要前置操作步骤，明确完整操作流程",
+                  "unique_coverage": [],
+                  "requirement_refs": []
+                },
+                {
+                  "basis": "potential",
+                  "title": "用例步骤描述笼统模糊，缺少具体操作细节",
+                  "evidence": "当前用例仅描述了'完成订单支付'，缺少从哪个入口进入支付页面、选择何种支付方式等必要操作细节，描述不清晰，无法独立执行",
+                  "severity": "medium",
+                  "case_refs": [
+                    "2a0be4c3-a632-4253-b2d7-a2bdc68d0efb"
+                  ],
+                  "relationship": "quality",
+                  "recommendation": "补充完整的具体操作步骤，明确操作路径和细节",
+                  "unique_coverage": [],
+                  "requirement_refs": []
+                },
+                {
+                  "basis": "potential",
+                  "title": "用例步骤不完整，缺少必要前置操作步骤",
+                  "evidence": "当前用例仅描述了提交全额退款并等待处理，缺少进入订单详情页、找到退款入口等必要前置步骤，步骤不完整，无法独立执行",
+                  "severity": "low",
+                  "case_refs": [
+                    "22f05fff-0266-4196-aa09-65a680d58689"
+                  ],
+                  "relationship": "quality",
+                  "recommendation": "补充缺失的必要前置操作步骤，明确完整操作流程",
+                  "unique_coverage": [],
+                  "requirement_refs": []
+                }
+              ],
+              "limitations": [
+                "本次检查无对应需求文档作为依据，仅基于提交的用例内容进行判断"
+              ]
+            }
+          },
+          "requires_confirmation": false,
+          "related_job_id": "32708074-b5c1-4ff2-a21a-7bf0c1435ba6",
+          "related_change_set_id": null,
+          "error_code": null,
+          "created_at": "2026-10-25T12:31:02.114377Z"
+        }
+      ]
+    },
+    "operation_history": [
+      {
+        "source_message_id": "09b8ede3-8845-4fd6-8a09-2392fde9c2f7",
+        "completed_at": "2026-10-25T12:31:57.470886Z",
+        "id": "56a8572d-5788-41df-a64e-2bfa6bf18f17",
+        "sequence": 0,
+        "intent": "CASE_REVIEW",
+        "confidence": 1,
+        "status": "completed",
+        "target": {
+          "kind": "case",
+          "case_ids": [
+            "726c024a-e5f2-4544-944d-1d257df5ac57",
+            "b00b796e-72d7-4cbe-9931-512d2d65737c",
+            "2a0be4c3-a632-4253-b2d7-a2bdc68d0efb",
+            "22f05fff-0266-4196-aa09-65a680d58689"
+          ],
+          "resolved": true,
+          "selectors": [],
+          "candidate_refs": []
+        },
+        "payload": {
+          "plan": {
+            "action": "CASE_REVIEW",
+            "intent": "CASE_REVIEW",
+            "changes": [],
+            "version": 2,
+            "confidence": 1,
+            "depends_on": null,
+            "speech_act": "request",
+            "constraints": [
+              "只审阅不修改"
+            ],
+            "instruction": "审阅当前集合用例质量，检查步骤与预期是否清晰可执行，只审阅不修改。",
+            "target_kind": "case",
+            "target_text": "当前集合用例",
+            "reason_codes": [
+              "USER_REQUEST_REVIEW_USECASE_QUALITY"
+            ],
+            "routing_source": "semantic",
+            "action_evidence": "审阅当前集合用例质量",
+            "clarification_kind": "none",
+            "query_presentation": "cases",
+            "resume_operation_id": null,
+            "requires_confirmation": false,
+            "uses_selected_targets": false,
+            "clarification_questions": []
+          },
+          "action": "CASE_REVIEW",
+          "depends_on": null,
+          "instruction": "审阅当前集合用例质量，检查步骤与预期是否清晰可执行，只审阅不修改。",
+          "reason_codes": [
+            "USER_REQUEST_REVIEW_USECASE_QUALITY"
+          ],
+          "predecessor_job_id": null,
+          "source_operation_id": null
+        },
+        "result": {
+          "answer": "已检查 4 条用例。\n本次按照CASE_REVIEW要求对4条提交的用例进行了质量审阅，检查步骤和预期的清晰度与可执行性，发现4条用例均存在步骤描述不完整、不清晰的质量问题。\n\n1. [medium] 用例步骤不完整，缺少必要前置操作步骤\n用例：TC-LOGIN-01-1792931434549\n依据：当前用例仅描述了输入验证码并提交的操作，缺少打开短信登录页面、输入已注册手机号等必要前置步骤，步骤不完整，无法独立执行\n建议：补充缺失的必要前置操作步骤，明确完整操作流程\n\n2. [medium] 用例步骤不完整，缺少必要前置操作步骤\n用例：TC-LOGIN-02-1792931434549\n依据：当前用例仅描述了输入账号及密码提交的操作，缺少打开密码登录页面等必要前置步骤，步骤不完整，无法独立执行\n建议：补充缺失的必要前置操作步骤，明确完整操作流程\n\n3. [medium] 用例步骤描述笼统模糊，缺少具体操作细节\n用例：TC-PAY-01-1792931434549\n依据：当前用例仅描述了'完成订单支付'，缺少从哪个入口进入支付页面、选择何种支付方式等必要操作细节，描述不清晰，无法独立执行\n建议：补充完整的具体操作步骤，明确操作路径和细节\n\n4. [low] 用例步骤不完整，缺少必要前置操作步骤\n用例：TC-REFUND-01-1792931434549\n依据：当前用例仅描述了提交全额退款并等待处理，缺少进入订单详情页、找到退款入口等必要前置步骤，步骤不完整，无法独立执行\n建议：补充缺失的必要前置操作步骤，明确完整操作流程\n\n检查限制：\n本次检查无对应需求文档作为依据，仅基于提交的用例内容进行判断\n\n以上为检查建议，尚未修改用例。",
+          "citations": [],
+          "assumptions": [],
+          "scope_count": 4,
+          "candidate_ids": [],
+          "scope_modules": [
+            "支付/付款",
+            "支付/退款",
+            "登录/密码",
+            "登录/短信"
+          ],
+          "scope_versions": {
+            "22f05fff-0266-4196-aa09-65a680d58689": "14def252-932e-4eee-a403-5ef7c27ab028",
+            "2a0be4c3-a632-4253-b2d7-a2bdc68d0efb": "fd43dc5d-155c-490b-8042-fe10f7981d32",
+            "726c024a-e5f2-4544-944d-1d257df5ac57": "90fbdcf0-ce1b-4fa6-ad49-129eac49bf74",
+            "b00b796e-72d7-4cbe-9931-512d2d65737c": "1704ba56-6c71-4a90-a9fd-3bb71411d0fc"
+          },
+          "analysis_report": {
+            "summary": "本次按照CASE_REVIEW要求对4条提交的用例进行了质量审阅，检查步骤和预期的清晰度与可执行性，发现4条用例均存在步骤描述不完整、不清晰的质量问题。",
+            "findings": [
+              {
+                "basis": "potential",
+                "title": "用例步骤不完整，缺少必要前置操作步骤",
+                "evidence": "当前用例仅描述了输入验证码并提交的操作，缺少打开短信登录页面、输入已注册手机号等必要前置步骤，步骤不完整，无法独立执行",
+                "severity": "medium",
+                "case_refs": [
+                  "726c024a-e5f2-4544-944d-1d257df5ac57"
+                ],
+                "relationship": "quality",
+                "recommendation": "补充缺失的必要前置操作步骤，明确完整操作流程",
+                "unique_coverage": [],
+                "requirement_refs": []
+              },
+              {
+                "basis": "potential",
+                "title": "用例步骤不完整，缺少必要前置操作步骤",
+                "evidence": "当前用例仅描述了输入账号及密码提交的操作，缺少打开密码登录页面等必要前置步骤，步骤不完整，无法独立执行",
+                "severity": "medium",
+                "case_refs": [
+                  "b00b796e-72d7-4cbe-9931-512d2d65737c"
+                ],
+                "relationship": "quality",
+                "recommendation": "补充缺失的必要前置操作步骤，明确完整操作流程",
+                "unique_coverage": [],
+                "requirement_refs": []
+              },
+              {
+                "basis": "potential",
+                "title": "用例步骤描述笼统模糊，缺少具体操作细节",
+                "evidence": "当前用例仅描述了'完成订单支付'，缺少从哪个入口进入支付页面、选择何种支付方式等必要操作细节，描述不清晰，无法独立执行",
+                "severity": "medium",
+                "case_refs": [
+                  "2a0be4c3-a632-4253-b2d7-a2bdc68d0efb"
+                ],
+                "relationship": "quality",
+                "recommendation": "补充完整的具体操作步骤，明确操作路径和细节",
+                "unique_coverage": [],
+                "requirement_refs": []
+              },
+              {
+                "basis": "potential",
+                "title": "用例步骤不完整，缺少必要前置操作步骤",
+                "evidence": "当前用例仅描述了提交全额退款并等待处理，缺少进入订单详情页、找到退款入口等必要前置步骤，步骤不完整，无法独立执行",
+                "severity": "low",
+                "case_refs": [
+                  "22f05fff-0266-4196-aa09-65a680d58689"
+                ],
+                "relationship": "quality",
+                "recommendation": "补充缺失的必要前置操作步骤，明确完整操作流程",
+                "unique_coverage": [],
+                "requirement_refs": []
+              }
+            ],
+            "limitations": [
+              "本次检查无对应需求文档作为依据，仅基于提交的用例内容进行判断"
+            ]
+          }
+        },
+        "requires_confirmation": false,
+        "related_job_id": "32708074-b5c1-4ff2-a21a-7bf0c1435ba6",
+        "related_change_set_id": null,
+        "error_code": null,
+        "created_at": "2026-10-25T12:31:02.114377Z"
+      }
+    ],
+    "candidate_history": [],
+    "created_at": "2026-10-25T12:30:36.122329Z",
+    "updated_at": "2026-10-25T12:31:35.851801Z"
+  },
+  "status": "passed",
+  "errors": [],
+  "final": [
+    {
+      "id": "726c024a-e5f2-4544-944d-1d257df5ac57",
+      "case_key": "TC-LOGIN-01-1792931434549",
+      "collection_ids": [
+        "7f91a6dd-618e-4d7a-92cd-ae9386ae27e8"
+      ],
+      "current_revision_id": "90fbdcf0-ce1b-4fa6-ad49-129eac49bf74",
+      "revision_number": 1,
+      "title": "短信登录",
+      "description": "",
+      "module": "登录/短信",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "手机号已注册且账号启用；准备有效的未使用验证码"
+      ],
+      "steps": [
+        {
+          "id": "d063d0d8-1d65-42fd-8a47-4bc7eaea48bf",
+          "action": "输入短信验证码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "e093df38-591f-45ed-bb1a-d67784d859dc",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931434230-ili7xe3u84f@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:30:34.602577Z"
+    },
+    {
+      "id": "b00b796e-72d7-4cbe-9931-512d2d65737c",
+      "case_key": "TC-LOGIN-02-1792931434549",
+      "collection_ids": [
+        "7f91a6dd-618e-4d7a-92cd-ae9386ae27e8"
+      ],
+      "current_revision_id": "1704ba56-6c71-4a90-a9fd-3bb71411d0fc",
+      "revision_number": 1,
+      "title": "密码登录",
+      "description": "",
+      "module": "登录/密码",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "账号已注册且启用；准备正确密码"
+      ],
+      "steps": [
+        {
+          "id": "32a32b77-13dd-4a8a-8c33-d23294fd98b7",
+          "action": "输入账号及正确密码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "e093df38-591f-45ed-bb1a-d67784d859dc",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931434230-ili7xe3u84f@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:30:34.662962Z"
+    },
+    {
+      "id": "2a0be4c3-a632-4253-b2d7-a2bdc68d0efb",
+      "case_key": "TC-PAY-01-1792931434549",
+      "collection_ids": [
+        "7f91a6dd-618e-4d7a-92cd-ae9386ae27e8"
+      ],
+      "current_revision_id": "fd43dc5d-155c-490b-8042-fe10f7981d32",
+      "revision_number": 1,
+      "title": "支付成功",
+      "description": "",
+      "module": "支付/付款",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备待支付订单和可用支付账户"
+      ],
+      "steps": [
+        {
+          "id": "93ac3049-bc00-4ace-82ab-ed7ac97d3af0",
+          "action": "完成订单支付",
+          "expected": "订单为已支付；仅有一条成功支付记录"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "e093df38-591f-45ed-bb1a-d67784d859dc",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931434230-ili7xe3u84f@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:30:34.708044Z"
+    },
+    {
+      "id": "22f05fff-0266-4196-aa09-65a680d58689",
+      "case_key": "TC-REFUND-01-1792931434549",
+      "collection_ids": [
+        "7f91a6dd-618e-4d7a-92cd-ae9386ae27e8"
+      ],
+      "current_revision_id": "14def252-932e-4eee-a403-5ef7c27ab028",
+      "revision_number": 1,
+      "title": "退款成功",
+      "description": "",
+      "module": "支付/退款",
+      "priority": "P2",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备一笔允许全额退款的已支付订单"
+      ],
+      "steps": [
+        {
+          "id": "97bdab0f-b90c-416f-b78d-5e7a3f5fafe1",
+          "action": "提交全额退款并等待处理完成",
+          "expected": "退款状态成功，退款金额等于原支付金额"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "e093df38-591f-45ed-bb1a-d67784d859dc",
+        "display_name": "自然语言验收",
+        "email": "nl-1792931434230-ili7xe3u84f@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T12:30:34.751035Z"
+    }
+  ]
+}

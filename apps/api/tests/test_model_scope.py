@@ -654,3 +654,58 @@ def test_fresh_generation_budget_never_enters_asset_scope(scope, instruction):
     assert result.target_case_ids == []
     assert result.target_candidate_snapshots == []
     selector.assert_not_called()
+
+
+@pytest.mark.parametrize('intent', ['CASE_MODIFY', 'CASE_DELETE', 'CASE_QUERY'])
+def test_explicit_missing_key_cannot_be_silently_corrected(scope, intent):
+    db, conversation, cases, selector = scope
+    result, error = conversations._resolve_model_scope(db, conversation,
+        ConversationMessageCreate(content='删除用例 QA-1-123456，其他不变'), intent)
+    assert 'QA-1-123456' in error
+    selector.assert_not_called()
+    assert not result.target_case_ids
+
+
+@pytest.mark.parametrize('content', [
+    '修改用例 QA-0，标题改为「用例 QA-MISSING」',
+    '修改用例 QA-0，标题改为用例 QA-MISSING',
+    '不是用例 QA-MISSING，而是用例 QA-0，步骤更清晰',
+])
+def test_target_validation_excludes_values_and_retracted_keys(scope, content):
+    db, conversation, cases, selector = scope
+    _, error = conversations._resolve_model_scope(db, conversation,
+        ConversationMessageCreate(content=content), 'CASE_MODIFY')
+    assert error is None
+    selector.assert_called_once()
+
+
+def test_mixed_identifier_list_cannot_drop_missing_member(scope):
+    db, conversation, _, selector = scope
+    _, error = conversations._resolve_model_scope(db, conversation,
+        ConversationMessageCreate(content='修改用例 QA-0、QA-NOTFOUND 和 QA-1，步骤清晰'),
+        'CASE_MODIFY')
+    assert 'QA-NOTFOUND' in error
+    selector.assert_not_called()
+
+
+@pytest.mark.parametrize('content', [
+    '查询标题包含「用例 QA-MISSING」的用例',
+    '删除用例 QA-MISSING\n补充说明：不是用例 QA-MISSING，而是用例 QA-0',
+    '修改用例 QA-0，标题改为「用例 QA-MISSING，候选 QA-OTHER」',
+])
+def test_scope_integrity_respects_content_predicates_and_correction_history(scope, content):
+    db, conversation, _, selector = scope
+    _, error = conversations._resolve_model_scope(db, conversation,
+        ConversationMessageCreate(content=content), 'CASE_MODIFY')
+    assert error is None
+    selector.assert_called_once()
+
+
+
+@pytest.mark.parametrize('content', ['删除用例编号： QA-1-INVALID', 'delete case id: QA-1-INVALID'])
+def test_explicit_reference_labels_allow_spaces_after_colon(scope, content):
+    db, conversation, _, selector = scope
+    _, error = conversations._resolve_model_scope(db, conversation,
+        ConversationMessageCreate(content=content), 'CASE_DELETE')
+    assert 'QA-1-INVALID' in error
+    selector.assert_not_called()

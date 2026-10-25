@@ -127,3 +127,38 @@ def test_identical_choices_are_shared_only_inside_one_request(monkeypatch):
         module.choice_request_cache.reset(token)
     module.interpret_generation_choice('只选这一条', settings, ['a'])
     assert call.call_count == 4
+
+
+@pytest.mark.parametrize('reference,evidence,target,valid,expected', [
+    ('current', '', 'other', True, None),
+    ('named', '切换到订单集合', 'other', True, 'other'),
+    ('named', '模型编造的引用', 'other', False, None),
+    ('named', '', 'other', False, None),
+    ('none', '切换到订单集合', 'other', False, None),
+    ('named', '', 'current', True, None),
+])
+def test_bound_collection_switch_requires_original_user_evidence(
+        monkeypatch, reference, evidence, target, valid, expected):
+    from types import SimpleNamespace
+    from agents import Runner
+    from casepilot_api.config import get_settings
+    from casepilot_api.generation_strategy import interpret_generation_choice
+
+    def run(agent, prompt, **kwargs):
+        import json
+        assert json.loads(prompt)['current_collection_id'] == 'current'
+        return SimpleNamespace(final_output=agent.output_type(
+            target_collection_id=target, collection_reference=reference,
+            target_collection_evidence=evidence,
+        ))
+
+    monkeypatch.setattr(Runner, 'run_sync', run)
+    settings = get_settings().model_copy(update={'agent_provider': 'openai_compatible', 'agent_api_key': 'fixture'})
+    arguments = dict(collection_catalog=[{'id': 'current', 'name': '当前工作区'},
+                                        {'id': 'other', 'name': '订单'}],
+                     explicit_collection_only=True, current_collection_id='current')
+    if not valid:
+        with pytest.raises(ValueError, match='collection_reference_without_user_evidence'):
+            interpret_generation_choice('切换到订单集合', settings, **arguments)
+    else:
+        assert interpret_generation_choice('切换到订单集合', settings, **arguments).target_collection_id == expected

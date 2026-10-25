@@ -383,3 +383,30 @@ def resolve_module_priority_union(instruction: str, cases: list[dict]) -> list[d
                         if str(case["id"]) in scope["ids"]
                         and case.get("priority") == match[2].upper())
     return [case for case in cases if str(case["id"]) in selected]
+
+
+def explicit_target_keys(instruction: str) -> list[str]:
+    """Read explicitly labelled identifiers, never choose or approximate assets.
+
+    This is an integrity check alongside semantic scope selection. Unlabelled
+    identifiers and other scope expressions remain the model's responsibility.
+    """
+    text = scope_reference_text(instruction)
+    # An unquoted field assignment can itself contain '用例 QA-1'. Its value
+    # is not a target; stop at the next clause so subsequent targets survive.
+    text = re.sub(
+        r'(?:标题|名称|描述|标签|模块|步骤|预期结果|预期|前置条件)\s*'
+        r'(?:改为|改成|设置为|设为|修改为|替换为|更新为)\s*[^，,。；;\n]+', '', text,
+    )
+    key = r'[A-Za-z][A-Za-z0-9]*(?:[-_][A-Za-z0-9]+)+'
+    label = r'(?:用例(?:编号)?|候选(?:编号)?|编号|\bcase(?:\s+id)?)'
+    # A correction explicitly retracts the old identifier in this turn.
+    retracted = {match.casefold() for match in re.findall(
+        rf'(?:不是|并非)\s*{label}[\s:：#「“\"]*({key})[」”\"]?', text, re.I)}
+    result = []
+    for match in re.finditer(
+        rf'{label}[\s:：#「“\"]*({key}(?:[」”\"]?\s*(?:和|与|及|、|，|,)\s*'
+        rf'(?:{label})?\s*[「“\"]?{key})*)', text, re.I,
+    ):
+        result.extend(re.findall(key, match[1]))
+    return [key for key in dict.fromkeys(result) if key.casefold() not in retracted]
