@@ -913,3 +913,33 @@ test('NL-SCOPE-UNION-EXCLUDE cross-module addition then exclusion replaces the c
   }
   expect(saved.filter((item:any) => ![b.id, payment.id].includes(item.id))).toEqual(journal.original.filter((item:any) => ![b.id, payment.id].includes(item.id)));
 });
+
+test('NL-CONFIRM-CORRECTION confirmation with new scope and values only prepares a fresh preview', async ({ page }) => {
+  const s = await setup(page), target = s.byKey('TC-LOGIN-02');
+  const first = await send(page, '把登录模块两条用例的标题都改成“登录验收”，优先级改成P0，其他字段保持不变。', false, 2);
+  expect(new Set(first.assistant_message.target_case_ids)).toEqual(new Set([s.byKey('TC-LOGIN-01').id, target.id]));
+  expect(first.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  expect(first.action.job_id).toBeFalsy();
+  await page.reload();
+  const revised = await send(page, '确认，但只改 TC-LOGIN-02，标题不要改了，保持原标题；优先级改成P2，其他用例和字段不变。', false, 2);
+  expect(revised.assistant_message.metadata.operation_id).toBe(first.assistant_message.metadata.operation_id);
+  expect(revised.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  expect(revised.assistant_message.target_case_ids).toEqual([target.id]);
+  expect(revised.action.job_id).toBeFalsy();
+  expect(revised.action.change_set_id).toBeFalsy();
+  expect(await s.read()).toEqual(journal.original);
+  await page.reload();
+  const change = await ready(page, await send(page, '现在确认最新方案。', true, 2));
+  expect(change.items.map((item:any) => item.ref)).toEqual([target.id]);
+  expect(change.items[0].field_diff.map((diff:any) => diff.field)).toEqual(['priority']);
+  expect(change.items[0].proposed_snapshot.title).toBe(target.title);
+  expect(change.items[0].proposed_snapshot.priority).toBe('P2');
+  expect(change.items[0].quality?.passed).not.toBe(false);
+  expect(await s.read()).toEqual(journal.original);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read(), changed = saved.find((item:any) => item.id === target.id);
+  expect(changed.priority).toBe('P2');
+  unchangedExcept(target, changed, ['priority']);
+  expect(saved.filter((item:any) => item.id !== target.id)).toEqual(journal.original.filter((item:any) => item.id !== target.id));
+});
