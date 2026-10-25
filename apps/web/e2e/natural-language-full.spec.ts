@@ -757,3 +757,35 @@ test('NL-CONFLICT-RECOVERY rebases on manual revision and preserves its content'
   expect((await get(page, `/case-change-sets/${prior.id}`)).status).toBe('conflict');
   journal.recoveredChangeSetId = change.id;
 });
+
+test('NL-NUMERIC-STEP business thresholds and step ordinal never expand the case scope', async ({ page }) => {
+  const s = await setup(page, false, false, stepFixture), target = s.byKey('TC-LOGIN-01');
+  const clause = '连续失败5次后锁定30秒';
+  const turn = await send(page, `只修改 TC-LOGIN-01 第2步的预期结果：在原文末尾追加“${clause}”。保留原文，其余步骤、字段和用例不变。`, false, 2);
+  expect(turn.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  expect(turn.assistant_message.target_case_ids).toEqual([target.id]);
+  expect(turn.action.job_id).toBeFalsy();
+  expect(await s.read()).toEqual(journal.original);
+  const confirmation = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/resume'));
+  await page.getByRole('button', { name: '确认修改并生成建议', exact: true }).last().click();
+  const response = await confirmation;
+  const body = observedBodies.get(response.url()) ?? await response.text();
+  expect(response.ok(), body).toBeTruthy();
+  const confirmed = JSON.parse(body); journal.turns.push({ confirmation: confirmed });
+  const change = await ready(page, confirmed);
+  expect(change.items.map((item:any) => item.ref)).toEqual([target.id]);
+  expect(change.items[0].field_diff.map((diff:any) => diff.field)).toEqual(['steps']);
+  expect(change.items[0].quality?.passed).not.toBe(false);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read(), changed = saved.find((c:any) => c.id === target.id);
+  const pairs = (c:any) => c.steps.map((step:any) => ({ action: step.action, expected: step.expected }));
+  const actual = pairs(changed), before = pairs(target);
+  expect(actual).toHaveLength(before.length);
+  expect(actual[1].action).toBe(before[1].action);
+  expect(actual[1].expected.startsWith(before[1].expected)).toBe(true);
+  expect(actual[1].expected).toContain(clause);
+  expect(actual.filter((_:any, i:number) => i !== 1)).toEqual(before.filter((_:any, i:number) => i !== 1));
+  unchangedExcept(target, changed, ['steps']);
+  expect(saved.filter((c:any) => c.id !== target.id)).toEqual(journal.original.filter((c:any) => c.id !== target.id));
+});
