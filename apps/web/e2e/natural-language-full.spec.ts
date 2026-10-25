@@ -943,3 +943,32 @@ test('NL-CONFIRM-CORRECTION confirmation with new scope and values only prepares
   unchangedExcept(target, changed, ['priority']);
   expect(saved.filter((item:any) => item.id !== target.id)).toEqual(journal.original.filter((item:any) => item.id !== target.id));
 });
+
+test('NL-FIELD-ACCEPT applies only checked fields and preserves unchecked review state after reload', async ({ page }) => {
+  const s = await setup(page), target = s.byKey('TC-LOGIN-01');
+  const change = await ready(page, await send(page, '把 TC-LOGIN-01 的标题改为“字段采纳验收”，优先级改成P0，其他内容不变。', true, 2));
+  expect(change.items.map((item:any) => item.ref)).toEqual([target.id]);
+  expect(new Set(change.items[0].field_diff.map((diff:any) => diff.field))).toEqual(new Set(['title', 'priority']));
+  expect(change.items[0].quality?.passed).not.toBe(false);
+  expect(await s.read()).toEqual(journal.original);
+  const review = page.locator('.collection-changes__review');
+  await review.getByRole('checkbox', { name: '标题', exact: true }).check();
+  await review.getByRole('checkbox', { name: '优先级', exact: true }).uncheck();
+  await apply(page, true); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read(), changed = saved.find((item:any) => item.id === target.id);
+  expect(changed.title).toBe('字段采纳验收');
+  unchangedExcept(target, changed, ['title']);
+  expect(saved.filter((item:any) => item.id !== target.id)).toEqual(journal.original.filter((item:any) => item.id !== target.id));
+  const applied = await get(page, `/case-change-sets/${change.id}`);
+  journal.fieldAcceptance = applied;
+  expect(applied.status).toBe('applied');
+  expect(applied.items[0].accepted_fields).toEqual(['title']);
+  await expect(review.getByRole('checkbox', { name: '标题', exact: true })).toBeChecked();
+  await expect(review.getByRole('checkbox', { name: '优先级', exact: true })).not.toBeChecked();
+  await expect(review.getByRole('checkbox', { name: '优先级', exact: true })).toBeDisabled();
+  const priority = review.locator('.collection-changes__field').filter({ has: page.getByRole('checkbox', { name: '优先级', exact: true }) });
+  await expect(priority).toContainText('未应用的建议');
+  await expect(priority).not.toContainText('已应用结果');
+  await expect(review.getByRole('button', { name: '应用已选修改', exact: true })).toHaveCount(0);
+});
