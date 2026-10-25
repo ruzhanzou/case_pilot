@@ -564,3 +564,37 @@ test('NL-MUL-11 modification then deletion waits for both reviews and completes 
   journal.completedOperations = state.operation_history.filter((op: any) => [modify.id, deletion.id].includes(op.id));
   expect(journal.completedOperations.map((op: any) => op.status)).toEqual(['completed', 'completed']);
 });
+
+test('NL-DRAFT-CANCEL-NEW field negation preserves draft then cancellation permits a fresh target', async ({ page }) => {
+  const s = await setup(page);
+  const submit = (content: string, confirm = false) => send(page, content, confirm, 2);
+  const login = s.byKey('TC-LOGIN-01'), payment = s.byKey('TC-PAY-01');
+  const initial = await submit('把用例 TC-LOGIN-01 的标题改为“新的登录标题”，优先级改成P0，其他字段保持不变。');
+  const oldId = initial.assistant_message.metadata.operation_id;
+  expect(initial.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  const revised = await submit('标题不要改了，保持原标题，只改优先级为P2。');
+  expect(revised.assistant_message.metadata.operation_id).toBe(oldId);
+  expect(revised.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  expect(revised.assistant_message.target_case_ids).toEqual([login.id]);
+  expect(revised.action.job_id).toBeFalsy();
+  expect(await s.read()).toEqual(journal.original);
+  await page.reload();
+  const cancelled = await submit('这次修改全部取消，不用继续了。');
+  expect(cancelled.action.type).toBe('cancelled');
+  expect(cancelled.operation_plan.operations.find((o:any) => o.id === oldId).status).toBe('cancelled');
+  expect(await s.read()).toEqual(journal.original);
+  await page.reload();
+  const fresh = await submit('把用例 TC-PAY-01 的优先级改成P0，其他字段不变。');
+  expect(fresh.assistant_message.metadata.operation_id).not.toBe(oldId);
+  expect(fresh.assistant_message.target_case_ids).toEqual([payment.id]);
+  expect(fresh.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  expect(await s.read()).toEqual(journal.original);
+  const change = await ready(page, await submit('确认修改。', true));
+  expect(change.items.map((item:any) => item.ref)).toEqual([payment.id]);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read();
+  expect(saved.find((c:any) => c.id === payment.id).priority).toBe('P0');
+  unchangedExcept(payment, saved.find((c:any) => c.id === payment.id), ['priority']);
+  expect(saved.filter((c:any) => c.id !== payment.id)).toEqual(journal.original.filter((c:any) => c.id !== payment.id));
+});

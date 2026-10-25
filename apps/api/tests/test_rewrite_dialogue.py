@@ -122,10 +122,24 @@ async def test_ambiguous_input_invalidates_confirmation(draft, monkeypatch, repl
 
 
 @pytest.mark.asyncio
-async def test_negation_of_field_does_not_cancel_but_explicit_stop_does(draft, monkeypatch):
-    client, _, oid, _, dispatched = draft
+@pytest.mark.parametrize("entry", ["resume", "message", "idempotent_message"])
+async def test_explicit_stop_cancels_existing_draft_without_dispatch(draft, monkeypatch, entry):
+    from casepilot_api.agent_router import IntentOperationDraft, IntentPlanDraft
+    client, workspace, oid, cases, dispatched = draft
+    content = "这次修改全部取消，不用继续了。"
+    monkeypatch.setattr(conversations.settings, "agent_provider", "openai_compatible")
+    monkeypatch.setattr(conversations, "_retry_generation_from_text", lambda *a: None)
+    monkeypatch.setattr(conversations, "plan_intents", lambda *a, **k: IntentPlanDraft(operations=[
+        IntentOperationDraft(intent="CASE_MODIFY", instruction=content, confidence=1,
+                             speech_act="request", action_evidence=content, resume_operation_id=oid)]))
     monkeypatch.setattr(conversations, "interpret_rewrite_reply", lambda *a, **k: RewriteReply(action="cancel"))
-    result = await client.post(f"/api/v1/conversation-operations/{oid}/resume", json={"content": "这次不改了，结束任务"})
+    payload = {"content": content}
+    if entry == "idempotent_message":
+        payload["client_request_id"] = str(uuid4())
+    endpoint = (f"/api/v1/conversation-operations/{oid}/resume" if entry == "resume"
+                else f"/api/v1/conversations/{workspace}/messages")
+    result = await client.post(endpoint, json=payload)
+    assert result.status_code == 202, result.text
     assert result.json()["action"]["type"] == "cancelled"
     with get_session_factory()() as db:
         assert db.get(ConversationOperation, UUID(oid)).status == "cancelled"
