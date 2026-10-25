@@ -73,7 +73,7 @@ from casepilot_api.models import (
     WorkspaceCandidate,
     WorkspaceTestBrief,
 )
-from casepilot_api.rewrite_dialogue import RewriteReply, interpret_rewrite_reply
+from casepilot_api.rewrite_dialogue import CollectionAwareRewriteReply, RewriteReply, interpret_rewrite_reply
 from casepilot_api.rewrite_state import reduce_draft, routing_draft_context, settle_draft
 from casepilot_api.schemas import (
     SOURCE_REF_EXCERPT_MAX_LENGTH,
@@ -1294,13 +1294,7 @@ def _explicit_collection_mention(content: str, name: str) -> bool:
     return any(re.search(pattern, content, re.IGNORECASE) for pattern in patterns)
 
 
-def _collection_candidates(
-    db: Session,
-    conversation: Conversation,
-    content: str,
-    *,
-    explicit_only: bool = False,
-) -> tuple[list[dict[str, str]], UUID | None]:
+def _collection_catalog(db: Session, conversation: Conversation) -> list[dict[str, str]]:
     collections = list(
         db.scalars(
             select(CaseCollection)
@@ -1312,11 +1306,18 @@ def _collection_candidates(
             .limit(100)
         )
     )
+    return [{"id": str(item.id), "name": item.name} for item in collections]
+
+
+def _collection_candidates(
+    db: Session,
+    conversation: Conversation,
+    content: str,
+    *,
+    explicit_only: bool = False,
+) -> tuple[list[dict[str, str]], UUID | None]:
+    candidates = _collection_catalog(db, conversation)
     normalized = "".join(content.casefold().split())
-    candidates = [
-        {"id": str(item.id), "name": item.name}
-        for item in collections
-    ]
     if settings.agent_provider != "mock":
         if not candidates:
             return candidates, None
@@ -1337,11 +1338,11 @@ def _collection_candidates(
             raise HTTPException(status_code=503, detail="集合识别暂时未完成，未执行本次操作，请重试。") from error
         return candidates, UUID(choice.target_collection_id) if choice.target_collection_id else None
     matches = [
-        item.id
-        for item in collections
-        if len("".join(item.name.casefold().split())) >= 2
-        and "".join(item.name.casefold().split()) in normalized
-        and (not explicit_only or _explicit_collection_mention(content, item.name))
+        UUID(item["id"])
+        for item in candidates
+        if len("".join(item["name"].casefold().split())) >= 2
+        and "".join(item["name"].casefold().split()) in normalized
+        and (not explicit_only or _explicit_collection_mention(content, item["name"]))
     ]
     return candidates, matches[0] if len(matches) == 1 else None
 
@@ -1353,10 +1354,11 @@ def _collection_gate(
     intent: str,
     confidence: float,
     operation_id: UUID | None,
+    resolved_collection: tuple[list[dict[str, str]], UUID | None] | None = None,
 ) -> tuple[ConversationMessage, dict[str, Any], str | None] | None:
     if intent not in ASSET_INTENTS:
         return None
-    candidates, mentioned_collection_id = _collection_candidates(
+    candidates, mentioned_collection_id = resolved_collection if resolved_collection is not None else _collection_candidates(
         db,
         conversation,
         payload.content,
@@ -2069,6 +2071,7 @@ def _start_action(
     operation_id: UUID | None = None,
     confirmed_targets: bool = False,
     confirm_modification: bool = False,
+    resolved_collection: tuple[list[dict[str, str]], UUID | None] | None = None,
 ) -> tuple[ConversationMessage, dict[str, Any], str | None]:
     instruction = user_message.content if user_message is not None else payload.content
     generation_details = (interpret_generation_choice(instruction, settings)
@@ -2121,6 +2124,7 @@ def _start_action(
         intent,
         confidence,
         operation_id,
+        resolved_collection=resolved_collection,
     )
     if collection_gate is not None:
         return collection_gate
@@ -5277,6 +5281,7 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
     if not state["scope_resolved"] and (supplement.target_case_ids or supplement.target_candidate_snapshots):
         selection_changed = True
     text = supplement.content or ""
+    resolved_collection = None
     if supplement.confirm_modification or (
         settings.agent_provider == "mock" and _MODIFICATION_ACKNOWLEDGEMENT.fullmatch(text)
     ):
@@ -5285,8 +5290,12 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
         reply = RewriteReply(action="update", requirements_ready=state["requirements_ready"])
     else:
         try:
+            catalog = _collection_catalog(db, conversation) if settings.agent_provider != "mock" else None
             reply = interpret_rewrite_reply(text, {
                 **state, "has_confirmation": bool(pending),
+                **({"collection_catalog": catalog, "current_collection_id": str(conversation.collection_id)
+                    if conversation.collection_id else None, "explicit_collection_only": conversation.collection_id is not None}
+                   if catalog is not None else {}),
                 "available_attachments": dict(operation.payload).get("attachment_context") or {
                     key: dict(user_message.message_metadata).get("request", {}).get(key, [])
                     for key in ("document_ids", "knowledge_source_ids")},
@@ -5296,6 +5305,9 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
                 base_url=settings.agent_base_url, api_key=settings.agent_api_key,
                 timeout_seconds=settings.agent_timeout_seconds,
                 tracing_enabled=settings.agent_tracing_enabled)
+            if isinstance(reply, CollectionAwareRewriteReply):
+                resolved_collection = (catalog, UUID(reply.collection.target_collection_id)
+                    if reply.collection.target_collection_id else None)
         except Exception as exc:
             logging.getLogger(__name__).warning("rewrite_reply_failed error_type=%s", type(exc).__name__)
             # Keep the last preview and input intact when the model fails; only
@@ -5373,7 +5385,7 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
     operation.status = "running"
     assistant, action, task_name = _start_action(db, account, conversation, user_message, payload,
         "CASE_MODIFY", operation.confidence, operation.id,
-        confirmed_targets=fixed_scope, confirm_modification=confirm)
+        confirmed_targets=fixed_scope, confirm_modification=confirm, resolved_collection=resolved_collection)
     # Scope failures must never leave an executable stale preview.
     state = settle_draft(state,
         scope_resolved=bool(dict(operation.target).get("resolved")),

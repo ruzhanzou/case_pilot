@@ -283,7 +283,7 @@ def test_planning_revision_preserves_strategy_unless_model_detects_explicit_swit
     conv = SimpleNamespace(id=uuid4(), collection_id=uuid4())
     captured = []
     sentinel = ('gate', {}, None)
-    def gate(db, conv, payload, *args):
+    def gate(db, conv, payload, *args, resolved_collection=None):
         captured.append(payload)
         return sentinel
     monkeypatch.setattr(conversations, '_collection_gate', gate)

@@ -1055,3 +1055,26 @@ test('NL-COUNT-SHORTAGE Chinese quantity mismatch clarifies then resumes with av
   }
   expect(saved.filter((item:any) => !ids.includes(item.id))).toEqual(journal.original.filter((item:any) => !ids.includes(item.id)));
 });
+
+test('NL-DRAFT-COLLECTION-SWITCH changing the draft collection cannot execute the current preview', async ({ page }) => {
+  const s = await setup(page);
+  const other = (await get(page, `/spaces/${journal.collection.space_id}/collections`)).find((c:any) => c.id !== journal.collection.id);
+  const otherBefore = await get(page, `/collections/${other.id}/test-cases`);
+  const preview = await send(page, '把 TC-LOGIN-01 的优先级改成P0，其他字段不变。', false, 2);
+  expect(preview.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  await page.reload();
+  const turn = await send(page, `刚才这次修改的目标集合换成「${other.name}」集合，当前集合不要改，仍然只改优先级P0。`, false, 2);
+  expect(turn.action.type).toBe('new_conversation_required');
+  expect(turn.action.requested_collection_id).toBe(other.id);
+  expect(turn.action.job_id).toBeFalsy();
+  expect(turn.action.change_set_id).toBeFalsy();
+  expect(turn.assistant_message.metadata.operation_id).toBe(preview.assistant_message.metadata.operation_id);
+  expect((await get(page, `/conversations/${turn.conversation_id}`)).collection_id).toBe(journal.collection.id);
+  expect(await s.read()).toEqual(journal.original);
+  expect(await get(page, `/collections/${other.id}/test-cases`)).toEqual(otherBefore);
+  await expect(page.locator('.principle-messages')).toContainText('请新建对话后继续');
+  await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled({ timeout: 60000 });
+  await expect(page.locator('.principle-messages')).toContainText('请新建对话后继续');
+  expect(await s.read()).toEqual(journal.original);
+});

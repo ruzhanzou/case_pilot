@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from casepilot_api.field_constraints import PRIORITY_ASSIGNMENT_DESCRIPTION, priority_assignment_error
 from casepilot_api.agent_router import _run_routing_agent
+from casepilot_api.collection_reference import CollectionReference, collection_instructions, validate_collection_reference
 
 
 class RewriteReply(BaseModel):
@@ -48,6 +49,16 @@ class SemanticRewriteReply(RewriteReply):
     ))
 
 
+class ExplicitCollectionReference(CollectionReference):
+    target_collection_id: str | None
+    collection_reference: Literal["none", "current", "named"]
+    target_collection_evidence: str
+
+
+class CollectionAwareRewriteReply(SemanticRewriteReply):
+    collection: ExplicitCollectionReference = Field(description="本轮回复的目标集合引用；不能从旧草稿推导新的集合切换授权。")
+
+
 def interpret_rewrite_reply(content: str, state: dict, *, provider: str, model_name: str,
                             base_url: str, api_key: str, timeout_seconds: float,
                             tracing_enabled: bool) -> RewriteReply:
@@ -69,6 +80,7 @@ def interpret_rewrite_reply(content: str, state: dict, *, provider: str, model_n
     set_tracing_disabled(not tracing_enabled)
     client = AsyncOpenAI(api_key=api_key, base_url=base_url.rstrip("/"),
                          timeout=timeout_seconds, max_retries=1)
+    output_model = CollectionAwareRewriteReply if "collection_catalog" in state else SemanticRewriteReply
     agent = Agent(
         name="Rewrite draft update",
         instructions=(
@@ -107,11 +119,13 @@ def interpret_rewrite_reply(content: str, state: dict, *, provider: str, model_n
             "旧要求为Set the title to Login / OTP — v2, keep other fields unchanged，本轮为再把优先级改P0，标题也保留："
             'requirements为“标题改为Login / OTP — v2，优先级改为P0，其余字段保持不变。”，不能返回英文修改说明或把标题翻译成中文。'
             "这些示例不授权添加用户未提出的要求；旧要求被否定时必须撤销，不能照抄示例。"
-            "JSON Schema: " + json.dumps(SemanticRewriteReply.model_json_schema(), ensure_ascii=False)
+            "若本轮明确要求改其他集合，action必须为update，不能当作确认当前预览。"
+            + (collection_instructions if "collection_catalog" in state else "")
+            + "JSON Schema: " + json.dumps(output_model.model_json_schema(), ensure_ascii=False)
         ),
         model=OpenAIChatCompletionsModel(model=model_name, openai_client=client),
         model_settings=ModelSettings(extra_body={"response_format": {"type": "json_object"}}),
-        output_type=AgentOutputSchema(SemanticRewriteReply, strict_json_schema=False),
+        output_type=AgentOutputSchema(output_model, strict_json_schema=False),
     )
     # Reply interpretation needs identities and current constraints, not revision
     # metadata or full case bodies. Scope selection separately receives bodies.
@@ -127,6 +141,11 @@ def interpret_rewrite_reply(content: str, state: dict, *, provider: str, model_n
         Runner, agent, json.dumps({"reply": content, "draft": context}, ensure_ascii=False, default=str),
         stage="rewrite_reply", model_name=model_name, client=client,
     )
+    if isinstance(reply, CollectionAwareRewriteReply):
+        target = validate_collection_reference(reply.collection, content, state["collection_catalog"], state.get("current_collection_id"))
+        reply.collection.target_collection_id = target
+        if target and reply.action == "confirm":
+            raise ValueError("confirmation_cannot_switch_collection")
     error = priority_assignment_error(reply.priority_assignment)
     if error and reply.action not in {"cancel"}:
         return reply.model_copy(update={"action": "clarify", "requirements_ready": False, "clarification": error})

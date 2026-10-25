@@ -225,7 +225,7 @@ def test_query_action_returns_all_matching_cases(monkeypatch):
     by_id = {item["id"]: item for item in snapshots}
     db = MagicMock()
     db.execute.return_value.all.return_value = rows
-    monkeypatch.setattr(conversations, "_collection_gate", lambda *args: None)
+    monkeypatch.setattr(conversations, "_collection_gate", lambda *args, resolved_collection=None: None)
     monkeypatch.setattr(conversations, "_load_scope_snapshots", lambda *args: snapshots)
     monkeypatch.setattr(
         conversations,

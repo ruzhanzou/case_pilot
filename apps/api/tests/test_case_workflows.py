@@ -99,7 +99,7 @@ def test_empty_module_creates_a_persisted_module_without_starting_generation(mon
     operation = SimpleNamespace(payload={}, result={})
     db = Mock()
     db.get.return_value = operation
-    monkeypatch.setattr(conversations, "_collection_gate", lambda *args: None)
+    monkeypatch.setattr(conversations, "_collection_gate", lambda *args, resolved_collection=None: None)
     monkeypatch.setattr(conversations, "ensure_collection", lambda *args: collection)
     message, action, job = conversations._start_action(
         db,

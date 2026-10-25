@@ -629,3 +629,58 @@ def test_live_invalid_priority_reply_becomes_clarification(monkeypatch):
     assert 'P9' in reply.clarification
     assert 'P0、P1、P2' in reply.clarification
     assert reply.requirements == '优先级改成P9，标题不变'
+
+
+def test_combined_reply_requires_explicit_collection_decision():
+    from casepilot_api.rewrite_dialogue import CollectionAwareRewriteReply
+    from pydantic import ValidationError
+    base = dict(action='update', scope_action='preserve', priority_assignment=None, requirements='标题不变')
+    for missing in ({}, {'collection': {}}, {'collection': {'target_collection_id': None}}):
+        with pytest.raises(ValidationError):
+            CollectionAwareRewriteReply.model_validate({**base, **missing})
+
+
+@pytest.mark.parametrize('target,evidence,action,error', [
+    ('other', '其他集合', 'update', None),
+    ('missing', '其他集合', 'update', 'outside_catalog'),
+    ('other', '编造的引用', 'update', 'without_user_evidence'),
+    ('other', '其他集合', 'confirm', 'confirmation_cannot_switch'),
+])
+def test_combined_live_reply_validates_collection_evidence(monkeypatch, target, evidence, action, error):
+    from types import SimpleNamespace
+    from agents import Runner
+    from casepilot_api.rewrite_dialogue import CollectionAwareRewriteReply, interpret_rewrite_reply
+    reply = CollectionAwareRewriteReply(action=action, scope_action='preserve', priority_assignment=None,
+        collection={'target_collection_id': target, 'collection_reference': 'named', 'target_collection_evidence': evidence})
+    monkeypatch.setattr(Runner, 'run_sync', Mock(return_value=SimpleNamespace(final_output=reply)))
+    def invoke():
+        return interpret_rewrite_reply('改其他集合', {'collection_catalog': [{'id': 'current'}, {'id': 'other'}],
+            'current_collection_id': 'current'}, provider='openai_compatible', model_name='test',
+            base_url='https://example.invalid/v1', api_key='test-key', timeout_seconds=10, tracing_enabled=False)
+    if error:
+        with pytest.raises(ValueError, match=error): invoke()
+    else:
+        assert invoke().collection.target_collection_id == 'other'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("switch_collection", [False, True])
+async def test_combined_collection_decision_skips_second_model_and_still_blocks_other_collection(draft, monkeypatch, switch_collection):
+    from casepilot_api.rewrite_dialogue import CollectionAwareRewriteReply
+    client, workspace, oid, cases, dispatched = draft
+    space = (await client.get('/api/v1/auth/me')).json()['spaces'][0]['id']
+    other = (await client.post(f'/api/v1/spaces/{space}/collections', json={'name': '其他集合'})).json()
+    monkeypatch.setattr(conversations.settings, 'agent_provider', 'openai_compatible')
+    monkeypatch.setattr(conversations, '_collection_candidates', Mock(side_effect=AssertionError('duplicate collection inference')))
+    monkeypatch.setattr(conversations, 'interpret_rewrite_reply', lambda *a, **k: CollectionAwareRewriteReply(
+        action='update', scope_action='preserve', priority_assignment='P0', requirements='优先级P0',
+        collection={'target_collection_id': other['id'] if switch_collection else None, 'collection_reference': 'named' if switch_collection else 'none', 'target_collection_evidence': '其他集合' if switch_collection else ''}))
+    blocked = await client.post(f'/api/v1/conversation-operations/{oid}/resume', json={'content': '改其他集合'})
+    assert blocked.status_code == 202, blocked.text
+    if switch_collection:
+        assert blocked.json()['assistant_message']['metadata']['action'] == 'new_conversation_required'
+    else:
+        assert blocked.json()['assistant_message']['metadata']['modification_confirmation']
+        assert set(blocked.json()['assistant_message']['target_case_ids']) == {c['id'] for c in cases}
+    assert not blocked.json()['action'].get('job_id')
+    assert not dispatched

@@ -338,7 +338,7 @@ def test_scope_transient_failure_retries_without_changing_catalog(scope):
 
 def test_router_scope_question_cannot_bypass_catalog_selector(monkeypatch):
     monkeypatch.setattr(conversations.settings, "agent_provider", "openai_compatible")
-    monkeypatch.setattr(conversations, "_collection_gate", lambda *args: None)
+    monkeypatch.setattr(conversations, "_collection_gate", lambda *args, resolved_collection=None: None)
     monkeypatch.setattr(conversations, "_link_rewrite_round", lambda db, c, op, p: p)
     payload = ConversationMessageCreate(content="查询前置条件包含只读审计账号的正式用例")
     operation = SimpleNamespace(

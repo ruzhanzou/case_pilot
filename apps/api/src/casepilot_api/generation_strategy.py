@@ -4,6 +4,8 @@ import re
 import json
 from contextvars import ContextVar
 
+from casepilot_api.collection_reference import CollectionReference, collection_instructions, validate_collection_reference
+
 choice_request_cache = ContextVar("choice_request_cache", default=None)
 
 STRATEGY = r"(?:select_and_generate|select|generate)"
@@ -155,16 +157,6 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
 
     from casepilot_api.agent_router import _run_routing_agent
 
-    class CollectionReference(BaseModel):
-        target_collection_id: str | None = Field(default=None, description=(
-            "明确作为本次操作目标的用例集合ID。普通业务名称、测试对象、参考来源、"
-            "否定切换以及要求继续当前集合时均为null。不能仅按名称重合选集合。"
-        ))
-        collection_reference: Literal["none", "current", "named"] = "none"
-        target_collection_evidence: str = Field(default="", description=(
-            "仅named时填写：用户本轮明确指定目标集合的连续原文片段。不得抄目录名称或改写原话。"
-        ))
-
     class RetryChoice(BaseModel):
         retry_requested: bool = False
         retry_kind: Literal[
@@ -203,17 +195,6 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
     client = AsyncOpenAI(api_key=settings.agent_api_key,
                          base_url=settings.agent_base_url.rstrip("/"),
                          timeout=settings.routing_timeout_seconds, max_retries=0)
-    collection_instructions = (
-        "target_collection_id仅返回用户指向的目标用例集合ID，来自collection_catalog；"
-        "没有明确指向、多个集合或只是提到同名业务时返回null。"
-        "explicit_collection_only为true时，必须明确将该名称当作集合，普通测试对象名称不算。"
-        "current_collection_id是当前对话绑定的集合。当前集合/这个集合是collection_reference=current，target_collection_id=null。"
-        "例如查询当前集合的登录用例，即使目录有账号登录验收用例集，也不得改指那个集合。"
-        "明确指定其他目标集合才是named，并填写target_collection_evidence为用户本轮连续原文；没有目标集合引用是none。"
-        "参考来源集合不是要切换的目标集合；否定切换、引用示例也不是目标。"
-        "例如目录有订单集合，用户说为订单业务增加用例，继续维护当前集合，"
-        "target_collection_id必须是null；只有说在订单集合操作才选对应ID。"
-    )
     retry_instructions = (
         "retry_requested仅当用户要求重试刚才失败或未完成的任务；解释重试、否定重试都不是重试。"
         "简短确认只有紧接助手明确询问是否重试才算重试。新任务或追加修改不算重试。"
@@ -268,16 +249,9 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
     if collection_only or retry_only:
         result = Choice.model_validate(result.model_dump())
     result.confirms_brief = result.confirms_brief and result.brief_action == "confirm"
-    if (result.target_collection_id is not None
-            and result.target_collection_id not in {item["id"] for item in collection_catalog or []}):
-        raise ValueError("collection_reference_outside_catalog")
-    if current_collection_id and result.target_collection_id:
-        if (result.collection_reference == "current"
-                or result.target_collection_id == current_collection_id):
-            result.target_collection_id = None
-        elif (result.collection_reference != "named" or not result.target_collection_evidence.strip()
-              or result.target_collection_evidence not in content):
-            raise ValueError("collection_reference_without_user_evidence")
+    result.target_collection_id = validate_collection_reference(
+        result, content, collection_catalog or [], current_collection_id,
+    )
     if result.selected_ids is not None:
         selected = result.selected_ids
         if (len(selected) != len(set(selected)) or not set(selected) <= set(case_ids or [])
