@@ -855,6 +855,32 @@ for (const remove of [true, false]) test(`NL-STEP-${remove ? 'REMOVE' : 'INSERT'
   expect(saved.filter((c:any) => c.id !== target.id)).toEqual(journal.original.filter((c:any) => c.id !== target.id));
 });
 
+test('NL-CLEAR-PRECONDITIONS explicit field clearing preserves the case and every other field', async ({ page }) => {
+  const s = await setup(page), target = s.byKey('TC-LOGIN-01');
+  expect(target.preconditions.length).toBeGreaterThan(0);
+  const preview = await send(page, '清空 TC-LOGIN-01 的全部前置条件，让前置条件为空；保留这条用例，标题、步骤、预期、优先级和其他字段都不改。', false, 2);
+  expect(preview.intent).toBe('CASE_MODIFY');
+  expect(preview.operation_plan.operations.map((op:any) => op.intent)).toEqual(['CASE_MODIFY']);
+  expect(preview.assistant_message.target_case_ids).toEqual([target.id]);
+  expect(preview.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  expect(preview.action.job_id).toBeFalsy();
+  expect(await s.read()).toEqual(journal.original);
+  await page.reload();
+  const change = await ready(page, await send(page, '确认修改。', true, 2));
+  expect(change.items.map((item:any) => item.ref)).toEqual([target.id]);
+  expect(change.items[0].field_diff.map((diff:any) => diff.field)).toEqual(['preconditions']);
+  expect(change.items[0].proposed_snapshot.preconditions).toEqual([]);
+  expect(change.items[0].quality?.passed).not.toBe(false);
+  expect(await s.read()).toEqual(journal.original);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read(), changed = saved.find((item:any) => item.id === target.id);
+  expect(saved).toHaveLength(journal.original.length);
+  expect(changed.preconditions).toEqual([]);
+  unchangedExcept(target, changed, ['preconditions']);
+  expect(saved.filter((item:any) => item.id !== target.id)).toEqual(journal.original.filter((item:any) => item.id !== target.id));
+});
+
 test('NL-PROPOSAL-RETRACT title withdrawal after reload preserves only the revised priority', async ({ page }) => {
   const s = await setup(page), target = s.byKey('TC-LOGIN-01');
   const first = await ready(page, await send(page, '把用例 TC-LOGIN-01 的标题改为“临时登录标题”，优先级改成P0，其他字段保持不变。', true, 2));

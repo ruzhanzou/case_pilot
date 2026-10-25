@@ -622,6 +622,32 @@ def test_rewrite_preserves_legal_existing_case_shape(count):
         TestCaseDraft.model_validate(base)
 
 
+@pytest.mark.parametrize("authorized", [True, False])
+def test_empty_preconditions_are_valid_but_still_require_semantic_authorization(authorized):
+    from casepilot_agent.contracts import QualityIssue, QualityReport, RewriteCandidate, RewriteCaseDraft
+    from casepilot_agent.pipeline import RewriteContentError, validate_rewrite_candidate
+
+    original = MockProvider().generate(GenerationRequest(prompt="登录")).test_cases[0]
+    assert original.preconditions
+    proposed = RewriteCaseDraft.model_validate({**original.model_dump(), "preconditions": []})
+    candidate = RewriteCandidate(proposed=proposed, reason="清空前置条件", diff=[], quality=QualityReport(passed=True, score=100))
+    request = RewriteRequest(test_case=original, instruction="清空前置条件，其他字段不变" if authorized else "只改标题，其他字段不变")
+    provider = Mock(name="semantic-provider")
+    provider.complete.return_value = (QualityReport(
+        passed=authorized, score=100 if authorized else 0,
+        issues=[] if authorized else [QualityIssue(code="unauthorized_clear", message="未授权清空前置条件", severity="error")],
+    ), None)
+    if authorized:
+        assert validate_rewrite_candidate(request, candidate, provider).proposed.preconditions == []
+    else:
+        with pytest.raises(RewriteContentError, match="未授权清空"):
+            validate_rewrite_candidate(request, candidate, provider)
+    provider.complete.assert_called_once()
+    assert provider.complete.call_args.kwargs["stage"] == "rewrite.constraints_validated"
+    assert provider.complete.call_args.kwargs["payload"]["proposed"]["preconditions"] == []
+    assert original.preconditions
+
+
 def test_single_semantic_rewrite_recomputes_diff_from_actual_candidate():
     from unittest.mock import Mock
 

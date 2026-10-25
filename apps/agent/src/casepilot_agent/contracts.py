@@ -168,7 +168,7 @@ class RewriteCaseDraft(BaseModel):
     preconditions: list[str] = Field(
         min_length=0,
         max_length=50,
-        description="test_setup：环境、状态、身份、权限和测试数据前提；无前提时明确写无特殊前置条件。",
+        description="test_setup：环境、状态、身份、权限和测试数据前提；修改已有用例时允许按用户要求清空为[]。",
     )
     steps: list[TestStep] = Field(
         min_length=1,
@@ -187,7 +187,7 @@ class TestCaseDraft(RewriteCaseDraft):
 
     preconditions: list[str] = Field(
         min_length=1, max_length=50,
-        description=RewriteCaseDraft.model_fields["preconditions"].description,
+        description="test_setup：环境、状态、身份、权限和测试数据前提；新生成用例无前提时明确写无特殊前置条件。",
     )
     steps: list[TestStep] = Field(
         min_length=1, max_length=4,
