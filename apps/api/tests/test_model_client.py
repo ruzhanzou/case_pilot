@@ -28,3 +28,24 @@ def test_request_client_closes_on_same_loop_even_on_failure(fails):
     finally:
         loop.close()
         asyncio.set_event_loop(None)
+
+
+def test_failure_detail_does_not_disclose_provider_body():
+    import httpx
+    from openai import APIStatusError
+    from casepilot_api.model_client import model_failure_detail
+    error = APIStatusError('private-token-and-user-content', response=httpx.Response(500,
+        request=httpx.Request('POST', 'https://example.invalid/private')), body={'secret': 'private'})
+    detail = model_failure_detail(error)
+    assert '模型服务暂时不可用' in detail
+    assert '未执行' in detail and '原草稿已保留' in detail
+    assert 'private' not in detail
+
+
+def test_error_chain_omits_messages_and_handles_cycles():
+    from casepilot_api.model_client import model_error_chain
+    inner = OSError('private connection URL')
+    outer = RuntimeError('private request content')
+    outer.__cause__ = inner
+    inner.__context__ = outer
+    assert model_error_chain(outer) == 'RuntimeError>OSError'

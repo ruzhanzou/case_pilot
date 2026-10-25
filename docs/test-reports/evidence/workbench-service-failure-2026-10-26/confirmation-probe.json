@@ -1,0 +1,78 @@
+{
+  "input": "确认这次修改。",
+  "context_summary": "固定当前集合、TC-A 标题为另一个集合的名称并改优先级 P2；已有完整待确认预览。直接真实解释器调用，不创建任务或修改正式数据。",
+  "samples": [
+    {
+      "sample": 1,
+      "status": "ok",
+      "action": "confirm",
+      "scope_action": "preserve",
+      "collection": {
+        "target_collection_id": null,
+        "collection_reference": "current",
+        "target_collection_evidence": ""
+      },
+      "seconds": 12.67
+    },
+    {
+      "sample": 2,
+      "status": "ok",
+      "action": "confirm",
+      "scope_action": "preserve",
+      "collection": {
+        "target_collection_id": null,
+        "collection_reference": "current",
+        "target_collection_evidence": ""
+      },
+      "seconds": 13.698
+    },
+    {
+      "sample": 3,
+      "status": "ok",
+      "action": "confirm",
+      "scope_action": "preserve",
+      "collection": {
+        "target_collection_id": null,
+        "collection_reference": "current",
+        "target_collection_evidence": ""
+      },
+      "seconds": 10.569
+    },
+    {
+      "sample": 4,
+      "status": "ok",
+      "action": "confirm",
+      "scope_action": "preserve",
+      "collection": {
+        "target_collection_id": null,
+        "collection_reference": "current",
+        "target_collection_evidence": ""
+      },
+      "seconds": 26.975
+    },
+    {
+      "sample": 5,
+      "status": "ok",
+      "action": "confirm",
+      "scope_action": "preserve",
+      "collection": {
+        "target_collection_id": null,
+        "collection_reference": "current",
+        "target_collection_evidence": ""
+      },
+      "seconds": 20.313
+    },
+    {
+      "sample": 6,
+      "status": "ok",
+      "action": "confirm",
+      "scope_action": "preserve",
+      "collection": {
+        "target_collection_id": null,
+        "collection_reference": "current",
+        "target_collection_evidence": ""
+      },
+      "seconds": 20.021
+    }
+  ]
+}

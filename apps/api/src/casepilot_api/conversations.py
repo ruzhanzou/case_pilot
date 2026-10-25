@@ -5309,12 +5309,11 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
                 resolved_collection = (catalog, UUID(reply.collection.target_collection_id)
                     if reply.collection.target_collection_id else None)
         except Exception as exc:
-            logging.getLogger(__name__).warning("rewrite_reply_failed error_type=%s", type(exc).__name__)
+            from casepilot_api.model_client import model_error_chain, model_failure_detail
+            logging.getLogger(__name__).warning("rewrite_reply_failed error_chain=%s", model_error_chain(exc))
             # Keep the last preview and input intact when the model fails; only
             # a successful ambiguous interpretation may replace it with a question.
-            raise HTTPException(status_code=503, detail=(
-                "修改要求暂时未能解析，未执行本次操作；请重试，原草稿已保留。"
-            )) from exc
+            raise HTTPException(status_code=503, detail=model_failure_detail(exc)) from exc
     if text:
         db.add(ConversationMessage(conversation_id=conversation.id, role="user", content=text,
             intent=operation.intent, intent_confidence=1.0, status="completed",

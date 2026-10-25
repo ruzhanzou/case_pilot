@@ -479,12 +479,12 @@ async def test_confirmed_rewrite_does_not_repeat_collection_or_generation_models
 @pytest.mark.asyncio
 @pytest.mark.parametrize('entry', ['message', 'idempotent_message', 'resume'])
 @pytest.mark.parametrize('stage', ['reply', 'scope'])
-@pytest.mark.parametrize('failure', ['connection', 'invalid_output'])
+@pytest.mark.parametrize('failure', ['connection', 'timeout', 'rate_limit', 'invalid_output'])
 async def test_interpretation_outage_keeps_preview_and_retry_updates_same_draft(
         draft, monkeypatch, entry, stage, failure):
     import httpx
     from agents import ModelBehaviorError
-    from openai import APIConnectionError
+    from openai import APIConnectionError, APITimeoutError, RateLimitError
     from casepilot_api.agent_router import CaseScopeDecision, IntentOperationDraft, IntentPlanDraft
 
     client, workspace, oid, cases, dispatched = draft
@@ -501,8 +501,13 @@ async def test_interpretation_outage_keeps_preview_and_retry_updates_same_draft(
     monkeypatch.setattr(conversations, 'interpret_rewrite_reply', reply)
     monkeypatch.setattr(conversations, 'select_case_scope', selector)
     broken = reply if stage == 'reply' else selector
-    broken.side_effect = (APIConnectionError(request=httpx.Request('POST', 'https://model.invalid'))
-                          if failure == 'connection' else ModelBehaviorError('invalid model output'))
+    request = httpx.Request('POST', 'https://model.invalid')
+    broken.side_effect = {
+        'connection': APIConnectionError(request=request),
+        'timeout': APITimeoutError(request=request),
+        'rate_limit': RateLimitError('private provider detail', response=httpx.Response(429, request=request), body=None),
+        'invalid_output': ModelBehaviorError('invalid model output'),
+    }[failure]
     endpoint = (f'/api/v1/conversation-operations/{oid}/resume' if entry == 'resume'
                 else f'/api/v1/conversations/{workspace}/messages')
     payload = {'content': content}
@@ -511,6 +516,11 @@ async def test_interpretation_outage_keeps_preview_and_retry_updates_same_draft(
     before = (await client.get(f'/api/v1/conversations/{workspace}')).json()
     response = await client.post(endpoint, json=payload)
     assert response.status_code == 503, response.text
+    if stage == 'reply':
+        expected = {'connection': '连接暂时中断', 'timeout': '响应超时', 'rate_limit': '服务当前繁忙', 'invalid_output': '模型回复未能解析'}
+        assert expected[failure] in response.json()['detail']
+        assert '原草稿已保留' in response.json()['detail']
+        assert 'private provider detail' not in response.text
     after = (await client.get(f'/api/v1/conversations/{workspace}')).json()
     assert after['operation_plan'] == before['operation_plan']
     assert after['messages'] == before['messages']
