@@ -823,3 +823,26 @@ for (const remove of [true, false]) test(`NL-STEP-${remove ? 'REMOVE' : 'INSERT'
   unchangedExcept(target, changed, ['steps']);
   expect(saved.filter((c:any) => c.id !== target.id)).toEqual(journal.original.filter((c:any) => c.id !== target.id));
 });
+
+test('NL-PROPOSAL-RETRACT title withdrawal after reload preserves only the revised priority', async ({ page }) => {
+  const s = await setup(page), target = s.byKey('TC-LOGIN-01');
+  const first = await ready(page, await send(page, '把用例 TC-LOGIN-01 的标题改为“临时登录标题”，优先级改成P0，其他字段保持不变。', true, 2));
+  expect(first.items.map((item:any) => item.ref)).toEqual([target.id]);
+  expect(first.items[0].proposed_snapshot.title).toBe('临时登录标题');
+  expect(first.items[0].proposed_snapshot.priority).toBe('P0');
+  expect(await s.read()).toEqual(journal.original);
+  await page.reload();
+  const revised = await ready(page, await send(page, '刚才的标题修改撤回，恢复正式用例原来的标题；优先级改为P2。只保留优先级这一项修改，其余内容不要改。', true, 2));
+  expect(revised.items.map((item:any) => item.ref)).toEqual([target.id]);
+  expect(revised.items[0].proposed_snapshot.title).toBe(target.title);
+  expect(revised.items[0].proposed_snapshot.priority).toBe('P2');
+  expect(revised.items[0].field_diff.map((diff:any) => diff.field)).toEqual(['priority']);
+  expect(revised.items[0].quality?.passed).not.toBe(false);
+  expect(await s.read()).toEqual(journal.original);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read(), changed = saved.find((item:any) => item.id === target.id);
+  expect(changed.priority).toBe('P2');
+  unchangedExcept(target, changed, ['priority']);
+  expect(saved.filter((item:any) => item.id !== target.id)).toEqual(journal.original.filter((item:any) => item.id !== target.id));
+});
