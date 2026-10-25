@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from casepilot_api.field_constraints import PRIORITY_ASSIGNMENT_DESCRIPTION, priority_assignment_error
+
 
 IntentName = Literal[
     "CASE_GENERATE",
@@ -74,6 +76,7 @@ DEFAULT_ACTIONS: dict[str, str] = {
 
 class SemanticIntentOperation(BaseModel):
     intent: IntentName
+    priority_assignment: str | None = Field(default=None, max_length=100, description=PRIORITY_ASSIGNMENT_DESCRIPTION)
     instruction: str = Field(min_length=1, max_length=8000)
     confidence: float = Field(ge=0, le=1)
     target_kind: Literal["none", "case", "module", "condition", "previous_result"] = "none"
@@ -287,6 +290,11 @@ def _validate_model_plan(
         if operation.intent == "UNRESOLVED":
             operation.resume_operation_id = None
         operation.action = DEFAULT_ACTIONS[operation.intent]
+        if operation.intent == "CASE_MODIFY":
+            error = priority_assignment_error(operation.priority_assignment)
+            if error:
+                operation.clarification_kind = "requirements"
+                operation.clarification_questions = [error]
     return IntentPlanDraft(operations=plan.operations)
 
 

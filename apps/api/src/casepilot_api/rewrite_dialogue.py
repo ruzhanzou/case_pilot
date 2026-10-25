@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from casepilot_api.field_constraints import PRIORITY_ASSIGNMENT_DESCRIPTION, priority_assignment_error
 from casepilot_api.model_client import managed_model_client
 
 
@@ -38,6 +39,7 @@ class RewriteReply(BaseModel):
 
 
 class SemanticRewriteReply(RewriteReply):
+    priority_assignment: str | None = Field(max_length=100, description=PRIORITY_ASSIGNMENT_DESCRIPTION)
     # An omitted model decision must not silently authorize reuse of old scope.
     scope_action: Literal["preserve", "replace"] = Field(description=(
         "必须显式判断本轮是否改变目标成员。新增、追加、也加入、排除、换成、只改部分都选replace；"
@@ -116,8 +118,12 @@ def interpret_rewrite_reply(content: str, state: dict, *, provider: str, model_n
             }} for item in state["scope_cases"]
         ]
     with managed_model_client(client):
-        return Runner.run_sync(agent, json.dumps({"reply": content, "draft": context},
+        reply = Runner.run_sync(agent, json.dumps({"reply": content, "draft": context},
                               ensure_ascii=False, default=str), max_turns=1).final_output
+    error = priority_assignment_error(reply.priority_assignment)
+    if error and reply.action not in {"cancel"}:
+        return reply.model_copy(update={"action": "clarify", "requirements_ready": False, "clarification": error})
+    return reply
 
 
 def rewrite_transition(state: dict, reply: RewriteReply, *, has_preview: bool,

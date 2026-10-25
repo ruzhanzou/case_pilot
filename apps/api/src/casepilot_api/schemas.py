@@ -14,6 +14,8 @@ from pydantic import (
     model_validator,
 )
 
+from casepilot_api.field_constraints import PRIORITY_PATTERN
+
 
 class ExecutionStatus(StrEnum):
     NOT_RUN = "not_run"
@@ -235,7 +237,7 @@ class TestCaseCreate(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     description: str = Field(default="", max_length=4000)
     module: str = Field(default="", max_length=4000)
-    priority: str = Field(default="P1", pattern=r"^P[0-2]$")
+    priority: str = Field(default="P1", pattern=PRIORITY_PATTERN)
     case_type: str = Field(default="功能", max_length=40)
     tags: list[str] = Field(default_factory=list, max_length=20)
     preconditions: list[str] = Field(default_factory=list, max_length=50)
@@ -264,7 +266,7 @@ class TestCaseUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     description: str | None = Field(default=None, max_length=4000)
     module: str = Field(default="", max_length=4000)
-    priority: str = Field(default="P1", pattern=r"^P[0-2]$")
+    priority: str = Field(default="P1", pattern=PRIORITY_PATTERN)
     case_type: str = Field(default="功能", max_length=40)
     tags: list[str] = Field(default_factory=list, max_length=20)
     preconditions: list[str] = Field(default_factory=list, max_length=50)

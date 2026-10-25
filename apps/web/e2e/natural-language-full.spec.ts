@@ -972,3 +972,45 @@ test('NL-FIELD-ACCEPT applies only checked fields and preserves unchecked review
   await expect(priority).not.toContainText('已应用结果');
   await expect(review.getByRole('button', { name: '应用已选修改', exact: true })).toHaveCount(0);
 });
+
+test('NL-INVALID-PRIORITY clarifies unsupported P9 then accepts an explicit correction', async ({ page }) => {
+  const s = await setup(page), target = s.byKey('TC-LOGIN-01');
+  const invalid = await send(page, '把 TC-LOGIN-01 的优先级改成P9，其他字段不变。', false, 2);
+  expect(invalid.action.job_id).toBeFalsy();
+  expect(invalid.action.change_set_id).toBeFalsy();
+  expect(invalid.assistant_message.metadata.modification_confirmation).toBeFalsy();
+  expect(invalid.assistant_message.content).toContain('P9');
+  expect(invalid.assistant_message.content).toMatch(/P0.*P1.*P2/);
+  expect(await s.read()).toEqual(journal.original);
+  await page.reload();
+  const corrected = await send(page, '刚才写错了，改成P2，还是同一条用例，其他字段不变。', false, 2);
+  expect(corrected.assistant_message.target_case_ids).toEqual([target.id]);
+  expect(corrected.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  expect(corrected.action.job_id).toBeFalsy();
+  expect(await s.read()).toEqual(journal.original);
+  const change = await ready(page, await send(page, '确认最新方案。', true, 2));
+  expect(change.items.map((item:any) => item.ref)).toEqual([target.id]);
+  expect(change.items[0].field_diff.map((diff:any) => diff.field)).toEqual(['priority']);
+  expect(change.items[0].proposed_snapshot.priority).toBe('P2');
+  expect(change.items[0].quality?.passed).not.toBe(false);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read(), changed = saved.find((item:any) => item.id === target.id);
+  expect(changed.priority).toBe('P2');
+  unchangedExcept(target, changed, ['priority']);
+  expect(saved.filter((item:any) => item.id !== target.id)).toEqual(journal.original.filter((item:any) => item.id !== target.id));
+});
+
+test('NL-PRIORITY-LITERAL P9 in a title is literal text rather than a priority assignment', async ({ page }) => {
+  const s = await setup(page), target = s.byKey('TC-LOGIN-01');
+  const change = await ready(page, await send(page, '只把 TC-LOGIN-01 的标题改成“P9”，优先级和其他字段保持不变。', true, 2));
+  expect(change.items.map((item:any) => item.ref)).toEqual([target.id]);
+  expect(change.items[0].field_diff.map((diff:any) => diff.field)).toEqual(['title']);
+  expect(change.items[0].quality?.passed).not.toBe(false);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read(), changed = saved.find((item:any) => item.id === target.id);
+  expect(changed.title).toBe('P9');
+  unchangedExcept(target, changed, ['title']);
+  expect(saved.filter((item:any) => item.id !== target.id)).toEqual(journal.original.filter((item:any) => item.id !== target.id));
+});

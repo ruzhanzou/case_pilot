@@ -919,3 +919,23 @@ def test_model_rewrite_intent_survives_validation(content, expected):
         assert result.operations[0].requires_confirmation
         assert result.operations[0].clarification_questions == ["请说明改动方向"]
         assert result.operations[0].action != "BRIEF_CREATE"
+
+
+@pytest.mark.parametrize('intent,value,clarifies', [
+    ('CASE_MODIFY', 'P9', True), ('CASE_MODIFY', 'P3', True),
+    ('CASE_MODIFY', 'P2', False), ('CASE_MODIFY', None, False),
+    ('CASE_QUERY', 'P9', False),
+])
+def test_priority_assignment_validation_never_coerces_unknown_values(intent, value, clarifies):
+    content = '把用例TC-1的优先级改成P9，其他不变'
+    plan = IntentPlanDraft.model_validate({'operations': [{
+        'intent': intent, 'instruction': content, 'confidence': 1,
+        'action_evidence': content, 'priority_assignment': value,
+    }]})
+    operation = agent_router._validate_model_plan(content, plan, has_targets=True, phase='maintenance').operations[0]
+    assert operation.priority_assignment == value
+    assert bool(operation.clarification_questions) is clarifies
+    if clarifies:
+        assert operation.clarification_kind == 'requirements'
+        assert value in operation.clarification_questions[0]
+        assert 'P0、P1、P2' in operation.clarification_questions[0]

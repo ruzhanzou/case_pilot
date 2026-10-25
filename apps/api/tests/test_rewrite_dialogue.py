@@ -193,8 +193,8 @@ def test_live_reply_context_omits_full_case_body_and_revision_metadata(monkeypat
     import json
     from types import SimpleNamespace
     from agents import Runner
-    from casepilot_api.rewrite_dialogue import interpret_rewrite_reply
-    runner = Mock(return_value=SimpleNamespace(final_output=RewriteReply(action='update', requirements='步骤更清晰')))
+    from casepilot_api.rewrite_dialogue import interpret_rewrite_reply, SemanticRewriteReply
+    runner = Mock(return_value=SimpleNamespace(final_output=SemanticRewriteReply(action='update', scope_action='preserve', priority_assignment=None, requirements='步骤更清晰')))
     monkeypatch.setattr(Runner, 'run_sync', runner)
     interpret_rewrite_reply('步骤更清晰', {
         'requirements': '标题保留', 'scope_cases': [{'ref': 'case-a', 'snapshot': {
@@ -605,10 +605,27 @@ def test_live_reply_requires_an_explicit_scope_decision():
     with pytest.raises(ValidationError, match='scope_action'):
         SemanticRewriteReply.model_validate({'action': 'update', 'requirements': '优先级P0'})
     reply = SemanticRewriteReply.model_validate({
-        'action': 'update', 'scope_action': 'replace',
+        'action': 'update', 'scope_action': 'replace', 'priority_assignment': None,
         'scope_instruction': '当前两条登录用例加上支付用例TC-PAY-01',
         'requirements': '所有目标优先级P0，其他字段不变',
     })
     assert reply.scope_action == 'replace'
     with pytest.raises(ValidationError, match='replacement scope needs an instruction'):
-        SemanticRewriteReply.model_validate({'action': 'update', 'scope_action': 'replace'})
+        SemanticRewriteReply.model_validate({'action': 'update', 'scope_action': 'replace', 'priority_assignment': None})
+
+
+def test_live_invalid_priority_reply_becomes_clarification(monkeypatch):
+    from types import SimpleNamespace
+    from agents import Runner
+    from casepilot_api.rewrite_dialogue import interpret_rewrite_reply, SemanticRewriteReply
+    monkeypatch.setattr(Runner, 'run_sync', Mock(return_value=SimpleNamespace(final_output=
+        SemanticRewriteReply(action='update', scope_action='preserve', priority_assignment='P9',
+                             requirements='优先级改成P9，标题不变'))))
+    reply = interpret_rewrite_reply('优先级改成P9', {}, provider='openai_compatible',
+        model_name='test', base_url='https://example.invalid/v1', api_key='test-only',
+        timeout_seconds=10, tracing_enabled=False)
+    assert reply.action == 'clarify'
+    assert reply.requirements_ready is False
+    assert 'P9' in reply.clarification
+    assert 'P0、P1、P2' in reply.clarification
+    assert reply.requirements == '优先级改成P9，标题不变'
