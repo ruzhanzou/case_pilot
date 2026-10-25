@@ -939,3 +939,28 @@ def test_priority_assignment_validation_never_coerces_unknown_values(intent, val
         assert operation.clarification_kind == 'requirements'
         assert value in operation.clarification_questions[0]
         assert 'P0、P1、P2' in operation.clarification_questions[0]
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_routing_timing_logs_outcome_without_prompt_or_exception_text(monkeypatch, caplog, fails):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from casepilot_api import agent_router
+    clock = iter([10.0, 35.25])
+    monkeypatch.setattr(agent_router, "perf_counter", lambda: next(clock))
+    private = "private-request-title-and-credential"
+    result = object()
+    runner = SimpleNamespace(run_sync=Mock(
+        side_effect=RuntimeError(private) if fails else None,
+        return_value=SimpleNamespace(final_output=result),
+    ))
+    if fails:
+        with pytest.raises(RuntimeError):
+            agent_router._run_routing_agent(runner, object(), private, stage="rewrite_reply", model_name="test-model")
+    else:
+        assert agent_router._run_routing_agent(runner, object(), private, stage="rewrite_reply", model_name="test-model") is result
+    assert "stage=rewrite_reply" in caplog.text
+    assert f"outcome={'error' if fails else 'ok'}" in caplog.text
+    assert "duration_seconds=25.250" in caplog.text
+    assert private not in caplog.text
+    assert runner.run_sync.call_args.kwargs == {"max_turns": 1}

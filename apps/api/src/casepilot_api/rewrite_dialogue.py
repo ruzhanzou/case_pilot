@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from casepilot_api.field_constraints import PRIORITY_ASSIGNMENT_DESCRIPTION, priority_assignment_error
-from casepilot_api.model_client import managed_model_client
+from casepilot_api.agent_router import _run_routing_agent
 
 
 class RewriteReply(BaseModel):
@@ -123,9 +123,10 @@ def interpret_rewrite_reply(content: str, state: dict, *, provider: str, model_n
                 for key in ("case_key", "title", "module")
             }} for item in state["scope_cases"]
         ]
-    with managed_model_client(client):
-        reply = Runner.run_sync(agent, json.dumps({"reply": content, "draft": context},
-                              ensure_ascii=False, default=str), max_turns=1).final_output
+    reply = _run_routing_agent(
+        Runner, agent, json.dumps({"reply": content, "draft": context}, ensure_ascii=False, default=str),
+        stage="rewrite_reply", model_name=model_name, client=client,
+    )
     error = priority_assignment_error(reply.priority_assignment)
     if error and reply.action not in {"cancel"}:
         return reply.model_copy(update={"action": "clarify", "requirements_ready": False, "clarification": error})
