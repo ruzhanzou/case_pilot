@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import { CheckCircle2, CircleAlert, Clock3, History, LoaderCircle, MessageSquare } from "lucide-react";
 import type { ConversationIntent } from "@/lib/casepilot-api";
 import { useI18n } from "@/lib/i18n";
-import { workspaceTasks } from "@/lib/workspace-tasks";
+import { workspaceScopeLabel, workspaceTasks } from "@/lib/workspace-tasks";
 
 type Task = ReturnType<typeof workspaceTasks>[number];
 type Props = {
@@ -42,6 +42,7 @@ export function CaseTaskWorkspace({ tasks, selectedId, displayedVersion, onSelec
     : displayedTask?.message.intent === "CASE_GENERATE" ? pick("Generation results", "生成结果")
     : displayedTask ? taskLabel(displayedTask) : "";
   const plan = displayedTask?.operation?.payload.plan as { target_text?: string; constraints?: string[] } | undefined;
+  const scopeLabel = workspaceScopeLabel(displayedTask?.operation?.payload);
   const sourceTask = tasks.find((item) => item.id === task?.sourceTaskId);
   const canDiscard = Boolean(
     !historical && onDiscard && task?.operation &&
@@ -73,7 +74,7 @@ export function CaseTaskWorkspace({ tasks, selectedId, displayedVersion, onSelec
           </nav>
           <div className="case-task-detail" key={task.id} tabIndex={-1} role="region" aria-label={pick("Current task result", "当前任务结果")}>
             <header><div><h3>{resultTitle}{versionNumber > 0 && <small> · V{versionNumber}</small>}</h3></div><div className="case-task-detail__actions"><span className="case-task-status" data-status={historical ? "superseded" : task.status}>{historical ? pick("Historical · read only", "历史版本 · 只读") : displayedTask.message.metadata.change_set_id && task.status === "awaiting_confirmation" ? pick("Awaiting review", "待审阅") : statusLabel(task.status)}</span><button type="button" onClick={() => onConversation(displayedTask.request?.id ?? displayedTask.messageIds.at(-1))}><MessageSquare size={14} />{pick("View request in conversation", "在对话区查看需求")}</button><button type="button" aria-expanded={historyOpen} aria-controls="case-task-history" onClick={() => { setHistoryOpen(!historyOpen); if (!historyOpen) requestAnimationFrame(() => document.querySelector<HTMLElement>('#case-task-history button[aria-pressed="true"]')?.focus()); }}><History size={15} />{pick("Result history", "历史结果")} · {tasks.length}</button></div></header>
-            {plan?.target_text && <p>{pick("Requested scope", "请求范围")}：{plan.target_text}</p>}
+            {scopeLabel && <p data-testid="task-requested-scope">{pick("Requested scope", "请求范围")}：{scopeLabel}</p>}
             {!!plan?.constraints?.length && <p>{pick("Preserve", "保留约束")}：{plan.constraints.join("；")}</p>}
             {!historical && !hasLiveResults && (task.waitingOn || isRunning || task.status.startsWith("awaiting_") && task.status !== "awaiting_confirmation" || ["failed", "cancelled"].includes(task.status)) && <div className="case-task-running" role="status"><p>{needsDetails
               ? task.message.content || pick("Confirm the affected cases and requirements in the conversation. Suggestions will appear here.", "请在对话区确认影响范围和修改要求，变更建议将在这里展示。")

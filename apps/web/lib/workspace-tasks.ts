@@ -14,6 +14,22 @@ export type WorkspaceTask = {
   versions?: WorkspaceTask[];
 };
 
+/** Resolve display-only IDs from this operation's own confirmation snapshot. */
+export function workspaceScopeLabel(payload?: Record<string, unknown>): string {
+  const plan = payload?.plan as { target_text?: string } | undefined;
+  const text = typeof plan?.target_text === "string" ? plan.target_text : "";
+  const confirmation = (payload?.modification_confirmation ?? payload?.last_confirmed_modification) as
+    { cases?: { ref?: string; snapshot?: { case_key?: string; title?: string } }[] } | undefined;
+  const labels = new Map<string, string>();
+  for (const item of Array.isArray(confirmation?.cases) ? confirmation.cases : []) {
+    const key = item.snapshot?.case_key?.trim();
+    const title = item.snapshot?.title?.trim();
+    if (item.ref && (key || title)) labels.set(item.ref.toLowerCase(), [key, title].filter(Boolean).join(" · "));
+  }
+  return text.replace(/(?<![\w-])[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?![\w-])/gi,
+    id => labels.get(id.toLowerCase()) ?? id);
+}
+
 /** Assignment values must not be inferred as existing case selections. */
 export function scopeReferenceText(instruction: string): string {
   return instruction

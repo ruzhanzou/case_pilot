@@ -179,3 +179,30 @@ test("reload observes a terminal job until its running operation snapshot catche
   assert.equal(workspaceJobNeedsWatch(state, "job"), false);
   assert.equal(workspaceJobNeedsWatch(state, ""), false);
 });
+
+test("scope labels use each round's confirmation without changing scope or exclusions", async () => {
+  const { workspaceScopeLabel } = await import('../lib/workspace-tasks');
+  const id = '2c6209a4-302a-4205-baed-59d0226843f1';
+  const unknown = '04af71d4-1ee9-4d31-b976-ea0b68c2fc57';
+  const payload = {
+    plan: { target_text: `${id}，排除 ${unknown}` },
+    last_confirmed_modification: { cases: [{ ref: id, snapshot: { case_key: 'TC-1', title: '原始标题' } }] },
+  };
+  const before = structuredClone(payload);
+  assert.equal(workspaceScopeLabel(payload), `TC-1 · 原始标题，排除 ${unknown}`);
+  assert.deepEqual(payload, before);
+  assert.equal(workspaceScopeLabel({ ...payload, modification_confirmation: {
+    cases: [{ ref: id, snapshot: { case_key: 'TC-1', title: '本轮标题' } }],
+  } }), `TC-1 · 本轮标题，排除 ${unknown}`);
+  assert.equal(workspaceScopeLabel(payload), `TC-1 · 原始标题，排除 ${unknown}`);
+});
+
+test("scope labels preserve natural language and never replace partial identifiers", async () => {
+  const { workspaceScopeLabel } = await import('../lib/workspace-tasks');
+  const id = '2c6209a4-302a-4205-baed-59d0226843f1';
+  const payload = { plan: { target_text: `登录模块前两条，排除P0；case-${id}` },
+    last_confirmed_modification: { cases: [{ ref: id, snapshot: { title: '登录' } }] } };
+  assert.equal(workspaceScopeLabel(payload), payload.plan.target_text);
+  assert.equal(workspaceScopeLabel({ plan: { target_text: id } }), id);
+  assert.equal(workspaceScopeLabel(), '');
+});

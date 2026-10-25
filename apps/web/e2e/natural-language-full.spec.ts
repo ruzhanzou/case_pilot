@@ -846,3 +846,32 @@ test('NL-PROPOSAL-RETRACT title withdrawal after reload preserves only the revis
   unchangedExcept(target, changed, ['priority']);
   expect(saved.filter((item:any) => item.id !== target.id)).toEqual(journal.original.filter((item:any) => item.id !== target.id));
 });
+
+test('NL-SCOPE-LABEL saved proposal scope is readable across revision navigation', async ({ page }) => {
+  test.skip(!process.env.CASEPILOT_SCOPE_EVIDENCE || !process.env.CASEPILOT_TEST_EMAIL, 'Requires an isolated completed multi-round fixture');
+  journal = JSON.parse(readFileSync(process.env.CASEPILOT_SCOPE_EVIDENCE!, 'utf8'));
+  journal.scopeVerificationStartedAt = new Date().toISOString();
+  journal.errors = [];
+  const baseline = journal.final;
+  const login = await page.request.post(`${api}/auth/login`, { data: { email: process.env.CASEPILOT_TEST_EMAIL, password: 'CasePilot123!' } });
+  expect(login.ok()).toBeTruthy();
+  await page.addInitScript(() => localStorage.setItem('casepilot.locale.v1', 'zh-CN'));
+  const before = await get(page, `/conversations/${journal.proposals.at(-1).conversation_id}`);
+  const originalTarget = journal.original.find((item:any) => item.case_key === journal.keyMap['TC-LOGIN-01']);
+  await page.goto(`/workbench/collections/${journal.collection.id}`);
+  const scope = page.getByTestId('task-requested-scope');
+  await expect(scope).toHaveText(`请求范围：${originalTarget.case_key} · ${originalTarget.title}`);
+  await expect(scope).not.toContainText(originalTarget.id);
+  await page.locator('.case-task-revisions summary').click();
+  await page.getByRole('combobox', { name: '查看修改版本' }).selectOption({ index: 0 });
+  await expect(scope).toHaveText(`请求范围：${originalTarget.case_key}`);
+  await page.getByRole('button', { name: '返回最新版本', exact: true }).click();
+  await expect(scope).toHaveText(`请求范围：${originalTarget.case_key} · ${originalTarget.title}`);
+  await page.reload();
+  await expect(scope).toHaveText(`请求范围：${originalTarget.case_key} · ${originalTarget.title}`);
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  expect(await get(page, `/collections/${journal.collection.id}/test-cases`)).toEqual(baseline);
+  const after = await get(page, `/conversations/${journal.proposals.at(-1).conversation_id}`);
+  expect(after.operation_history).toEqual(before.operation_history);
+  expect(after.messages).toEqual(before.messages);
+});
