@@ -442,16 +442,20 @@ async def test_routing_outage_preserves_draft_and_retries_without_new_task(draft
 
 
 @pytest.mark.asyncio
-async def test_confirmed_rewrite_does_not_infer_generation_test_object(draft, monkeypatch):
+@pytest.mark.parametrize("confirmation", [{"content": "确认"}, {"confirm_modification": True}])
+async def test_confirmed_rewrite_does_not_repeat_collection_or_generation_models(draft, monkeypatch, confirmation):
     client, workspace, oid, cases, dispatched = draft
     infer = Mock(side_effect=AssertionError("rewrite must not infer a generation test object"))
     monkeypatch.setattr(conversations, "_test_object_from_memory", infer)
+    collection = Mock(side_effect=AssertionError("confirmed scope must not be reinterpreted"))
+    monkeypatch.setattr(conversations, "_collection_candidates", collection)
     monkeypatch.setattr(conversations, "interpret_rewrite_reply", lambda *a, **k: RewriteReply(action="confirm"))
-    response = await client.post(f"/api/v1/conversation-operations/{oid}/resume", json={"content": "确认"})
+    response = await client.post(f"/api/v1/conversation-operations/{oid}/resume", json=confirmation)
     assert response.status_code == 202, response.text
     assert response.json()["action"]["job_id"]
     assert len(dispatched) == 1
     infer.assert_not_called()
+    collection.assert_not_called()
     with get_session_factory()() as db:
         job = db.get(GenerationJob, UUID(response.json()["action"]["job_id"]))
         assert {item["ref"] for item in job.input_payload["case_context"]} == {c["id"] for c in cases}

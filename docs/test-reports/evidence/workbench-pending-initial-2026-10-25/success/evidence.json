@@ -1,0 +1,1612 @@
+{
+  "turns": [
+    {
+      "content": "把 TC-LOGIN-01-1792934473869 标题改为“待采纳标题”。",
+      "response": {
+        "conversation_id": "f4293904-44f9-4a6a-8e4f-211b185c6a28",
+        "user_message": {
+          "id": "0c5258bc-2d9e-4a19-85fe-24e47bb8dced",
+          "role": "user",
+          "content": "把 TC-LOGIN-01-1792934473869 标题改为“待采纳标题”。",
+          "intent": "CASE_MODIFY",
+          "intent_confidence": 1,
+          "status": "completed",
+          "target_case_ids": [],
+          "related_job_id": null,
+          "citations": [],
+          "metadata": {
+            "request": {
+              "scope": "current",
+              "content": "把 TC-LOGIN-01-1792934473869 标题改为“待采纳标题”。",
+              "targets": [],
+              "model_id": "doubao-seed-2.0-lite",
+              "document_ids": [],
+              "target_scope": "inferred",
+              "intent_override": null,
+              "target_case_ids": [],
+              "client_request_id": "0b97eeca-e995-4969-8515-f0ff73fc8343",
+              "generation_strategy": null,
+              "inherit_attachments": true,
+              "source_operation_id": null,
+              "use_space_knowledge": false,
+              "knowledge_source_ids": [],
+              "source_collection_ids": [],
+              "target_candidate_snapshots": []
+            },
+            "submission_request_id": "0b97eeca-e995-4969-8515-f0ff73fc8343"
+          },
+          "created_at": "2026-10-25T13:21:26.322161Z"
+        },
+        "assistant_message": {
+          "id": "dd6fa4aa-f4ad-42de-ae4a-d7e525817505",
+          "role": "assistant",
+          "content": "请确认本轮修改：共 1 条用例。\n- TC-LOGIN-01-1792934473869：短信登录\n\n修改要求：\n把 TC-LOGIN-01-1792934473869 标题改为“待采纳标题”。\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "intent": "CASE_MODIFY",
+          "intent_confidence": 1,
+          "status": "awaiting_clarification",
+          "target_case_ids": [
+            "c9b08a51-75c7-4a8f-96bb-4b0f105ed047"
+          ],
+          "related_job_id": null,
+          "citations": [],
+          "metadata": {
+            "operation_id": "f47ea48b-f0a9-4c60-a7a5-2b499e1389a4",
+            "source_message_id": "0c5258bc-2d9e-4a19-85fe-24e47bb8dced",
+            "source_operation_id": null,
+            "modification_confirmation": true
+          },
+          "created_at": "2026-10-25T13:21:52.406391Z"
+        },
+        "intent": "CASE_MODIFY",
+        "intent_confidence": 1,
+        "requires_intent_confirmation": false,
+        "action": {
+          "type": "clarification"
+        },
+        "operation_plan": {
+          "status": "paused",
+          "source_message_id": "0c5258bc-2d9e-4a19-85fe-24e47bb8dced",
+          "current_operation_id": "f47ea48b-f0a9-4c60-a7a5-2b499e1389a4",
+          "operations": [
+            {
+              "source_message_id": "0c5258bc-2d9e-4a19-85fe-24e47bb8dced",
+              "completed_at": null,
+              "id": "f47ea48b-f0a9-4c60-a7a5-2b499e1389a4",
+              "sequence": 0,
+              "intent": "CASE_MODIFY",
+              "confidence": 1,
+              "status": "awaiting_target",
+              "target": {
+                "kind": "case",
+                "selectors": [],
+                "case_ids": [
+                  "c9b08a51-75c7-4a8f-96bb-4b0f105ed047"
+                ],
+                "candidate_refs": [],
+                "resolved": true
+              },
+              "payload": {
+                "plan": {
+                  "version": 2,
+                  "intent": "CASE_MODIFY",
+                  "action": "CHANGESET_PREPARE",
+                  "instruction": "把 TC-LOGIN-01-1792934473869 标题改为“待采纳标题”。",
+                  "confidence": 1,
+                  "target_kind": "case",
+                  "requires_confirmation": true,
+                  "reason_codes": [
+                    "用户明确要求修改指定用例标题"
+                  ],
+                  "depends_on": null,
+                  "target_text": "TC-LOGIN-01-1792934473869",
+                  "action_evidence": "改为",
+                  "changes": [
+                    "标题改为“待采纳标题”"
+                  ],
+                  "constraints": [],
+                  "clarification_questions": [],
+                  "clarification_kind": "none",
+                  "uses_selected_targets": false,
+                  "resume_operation_id": null,
+                  "speech_act": "request",
+                  "query_presentation": "cases",
+                  "routing_source": "semantic"
+                },
+                "instruction": "把 TC-LOGIN-01-1792934473869 标题改为“待采纳标题”。",
+                "action": "CHANGESET_PREPARE",
+                "reason_codes": [
+                  "用户明确要求修改指定用例标题"
+                ],
+                "depends_on": null,
+                "predecessor_job_id": null,
+                "source_operation_id": null,
+                "task_id": "f47ea48b-f0a9-4c60-a7a5-2b499e1389a4",
+                "task_intent": "CASE_MODIFY",
+                "task_revision": 1,
+                "asset_reference_sources": [],
+                "asset_reference_target_scope": null,
+                "modification_confirmation": {
+                  "instruction": "把 TC-LOGIN-01-1792934473869 标题改为“待采纳标题”。",
+                  "cases": [
+                    {
+                      "ref": "c9b08a51-75c7-4a8f-96bb-4b0f105ed047",
+                      "target_type": "formal",
+                      "snapshot": {
+                        "id": "c9b08a51-75c7-4a8f-96bb-4b0f105ed047",
+                        "case_key": "TC-LOGIN-01-1792934473869",
+                        "collection_ids": [
+                          "60577554-84b3-4ea6-b8a3-32f69871c25d"
+                        ],
+                        "current_revision_id": "1dcc89fa-3df3-4ed1-a72f-1b4ddc3e628c",
+                        "revision_number": 1,
+                        "title": "短信登录",
+                        "description": "",
+                        "module": "登录/短信",
+                        "priority": "P1",
+                        "case_type": "功能",
+                        "tags": [],
+                        "preconditions": [
+                          "手机号已注册且账号启用；准备有效的未使用验证码"
+                        ],
+                        "steps": [
+                          {
+                            "id": "10b476ae-c785-4e0b-9f01-152e9c98a1a1",
+                            "action": "输入短信验证码并提交",
+                            "expected": "登录成功并建立会话"
+                          }
+                        ],
+                        "source": "人工创建",
+                        "source_refs": [
+                          {
+                            "source_id": null,
+                            "document_id": null,
+                            "chunk_id": null,
+                            "label": "人工创建",
+                            "locator": "",
+                            "excerpt": ""
+                          }
+                        ],
+                        "execution_level": "L0",
+                        "test_domains": [],
+                        "automation_type": "manual",
+                        "automation_cases": [],
+                        "creator": null,
+                        "test_targets": [],
+                        "created_at": "2026-10-25T13:21:13.925656Z"
+                      }
+                    }
+                  ]
+                },
+                "rewrite_draft": {
+                  "version": 1,
+                  "scope_instruction": "TC-LOGIN-01-1792934473869",
+                  "requirements": "把 TC-LOGIN-01-1792934473869 标题改为“待采纳标题”。",
+                  "requirements_ready": true,
+                  "scope_resolved": true,
+                  "phase": "preview"
+                }
+              },
+              "result": {
+                "scope_versions": {
+                  "c9b08a51-75c7-4a8f-96bb-4b0f105ed047": "1dcc89fa-3df3-4ed1-a72f-1b4ddc3e628c"
+                },
+                "scope_modules": [
+                  "登录/短信"
+                ],
+                "scope_count": 1
+              },
+              "requires_confirmation": true,
+              "related_job_id": null,
+              "related_change_set_id": null,
+              "error_code": null,
+              "created_at": "2026-10-25T13:21:26.323853Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "confirmation": {
+        "conversation_id": "f4293904-44f9-4a6a-8e4f-211b185c6a28",
+        "user_message": {
+          "id": "0c5258bc-2d9e-4a19-85fe-24e47bb8dced",
+          "role": "user",
+          "content": "把 TC-LOGIN-01-1792934473869 标题改为“待采纳标题”。",
+          "intent": "CASE_MODIFY",
+          "intent_confidence": 1,
+          "status": "completed",
+          "target_case_ids": [],
+          "related_job_id": null,
+          "citations": [],
+          "metadata": {
+            "request": {
+              "scope": "current",
+              "content": "把 TC-LOGIN-01-1792934473869 标题改为“待采纳标题”。",
+              "targets": [],
+              "model_id": "doubao-seed-2.0-lite",
+              "document_ids": [],
+              "target_scope": "inferred",
+              "intent_override": null,
+              "target_case_ids": [],
+              "client_request_id": "0b97eeca-e995-4969-8515-f0ff73fc8343",
+              "generation_strategy": null,
+              "inherit_attachments": true,
+              "source_operation_id": null,
+              "use_space_knowledge": false,
+              "knowledge_source_ids": [],
+              "source_collection_ids": [],
+              "target_candidate_snapshots": []
+            },
+            "submission_request_id": "0b97eeca-e995-4969-8515-f0ff73fc8343"
+          },
+          "created_at": "2026-10-25T13:21:26.322161Z"
+        },
+        "assistant_message": {
+          "id": "4bc51cea-ee9f-4a6b-ac31-d5232bdef5d2",
+          "role": "assistant",
+          "content": "正在为 1 条用例生成字段差异。",
+          "intent": "CASE_MODIFY",
+          "intent_confidence": 1,
+          "status": "running",
+          "target_case_ids": [
+            "c9b08a51-75c7-4a8f-96bb-4b0f105ed047"
+          ],
+          "related_job_id": "a46e9bcf-fc27-48d9-b3c0-96bd37d70146",
+          "citations": [],
+          "metadata": {
+            "operation_id": "f47ea48b-f0a9-4c60-a7a5-2b499e1389a4",
+            "change_set_id": "c04db216-9031-4ab9-8924-020154025556",
+            "task_revision": 1,
+            "task_case_count": 1,
+            "source_message_id": "0c5258bc-2d9e-4a19-85fe-24e47bb8dced",
+            "source_operation_id": null
+          },
+          "created_at": "2026-10-25T13:22:10.555241Z"
+        },
+        "intent": "CASE_MODIFY",
+        "intent_confidence": 1,
+        "requires_intent_confirmation": false,
+        "action": {
+          "type": "change_set",
+          "job_id": "a46e9bcf-fc27-48d9-b3c0-96bd37d70146",
+          "change_set_id": "c04db216-9031-4ab9-8924-020154025556"
+        },
+        "operation_plan": {
+          "status": "running",
+          "source_message_id": "0c5258bc-2d9e-4a19-85fe-24e47bb8dced",
+          "current_operation_id": "f47ea48b-f0a9-4c60-a7a5-2b499e1389a4",
+          "operations": [
+            {
+              "source_message_id": "0c5258bc-2d9e-4a19-85fe-24e47bb8dced",
+              "completed_at": null,
+              "id": "f47ea48b-f0a9-4c60-a7a5-2b499e1389a4",
+              "sequence": 0,
+              "intent": "CASE_MODIFY",
+              "confidence": 1,
+              "status": "running",
+              "target": {
+                "kind": "case",
+                "case_ids": [
+                  "c9b08a51-75c7-4a8f-96bb-4b0f105ed047"
+                ],
+                "resolved": true,
+                "selectors": [],
+                "candidate_refs": []
+              },
+              "payload": {
+                "plan": {
+                  "action": "CHANGESET_PREPARE",
+                  "intent": "CASE_MODIFY",
+                  "changes": [
+                    "标题改为“待采纳标题”"
+                  ],
+                  "version": 2,
+                  "confidence": 1,
+                  "depends_on": null,
+                  "speech_act": "request",
+                  "constraints": [],
+                  "instruction": "把 TC-LOGIN-01-1792934473869 标题改为“待采纳标题”。",
+                  "target_kind": "case",
+                  "target_text": "TC-LOGIN-01-1792934473869",
+                  "reason_codes": [
+                    "用户明确要求修改指定用例标题"
+                  ],
+                  "routing_source": "semantic",
+                  "action_evidence": "改为",
+                  "clarification_kind": "none",
+                  "query_presentation": "cases",
+                  "resume_operation_id": null,
+                  "requires_confirmation": true,
+                  "uses_selected_targets": false,
+                  "clarification_questions": []
+                },
+                "action": "CHANGESET_PREPARE",
+                "task_id": "f47ea48b-f0a9-4c60-a7a5-2b499e1389a4",
+                "depends_on": null,
+                "instruction": "把 TC-LOGIN-01-1792934473869 标题改为“待采纳标题”。",
+                "task_intent": "CASE_MODIFY",
+                "reason_codes": [
+                  "用户明确要求修改指定用例标题"
+                ],
+                "rewrite_draft": {
+                  "phase": "executing",
+                  "version": 1,
+                  "requirements": "把 TC-LOGIN-01-1792934473869 标题改为“待采纳标题”。",
+                  "scope_resolved": true,
+                  "scope_instruction": "TC-LOGIN-01-1792934473869",
+                  "requirements_ready": true
+                },
+                "task_revision": 1,
+                "predecessor_job_id": null,
+                "source_operation_id": null,
+                "asset_reference_sources": [],
+                "modification_confirmation": null,
+                "asset_reference_target_scope": null,
+                "last_confirmed_modification": {
+                  "instruction": "把 TC-LOGIN-01-1792934473869 标题改为“待采纳标题”。",
+                  "cases": [
+                    {
+                      "ref": "c9b08a51-75c7-4a8f-96bb-4b0f105ed047",
+                      "target_type": "formal",
+                      "snapshot": {
+                        "id": "c9b08a51-75c7-4a8f-96bb-4b0f105ed047",
+                        "case_key": "TC-LOGIN-01-1792934473869",
+                        "collection_ids": [
+                          "60577554-84b3-4ea6-b8a3-32f69871c25d"
+                        ],
+                        "current_revision_id": "1dcc89fa-3df3-4ed1-a72f-1b4ddc3e628c",
+                        "revision_number": 1,
+                        "title": "短信登录",
+                        "description": "",
+                        "module": "登录/短信",
+                        "priority": "P1",
+                        "case_type": "功能",
+                        "tags": [],
+                        "preconditions": [
+                          "手机号已注册且账号启用；准备有效的未使用验证码"
+                        ],
+                        "steps": [
+                          {
+                            "id": "10b476ae-c785-4e0b-9f01-152e9c98a1a1",
+                            "action": "输入短信验证码并提交",
+                            "expected": "登录成功并建立会话"
+                          }
+                        ],
+                        "source": "人工创建",
+                        "source_refs": [
+                          {
+                            "source_id": null,
+                            "document_id": null,
+                            "chunk_id": null,
+                            "label": "人工创建",
+                            "locator": "",
+                            "excerpt": ""
+                          }
+                        ],
+                        "execution_level": "L0",
+                        "test_domains": [],
+                        "automation_type": "manual",
+                        "automation_cases": [],
+                        "creator": null,
+                        "test_targets": [],
+                        "created_at": "2026-10-25T13:21:13.925656Z"
+                      }
+                    }
+                  ]
+                }
+              },
+              "result": {
+                "scope_count": 1,
+                "scope_modules": [
+                  "登录/短信"
+                ],
+                "scope_versions": {
+                  "c9b08a51-75c7-4a8f-96bb-4b0f105ed047": "1dcc89fa-3df3-4ed1-a72f-1b4ddc3e628c"
+                }
+              },
+              "requires_confirmation": true,
+              "related_job_id": "a46e9bcf-fc27-48d9-b3c0-96bd37d70146",
+              "related_change_set_id": "c04db216-9031-4ab9-8924-020154025556",
+              "error_code": null,
+              "created_at": "2026-10-25T13:21:26.323853Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "content": "把 TC-LOGIN-02-1792934473869 标题改为“密码登录”。",
+      "response": {
+        "conversation_id": "f4293904-44f9-4a6a-8e4f-211b185c6a28",
+        "user_message": {
+          "id": "0344fa81-0199-48ef-ba19-1fe5765383a4",
+          "role": "user",
+          "content": "把 TC-LOGIN-02-1792934473869 标题改为“密码登录”。",
+          "intent": "CASE_MODIFY",
+          "intent_confidence": 1,
+          "status": "completed",
+          "target_case_ids": [],
+          "related_job_id": null,
+          "citations": [],
+          "metadata": {
+            "request": {
+              "scope": "current",
+              "content": "把 TC-LOGIN-02-1792934473869 标题改为“密码登录”。",
+              "targets": [
+                {
+                  "kind": "case",
+                  "module": "",
+                  "case_ids": [
+                    "c9b08a51-75c7-4a8f-96bb-4b0f105ed047"
+                  ],
+                  "condition": "",
+                  "collection_id": null,
+                  "candidate_refs": [],
+                  "source_operation_id": null
+                }
+              ],
+              "model_id": "doubao-seed-2.0-lite",
+              "document_ids": [],
+              "target_scope": "inferred",
+              "intent_override": null,
+              "target_case_ids": [],
+              "client_request_id": "9a124d4b-7250-4dd2-8b9f-52d8e4a21305",
+              "generation_strategy": null,
+              "inherit_attachments": true,
+              "source_operation_id": null,
+              "use_space_knowledge": false,
+              "knowledge_source_ids": [],
+              "source_collection_ids": [],
+              "target_candidate_snapshots": []
+            },
+            "submission_request_id": "9a124d4b-7250-4dd2-8b9f-52d8e4a21305"
+          },
+          "created_at": "2026-10-25T13:22:59.857328Z"
+        },
+        "assistant_message": {
+          "id": "47562021-4605-4675-9dd0-c6bfa653363a",
+          "role": "assistant",
+          "content": "请确认本轮修改：共 1 条用例。\n- TC-LOGIN-02-1792934473869：密码登录\n\n修改要求：\n把 TC-LOGIN-02-1792934473869 标题改为“密码登录”。\n\n确认后生成修改建议，审阅采纳后才会保存。也可以补充范围、修改要求或保留约束。",
+          "intent": "CASE_MODIFY",
+          "intent_confidence": 1,
+          "status": "awaiting_clarification",
+          "target_case_ids": [
+            "ea275936-1f07-49a8-a816-03a257b10f89"
+          ],
+          "related_job_id": null,
+          "citations": [],
+          "metadata": {
+            "operation_id": "653189bf-bc74-43d3-8cc0-d1d7f80bf021",
+            "source_message_id": "0344fa81-0199-48ef-ba19-1fe5765383a4",
+            "source_operation_id": "f47ea48b-f0a9-4c60-a7a5-2b499e1389a4",
+            "modification_confirmation": true
+          },
+          "created_at": "2026-10-25T13:23:22.645384Z"
+        },
+        "intent": "CASE_MODIFY",
+        "intent_confidence": 1,
+        "requires_intent_confirmation": false,
+        "action": {
+          "type": "clarification"
+        },
+        "operation_plan": {
+          "status": "paused",
+          "source_message_id": "0344fa81-0199-48ef-ba19-1fe5765383a4",
+          "current_operation_id": "653189bf-bc74-43d3-8cc0-d1d7f80bf021",
+          "operations": [
+            {
+              "source_message_id": "0344fa81-0199-48ef-ba19-1fe5765383a4",
+              "completed_at": null,
+              "id": "653189bf-bc74-43d3-8cc0-d1d7f80bf021",
+              "sequence": 0,
+              "intent": "CASE_MODIFY",
+              "confidence": 1,
+              "status": "awaiting_target",
+              "target": {
+                "kind": "case",
+                "selectors": [],
+                "case_ids": [
+                  "ea275936-1f07-49a8-a816-03a257b10f89"
+                ],
+                "candidate_refs": [],
+                "resolved": true
+              },
+              "payload": {
+                "plan": {
+                  "version": 2,
+                  "intent": "CASE_MODIFY",
+                  "action": "CHANGESET_PREPARE",
+                  "instruction": "把 TC-LOGIN-02-1792934473869 标题改为“密码登录”。",
+                  "confidence": 1,
+                  "target_kind": "case",
+                  "requires_confirmation": true,
+                  "reason_codes": [
+                    "modify_case_title"
+                  ],
+                  "depends_on": null,
+                  "target_text": "TC-LOGIN-02-1792934473869",
+                  "action_evidence": "标题改为“密码登录”",
+                  "changes": [
+                    "标题修改为“密码登录”"
+                  ],
+                  "constraints": [],
+                  "clarification_questions": [],
+                  "clarification_kind": "none",
+                  "uses_selected_targets": false,
+                  "resume_operation_id": null,
+                  "speech_act": "request",
+                  "query_presentation": "cases",
+                  "routing_source": "semantic"
+                },
+                "instruction": "把 TC-LOGIN-02-1792934473869 标题改为“密码登录”。",
+                "action": "CHANGESET_PREPARE",
+                "reason_codes": [
+                  "modify_case_title"
+                ],
+                "depends_on": null,
+                "predecessor_job_id": null,
+                "source_operation_id": "f47ea48b-f0a9-4c60-a7a5-2b499e1389a4",
+                "task_id": "f47ea48b-f0a9-4c60-a7a5-2b499e1389a4",
+                "task_intent": "CASE_MODIFY",
+                "task_revision": 2,
+                "asset_reference_sources": [],
+                "asset_reference_target_scope": null,
+                "modification_confirmation": {
+                  "instruction": "把 TC-LOGIN-02-1792934473869 标题改为“密码登录”。",
+                  "cases": [
+                    {
+                      "ref": "ea275936-1f07-49a8-a816-03a257b10f89",
+                      "target_type": "formal",
+                      "snapshot": {
+                        "id": "ea275936-1f07-49a8-a816-03a257b10f89",
+                        "case_key": "TC-LOGIN-02-1792934473869",
+                        "collection_ids": [
+                          "60577554-84b3-4ea6-b8a3-32f69871c25d"
+                        ],
+                        "current_revision_id": "c87d035c-29c0-4f51-9fe7-8747bdcdd87e",
+                        "revision_number": 1,
+                        "title": "密码登录",
+                        "description": "",
+                        "module": "登录/密码",
+                        "priority": "P1",
+                        "case_type": "功能",
+                        "tags": [],
+                        "preconditions": [
+                          "账号已注册且启用；准备正确密码"
+                        ],
+                        "steps": [
+                          {
+                            "id": "6a7f55ec-e6c2-466d-b063-eaf556a4ab9c",
+                            "action": "输入账号及正确密码并提交",
+                            "expected": "登录成功并建立会话"
+                          }
+                        ],
+                        "source": "人工创建",
+                        "source_refs": [
+                          {
+                            "source_id": null,
+                            "document_id": null,
+                            "chunk_id": null,
+                            "label": "人工创建",
+                            "locator": "",
+                            "excerpt": ""
+                          }
+                        ],
+                        "execution_level": "L0",
+                        "test_domains": [],
+                        "automation_type": "manual",
+                        "automation_cases": [],
+                        "creator": null,
+                        "test_targets": [],
+                        "created_at": "2026-10-25T13:21:13.974504Z"
+                      }
+                    }
+                  ]
+                },
+                "rewrite_draft": {
+                  "version": 1,
+                  "scope_instruction": "TC-LOGIN-02-1792934473869",
+                  "requirements": "把 TC-LOGIN-02-1792934473869 标题改为“密码登录”。",
+                  "requirements_ready": true,
+                  "scope_resolved": true,
+                  "phase": "preview"
+                }
+              },
+              "result": {
+                "scope_versions": {
+                  "ea275936-1f07-49a8-a816-03a257b10f89": "c87d035c-29c0-4f51-9fe7-8747bdcdd87e"
+                },
+                "scope_modules": [
+                  "登录/密码"
+                ],
+                "scope_count": 1
+              },
+              "requires_confirmation": true,
+              "related_job_id": null,
+              "related_change_set_id": null,
+              "error_code": null,
+              "created_at": "2026-10-25T13:22:59.860624Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "confirmation": {
+        "conversation_id": "f4293904-44f9-4a6a-8e4f-211b185c6a28",
+        "user_message": {
+          "id": "0344fa81-0199-48ef-ba19-1fe5765383a4",
+          "role": "user",
+          "content": "把 TC-LOGIN-02-1792934473869 标题改为“密码登录”。",
+          "intent": "CASE_MODIFY",
+          "intent_confidence": 1,
+          "status": "completed",
+          "target_case_ids": [],
+          "related_job_id": null,
+          "citations": [],
+          "metadata": {
+            "request": {
+              "scope": "current",
+              "content": "把 TC-LOGIN-02-1792934473869 标题改为“密码登录”。",
+              "targets": [
+                {
+                  "kind": "case",
+                  "module": "",
+                  "case_ids": [
+                    "c9b08a51-75c7-4a8f-96bb-4b0f105ed047"
+                  ],
+                  "condition": "",
+                  "collection_id": null,
+                  "candidate_refs": [],
+                  "source_operation_id": null
+                }
+              ],
+              "model_id": "doubao-seed-2.0-lite",
+              "document_ids": [],
+              "target_scope": "inferred",
+              "intent_override": null,
+              "target_case_ids": [],
+              "client_request_id": "9a124d4b-7250-4dd2-8b9f-52d8e4a21305",
+              "generation_strategy": null,
+              "inherit_attachments": true,
+              "source_operation_id": null,
+              "use_space_knowledge": false,
+              "knowledge_source_ids": [],
+              "source_collection_ids": [],
+              "target_candidate_snapshots": []
+            },
+            "submission_request_id": "9a124d4b-7250-4dd2-8b9f-52d8e4a21305"
+          },
+          "created_at": "2026-10-25T13:22:59.857328Z"
+        },
+        "assistant_message": {
+          "id": "a8535dd3-30f4-4b7b-a7b2-646d1adb9c55",
+          "role": "assistant",
+          "content": "正在为 1 条用例生成字段差异。",
+          "intent": "CASE_MODIFY",
+          "intent_confidence": 1,
+          "status": "running",
+          "target_case_ids": [
+            "ea275936-1f07-49a8-a816-03a257b10f89"
+          ],
+          "related_job_id": "9b90d59c-f45f-4f15-9caf-02332a077cdf",
+          "citations": [],
+          "metadata": {
+            "operation_id": "653189bf-bc74-43d3-8cc0-d1d7f80bf021",
+            "change_set_id": "c2dd80d0-1564-481b-bf4e-95fbe5bf5f15",
+            "task_revision": 2,
+            "task_case_count": 2,
+            "source_message_id": "0344fa81-0199-48ef-ba19-1fe5765383a4",
+            "source_operation_id": "f47ea48b-f0a9-4c60-a7a5-2b499e1389a4"
+          },
+          "created_at": "2026-10-25T13:23:40.665264Z"
+        },
+        "intent": "CASE_MODIFY",
+        "intent_confidence": 1,
+        "requires_intent_confirmation": false,
+        "action": {
+          "type": "change_set",
+          "job_id": "9b90d59c-f45f-4f15-9caf-02332a077cdf",
+          "change_set_id": "c2dd80d0-1564-481b-bf4e-95fbe5bf5f15"
+        },
+        "operation_plan": {
+          "status": "running",
+          "source_message_id": "0344fa81-0199-48ef-ba19-1fe5765383a4",
+          "current_operation_id": "653189bf-bc74-43d3-8cc0-d1d7f80bf021",
+          "operations": [
+            {
+              "source_message_id": "0344fa81-0199-48ef-ba19-1fe5765383a4",
+              "completed_at": null,
+              "id": "653189bf-bc74-43d3-8cc0-d1d7f80bf021",
+              "sequence": 0,
+              "intent": "CASE_MODIFY",
+              "confidence": 1,
+              "status": "running",
+              "target": {
+                "kind": "case",
+                "case_ids": [
+                  "ea275936-1f07-49a8-a816-03a257b10f89",
+                  "c9b08a51-75c7-4a8f-96bb-4b0f105ed047"
+                ],
+                "resolved": true,
+                "selectors": [],
+                "candidate_refs": []
+              },
+              "payload": {
+                "plan": {
+                  "action": "CHANGESET_PREPARE",
+                  "intent": "CASE_MODIFY",
+                  "changes": [
+                    "标题修改为“密码登录”"
+                  ],
+                  "version": 2,
+                  "confidence": 1,
+                  "depends_on": null,
+                  "speech_act": "request",
+                  "constraints": [],
+                  "instruction": "把 TC-LOGIN-02-1792934473869 标题改为“密码登录”。",
+                  "target_kind": "case",
+                  "target_text": "TC-LOGIN-02-1792934473869",
+                  "reason_codes": [
+                    "modify_case_title"
+                  ],
+                  "routing_source": "semantic",
+                  "action_evidence": "标题改为“密码登录”",
+                  "clarification_kind": "none",
+                  "query_presentation": "cases",
+                  "resume_operation_id": null,
+                  "requires_confirmation": true,
+                  "uses_selected_targets": false,
+                  "clarification_questions": []
+                },
+                "action": "CHANGESET_PREPARE",
+                "task_id": "f47ea48b-f0a9-4c60-a7a5-2b499e1389a4",
+                "depends_on": null,
+                "instruction": "把 TC-LOGIN-02-1792934473869 标题改为“密码登录”。",
+                "task_intent": "CASE_MODIFY",
+                "reason_codes": [
+                  "modify_case_title"
+                ],
+                "rewrite_draft": {
+                  "phase": "executing",
+                  "version": 1,
+                  "requirements": "把 TC-LOGIN-02-1792934473869 标题改为“密码登录”。",
+                  "scope_resolved": true,
+                  "scope_instruction": "TC-LOGIN-02-1792934473869",
+                  "requirements_ready": true
+                },
+                "task_revision": 2,
+                "predecessor_job_id": null,
+                "source_operation_id": "f47ea48b-f0a9-4c60-a7a5-2b499e1389a4",
+                "asset_reference_sources": [],
+                "modification_confirmation": null,
+                "asset_reference_target_scope": null,
+                "last_confirmed_modification": {
+                  "instruction": "把 TC-LOGIN-02-1792934473869 标题改为“密码登录”。",
+                  "cases": [
+                    {
+                      "ref": "ea275936-1f07-49a8-a816-03a257b10f89",
+                      "target_type": "formal",
+                      "snapshot": {
+                        "id": "ea275936-1f07-49a8-a816-03a257b10f89",
+                        "case_key": "TC-LOGIN-02-1792934473869",
+                        "collection_ids": [
+                          "60577554-84b3-4ea6-b8a3-32f69871c25d"
+                        ],
+                        "current_revision_id": "c87d035c-29c0-4f51-9fe7-8747bdcdd87e",
+                        "revision_number": 1,
+                        "title": "密码登录",
+                        "description": "",
+                        "module": "登录/密码",
+                        "priority": "P1",
+                        "case_type": "功能",
+                        "tags": [],
+                        "preconditions": [
+                          "账号已注册且启用；准备正确密码"
+                        ],
+                        "steps": [
+                          {
+                            "id": "6a7f55ec-e6c2-466d-b063-eaf556a4ab9c",
+                            "action": "输入账号及正确密码并提交",
+                            "expected": "登录成功并建立会话"
+                          }
+                        ],
+                        "source": "人工创建",
+                        "source_refs": [
+                          {
+                            "source_id": null,
+                            "document_id": null,
+                            "chunk_id": null,
+                            "label": "人工创建",
+                            "locator": "",
+                            "excerpt": ""
+                          }
+                        ],
+                        "execution_level": "L0",
+                        "test_domains": [],
+                        "automation_type": "manual",
+                        "automation_cases": [],
+                        "creator": null,
+                        "test_targets": [],
+                        "created_at": "2026-10-25T13:21:13.974504Z"
+                      }
+                    }
+                  ]
+                }
+              },
+              "result": {
+                "scope_count": 1,
+                "scope_modules": [
+                  "登录/密码"
+                ],
+                "scope_versions": {
+                  "ea275936-1f07-49a8-a816-03a257b10f89": "c87d035c-29c0-4f51-9fe7-8747bdcdd87e"
+                }
+              },
+              "requires_confirmation": true,
+              "related_job_id": "9b90d59c-f45f-4f15-9caf-02332a077cdf",
+              "related_change_set_id": "c2dd80d0-1564-481b-bf4e-95fbe5bf5f15",
+              "error_code": null,
+              "created_at": "2026-10-25T13:22:59.860624Z"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "timings": [
+    {
+      "kind": "message_response",
+      "ms": 36486
+    },
+    {
+      "kind": "proposal_wait_after_response",
+      "ms": 29759
+    },
+    {
+      "kind": "message_response",
+      "ms": 42251
+    },
+    {
+      "kind": "proposal_wait_after_response",
+      "ms": 27872
+    },
+    {
+      "kind": "apply_response",
+      "ms": 2660
+    }
+  ],
+  "startedAt": "2026-10-25T13:21:13.634Z",
+  "collection": {
+    "id": "60577554-84b3-4ea6-b8a3-32f69871c25d",
+    "space_id": "73a91825-f28b-4588-a415-b907b7dfa246",
+    "name": "NL评测-NL-MUL-10-1792934473827",
+    "description": "",
+    "mind_map_notes": [],
+    "case_count": 0,
+    "lifecycle_status": "empty",
+    "creator": {
+      "id": "4ae47328-cee9-4bee-999a-2be84e19bddf",
+      "display_name": "自然语言验收",
+      "email": "nl-1792934473649-3a64y6se0xp@casepilot.test"
+    },
+    "test_target": null,
+    "created_at": "2026-10-25T13:21:13.877332Z"
+  },
+  "keyMap": {
+    "TC-LOGIN-01": "TC-LOGIN-01-1792934473869",
+    "TC-LOGIN-02": "TC-LOGIN-02-1792934473869",
+    "TC-PAY-01": "TC-PAY-01-1792934473869",
+    "TC-REFUND-01": "TC-REFUND-01-1792934473869"
+  },
+  "original": [
+    {
+      "id": "c9b08a51-75c7-4a8f-96bb-4b0f105ed047",
+      "case_key": "TC-LOGIN-01-1792934473869",
+      "collection_ids": [
+        "60577554-84b3-4ea6-b8a3-32f69871c25d"
+      ],
+      "current_revision_id": "1dcc89fa-3df3-4ed1-a72f-1b4ddc3e628c",
+      "revision_number": 1,
+      "title": "短信登录",
+      "description": "",
+      "module": "登录/短信",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "手机号已注册且账号启用；准备有效的未使用验证码"
+      ],
+      "steps": [
+        {
+          "id": "10b476ae-c785-4e0b-9f01-152e9c98a1a1",
+          "action": "输入短信验证码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "4ae47328-cee9-4bee-999a-2be84e19bddf",
+        "display_name": "自然语言验收",
+        "email": "nl-1792934473649-3a64y6se0xp@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T13:21:13.925656Z"
+    },
+    {
+      "id": "ea275936-1f07-49a8-a816-03a257b10f89",
+      "case_key": "TC-LOGIN-02-1792934473869",
+      "collection_ids": [
+        "60577554-84b3-4ea6-b8a3-32f69871c25d"
+      ],
+      "current_revision_id": "c87d035c-29c0-4f51-9fe7-8747bdcdd87e",
+      "revision_number": 1,
+      "title": "密码登录",
+      "description": "",
+      "module": "登录/密码",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "账号已注册且启用；准备正确密码"
+      ],
+      "steps": [
+        {
+          "id": "6a7f55ec-e6c2-466d-b063-eaf556a4ab9c",
+          "action": "输入账号及正确密码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "4ae47328-cee9-4bee-999a-2be84e19bddf",
+        "display_name": "自然语言验收",
+        "email": "nl-1792934473649-3a64y6se0xp@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T13:21:13.974504Z"
+    },
+    {
+      "id": "9698f045-31cb-42fe-a8de-82f36911c1aa",
+      "case_key": "TC-PAY-01-1792934473869",
+      "collection_ids": [
+        "60577554-84b3-4ea6-b8a3-32f69871c25d"
+      ],
+      "current_revision_id": "e6e3ebbc-3719-4ba2-b9d8-01f4d1bf40f3",
+      "revision_number": 1,
+      "title": "支付成功",
+      "description": "",
+      "module": "支付/付款",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备待支付订单和可用支付账户"
+      ],
+      "steps": [
+        {
+          "id": "57633e6c-9b8a-4340-aa86-7699f7dffc7a",
+          "action": "完成订单支付",
+          "expected": "订单为已支付；仅有一条成功支付记录"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "4ae47328-cee9-4bee-999a-2be84e19bddf",
+        "display_name": "自然语言验收",
+        "email": "nl-1792934473649-3a64y6se0xp@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T13:21:14.028585Z"
+    },
+    {
+      "id": "aaa0c2d0-5a10-4ded-8e07-72b782509164",
+      "case_key": "TC-REFUND-01-1792934473869",
+      "collection_ids": [
+        "60577554-84b3-4ea6-b8a3-32f69871c25d"
+      ],
+      "current_revision_id": "3fc7b7e0-3363-4c3b-ba3d-9483056845c9",
+      "revision_number": 1,
+      "title": "退款成功",
+      "description": "",
+      "module": "支付/退款",
+      "priority": "P2",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备一笔允许全额退款的已支付订单"
+      ],
+      "steps": [
+        {
+          "id": "8775ad8c-b437-4c5b-9b56-a30b143e5161",
+          "action": "提交全额退款并等待处理完成",
+          "expected": "退款状态成功，退款金额等于原支付金额"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "4ae47328-cee9-4bee-999a-2be84e19bddf",
+        "display_name": "自然语言验收",
+        "email": "nl-1792934473649-3a64y6se0xp@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T13:21:14.089696Z"
+    }
+  ],
+  "proposals": [
+    {
+      "id": "c04db216-9031-4ab9-8924-020154025556",
+      "conversation_id": "f4293904-44f9-4a6a-8e4f-211b185c6a28",
+      "generation_job_id": "a46e9bcf-fc27-48d9-b3c0-96bd37d70146",
+      "instruction": "把 TC-LOGIN-01-1792934473869 标题改为“待采纳标题”。",
+      "scope": "current",
+      "status": "ready",
+      "items": [
+        {
+          "ref": "c9b08a51-75c7-4a8f-96bb-4b0f105ed047",
+          "reason": "按照用户要求将该用例的标题修改为指定内容",
+          "status": "ready",
+          "quality": {
+            "score": 90,
+            "issues": [
+              {
+                "code": "manual_review_required",
+                "message": "已完成本地基础校验，业务预期与修改内容请人工审阅后采纳。",
+                "severity": "warning",
+                "object_id": null
+              }
+            ],
+            "passed": true,
+            "repair_rounds": 0,
+            "grounding_status": "unverified",
+            "structural_passed": true
+          },
+          "field_diff": [
+            {
+              "after": "待采纳标题",
+              "field": "title",
+              "before": "短信登录"
+            }
+          ],
+          "target_type": "formal",
+          "test_case_id": "c9b08a51-75c7-4a8f-96bb-4b0f105ed047",
+          "base_snapshot": {
+            "id": "TC-LOGIN-01-1792934473869",
+            "tags": [],
+            "steps": [
+              {
+                "id": "10b476ae-c785-4e0b-9f01-152e9c98a1a1",
+                "action": "输入短信验证码并提交",
+                "expected": "登录成功并建立会话"
+              }
+            ],
+            "title": "短信登录",
+            "module": "登录/短信",
+            "status": "pending",
+            "case_key": "TC-LOGIN-01-1792934473869",
+            "priority": "P1",
+            "automated": false,
+            "case_type": "功能",
+            "source_refs": [
+              {
+                "label": "人工创建",
+                "excerpt": ""
+              }
+            ],
+            "preconditions": [
+              "手机号已注册且账号启用；准备有效的未使用验证码"
+            ],
+            "test_point_ids": [],
+            "revision_number": 1
+          },
+          "base_revision_id": "1dcc89fa-3df3-4ed1-a72f-1b4ddc3e628c",
+          "proposal_version": 1,
+          "previous_snapshot": null,
+          "proposed_snapshot": {
+            "id": "TC-LOGIN-01-1792934473869",
+            "tags": [],
+            "steps": [
+              {
+                "action": "输入短信验证码并提交",
+                "expected": "登录成功并建立会话"
+              }
+            ],
+            "title": "待采纳标题",
+            "module": "登录/短信",
+            "status": "pending",
+            "priority": "P1",
+            "automated": false,
+            "case_type": "功能",
+            "source_refs": [
+              {
+                "label": "人工创建",
+                "excerpt": "",
+                "locator": "",
+                "chunk_id": null,
+                "source_id": null,
+                "document_id": null
+              }
+            ],
+            "preconditions": [
+              "手机号已注册且账号启用；准备有效的未使用验证码"
+            ],
+            "test_point_ids": []
+          },
+          "candidate_revision_id": "e6722c68-b319-4033-bd34-d03acc0ddc9f",
+          "previous_change_set_id": null
+        }
+      ],
+      "created_at": "2026-10-25T13:22:10.552956Z",
+      "applied_at": null
+    },
+    {
+      "id": "c2dd80d0-1564-481b-bf4e-95fbe5bf5f15",
+      "conversation_id": "f4293904-44f9-4a6a-8e4f-211b185c6a28",
+      "generation_job_id": "9b90d59c-f45f-4f15-9caf-02332a077cdf",
+      "instruction": "把 TC-LOGIN-02-1792934473869 标题改为“密码登录”。",
+      "scope": "current",
+      "status": "ready",
+      "items": [
+        {
+          "ref": "ea275936-1f07-49a8-a816-03a257b10f89",
+          "reason": "按照用户指令将指定用例的标题修改为“密码登录”",
+          "status": "ready",
+          "quality": {
+            "score": 90,
+            "issues": [
+              {
+                "code": "manual_review_required",
+                "message": "已完成本地基础校验，业务预期与修改内容请人工审阅后采纳。",
+                "severity": "warning",
+                "object_id": null
+              }
+            ],
+            "passed": true,
+            "repair_rounds": 0,
+            "grounding_status": "unverified",
+            "structural_passed": true
+          },
+          "field_diff": [],
+          "target_type": "formal",
+          "test_case_id": "ea275936-1f07-49a8-a816-03a257b10f89",
+          "base_snapshot": {
+            "id": "TC-LOGIN-02-1792934473869",
+            "tags": [],
+            "steps": [
+              {
+                "id": "6a7f55ec-e6c2-466d-b063-eaf556a4ab9c",
+                "action": "输入账号及正确密码并提交",
+                "expected": "登录成功并建立会话"
+              }
+            ],
+            "title": "密码登录",
+            "module": "登录/密码",
+            "status": "pending",
+            "case_key": "TC-LOGIN-02-1792934473869",
+            "priority": "P1",
+            "automated": false,
+            "case_type": "功能",
+            "source_refs": [
+              {
+                "label": "人工创建",
+                "excerpt": ""
+              }
+            ],
+            "preconditions": [
+              "账号已注册且启用；准备正确密码"
+            ],
+            "test_point_ids": [],
+            "revision_number": 1
+          },
+          "base_revision_id": "c87d035c-29c0-4f51-9fe7-8747bdcdd87e",
+          "proposal_version": 2,
+          "previous_snapshot": null,
+          "proposed_snapshot": {
+            "id": "TC-LOGIN-02-1792934473869",
+            "tags": [],
+            "steps": [
+              {
+                "action": "输入账号及正确密码并提交",
+                "expected": "登录成功并建立会话"
+              }
+            ],
+            "title": "密码登录",
+            "module": "登录/密码",
+            "status": "pending",
+            "priority": "P1",
+            "automated": false,
+            "case_type": "功能",
+            "source_refs": [
+              {
+                "label": "人工创建",
+                "excerpt": "",
+                "locator": "",
+                "chunk_id": null,
+                "source_id": null,
+                "document_id": null
+              }
+            ],
+            "preconditions": [
+              "账号已注册且启用；准备正确密码"
+            ],
+            "test_point_ids": []
+          },
+          "candidate_revision_id": null,
+          "previous_change_set_id": "c04db216-9031-4ab9-8924-020154025556"
+        },
+        {
+          "ref": "c9b08a51-75c7-4a8f-96bb-4b0f105ed047",
+          "reason": "按照用户要求将该用例的标题修改为指定内容",
+          "status": "ready",
+          "quality": {
+            "score": 90,
+            "issues": [
+              {
+                "code": "manual_review_required",
+                "message": "已完成本地基础校验，业务预期与修改内容请人工审阅后采纳。",
+                "severity": "warning",
+                "object_id": null
+              }
+            ],
+            "passed": true,
+            "repair_rounds": 0,
+            "grounding_status": "unverified",
+            "structural_passed": true
+          },
+          "field_diff": [
+            {
+              "after": "待采纳标题",
+              "field": "title",
+              "before": "短信登录"
+            }
+          ],
+          "target_type": "formal",
+          "test_case_id": "c9b08a51-75c7-4a8f-96bb-4b0f105ed047",
+          "base_snapshot": {
+            "id": "TC-LOGIN-01-1792934473869",
+            "tags": [],
+            "steps": [
+              {
+                "id": "10b476ae-c785-4e0b-9f01-152e9c98a1a1",
+                "action": "输入短信验证码并提交",
+                "expected": "登录成功并建立会话"
+              }
+            ],
+            "title": "短信登录",
+            "module": "登录/短信",
+            "status": "pending",
+            "case_key": "TC-LOGIN-01-1792934473869",
+            "priority": "P1",
+            "automated": false,
+            "case_type": "功能",
+            "source_refs": [
+              {
+                "label": "人工创建",
+                "excerpt": ""
+              }
+            ],
+            "preconditions": [
+              "手机号已注册且账号启用；准备有效的未使用验证码"
+            ],
+            "test_point_ids": [],
+            "revision_number": 1
+          },
+          "base_revision_id": "1dcc89fa-3df3-4ed1-a72f-1b4ddc3e628c",
+          "proposal_version": 2,
+          "previous_snapshot": {
+            "id": "TC-LOGIN-01-1792934473869",
+            "tags": [],
+            "steps": [
+              {
+                "action": "输入短信验证码并提交",
+                "expected": "登录成功并建立会话"
+              }
+            ],
+            "title": "待采纳标题",
+            "module": "登录/短信",
+            "status": "pending",
+            "priority": "P1",
+            "automated": false,
+            "case_type": "功能",
+            "source_refs": [
+              {
+                "label": "人工创建",
+                "excerpt": "",
+                "locator": "",
+                "chunk_id": null,
+                "source_id": null,
+                "document_id": null
+              }
+            ],
+            "preconditions": [
+              "手机号已注册且账号启用；准备有效的未使用验证码"
+            ],
+            "test_point_ids": []
+          },
+          "proposed_snapshot": {
+            "id": "TC-LOGIN-01-1792934473869",
+            "tags": [],
+            "steps": [
+              {
+                "action": "输入短信验证码并提交",
+                "expected": "登录成功并建立会话"
+              }
+            ],
+            "title": "待采纳标题",
+            "module": "登录/短信",
+            "status": "pending",
+            "priority": "P1",
+            "automated": false,
+            "case_type": "功能",
+            "source_refs": [
+              {
+                "label": "人工创建",
+                "excerpt": "",
+                "locator": "",
+                "chunk_id": null,
+                "source_id": null,
+                "document_id": null
+              }
+            ],
+            "preconditions": [
+              "手机号已注册且账号启用；准备有效的未使用验证码"
+            ],
+            "test_point_ids": []
+          },
+          "candidate_revision_id": "e6722c68-b319-4033-bd34-d03acc0ddc9f",
+          "previous_change_set_id": null
+        }
+      ],
+      "created_at": "2026-10-25T13:23:40.662191Z",
+      "applied_at": null
+    }
+  ],
+  "status": "passed",
+  "errors": [],
+  "final": [
+    {
+      "id": "c9b08a51-75c7-4a8f-96bb-4b0f105ed047",
+      "case_key": "TC-LOGIN-01-1792934473869",
+      "collection_ids": [
+        "60577554-84b3-4ea6-b8a3-32f69871c25d"
+      ],
+      "current_revision_id": "de0c5185-9068-467b-b87d-93378f49c262",
+      "revision_number": 2,
+      "title": "待采纳标题",
+      "description": "",
+      "module": "登录/短信",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "手机号已注册且账号启用；准备有效的未使用验证码"
+      ],
+      "steps": [
+        {
+          "id": "10b476ae-c785-4e0b-9f01-152e9c98a1a1",
+          "action": "输入短信验证码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "4ae47328-cee9-4bee-999a-2be84e19bddf",
+        "display_name": "自然语言验收",
+        "email": "nl-1792934473649-3a64y6se0xp@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T13:21:13.925656Z"
+    },
+    {
+      "id": "ea275936-1f07-49a8-a816-03a257b10f89",
+      "case_key": "TC-LOGIN-02-1792934473869",
+      "collection_ids": [
+        "60577554-84b3-4ea6-b8a3-32f69871c25d"
+      ],
+      "current_revision_id": "c87d035c-29c0-4f51-9fe7-8747bdcdd87e",
+      "revision_number": 1,
+      "title": "密码登录",
+      "description": "",
+      "module": "登录/密码",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "账号已注册且启用；准备正确密码"
+      ],
+      "steps": [
+        {
+          "id": "6a7f55ec-e6c2-466d-b063-eaf556a4ab9c",
+          "action": "输入账号及正确密码并提交",
+          "expected": "登录成功并建立会话"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "4ae47328-cee9-4bee-999a-2be84e19bddf",
+        "display_name": "自然语言验收",
+        "email": "nl-1792934473649-3a64y6se0xp@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T13:21:13.974504Z"
+    },
+    {
+      "id": "9698f045-31cb-42fe-a8de-82f36911c1aa",
+      "case_key": "TC-PAY-01-1792934473869",
+      "collection_ids": [
+        "60577554-84b3-4ea6-b8a3-32f69871c25d"
+      ],
+      "current_revision_id": "e6e3ebbc-3719-4ba2-b9d8-01f4d1bf40f3",
+      "revision_number": 1,
+      "title": "支付成功",
+      "description": "",
+      "module": "支付/付款",
+      "priority": "P1",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备待支付订单和可用支付账户"
+      ],
+      "steps": [
+        {
+          "id": "57633e6c-9b8a-4340-aa86-7699f7dffc7a",
+          "action": "完成订单支付",
+          "expected": "订单为已支付；仅有一条成功支付记录"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "4ae47328-cee9-4bee-999a-2be84e19bddf",
+        "display_name": "自然语言验收",
+        "email": "nl-1792934473649-3a64y6se0xp@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T13:21:14.028585Z"
+    },
+    {
+      "id": "aaa0c2d0-5a10-4ded-8e07-72b782509164",
+      "case_key": "TC-REFUND-01-1792934473869",
+      "collection_ids": [
+        "60577554-84b3-4ea6-b8a3-32f69871c25d"
+      ],
+      "current_revision_id": "3fc7b7e0-3363-4c3b-ba3d-9483056845c9",
+      "revision_number": 1,
+      "title": "退款成功",
+      "description": "",
+      "module": "支付/退款",
+      "priority": "P2",
+      "case_type": "功能",
+      "tags": [],
+      "preconditions": [
+        "准备一笔允许全额退款的已支付订单"
+      ],
+      "steps": [
+        {
+          "id": "8775ad8c-b437-4c5b-9b56-a30b143e5161",
+          "action": "提交全额退款并等待处理完成",
+          "expected": "退款状态成功，退款金额等于原支付金额"
+        }
+      ],
+      "source": "人工创建",
+      "source_refs": [
+        {
+          "source_id": null,
+          "document_id": null,
+          "chunk_id": null,
+          "label": "人工创建",
+          "locator": "",
+          "excerpt": ""
+        }
+      ],
+      "execution_level": "L0",
+      "test_domains": [],
+      "automation_type": "manual",
+      "automation_cases": [],
+      "creator": {
+        "id": "4ae47328-cee9-4bee-999a-2be84e19bddf",
+        "display_name": "自然语言验收",
+        "email": "nl-1792934473649-3a64y6se0xp@casepilot.test"
+      },
+      "test_targets": [],
+      "created_at": "2026-10-25T13:21:14.089696Z"
+    }
+  ]
+}

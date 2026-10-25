@@ -2102,7 +2102,14 @@ def _start_action(
             or db.scalar(select(WorkspaceCandidate.id).where(WorkspaceCandidate.conversation_id == conversation.id,
                 WorkspaceCandidate.status == "candidate").limit(1)))
     )
-    collection_gate = _collection_gate(
+    # Confirming an unchanged, resolved preview introduces no collection request.
+    # Reinterpreting its old instruction can fail or redirect an already approved
+    # scope. Target expansion below still checks membership and current revisions.
+    confirmed_rewrite = (
+        intent == "CASE_MODIFY" and confirm_modification and confirmed_targets
+        and conversation.collection_id is not None
+    )
+    collection_gate = None if confirmed_rewrite else _collection_gate(
         db,
         conversation,
         payload,

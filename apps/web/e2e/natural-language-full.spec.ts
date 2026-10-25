@@ -91,7 +91,11 @@ async function send(page: Page, content: string, confirm = true, serviceRetries 
     expect(turn.action.job_id).toBeFalsy();
     const pending = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/resume'), { timeout: 180000 });
     await page.getByRole('button', { name: '确认修改并生成建议', exact: true }).last().click();
-    const response = await pending; expect(response.ok()).toBeTruthy(); turn = JSON.parse(observedBodies.get(response.url()) ?? await response.text()); journal.turns.push({ confirmation: turn });
+    const response = await pending;
+    const body = observedBodies.get(response.url()) ?? await response.text();
+    journal.turns.push({ confirmationStatus: response.status(), confirmationBody: body });
+    expect(response.ok(), body).toBeTruthy();
+    turn = JSON.parse(body); journal.turns.push({ confirmation: turn });
   }
   return turn;
 }
