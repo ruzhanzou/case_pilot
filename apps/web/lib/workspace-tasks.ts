@@ -30,6 +30,17 @@ export function workspaceScopeLabel(payload?: Record<string, unknown>): string {
     id => labels.get(id.toLowerCase()) ?? id);
 }
 
+/** Use this displayed version's current requirements, never the initial routing constraints. */
+export function workspaceModificationRequirements(payload?: Record<string, unknown>): string {
+  const draft = payload?.rewrite_draft as { requirements?: unknown } | undefined;
+  const preview = payload?.modification_confirmation as { instruction?: unknown } | undefined;
+  const confirmed = payload?.last_confirmed_modification as { instruction?: unknown } | undefined;
+  for (const value of [draft?.requirements, preview?.instruction, confirmed?.instruction]) {
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return "";
+}
+
 /** Assignment values must not be inferred as existing case selections. */
 export function scopeReferenceText(instruction: string): string {
   return instruction

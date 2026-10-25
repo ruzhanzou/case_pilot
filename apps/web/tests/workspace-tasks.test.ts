@@ -206,3 +206,18 @@ test("scope labels preserve natural language and never replace partial identifie
   assert.equal(workspaceScopeLabel({ plan: { target_text: id } }), id);
   assert.equal(workspaceScopeLabel(), '');
 });
+
+test('modification requirements follow the displayed draft instead of stale initial constraints', async () => {
+  const { workspaceModificationRequirements } = await import('../lib/workspace-tasks');
+  const original = { plan: { constraints: ['只修改标题'] },
+    rewrite_draft: { requirements: '标题改为验收，其他不变' } };
+  const revised = { ...original, rewrite_draft: { requirements: '标题改为验收，优先级P2，其余不变' },
+    last_confirmed_modification: { instruction: '标题改为验收，其他不变' } };
+  assert.equal(workspaceModificationRequirements(revised), '标题改为验收，优先级P2，其余不变');
+  assert.equal(workspaceModificationRequirements(original), '标题改为验收，其他不变');
+  assert.equal(workspaceModificationRequirements({ modification_confirmation: { instruction: '当前预览' },
+    last_confirmed_modification: { instruction: '旧预览' } }), '当前预览');
+  assert.equal(workspaceModificationRequirements({ last_confirmed_modification: { instruction: '旧版确认内容' } }), '旧版确认内容');
+  assert.equal(workspaceModificationRequirements({ plan: { constraints: ['其他不变'] } }), '');
+  assert.equal(workspaceModificationRequirements(), '');
+});

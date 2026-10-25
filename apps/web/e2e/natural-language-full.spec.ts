@@ -1078,3 +1078,64 @@ test('NL-DRAFT-COLLECTION-SWITCH changing the draft collection cannot execute th
   await expect(page.locator('.principle-messages')).toContainText('请新建对话后继续');
   expect(await s.read()).toEqual(journal.original);
 });
+
+test('NL-COLLECTION-TITLE-LITERAL a collection name used as a title does not switch the draft collection', async ({ page }) => {
+  const s = await setup(page), target = s.byKey('TC-LOGIN-01');
+  const other = (await get(page, `/spaces/${journal.collection.space_id}/collections`)).find((c:any) => c.id !== journal.collection.id);
+  const otherBefore = await get(page, `/collections/${other.id}/test-cases`);
+  const first = await send(page, `把 TC-LOGIN-01 的标题改成“${other.name}”，只修改标题，其他字段不变。`, false, 2);
+  const operationId = first.assistant_message.metadata.operation_id;
+  const preview = async (turn:any) => {
+    expect(turn.action.type).not.toBe('new_conversation_required');
+    expect(turn.assistant_message.metadata.operation_id).toBe(operationId);
+    expect(turn.assistant_message.metadata.modification_confirmation).toBeTruthy();
+    expect(turn.assistant_message.target_case_ids).toEqual([target.id]);
+    expect(turn.action.job_id).toBeFalsy();
+    expect((await get(page, `/conversations/${turn.conversation_id}`)).collection_id).toBe(journal.collection.id);
+    expect(await s.read()).toEqual(journal.original);
+  };
+  await preview(first);
+  await page.reload();
+  const revised = await send(page, `标题仍然是“${other.name}”，再把这条优先级改为P2，其他字段不要改。`, false, 2);
+  await preview(revised);
+  await page.reload();
+  const change = await ready(page, await send(page, '确认这次修改。', true, 2));
+  expect(change.items.map((item:any) => item.ref)).toEqual([target.id]);
+  expect(new Set(change.items[0].field_diff.map((diff:any) => diff.field))).toEqual(new Set(['title', 'priority']));
+  expect(change.items[0].quality?.passed).not.toBe(false);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read(), changed = saved.find((item:any) => item.id === target.id);
+  expect(changed.title).toBe(other.name);
+  expect(changed.priority).toBe('P2');
+  unchangedExcept(target, changed, ['title', 'priority']);
+  expect(saved.filter((item:any) => item.id !== target.id)).toEqual(journal.original.filter((item:any) => item.id !== target.id));
+  expect(await get(page, `/collections/${other.id}/test-cases`)).toEqual(otherBefore);
+});
+
+test('NL-REQUIREMENTS-LABEL refreshed review shows the latest requirements instead of initial constraints', async ({ page }) => {
+  test.skip(!process.env.CASEPILOT_REQUIREMENTS_EVIDENCE || !process.env.CASEPILOT_TEST_EMAIL, 'Requires an isolated completed refinement fixture');
+  const fixture = JSON.parse(readFileSync(process.env.CASEPILOT_REQUIREMENTS_EVIDENCE!, 'utf8'));
+  journal.collection = fixture.collection;
+  const login = await page.request.post(`${api}/auth/login`, { data: { email: process.env.CASEPILOT_TEST_EMAIL, password: 'CasePilot123!' } });
+  expect(login.ok()).toBeTruthy();
+  await page.addInitScript(() => localStorage.setItem('casepilot.locale.v1', 'zh-CN'));
+  const cid = fixture.turns.find((turn:any) => turn.response)?.response.conversation_id;
+  const before = await get(page, `/conversations/${cid}`);
+  const baseline = await get(page, `/collections/${fixture.collection.id}/test-cases`);
+  const operation = before.operation_history.find((op:any) => op.intent === 'CASE_MODIFY');
+  const requirements = operation.payload.rewrite_draft.requirements;
+  expect(operation.payload.plan.constraints.join('；')).toContain('只修改标题');
+  expect(requirements).toContain('P2');
+  await page.goto(`/workbench/collections/${fixture.collection.id}`);
+  const summary = page.locator('.case-task-detail > p').filter({ hasText: '修改要求：' });
+  await expect(summary).toHaveText(`修改要求：${requirements}`);
+  await expect(page.locator('.case-task-detail > p').filter({ hasText: '保留约束：' })).toHaveCount(0);
+  await page.reload();
+  await expect(summary).toHaveText(`修改要求：${requirements}`);
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  expect(await get(page, `/collections/${fixture.collection.id}/test-cases`)).toEqual(baseline);
+  const after = await get(page, `/conversations/${cid}`);
+  expect(after.operation_history).toEqual(before.operation_history);
+  expect(after.messages).toEqual(before.messages);
+});
