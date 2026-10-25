@@ -1,0 +1,37 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_routing_catalog_retains_old_current_and_named_collections_without_crossing_space _
+
+    @pytest.mark.asyncio
+    async def test_routing_catalog_retains_old_current_and_named_collections_without_crossing_space():
+        from datetime import UTC, datetime, timedelta
+        from types import SimpleNamespace
+        from uuid import UUID
+        from casepilot_api.conversations import _collection_catalog
+        from casepilot_api.models import Space
+        async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
+            registered = await client.post('/api/v1/auth/register', json={
+                'email': f'catalog-{uuid4().hex}@casepilot.test', 'display_name': 'Catalog boundary', 'password': 'CasePilot123!'})
+            space_id = UUID(registered.json()['spaces'][0]['id'])
+        with get_session_factory()() as db:
+            other_space = Space(name='Other space')
+            db.add(other_space); db.flush()
+            now = datetime.now(UTC)
+            current = CaseCollection(space_id=space_id, name='旧当前集合', created_at=now-timedelta(days=3))
+            mentioned = CaseCollection(space_id=space_id, name='Legacy %_ 收款', created_at=now-timedelta(days=4))
+            unrelated = CaseCollection(space_id=space_id, name='无关旧集合', created_at=now-timedelta(days=5))
+            deleted = CaseCollection(space_id=space_id, name=mentioned.name, deleted_at=now, created_at=now)
+            foreign = CaseCollection(space_id=other_space.id, name=mentioned.name, created_at=now)
+            recent = [CaseCollection(space_id=space_id, name=f'近期集合 {i}', created_at=now+timedelta(seconds=i)) for i in range(100)]
+            db.add_all([current, mentioned, unrelated, deleted, foreign, *recent]); db.flush()
+            conversation = SimpleNamespace(space_id=space_id, collection_id=current.id)
+            ordinary = _collection_catalog(db, conversation)
+>           assert str(current.id) in {c['id'] for c in ordinary}
+E           AssertionError: assert '73e49272-4535-434b-8837-4bf5a2ce52f0' in {'002792a0-7d69-4b07-8d84-fc321036ed8c', '01e86100-ecfe-49c6-a10f-335c30a63e0f', '075f9ebe-bc23-42cf-a609-351145e5643c...7dc6-c205-475b-9733-fe838c4efda0', '17f7578a-dd71-41c4-9032-b1a6185ff389', '1820acc9-22da-4256-8114-267901eb9749', ...}
+E            +  where '73e49272-4535-434b-8837-4bf5a2ce52f0' = str(UUID('73e49272-4535-434b-8837-4bf5a2ce52f0'))
+E            +    where UUID('73e49272-4535-434b-8837-4bf5a2ce52f0') = <casepilot_api.models.CaseCollection object at 0x7167cbddfc50>.id
+
+apps/api/tests/test_collection_batch_loading.py:100: AssertionError
+=========================== short test summary info ============================
+FAILED apps/api/tests/test_collection_batch_loading.py::test_routing_catalog_retains_old_current_and_named_collections_without_crossing_space
+1 failed, 1 deselected in 1.85s

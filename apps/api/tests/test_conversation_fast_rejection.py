@@ -93,9 +93,9 @@ def test_collection_model_failure_is_retryable_without_scope_fallback(monkeypatc
     monkeypatch.setattr(conversations.settings, "agent_provider", "openai_compatible")
     monkeypatch.setattr(conversations, "interpret_generation_choice", Mock(side_effect=errors[failure]))
     db = Mock()
-    db.scalars.return_value = [SimpleNamespace(id=uuid4(), name="当前集合")]
+    db.execute.return_value = [(uuid4(), "当前集合")]
     with pytest.raises(HTTPException) as error:
-        conversations._collection_candidates(db, SimpleNamespace(space_id=uuid4()), "审阅当前集合")
+        conversations._collection_candidates(db, SimpleNamespace(space_id=uuid4(), collection_id=None), "审阅当前集合")
     assert error.value.status_code == 503
     assert "未执行" in error.value.detail
     db.add.assert_not_called()

@@ -1294,19 +1294,23 @@ def _explicit_collection_mention(content: str, name: str) -> bool:
     return any(re.search(pattern, content, re.IGNORECASE) for pattern in patterns)
 
 
-def _collection_catalog(db: Session, conversation: Conversation) -> list[dict[str, str]]:
-    collections = list(
-        db.scalars(
-            select(CaseCollection)
-            .where(
-                CaseCollection.space_id == conversation.space_id,
-                CaseCollection.deleted_at.is_(None),
-            )
-            .order_by(CaseCollection.created_at.desc(), CaseCollection.name)
-            .limit(100)
-        )
+def _collection_catalog(db: Session, conversation: Conversation, content: str = "") -> list[dict[str, str]]:
+    # Recency is a prompt-size hint, never a reason to hide the bound collection
+    # or an exact name present in the user's message. Names only provide model
+    # candidates; the semantic evidence gate still decides whether to switch.
+    rows = db.execute(
+        select(CaseCollection.id, CaseCollection.name)
+        .where(CaseCollection.space_id == conversation.space_id, CaseCollection.deleted_at.is_(None))
+        .order_by(CaseCollection.created_at.desc(), CaseCollection.name, CaseCollection.id)
+        .execution_options(yield_per=500)
     )
-    return [{"id": str(item.id), "name": item.name} for item in collections]
+    message = content.casefold()
+    candidates = []
+    for index, (collection_id, name) in enumerate(rows):
+        mentioned = bool(name.strip()) and name.casefold() in message
+        if index < 100 or collection_id == conversation.collection_id or mentioned:
+            candidates.append({"id": str(collection_id), "name": name})
+    return candidates
 
 
 def _collection_candidates(
@@ -1316,7 +1320,7 @@ def _collection_candidates(
     *,
     explicit_only: bool = False,
 ) -> tuple[list[dict[str, str]], UUID | None]:
-    candidates = _collection_catalog(db, conversation)
+    candidates = _collection_catalog(db, conversation, content)
     normalized = "".join(content.casefold().split())
     if settings.agent_provider != "mock":
         if not candidates:
@@ -5290,7 +5294,7 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
         reply = RewriteReply(action="update", requirements_ready=state["requirements_ready"])
     else:
         try:
-            catalog = _collection_catalog(db, conversation) if settings.agent_provider != "mock" else None
+            catalog = _collection_catalog(db, conversation, text) if settings.agent_provider != "mock" else None
             reply = interpret_rewrite_reply(text, {
                 **state, "has_confirmation": bool(pending),
                 **({"collection_catalog": catalog, "current_collection_id": str(conversation.collection_id)

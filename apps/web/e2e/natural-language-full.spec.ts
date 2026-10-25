@@ -1056,12 +1056,19 @@ test('NL-COUNT-SHORTAGE Chinese quantity mismatch clarifies then resumes with av
   expect(saved.filter((item:any) => !ids.includes(item.id))).toEqual(journal.original.filter((item:any) => !ids.includes(item.id)));
 });
 
-test('NL-DRAFT-COLLECTION-SWITCH changing the draft collection cannot execute the current preview', async ({ page }) => {
+for (const extraCollections of [0, 101]) test(`${extraCollections ? 'NL-DRAFT-OLD-COLLECTION-SWITCH' : 'NL-DRAFT-COLLECTION-SWITCH'} changing the draft collection cannot execute the current preview`, async ({ page }) => {
   const s = await setup(page);
   const other = (await get(page, `/spaces/${journal.collection.space_id}/collections`)).find((c:any) => c.id !== journal.collection.id);
   const otherBefore = await get(page, `/collections/${other.id}/test-cases`);
   const preview = await send(page, '把 TC-LOGIN-01 的优先级改成P0，其他字段不变。', false, 2);
   expect(preview.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  journal.extraCollectionCount = extraCollections;
+  for (let index = 0; index < extraCollections; index++) {
+    const created = await page.request.post(`${api}/spaces/${journal.collection.space_id}/collections`, {
+      data: { name: `近期干扰集合-${index}-${Date.now()}` },
+    });
+    expect(created.status()).toBe(201);
+  }
   await page.reload();
   const turn = await send(page, `刚才这次修改的目标集合换成「${other.name}」集合，当前集合不要改，仍然只改优先级P0。`, false, 2);
   expect(turn.action.type).toBe('new_conversation_required');

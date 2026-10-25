@@ -157,14 +157,14 @@ def test_collection_reference_uses_model_instead_of_name_matching(monkeypatch):
 
     collection = SimpleNamespace(id=uuid4(), name="订单")
     db = Mock()
-    db.scalars.return_value = [collection]
+    db.execute.return_value = [(collection.id, collection.name)]
     monkeypatch.setattr(conversations.settings, "agent_provider", "openai_compatible")
     interpreter = Mock(return_value=SimpleNamespace(target_collection_id=None))
     monkeypatch.setattr(conversations, "interpret_generation_choice", interpreter)
     matcher = Mock(side_effect=AssertionError("No local semantic collection matching"))
     monkeypatch.setattr(conversations, "_explicit_collection_mention", matcher)
     candidates, chosen = conversations._collection_candidates(
-        db, SimpleNamespace(space_id=uuid4()), "不要切换到订单集合", explicit_only=True
+        db, SimpleNamespace(space_id=uuid4(), collection_id=None), "不要切换到订单集合", explicit_only=True
     )
     assert chosen is None
     assert interpreter.call_args.kwargs["collection_catalog"] == candidates

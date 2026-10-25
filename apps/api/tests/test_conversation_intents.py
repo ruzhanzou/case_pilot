@@ -283,8 +283,8 @@ def test_brief_review_does_not_treat_plain_statements_as_asset_writes() -> None:
 
 def test_collection_candidates_builds_query_with_collection_columns() -> None:
     class FakeDb:
-        def scalars(self, statement):
-            assert statement is not None
+        def execute(self, statement):
+            assert {column.name for column in statement.selected_columns} == {"id", "name"}
             return []
 
     candidates, suggested = _collection_candidates(
@@ -517,10 +517,10 @@ def test_case_count_never_becomes_test_object(content, expected):
 def test_bound_collection_does_not_match_ordinary_case_words(content):
     other = SimpleNamespace(id=uuid4(), name="test")
     class FakeDb:
-        def scalars(self, statement):
-            return [other]
+        def execute(self, statement):
+            return [(other.id, other.name)]
     _, suggested = _collection_candidates(
-        FakeDb(), SimpleNamespace(space_id=uuid4()), content, explicit_only=True,
+        FakeDb(), SimpleNamespace(space_id=uuid4(), collection_id=None), content, explicit_only=True,
     )
     assert suggested is None
 
@@ -533,10 +533,10 @@ def test_bound_collection_does_not_match_ordinary_case_words(content):
 def test_bound_collection_still_detects_explicit_other_collection(content):
     other = SimpleNamespace(id=uuid4(), name="test")
     class FakeDb:
-        def scalars(self, statement):
-            return [other]
+        def execute(self, statement):
+            return [(other.id, other.name)]
     _, suggested = _collection_candidates(
-        FakeDb(), SimpleNamespace(space_id=uuid4()), content, explicit_only=True,
+        FakeDb(), SimpleNamespace(space_id=uuid4(), collection_id=None), content, explicit_only=True,
     )
     assert suggested == other.id
 
