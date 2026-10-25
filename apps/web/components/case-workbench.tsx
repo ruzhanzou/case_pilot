@@ -1335,10 +1335,13 @@ export function CaseWorkbench({
       });
       setPendingMessage(null);
       setRefineSourceId("");
+      const nextView = turn.action.type === "module_created" ? "map"
+        : turn.action.type === "test_brief" ? "plan"
+        : turn.action.type === "generation" ? "list" : viewMode;
       if (turn.intent !== "SMALL_TALK") {
         viewTouchedRef.current = true;
         setPlanMessageId(turn.operation_plan?.current_operation_id ?? turn.operation_plan?.operations[0]?.id ?? "");
-        setViewMode(turn.action.type === "module_created" ? "map" : "plan");
+        setViewMode(nextView);
         setArtifactOpen(false);
       }
       if (turn.action.type === "module_created") await onCasesChanged();
@@ -1381,7 +1384,7 @@ export function CaseWorkbench({
       setWorkspace(
         await updateWorkspaceState(workspace.id, {
           draft_text: "",
-          active_view: turn.intent === "SMALL_TALK" ? viewMode : "plan",
+          active_view: nextView,
           selected_case_id: resolvedCaseId,
           selected_targets: retainedSelections.map((item) => ({
             label: item.label,

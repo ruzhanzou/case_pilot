@@ -1945,6 +1945,11 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
             execute_stage=execute_stage,
             on_batch=publish_batch,
         )
+        if result.model_metadata.get("generation_budget"):
+            job["input_payload"]["confirmed_plan"] = {
+                **request.confirmed_plan,
+                "generation_budget": result.model_metadata["generation_budget"],
+            }
         quality_started = monotonic()
         _apply_persisted_asset_quality(
             store,
@@ -2011,11 +2016,7 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
                 **output,
                 "performance_metrics": performance_metrics,
                 "generated_count": len(output["test_cases"]),
-                "total_count": (
-                    len(result.test_points)
-                    if payload.get("output_contract") == "case_batch_v2"
-                    else len(output["test_cases"])
-                ),
+                "total_count": len(output["test_cases"]),
                 "started_at": partial_output["started_at"],
                 "case_ids": case_ids,
                 "workspace_candidate_ids": workspace_candidate_ids,

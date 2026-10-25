@@ -634,3 +634,23 @@ def test_previous_query_order_places_candidates_before_formal_cases(scope):
     conversations._resolve_model_scope(db, conversation,
         ConversationMessageCreate(content='刚列出的第一条'), 'CASE_QUERY')
     assert selector.call_args.args[2]['latest_query']['ids'] == [str(candidate_id), cases[0]['id']]
+
+
+@pytest.mark.parametrize("instruction", [
+    "17个case太少了，增加到30个",
+    "再补充13条登录用例",
+    "生成三十条用例，保留已有用例",
+])
+def test_fresh_generation_budget_never_enters_asset_scope(scope, instruction):
+    db, conversation, _, selector = scope
+    selector.side_effect = AssertionError("generation budget interpreted as asset selection")
+    result, error = conversations._resolve_action_scope(
+        db, conversation,
+        ConversationMessageCreate(content=instruction, generation_strategy="generate"),
+        "CASE_GENERATE",
+    )
+    assert error is None
+    assert result.content == instruction
+    assert result.target_case_ids == []
+    assert result.target_candidate_snapshots == []
+    selector.assert_not_called()

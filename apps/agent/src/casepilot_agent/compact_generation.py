@@ -382,7 +382,11 @@ def run_compact(request, provider, execute_stage, on_batch, count):
         raise StageContractError("duplicate_planning_identity")
     if any(not p.feature_point_ids or not set(p.feature_point_ids) <= feature_ids for p in points):
         raise StageContractError("invalid_feature_reference")
-    if count is not None and count != len(points):
+    reuse_sources = [d["source"]["key"] for d in plan.get("reuse", {}).get("decisions", [])
+                     if d.get("action") == "reuse"]
+    if count is not None and (
+        count != len(points) or len(reuse_sources) != len(set(reuse_sources))
+    ):
         from casepilot_agent.case_allocation import run_allocated
         return run_allocated(request, provider, execute_stage, count)
     total = len(points)
@@ -682,6 +686,10 @@ def run_compact(request, provider, execute_stage, on_batch, count):
         quality=QualityReport(passed=True, score=100),
     )
     result.quality = validate_generation(result)
+    if count is not None and len(generated) != count:
+        result.quality.issues.append(QualityIssue(
+            code="case_count_mismatch", severity="error",
+            message=f"要求{count}条，实际{len(generated)}条，不能标记完成。"))
     for issue in result.quality.issues:
         if issue.code in {"duplicate_case", "duplicate_case_content"}:
             issue.severity = "warning"

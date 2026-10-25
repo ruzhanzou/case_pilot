@@ -1759,6 +1759,12 @@ def _resolve_action_scope(
 ) -> tuple[ConversationMessageCreate, str | None]:
     if conversation.collection_id is None:
         return payload, None
+    # Fresh generation has an output budget, not an existing-asset scope.
+    # Reuse and rewrite paths still resolve and validate their source assets.
+    if intent == "CASE_GENERATE" and payload.generation_strategy == "generate":
+        return payload.model_copy(update={
+            "targets": [], "target_case_ids": [], "target_candidate_snapshots": [],
+        }), None
     # The polish dialog binds its instruction to an explicit selection. Resolve
     # IDs from storage, but do not ask a model to reinterpret that selection.
     # The normal modification preview/confirmation gate still applies.
@@ -2050,6 +2056,11 @@ def _start_action(
             ).order_by(WorkspaceTestBrief.version.desc()))
             if latest_brief and latest_brief.content.get("generation_strategy"):
                 strategy = latest_brief.content["generation_strategy"]
+        if (generation_details and generation_details.continue_cases
+                and not generation_details.strategy_change_requested
+                and not generation_details.rewrite_existing_assets):
+            # Keeping current candidates is continuation, not asset discovery.
+            strategy = "generate"
         payload = payload.model_copy(update={"generation_strategy": strategy})
     rewrite_instruction = re.sub(
         r"(?:不要|无需|禁止|勿|不(?:得)?)(?:修改|改写|重写)[^，,。；;\n]*",
@@ -2688,6 +2699,70 @@ def _start_action(
     brief_operation = "update" if latest_brief is not None else "draft"
     input_payload["brief_operation"] = brief_operation
 
+    if (intent == "CASE_GENERATE" and generation_details
+            and generation_details.continue_cases and generation_details.brief_action == "none"
+            and payload.generation_strategy == "generate"):
+        previous_job = db.scalar(select(GenerationJob).where(
+            GenerationJob.input_payload["conversation_id"].astext == str(conversation.id),
+            GenerationJob.operation == "generate", GenerationJob.status == "completed",
+        ).order_by(GenerationJob.created_at.desc()).limit(1))
+        previous_plan = dict(previous_job.input_payload.get("confirmed_plan") or {}) if previous_job else {}
+        unchanged_sources = previous_job is not None and (
+            {str(value) for value in payload.document_ids}
+            <= set(previous_job.input_payload.get("document_ids", []))
+            and {str(value) for value in payload.knowledge_source_ids}
+            <= set(previous_job.input_payload.get("knowledge_source_ids", []))
+        )
+        if previous_plan.get("test_points") and unchanged_sources:
+            inventory = _load_scope_snapshots(db, conversation)
+            candidates = list(db.scalars(select(WorkspaceCandidate).where(
+                WorkspaceCandidate.conversation_id == conversation.id,
+                WorkspaceCandidate.status == "candidate",
+            )))
+            previous_plan.pop("generation_budget", None)
+            previous_plan["generation_operation"] = "append"
+            previous_plan["existing_cases"] = [
+                {"id": str(item["id"]), "title": item.get("title", ""), "module": item.get("module", "")}
+                for item in inventory
+            ] + [{"id": str(item.id), "title": item.snapshot.get("title", ""),
+                  "module": item.snapshot.get("module", "")} for item in candidates]
+            continuation = {**dict(previous_job.input_payload), **input_payload,
+                "confirmed_plan": previous_plan,
+                "markdown_content": previous_job.input_payload.get("markdown_content", ""),
+                "output_contract": "case_batch_v2", "generation_operation": "append",
+                "predecessor_job_id": str(previous_job.id)}
+            continuation.pop("assistant_message_id", None)
+            job = GenerationJob(space_id=conversation.space_id, account_id=account.id,
+                collection_id=conversation.collection_id, operation="generate", status="queued",
+                stage="queued", input_payload=continuation, output_payload={})
+            db.add(job)
+            db.flush()
+            assistant = _new_assistant_message(conversation.id,
+                content="正在沿用已确认的测试范围补充用例，保留现有用例。",
+                intent=intent, confidence=confidence, status="running", target_case_ids=[],
+                metadata={"workflow": True, "generation_operation": "append"})
+            db.add(assistant)
+            db.flush()
+            assistant.related_job_id = job.id
+            job.input_payload = {**continuation, "assistant_message_id": str(assistant.id)}
+            if operation:
+                operation.related_job_id = job.id
+                operation.status = "running"
+            db.execute(update(ConversationOperation).where(
+                ConversationOperation.conversation_id == conversation.id,
+                ConversationOperation.intent == "CASE_GENERATE",
+                ConversationOperation.status == "awaiting_confirmation",
+                ConversationOperation.id != operation_id,
+            ).values(status="cancelled", completed_at=datetime.now(UTC)))
+            conversation.context = {**dict(conversation.context), "phase": "generating",
+                "selected_brief_version": previous_job.input_payload.get("confirmed_test_brief_version"),
+                "active_view": "list", "active_job_id": str(job.id),
+                "active_operation_id": str(operation_id) if operation_id else None,
+                "confirmed_brief_version": previous_job.input_payload.get("confirmed_test_brief_version"),
+                "last_intent": intent}
+            db.flush()
+            return assistant, {"type": "generation", "job_id": str(job.id)}, "casepilot.agent.generate"
+
     job = GenerationJob(
         space_id=conversation.space_id,
         account_id=account.id,
@@ -2731,15 +2806,9 @@ def _start_action(
                 ConversationOperation.sequence > previous.sequence,
                 ConversationOperation.status == "queued",
             ).values(status="cancelled", completed_at=datetime.now(UTC)))
-        if payload.generation_strategy == "generate":
-            db.execute(
-                update(WorkspaceCandidate)
-                .where(
-                    WorkspaceCandidate.conversation_id == conversation.id,
-                    WorkspaceCandidate.status == "candidate",
-                )
-                .values(status="archived")
-            )
+        # Keep candidates live while planning. Quantity resolution needs this
+        # inventory, and a failed/new plan must not discard previous work.
+        # Replacement vs append is applied atomically when results are saved.
         assistant = _new_assistant_message(
             conversation.id,
             content="",
@@ -3526,6 +3595,19 @@ def confirm_test_brief(
         original_request = db.get(ConversationMessage, active_operation.message_id)
         if original_request:
             prompt = original_request.content[:8000]
+    # Snapshot the live inventory at confirmation, not historical chat counts.
+    existing_cases = _load_scope_snapshots(db, conversation)
+    pending_candidates = list(db.scalars(select(WorkspaceCandidate).where(
+        WorkspaceCandidate.conversation_id == conversation.id,
+        WorkspaceCandidate.status == "candidate",
+    )))
+    planning["existing_cases"] = [
+        {"id": str(item["id"]), "title": item.get("title", ""),
+         "module": item.get("module", "")} for item in existing_cases
+    ] + [
+        {"id": str(item.id), "title": item.snapshot.get("title", ""),
+         "module": item.snapshot.get("module", "")} for item in pending_candidates
+    ]
     job = GenerationJob(
         space_id=conversation.space_id,
         account_id=account.id,
@@ -4193,6 +4275,9 @@ def _retry_generation_from_text(
         recent = list(db.scalars(select(ConversationMessage).where(
             ConversationMessage.conversation_id == conversation.id,
         ).order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc()).limit(2)))
+        # A new conversation has no task to retry. Avoid an extra model round trip.
+        if not recent:
+            return None
         retry_details = interpret_generation_choice(payload.content, settings,
             conversation_memory=[{"role": m.role, "content": m.content} for m in reversed(recent)])
         if not retry_details.retry_requested:
@@ -4391,6 +4476,11 @@ def _resume_model_selected_operation(db, account, conversation, payload, operati
 
 def _send_message(conversation_id, payload, account, db) -> ConversationTurnView:
     conversation = _ensure_conversation(db, account.id, conversation_id)
+    # Reject busy or invalid requests before any paid/slow routing call.
+    if not settings.is_agent_model_allowed(payload.model_id):
+        raise HTTPException(status_code=422, detail="generation_model_not_configured")
+    if settings.agent_provider != "mock":
+        _require_idle_conversation(db, conversation)
     # A strategy label is not authorization to cancel an active task.
     # Preserve the deterministic demo flow only for the mock provider.
     generation_choice = interpret_generation_choice(payload.content, settings)

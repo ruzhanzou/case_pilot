@@ -585,17 +585,36 @@ def _merge_by_id(current: list[Any], enhanced: list[Any]) -> list[Any]:
 
 
 def requested_case_count(request: GenerationRequest, execute_stage) -> int | None:
-    from casepilot_agent.quantity import interpret_quantity
-    return interpret_quantity(
+    from casepilot_agent.quantity import interpret_quantity, resolve_case_budget
+    quantity = interpret_quantity(
         lambda stage, instruction, payload, schema: execute_stage(
             stage, instruction, payload, schema, request.model_id
         ),
         {"prompt": request.prompt, "markdown_content": request.markdown_content,
          "conversation_memory": request.conversation_memory,
+         "existing_cases": request.confirmed_plan.get("existing_cases"),
+         "reuse_sources": request.confirmed_plan.get("reuse", {}).get("decisions", []),
          "selection_context": request.confirmed_plan.get("selection_context"),
          "confirmed_test_points": [{"id": p["id"], "title": p.get("title", "")}
                                    for p in request.confirmed_plan.get("test_points", [])]},
-    ).case_count
+    )
+    count = resolve_case_budget(quantity, request.confirmed_plan.get("existing_cases"))
+    reuse_keys = {
+        (d["action"], d["source"]["key"] if d["action"] == "reuse" else d["point_id"])
+        for d in request.confirmed_plan.get("reuse", {}).get("decisions", [])
+        if d.get("action") in {"reuse", "modify"}
+    }
+    if count is not None and not quantity.count_includes_reuse:
+        count += len(reuse_keys)
+    if count is not None and count > 500:
+        raise ValueError("本轮新增及复用输出合计超过500条")
+    request.confirmed_plan["generation_budget"] = {
+        "output_count": count,
+        "preserve_existing": (quantity.preserve_existing or quantity.case_count_mode == "total"
+                              or request.confirmed_plan.get("generation_operation") == "append"),
+        "scope_case_ids": quantity.scope_case_ids,
+    }
+    return count
 
 
 def rebase_rewrite_candidate(
@@ -631,7 +650,11 @@ class GenerationPipeline:
     def run_planned(self, request: GenerationRequest, execute_stage: StageExecutor, on_batch=None):
         if request.output_contract == "case_batch_v2":
             from casepilot_agent.compact_generation import run_compact
-            return run_compact(request, self.provider, execute_stage, on_batch, requested_case_count(request, execute_stage))
+            scoped_request = request.model_copy(deep=True)
+            count = requested_case_count(scoped_request, execute_stage)
+            result = run_compact(scoped_request, self.provider, execute_stage, on_batch, count)
+            result.model_metadata["generation_budget"] = scoped_request.confirmed_plan.get("generation_budget", {})
+            return result
         plan = request.confirmed_plan
         features = FeaturePlan.model_validate(plan).feature_points
         points = TestPointPlan.model_validate(plan).test_points

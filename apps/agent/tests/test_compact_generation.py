@@ -394,7 +394,7 @@ def test_invalid_plan_reference_is_not_downgraded_to_review_warning():
 
 @pytest.mark.parametrize('size', [3, 5, 10])
 @pytest.mark.parametrize('concurrency', [1, 2, 4])
-@pytest.mark.parametrize('count', [1, 3, 5, 6, 10, 11, 100])
+@pytest.mark.parametrize('count', [1, 3, 5, 6, 10, 11, 30, 100])
 def test_batch_configuration_preserves_coverage(size, concurrency, count):
     req = request(count).model_copy(update={'batch_size': size, 'batch_concurrency': concurrency})
     calls = []

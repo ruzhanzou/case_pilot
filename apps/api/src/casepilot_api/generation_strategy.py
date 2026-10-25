@@ -152,7 +152,7 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
     from openai import AsyncOpenAI
     from pydantic import BaseModel, Field
 
-    from casepilot_api.model_client import managed_model_client
+    from casepilot_api.agent_router import _run_routing_agent
 
     class Choice(BaseModel):
         strategy: Literal["generate", "select", "select_and_generate"] = "generate"
@@ -168,6 +168,10 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
                 "明确接受现有规划且无任何修改要求、直接开始生成候选才是confirm；其他none。"
             )
         )
+        continue_cases: bool = Field(default=False, description=(
+            "对已生成用例要求继续追加、补足数量或增加覆盖，且没有修改测试点、"
+            "更换测试对象、新模块或新增业务规则时为true；询问、否定、重做规划为false。"
+        ))
         confirms_brief: bool = False
         test_object: str = ""
         new_module: str = ""
@@ -189,11 +193,14 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
     set_tracing_disabled(not settings.agent_tracing_enabled)
     client = AsyncOpenAI(api_key=settings.agent_api_key,
                          base_url=settings.agent_base_url.rstrip("/"),
-                         timeout=settings.agent_timeout_seconds, max_retries=1)
+                         timeout=settings.routing_timeout_seconds, max_retries=0)
     agent = Agent(
         name="Generation and asset choice",
         instructions=(
             "理解当前用户的生成策略和已展示资产的选择。默认generate。"
+            "用例太少、17个case增加到30个、继续补充用例属于continue_cases=true，brief_action=none；"
+            "不要把增加用例数量理解为修改测试点数量。明确修改测试点或需求时continue_cases=false。"
+            "保留当前已有用例再补数量不是搜索或复用历史资产，strategy=generate、strategy_change_requested=false。"
             "仅修改测试点、替换测试点、保留原有规划不是复用历史用例资产，也不是切换生成模式。"
             "这些情况brief_action=revise、strategy_change_requested=false；复用退出前同一会话是业务动作，不是复用用例。"
             "target_collection_id仅返回用户指向的目标用例集合ID，来自collection_catalog；"
@@ -232,13 +239,12 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
         model=OpenAIChatCompletionsModel(model=settings.routing_model, openai_client=client),
         output_type=Choice,
     )
-    with managed_model_client(client):
-        result = Runner.run_sync(agent, json.dumps(
+    result = _run_routing_agent(Runner, agent, json.dumps(
             {"message": content, "available_ids": case_ids or [],
              "conversation_memory": conversation_memory or [],
              "collection_catalog": collection_catalog or [],
              "explicit_collection_only": explicit_collection_only}, ensure_ascii=False),
-            max_turns=1).final_output
+            stage="generation_choice", model_name=settings.routing_model, client=client)
     result.confirms_brief = result.confirms_brief and result.brief_action == "confirm"
     if (result.target_collection_id is not None
             and result.target_collection_id not in {item["id"] for item in collection_catalog or []}):

@@ -15,7 +15,7 @@ from casepilot_api.models import CollectionCaseMembership, GenerationJob, Worksp
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("choice", ["suggested", "copy", "stale", "external"])
+@pytest.mark.parametrize("choice", ["suggested", "copy", "stale", "external", "append"])
 async def test_partial_generation_preserves_siblings_and_commit_reuses_only_live_assets(choice):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         registration = await client.post(
@@ -96,7 +96,8 @@ async def test_partial_generation_preserves_siblings_and_commit_reuses_only_live
                 input_payload={
                     "conversation_id": str(cid),
                     "confirmed_test_brief_version": 1,
-                    "confirmed_plan": {**plan, "test_points": [points[0]]},
+                    "confirmed_plan": {**plan, "test_points": [points[0]],
+                        "generation_budget": {"preserve_existing": choice == "append"}},
                 },
                 output_payload={},
             )
@@ -105,7 +106,7 @@ async def test_partial_generation_preserves_siblings_and_commit_reuses_only_live
             job_id = job.id
             old = WorkspaceCandidate(
                 conversation_id=cid,
-                generation_job_id=job.id,
+                generation_job_id=None if choice == "append" else job.id,
                 ref="old",
                 version=1,
                 position=0,
@@ -144,6 +145,15 @@ async def test_partial_generation_preserves_siblings_and_commit_reuses_only_live
             ids = store.persist_workspace_candidates(connection, loaded, [draft])
         with get_session_factory()() as db:
             retained = db.get(WorkspaceCandidate, old_id)
+            if choice == "append":
+                assert retained.status == "candidate"
+                assert retained.snapshot == snapshot
+                assert retained.version == 1 and retained.ref == "old"
+                added = db.get(WorkspaceCandidate, UUID(ids[0]))
+                assert added.status == "candidate" and added.ref != retained.ref
+                assert added.snapshot["id"] == added.ref
+                assert added.snapshot["test_point_ids"] == ["P1"]
+                return
             assert retained.status == "candidate" and retained.snapshot["test_point_ids"] == ["P2"]
             assert retained.version == 2
             assert retained.ref != draft["id"]

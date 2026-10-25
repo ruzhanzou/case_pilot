@@ -219,3 +219,60 @@ def test_subset_budget_and_scope_reach_allocation_together():
     result = run(req, executor)
     assert len(result.test_cases) == 2 and result.quality.passed
     assert all(c.test_point_ids == ['P-0'] for c in result.test_cases)
+
+
+def test_confirmed_point_design_does_not_require_literal_user_phrase():
+    from casepilot_agent.case_allocation import validate_allocation
+    allocation = CaseAllocation(scenarios=[{
+        'point_ids': ['P1'], 'variant': '输入为空后重新填写有效值',
+        'basis': 'confirmed_point',
+    }])
+    assert validate_allocation(allocation, {
+        'requested_case_count': 1, 'test_points': [{'id': 'P1'}],
+        'prompt': '增加用例数量',
+    }) is allocation
+
+
+def test_designed_variant_still_requires_semantic_review():
+    from casepilot_agent.pipeline import AwaitingInput
+    reviews = []
+    def executor(stage, instruction, payload, result_type, model_id):
+        if stage == 'output_quantity.interpreted':
+            return OutputQuantity(case_count=2)
+        if stage == 'test_case.allocated':
+            return CaseAllocation(scenarios=[
+                dict(point_ids=['P-0'], variant=f'编造锁定阈值{i}', basis='confirmed_point')
+                for i in range(2)
+            ])
+        if stage == 'test_case.allocation_reviewed':
+            reviews.append(payload)
+            return AllocationReview(supported=False, issues=['编造了未声明的锁定阈值'])
+        raise AssertionError('Unsupported designs must not reach generation')
+    with pytest.raises(AwaitingInput):
+        run(request(1), executor)
+    assert len(reviews) == 2
+
+
+def test_shared_reuse_source_allocates_missing_output_instead_of_underproducing():
+    from casepilot_agent.providers.mock import MockProvider
+    from casepilot_agent.contracts import GenerationRequest
+    req = request(2)
+    source = MockProvider().generate(GenerationRequest(prompt='登录')).test_cases[0].model_dump(mode='json')
+    req.confirmed_plan['reuse'] = {'strategy': 'regression', 'decisions': [
+        {'point_id': p['id'], 'point_snapshot': deepcopy(p), 'action': 'reuse', 'reason': '复用',
+         'source': {'key': 'shared', 'label': '原用例', 'locator': '原集合', 'snapshot': source}}
+        for p in req.confirmed_plan['test_points']]}
+    def executor(stage, instruction, payload, result_type, model_id):
+        if stage == 'output_quantity.interpreted':
+            return OutputQuantity(case_count=2)
+        if stage == 'test_case.allocated':
+            assert len(payload['reuse_decisions']) == 1
+            return CaseAllocation(scenarios=[
+                dict(point_ids=['P-0'], source_point_id='P-0', variant='原有效账号'),
+                dict(point_ids=['P-1'], variant='原第二点')])
+        if stage == 'test_case.allocation_reviewed':
+            return AllocationReview(supported=True, issues=[])
+        return execute(stage, instruction, payload, result_type, model_id)
+    result = run(req, executor)
+    assert result.quality.passed
+    assert len(result.test_cases) == 2

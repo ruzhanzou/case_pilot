@@ -44,7 +44,7 @@ def main(output_path, expressions=False):
             actual, _ = provider.complete(stage="output_quantity.interpreted", instruction=QUANTITY_INSTRUCTION,
                 payload={"prompt": prompt, "conversation_memory": [{"role": "user", "content": history}]},
                 result_type=OutputQuantity, model_id="doubao-seed-2.0-lite")
-            record.update(actual=actual.model_dump(), passed=actual.model_dump() == expected)
+            record.update(actual=actual.model_dump(), passed={key: getattr(actual, key) for key in expected} == expected)
         except Exception as exc:
             record.update(passed=False, error_type=type(exc).__name__)
         records.append(record)

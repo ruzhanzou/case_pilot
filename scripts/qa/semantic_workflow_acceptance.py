@@ -9,18 +9,19 @@ import asyncio
 import json
 from pathlib import Path
 from uuid import UUID, uuid4
+from time import monotonic
 
 from casepilot_agent import tasks
 from casepilot_api import conversations
 from casepilot_api.database import get_session_factory
 from casepilot_api.main import app
-from casepilot_api.models import Account, Space
+from casepilot_api.models import Account, Space, WorkspaceCandidate, CollectionCaseMembership, GenerationJobStage
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 
 async def main(
-    output_path="artifacts/semantic-acceptance/workflows.json", intents=None
+    output_path="artifacts/semantic-acceptance/workflows.json", intents=None, topup=False, candidate_topup=False
 ):
     assert (
         conversations.settings.agent_provider != "mock"
@@ -75,6 +76,7 @@ async def main(
                 if intents and intent not in intents:
                     continue
                 record = {"intent": intent, "passed": False}
+                scenario_started = monotonic()
                 try:
                     collection = await request(
                         "POST",
@@ -82,8 +84,8 @@ async def main(
                         {"name": f"验收-{intent}"},
                     )
                     cases = []
-                    if intent != "CASE_GENERATE":
-                        for index in range(2):
+                    if intent != "CASE_GENERATE" or topup:
+                        for index in range(17 if topup else 2):
                             cases.append(
                                 await request(
                                     "POST",
@@ -108,9 +110,22 @@ async def main(
                         {"space_id": space, "collection_id": collection["id"]},
                     )
                     cid = conversation["id"]
+                    baseline_candidates = {}
+                    if candidate_topup:
+                        with get_session_factory()() as db:
+                            for index, case in enumerate(cases):
+                                snapshot = {**case, "id": f"OLD-{index}", "test_point_ids": ["P-existing"]}
+                                baseline_candidates[snapshot["id"]] = snapshot
+                                db.add(WorkspaceCandidate(conversation_id=UUID(cid), ref=snapshot["id"],
+                                    snapshot=snapshot, status="candidate", position=index))
+                            db.execute(delete(CollectionCaseMembership).where(
+                                CollectionCaseMembership.collection_id == UUID(collection["id"])))
+                            db.commit()
                     prompt = template.format(
                         case_key=cases[0]["case_key"] if cases else ""
                     )
+                    if topup:
+                        prompt = "为登录系统生成测试用例。17个case太少了，增加到30个，已有用例保持不变。"
                     record.update(prompt=prompt, conversation_id=cid)
                     turn = await request(
                         "POST", f"/conversations/{cid}/messages", {"content": prompt}
@@ -176,9 +191,14 @@ async def main(
                         )
                     elif intent == "CASE_GENERATE":
                         state = await request("GET", f"/conversations/{cid}")
+                        if candidate_topup:
+                            before = {c["ref"]: c["snapshot"] for c in state["candidates"]}
+                            assert all(before.get(ref) == snapshot for ref, snapshot in baseline_candidates.items()), "planning discarded existing candidates"
                         brief = state["test_briefs"][-1]
                         points = brief["content"]["planning"]["test_points"]
-                        assert len(points) == 2, len(points)
+                        assert points
+                        if not topup:
+                            assert len(points) == 2, len(points)
                         turn = await request(
                             "POST",
                             f"/workspaces/{cid}/test-briefs/confirm",
@@ -193,15 +213,42 @@ async def main(
                         result = await asyncio.to_thread(
                             tasks.generate_test_cases.run, turn["action"]["job_id"]
                         )
+                        record["generation_result"] = result
+                        generated_job = await request(
+                            "GET", f"/generation-jobs/{turn['action']['job_id']}"
+                        )
+                        record["generation_status"] = generated_job["status"]
+                        if generated_job["status"] != "completed":
+                            with get_session_factory()() as db:
+                                stages = db.scalars(select(GenerationJobStage).where(
+                                    GenerationJobStage.generation_job_id == UUID(turn['action']['job_id']),
+                                    GenerationJobStage.stage.in_(['test_case.allocated', 'test_case.allocation_reviewed'])
+                                )).all()
+                                record['allocation_diagnostics'] = [
+                                    {'stage': row.stage, 'output': row.output_payload} for row in stages]
+                        record["generation_output"] = generated_job.get("output_payload")
+                        record["generation_error"] = generated_job.get("error_code")
                         assert "error" not in result, result
                         state = await request("GET", f"/conversations/{cid}")
-                        assert len(state["candidates"]) == 2, len(state["candidates"])
-                        record["generated_count"] = 2
+                        expected = 30 if candidate_topup else 13 if topup else 2
+                        record["generated_count"] = len(state["candidates"])
+                        assert len(state["candidates"]) == expected, len(state["candidates"])
+                        if topup:
+                            remaining = await request("GET", f"/collections/{collection['id']}/test-cases")
+                            if candidate_topup:
+                                assert not remaining
+                                current = {c["ref"]: c["snapshot"] for c in state["candidates"]}
+                                assert all(current.get(ref) == snapshot for ref, snapshot in baseline_candidates.items())
+                            else:
+                                assert remaining == cases, "existing cases changed"
+                            record["total_count"] = len(remaining) + len(state["candidates"])
+                            assert record["total_count"] == 30
                     record["passed"] = True
                 except Exception as error:
                     record.update(
                         error_type=type(error).__name__, error=str(error)[:800]
                     )
+                record["elapsed_seconds"] = round(monotonic() - scenario_started, 3)
                 records.append(record)
                 output.write_text(json.dumps(records, ensure_ascii=False, indent=2))
                 print(json.dumps(record, ensure_ascii=False), flush=True)
@@ -225,5 +272,7 @@ if __name__ == "__main__":
         "--output", default="artifacts/semantic-acceptance/workflows.json"
     )
     parser.add_argument("--intents", nargs="+")
+    parser.add_argument("--topup", action="store_true")
+    parser.add_argument("--candidate-topup", action="store_true")
     args = parser.parse_args()
-    raise SystemExit(asyncio.run(main(args.output, args.intents)))
+    raise SystemExit(asyncio.run(main(args.output, ["CASE_GENERATE"] if args.topup or args.candidate_topup else args.intents, args.topup or args.candidate_topup, args.candidate_topup)))

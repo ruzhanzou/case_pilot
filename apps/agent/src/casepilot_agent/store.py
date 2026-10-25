@@ -1428,7 +1428,9 @@ class JobStore:
             workspace_candidates.c.conversation_id == conversation_id,
             workspace_candidates.c.status == "candidate",
         ]
-        if planning:
+        if planning.get("generation_budget", {}).get("preserve_existing"):
+            archive_filter.append(workspace_candidates.c.generation_job_id == job["id"])
+        elif planning:
             # Replace only coverage actually produced. A failed slot must not
             # erase its previous candidate, nor a sibling point sharing a case.
             selected = {point["id"] for point in planning.get("test_points", [])}
@@ -1479,10 +1481,21 @@ class JobStore:
         candidate_ids: list[str] = []
         for position, draft in enumerate(drafts):
             ref = str(draft["id"])
+            preview_ref = ref
+            if planning.get("generation_budget", {}).get("preserve_existing"):
+                conflict = connection.scalar(select(workspace_candidates.c.id).where(
+                    workspace_candidates.c.conversation_id == conversation_id,
+                    workspace_candidates.c.ref == ref,
+                    workspace_candidates.c.status == "candidate",
+                    workspace_candidates.c.generation_job_id.is_distinct_from(job["id"]),
+                ).limit(1))
+                if conflict:
+                    ref = f"{ref[:110]}-append-{str(job['id'])}"
+                    draft = {**draft, "id": ref}
             preview_id = connection.scalar(
                 select(workspace_candidates.c.id).where(
                     workspace_candidates.c.generation_job_id == job["id"],
-                    workspace_candidates.c.ref == ref,
+                    workspace_candidates.c.ref == preview_ref,
                     workspace_candidates.c.status == "generating",
                 )
             )
@@ -1493,6 +1506,7 @@ class JobStore:
                         workspace_candidates.c.id == preview_id,
                     )
                     .values(
+                        ref=ref,
                         snapshot=draft,
                         position=position,
                         included=True,

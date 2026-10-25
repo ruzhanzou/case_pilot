@@ -72,3 +72,50 @@ def test_incremental_point_budget_receives_retained_plan_and_replacements():
     assert requested_point_count('原来的两个不动，再加一个', execute,
                                  planning_context=context) == 1
     assert execute.call_args.args[2]['planning_context'] == context
+
+
+@pytest.mark.parametrize("mode, expected", [("new", 30), ("total", 13)])
+def test_total_and_additional_budgets_use_live_inventory(mode, expected):
+    execute = Mock(return_value=OutputQuantity(case_count=30, case_count_mode=mode))
+    request = GenerationRequest(prompt="增加到30个", confirmed_plan={
+        "existing_cases": [{"id": str(i)} for i in range(17)]})
+    assert requested_case_count(request, execute) == expected
+    assert len(execute.call_args.args[2]["existing_cases"]) == 17
+
+
+@pytest.mark.parametrize("cases", [None, [{"id": "a"}, {"id": "a"}]])
+def test_total_requires_valid_inventory(cases):
+    from casepilot_agent.quantity import resolve_case_budget
+    with pytest.raises(ValueError):
+        resolve_case_budget(OutputQuantity(case_count=30, case_count_mode="total"), cases)
+
+
+def test_total_does_not_generate_or_delete_when_target_already_met():
+    from casepilot_agent.quantity import resolve_case_budget
+    with pytest.raises(ValueError, match="无需新增"):
+        resolve_case_budget(OutputQuantity(case_count=1, case_count_mode="total"), [{"id": "a"}])
+
+
+def test_module_total_excludes_unrelated_inventory():
+    from casepilot_agent.quantity import resolve_case_budget
+    cases = [{'id': str(i)} for i in range(37)]
+    quantity = OutputQuantity(case_count=30, case_count_mode='total',
+                              scope_case_ids=[str(i) for i in range(17)])
+    assert resolve_case_budget(quantity, cases) == 13
+
+
+def test_scope_cannot_invent_or_repeat_asset_ids():
+    from casepilot_agent.quantity import resolve_case_budget
+    for ids in [['foreign'], ['a', 'a']]:
+        with pytest.raises(ValueError):
+            resolve_case_budget(OutputQuantity(case_count=30, case_count_mode='total',
+                                               scope_case_ids=ids), [{'id': 'a'}])
+
+
+def test_additional_budget_reserves_unique_reuse_outputs():
+    execute = Mock(return_value=OutputQuantity(case_count=13, count_includes_reuse=False,
+                                               preserve_existing=True))
+    request = GenerationRequest(prompt='复用17条再新增13条', confirmed_plan={'reuse': {
+        'decisions': [{'action': 'reuse', 'source': {'key': str(i)}} for i in range(17)]}})
+    assert requested_case_count(request, execute) == 30
+    assert request.confirmed_plan['generation_budget']['preserve_existing']
