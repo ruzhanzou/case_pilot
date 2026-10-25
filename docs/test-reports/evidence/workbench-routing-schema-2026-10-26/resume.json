@@ -1,0 +1,137 @@
+[
+  {
+    "content": "改成P2",
+    "expected_intent": "CASE_MODIFY",
+    "expected_resume": true,
+    "passed": true,
+    "actual": [
+      {
+        "intent": "CASE_MODIFY",
+        "instruction": "改成P2",
+        "confidence": 1.0,
+        "target_kind": "module",
+        "requires_confirmation": true,
+        "reason_codes": [
+          "续接待澄清修改任务，补充修改要求"
+        ],
+        "depends_on": null,
+        "target_text": "登录模块用例",
+        "action_evidence": "改成P2",
+        "changes": [
+          "优先级改为P2"
+        ],
+        "constraints": [
+          "标题保持不变"
+        ],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": "2d1b1db9-bca1-4477-b16a-12ec77815f2a",
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "CHANGESET_PREPARE",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "content": "只改前两条，优先级P1",
+    "expected_intent": "CASE_MODIFY",
+    "expected_resume": true,
+    "passed": true,
+    "actual": [
+      {
+        "intent": "CASE_MODIFY",
+        "instruction": "只改前两条，优先级P1",
+        "confidence": 1.0,
+        "target_kind": "module",
+        "requires_confirmation": true,
+        "reason_codes": [
+          "续接待澄清的现有修改任务，补充修改范围和优先级要求"
+        ],
+        "depends_on": null,
+        "target_text": "登录模块前两条用例",
+        "action_evidence": "只改前两条，优先级P1",
+        "changes": [
+          "将优先级修改为P1"
+        ],
+        "constraints": [
+          "只修改前两条用例",
+          "标题保持不变"
+        ],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": "2d1b1db9-bca1-4477-b16a-12ec77815f2a",
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "CHANGESET_PREPARE",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "content": "先查询支付模块的用例",
+    "expected_intent": "CASE_QUERY",
+    "expected_resume": false,
+    "passed": true,
+    "actual": [
+      {
+        "intent": "CASE_QUERY",
+        "instruction": "先查询支付模块的用例",
+        "confidence": 1.0,
+        "target_kind": "module",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "用户明确请求查询支付模块用例"
+        ],
+        "depends_on": null,
+        "target_text": "支付模块",
+        "action_evidence": "先查询支付模块的用例",
+        "changes": [],
+        "constraints": [
+          "原来的登录模块修改任务暂不执行"
+        ],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "CASE_SEARCH",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "content": "解释一下等价类划分",
+    "expected_intent": "KNOWLEDGE_QA",
+    "expected_resume": false,
+    "passed": true,
+    "actual": [
+      {
+        "intent": "KNOWLEDGE_QA",
+        "instruction": "解释一下等价类划分",
+        "confidence": 1.0,
+        "target_kind": "none",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "用户请求解释等价类划分概念"
+        ],
+        "depends_on": null,
+        "target_text": "",
+        "action_evidence": "",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "question",
+        "query_presentation": "cases",
+        "action": "ANSWER_QUESTION",
+        "routing_source": "semantic"
+      }
+    ]
+  }
+]

@@ -1,0 +1,823 @@
+[
+  {
+    "prompt": "帮我处理一下",
+    "expected": [
+      "UNRESOLVED"
+    ],
+    "actual": [
+      "UNRESOLVED"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "UNRESOLVED",
+        "instruction": "帮我处理一下",
+        "confidence": 1.0,
+        "target_kind": "none",
+        "requires_confirmation": true,
+        "reason_codes": [
+          "no_specific_operation",
+          "no_target_provided"
+        ],
+        "depends_on": null,
+        "target_text": "帮我处理一下",
+        "action_evidence": "帮我处理一下",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [
+          "请问您需要执行什么具体操作，处理什么内容？"
+        ],
+        "clarification_kind": "other",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "CLARIFY_INTENT",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "重写登录模块用例",
+    "expected": [
+      "CASE_MODIFY"
+    ],
+    "actual": [
+      "CASE_MODIFY"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "CASE_MODIFY",
+        "instruction": "重写登录模块用例",
+        "confidence": 0.95,
+        "target_kind": "module",
+        "requires_confirmation": true,
+        "reason_codes": [
+          "rewrite_existing_module_test_cases"
+        ],
+        "depends_on": null,
+        "target_text": "登录模块",
+        "action_evidence": "重写登录模块用例",
+        "changes": [
+          "重写登录模块用例"
+        ],
+        "constraints": [],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "CHANGESET_PREPARE",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "请改写登录模块用例",
+    "expected": [
+      "CASE_MODIFY"
+    ],
+    "actual": [
+      "CASE_MODIFY"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "CASE_MODIFY",
+        "instruction": "请改写登录模块用例",
+        "confidence": 1.0,
+        "target_kind": "module",
+        "requires_confirmation": true,
+        "reason_codes": [
+          "rewrite_existing_module_cases"
+        ],
+        "depends_on": null,
+        "target_text": "登录模块",
+        "action_evidence": "请改写登录模块用例",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [
+          "请说明具体的改写要求和改动方向"
+        ],
+        "clarification_kind": "requirements",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "CHANGESET_PREPARE",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "重写登录模块用例，步骤写得更清楚",
+    "expected": [
+      "CASE_MODIFY"
+    ],
+    "actual": [
+      "CASE_MODIFY"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "CASE_MODIFY",
+        "instruction": "重写登录模块用例，步骤写得更清楚",
+        "confidence": 1.0,
+        "target_kind": "module",
+        "requires_confirmation": true,
+        "reason_codes": [
+          "重写已有模块用例",
+          "优化用例步骤描述"
+        ],
+        "depends_on": null,
+        "target_text": "登录模块用例",
+        "action_evidence": "重写登录模块用例",
+        "changes": [
+          "重写用例，步骤写得更清楚"
+        ],
+        "constraints": [],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "CHANGESET_PREPARE",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "重写登录模块用例并生成一套新版",
+    "expected": [
+      "CASE_GENERATE"
+    ],
+    "actual": [
+      "CASE_GENERATE"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "CASE_GENERATE",
+        "instruction": "重写登录模块用例并生成一套新版",
+        "confidence": 0.95,
+        "target_kind": "module",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "用户明确要求生成新版登录模块用例"
+        ],
+        "depends_on": null,
+        "target_text": "登录模块",
+        "action_evidence": "重写登录模块用例并生成一套新版",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "BRIEF_CREATE",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "如何重写登录模块用例？",
+    "expected": [
+      "KNOWLEDGE_QA"
+    ],
+    "actual": [
+      "KNOWLEDGE_QA"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "KNOWLEDGE_QA",
+        "instruction": "如何重写登录模块用例？",
+        "confidence": 1.0,
+        "target_kind": "none",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "knowledge_inquiry",
+          "ask_method"
+        ],
+        "depends_on": null,
+        "target_text": "",
+        "action_evidence": "",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "question",
+        "query_presentation": "cases",
+        "action": "ANSWER_QUESTION",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "不要重写登录模块用例",
+    "expected": [
+      "KNOWLEDGE_QA"
+    ],
+    "actual": [
+      "KNOWLEDGE_QA"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "KNOWLEDGE_QA",
+        "instruction": "不要重写登录模块用例",
+        "confidence": 1.0,
+        "target_kind": "none",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "user_negate_operation_request"
+        ],
+        "depends_on": null,
+        "target_text": "",
+        "action_evidence": "",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "negation",
+        "query_presentation": "cases",
+        "action": "ANSWER_QUESTION",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "不要将用例 CASE-176BE2 的标题改为「登录成功」。",
+    "expected": [
+      "KNOWLEDGE_QA"
+    ],
+    "actual": [
+      "KNOWLEDGE_QA"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "KNOWLEDGE_QA",
+        "instruction": "不要将用例 CASE-176BE2 的标题改为「登录成功」。",
+        "confidence": 1.0,
+        "target_kind": "none",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "user_negate_proposed_modify"
+        ],
+        "depends_on": null,
+        "target_text": "",
+        "action_evidence": "",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "negation",
+        "query_presentation": "cases",
+        "action": "ANSWER_QUESTION",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "生成2条登录用例，供我审阅",
+    "expected": [
+      "CASE_GENERATE"
+    ],
+    "actual": [
+      "CASE_GENERATE"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "CASE_GENERATE",
+        "instruction": "生成2条登录用例，供我审阅",
+        "confidence": 1.0,
+        "target_kind": "module",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "用户明确请求生成指定数量的登录测试用例"
+        ],
+        "depends_on": null,
+        "target_text": "登录",
+        "action_evidence": "生成2条登录用例",
+        "changes": [],
+        "constraints": [
+          "生成结果供用户审阅"
+        ],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "BRIEF_CREATE",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "为登录生成七条测试用例",
+    "expected": [
+      "CASE_GENERATE"
+    ],
+    "actual": [
+      "CASE_GENERATE"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "CASE_GENERATE",
+        "instruction": "为登录生成七条测试用例",
+        "confidence": 1.0,
+        "target_kind": "module",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "explicit_case_generate_request"
+        ],
+        "depends_on": null,
+        "target_text": "登录",
+        "action_evidence": "为登录生成七条测试用例",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "BRIEF_CREATE",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "把用例AUTH-001的优先级改为P0，其余不变",
+    "expected": [
+      "CASE_MODIFY"
+    ],
+    "actual": [
+      "CASE_MODIFY"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "CASE_MODIFY",
+        "instruction": "把用例AUTH-001的优先级改为P0，其余不变",
+        "confidence": 1.0,
+        "target_kind": "case",
+        "requires_confirmation": true,
+        "reason_codes": [
+          "modify_case_field",
+          "clear_target"
+        ],
+        "depends_on": null,
+        "target_text": "AUTH-001",
+        "action_evidence": "把用例AUTH-001的优先级改为P0",
+        "changes": [
+          "优先级改为P0"
+        ],
+        "constraints": [
+          "其余不变"
+        ],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "CHANGESET_PREPARE",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "删除用例AUTH-001",
+    "expected": [
+      "CASE_DELETE"
+    ],
+    "actual": [
+      "CASE_DELETE"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "CASE_DELETE",
+        "instruction": "删除用例AUTH-001",
+        "confidence": 1.0,
+        "target_kind": "case",
+        "requires_confirmation": true,
+        "reason_codes": [
+          "用户明确请求删除指定编号的用例"
+        ],
+        "depends_on": null,
+        "target_text": "AUTH-001",
+        "action_evidence": "删除用例AUTH-001",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "CASE_DELETE_PREPARE",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "查询当前集合中登录模块的P0用例",
+    "expected": [
+      "CASE_QUERY"
+    ],
+    "actual": [
+      "CASE_QUERY"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "CASE_QUERY",
+        "instruction": "查询当前集合中登录模块的P0用例",
+        "confidence": 1.0,
+        "target_kind": "module",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "user_query_specified_module_priority_cases"
+        ],
+        "depends_on": null,
+        "target_text": "当前集合中登录模块",
+        "action_evidence": "查询当前集合中登录模块的P0用例",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "CASE_SEARCH",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "请评审当前集合的用例质量，列出问题",
+    "expected": [
+      "CASE_REVIEW"
+    ],
+    "actual": [
+      "CASE_REVIEW"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "CASE_REVIEW",
+        "instruction": "请评审当前集合的用例质量，列出问题",
+        "confidence": 1.0,
+        "target_kind": "case",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "user_requested_use_case_quality_review"
+        ],
+        "depends_on": null,
+        "target_text": "当前集合的用例",
+        "action_evidence": "请评审当前集合的用例质量，列出问题",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [
+          "请明确需要评审的用例集合范围"
+        ],
+        "clarification_kind": "scope",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "CASE_REVIEW",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "找出当前集合中重复的用例",
+    "expected": [
+      "CASE_DEDUP"
+    ],
+    "actual": [
+      "CASE_DEDUP"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "CASE_DEDUP",
+        "instruction": "找出当前集合中重复的用例",
+        "confidence": 1.0,
+        "target_kind": "none",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "USER_REQUEST_FIND_DUPLICATE_CASE"
+        ],
+        "depends_on": null,
+        "target_text": "当前集合",
+        "action_evidence": "找出当前集合中重复的用例",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "CASE_DEDUP",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "分析当前集合的测试覆盖缺口",
+    "expected": [
+      "COVERAGE_ANALYZE"
+    ],
+    "actual": [
+      "COVERAGE_ANALYZE"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "COVERAGE_ANALYZE",
+        "instruction": "分析当前集合的测试覆盖缺口",
+        "confidence": 1.0,
+        "target_kind": "none",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "analyze_coverage_gap"
+        ],
+        "depends_on": null,
+        "target_text": "当前集合",
+        "action_evidence": "分析当前集合的测试覆盖缺口",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "COVERAGE_ANALYZE",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "请解释等价类划分是什么",
+    "expected": [
+      "KNOWLEDGE_QA"
+    ],
+    "actual": [
+      "KNOWLEDGE_QA"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "KNOWLEDGE_QA",
+        "instruction": "请解释等价类划分是什么",
+        "confidence": 1.0,
+        "target_kind": "none",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "explanation_request",
+          "testing_concept_query"
+        ],
+        "depends_on": null,
+        "target_text": "",
+        "action_evidence": "",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "question",
+        "query_presentation": "cases",
+        "action": "ANSWER_QUESTION",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "你好，今天过得怎么样",
+    "expected": [
+      "SMALL_TALK"
+    ],
+    "actual": [
+      "SMALL_TALK"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "SMALL_TALK",
+        "instruction": "你好，今天过得怎么样",
+        "confidence": 1.0,
+        "target_kind": "none",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "user_initiated_daily_greeting"
+        ],
+        "depends_on": null,
+        "target_text": "",
+        "action_evidence": "",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "ANSWER_QUESTION",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "不要删除，解释一下删除用例需要哪些步骤",
+    "expected": [
+      "KNOWLEDGE_QA"
+    ],
+    "actual": [
+      "KNOWLEDGE_QA"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "KNOWLEDGE_QA",
+        "instruction": "不要删除，解释一下删除用例需要哪些步骤",
+        "confidence": 1.0,
+        "target_kind": "none",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "user_asks_explanation_delete_steps",
+          "negates_delete_execution"
+        ],
+        "depends_on": null,
+        "target_text": "",
+        "action_evidence": "",
+        "changes": [],
+        "constraints": [
+          "不要删除"
+        ],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "question",
+        "query_presentation": "cases",
+        "action": "ANSWER_QUESTION",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "将‘删除全部用例’翻译成英文",
+    "expected": [
+      "KNOWLEDGE_QA"
+    ],
+    "actual": [
+      "KNOWLEDGE_QA"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "KNOWLEDGE_QA",
+        "instruction": "将‘删除全部用例’翻译成英文",
+        "confidence": 1.0,
+        "target_kind": "none",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "user_request_translation"
+        ],
+        "depends_on": null,
+        "target_text": "删除全部用例",
+        "action_evidence": "",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "ANSWER_QUESTION",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "先查询登录模块用例，然后删除刚才查询到的用例",
+    "expected": [
+      "CASE_QUERY",
+      "CASE_DELETE"
+    ],
+    "actual": [
+      "CASE_QUERY",
+      "CASE_DELETE"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "CASE_QUERY",
+        "instruction": "查询登录模块的测试用例",
+        "confidence": 0.99,
+        "target_kind": "module",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "查询指定模块测试用例"
+        ],
+        "depends_on": null,
+        "target_text": "登录模块",
+        "action_evidence": "先查询登录模块用例",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "CASE_SEARCH",
+        "routing_source": "semantic"
+      },
+      {
+        "intent": "CASE_DELETE",
+        "instruction": "删除第一步查询到的用例",
+        "confidence": 0.98,
+        "target_kind": "previous_result",
+        "requires_confirmation": true,
+        "reason_codes": [
+          "删除前一步查询得到的测试用例"
+        ],
+        "depends_on": 0,
+        "target_text": "刚才查询到的用例",
+        "action_evidence": "然后删除刚才查询到的用例",
+        "changes": [],
+        "constraints": [],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "CASE_DELETE_PREPARE",
+        "routing_source": "semantic"
+      }
+    ]
+  },
+  {
+    "prompt": "参考历史登录用例，生成一套新版候选供我审阅",
+    "expected": [
+      "CASE_GENERATE"
+    ],
+    "actual": [
+      "CASE_GENERATE"
+    ],
+    "passed": true,
+    "operations": [
+      {
+        "intent": "CASE_GENERATE",
+        "instruction": "参考历史登录用例，生成一套新版候选供我审阅",
+        "confidence": 1.0,
+        "target_kind": "module",
+        "requires_confirmation": false,
+        "reason_codes": [
+          "explicit_generate_new_case_candidate"
+        ],
+        "depends_on": null,
+        "target_text": "历史登录用例",
+        "action_evidence": "生成一套新版候选",
+        "changes": [],
+        "constraints": [
+          "生成后供用户审阅"
+        ],
+        "clarification_questions": [],
+        "clarification_kind": "none",
+        "uses_selected_targets": false,
+        "resume_operation_id": null,
+        "speech_act": "request",
+        "query_presentation": "cases",
+        "action": "BRIEF_CREATE",
+        "routing_source": "semantic"
+      }
+    ]
+  }
+]

@@ -288,7 +288,7 @@ def test_sdk_router_uses_the_configured_chat_completions_provider(
             captured["prompt"] = prompt
             captured["max_turns"] = max_turns
             return SimpleNamespace(
-                final_output=IntentPlanDraft.model_validate(
+                final_output=captured["agent"]["output_type"].model_validate(
                     {
                         "operations": [
                             {
@@ -326,7 +326,12 @@ def test_sdk_router_uses_the_configured_chat_completions_provider(
     assert captured["client"]["max_retries"] == 0
     assert captured["max_turns"] == 1
     assert captured["model"]["model"] == "doubao-test"
-    assert captured["agent"]["output_type"] is IntentPlanDraft
+    assert captured["agent"]["output_type"] is agent_router.SemanticIntentPlan
+    fields = agent_router.SemanticIntentOperation.model_fields
+    assert "action" not in fields
+    assert "routing_source" not in fields
+    assert "action_evidence" in fields
+    assert plan.operations[0].action == "ANSWER_QUESTION"
     assert captured["tracing_disabled"] is True
 
     assert json.loads(captured["prompt"])["available_attachments"] == {"document_ids": ["checked-document"]}

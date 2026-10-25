@@ -596,3 +596,19 @@ async def test_conflict_retry_builds_fresh_preview_before_dispatch(draft, entry)
     assert accepted.status_code == 202, accepted.text
     assert accepted.json()['action']['job_id']
     assert len(dispatched) == 2
+
+
+def test_live_reply_requires_an_explicit_scope_decision():
+    from pydantic import ValidationError
+    from casepilot_api.rewrite_dialogue import SemanticRewriteReply
+
+    with pytest.raises(ValidationError, match='scope_action'):
+        SemanticRewriteReply.model_validate({'action': 'update', 'requirements': '优先级P0'})
+    reply = SemanticRewriteReply.model_validate({
+        'action': 'update', 'scope_action': 'replace',
+        'scope_instruction': '当前两条登录用例加上支付用例TC-PAY-01',
+        'requirements': '所有目标优先级P0，其他字段不变',
+    })
+    assert reply.scope_action == 'replace'
+    with pytest.raises(ValidationError, match='replacement scope needs an instruction'):
+        SemanticRewriteReply.model_validate({'action': 'update', 'scope_action': 'replace'})

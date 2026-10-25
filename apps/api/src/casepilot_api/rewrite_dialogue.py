@@ -37,6 +37,15 @@ class RewriteReply(BaseModel):
         return self
 
 
+class SemanticRewriteReply(RewriteReply):
+    # An omitted model decision must not silently authorize reuse of old scope.
+    scope_action: Literal["preserve", "replace"] = Field(description=(
+        "必须显式判断本轮是否改变目标成员。新增、追加、也加入、排除、换成、只改部分都选replace；"
+        "保留原来的目标同时追加新目标也是replace，scope_instruction写完整并集。"
+        "仅修改字段值且目标成员不变才选preserve。"
+    ))
+
+
 def interpret_rewrite_reply(content: str, state: dict, *, provider: str, model_name: str,
                             base_url: str, api_key: str, timeout_seconds: float,
                             tracing_enabled: bool) -> RewriteReply:
@@ -90,11 +99,11 @@ def interpret_rewrite_reply(content: str, state: dict, *, provider: str, model_n
             "先删掉编号X再改其余，明确要求删除整条用例：additional_intents含CASE_DELETE，action=clarify；"
             "不能偷换成范围排除X。仅本轮不改X、范围排除X才是正常范围更新。删除重复步骤是改写字段，不是删除用例。"
             "若仍缺修改方向则requirements_ready=false。没有可靠依据时clarify，不猜测范围，不替用户确认。"
-            "JSON Schema: " + json.dumps(RewriteReply.model_json_schema(), ensure_ascii=False)
+            "JSON Schema: " + json.dumps(SemanticRewriteReply.model_json_schema(), ensure_ascii=False)
         ),
         model=OpenAIChatCompletionsModel(model=model_name, openai_client=client),
         model_settings=ModelSettings(extra_body={"response_format": {"type": "json_object"}}),
-        output_type=AgentOutputSchema(RewriteReply, strict_json_schema=False),
+        output_type=AgentOutputSchema(SemanticRewriteReply, strict_json_schema=False),
     )
     # Reply interpretation needs identities and current constraints, not revision
     # metadata or full case bodies. Scope selection separately receives bodies.
