@@ -945,6 +945,38 @@ test('NL-SCOPE-UNION-EXCLUDE cross-module addition then exclusion replaces the c
   expect(saved.filter((item:any) => ![b.id, payment.id].includes(item.id))).toEqual(journal.original.filter((item:any) => ![b.id, payment.id].includes(item.id)));
 });
 
+test('NL-ALL-EXCEPT-COUNT collection complement selects exactly three and preserves the excluded case', async ({ page }) => {
+  const s = await setup(page), excluded = s.byKey('TC-REFUND-01');
+  const targets = journal.original.filter((item:any) => item.id !== excluded.id);
+  const ids = targets.map((item:any) => item.id);
+  const preview = await send(page, '当前集合除了 TC-REFUND-01 不动，其余全部三条用例的优先级都改为P0，其他字段保持不变。', false, 2);
+  expect(preview.intent).toBe('CASE_MODIFY');
+  expect(new Set(preview.assistant_message.target_case_ids)).toEqual(new Set(ids));
+  expect(preview.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  expect(preview.action.job_id).toBeFalsy();
+  expect(await s.read()).toEqual(journal.original);
+  await page.reload();
+  const change = await ready(page, await send(page, '确认，排除的那条继续保持不变。', true, 2));
+  expect(new Set(change.items.map((item:any) => item.ref))).toEqual(new Set(ids));
+  expect(change.items).toHaveLength(3);
+  for (const item of change.items) {
+    expect(item.field_diff.map((diff:any) => diff.field)).toEqual(['priority']);
+    expect(item.proposed_snapshot.priority).toBe('P0');
+    expect(item.quality?.passed).not.toBe(false);
+  }
+  expect(await s.read()).toEqual(journal.original);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read();
+  expect(saved).toHaveLength(journal.original.length);
+  expect(saved.find((item:any) => item.id === excluded.id)).toEqual(excluded);
+  for (const target of targets) {
+    const changed = saved.find((item:any) => item.id === target.id);
+    expect(changed.priority).toBe('P0');
+    unchangedExcept(target, changed, ['priority']);
+  }
+});
+
 test('NL-CONFIRM-CORRECTION confirmation with new scope and values only prepares a fresh preview', async ({ page }) => {
   const s = await setup(page), target = s.byKey('TC-LOGIN-02');
   const first = await send(page, '把登录模块两条用例的标题都改成“登录验收”，优先级改成P0，其他字段保持不变。', false, 2);
