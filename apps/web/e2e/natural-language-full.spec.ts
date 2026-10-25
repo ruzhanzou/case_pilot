@@ -855,6 +855,45 @@ for (const remove of [true, false]) test(`NL-STEP-${remove ? 'REMOVE' : 'INSERT'
   expect(saved.filter((c:any) => c.id !== target.id)).toEqual(journal.original.filter((c:any) => c.id !== target.id));
 });
 
+test('NL-DRAFT-QUESTION asking about a preview does not confirm or discard it', async ({ page }) => {
+  const s = await setup(page), target = s.byKey('TC-LOGIN-01');
+  const initial = await send(page, '把 TC-LOGIN-01 的优先级改为P0，其他字段不变。', false, 2);
+  const operationId = initial.assistant_message.metadata.operation_id;
+  const initialState = await get(page, `/conversations/${initial.conversation_id}`);
+  const original = initialState.operation_history.find((op:any) => op.id === operationId);
+  expect(initial.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  await page.reload();
+  const question = await send(page, '这个方案会修改哪些字段？只是问一下，暂时不要执行，原方案先保留。', false, 2);
+  expect(question.action.change_set_id).toBeFalsy();
+  await expect.poll(async () => {
+    const current = await get(page, `/conversations/${initial.conversation_id}`);
+    const answer = current.messages.find((message:any) => message.id === question.assistant_message.id);
+    if (['failed', 'cancelled'].includes(answer?.status)) throw new Error(JSON.stringify(answer));
+    return answer?.status;
+  }, { timeout: 180000 }).not.toBe('running');
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled({ timeout: 180000 });
+  const state = await get(page, `/conversations/${initial.conversation_id}`);
+  journal.questionState = state;
+  const preserved = state.operation_history.find((op:any) => op.id === operationId);
+  expect(preserved.status).toBe(original.status);
+  expect(preserved.related_change_set_id).toBeFalsy();
+  expect(preserved.related_job_id).toBeFalsy();
+  expect(preserved.payload.rewrite_draft).toEqual(original.payload.rewrite_draft);
+  expect(await s.read()).toEqual(journal.original);
+  const response = state.messages.filter((message:any) => message.role === 'assistant').at(-1).content;
+  expect(response).toContain('优先级');
+  expect(response).toContain('P0');
+  await page.reload();
+  const change = await ready(page, await send(page, '确认刚才保留的修改方案。', true, 2));
+  expect(change.items.map((item:any) => item.ref)).toEqual([target.id]);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read(), changed = saved.find((item:any) => item.id === target.id);
+  expect(changed.priority).toBe('P0');
+  unchangedExcept(target, changed, ['priority']);
+  expect(saved.filter((item:any) => item.id !== target.id)).toEqual(journal.original.filter((item:any) => item.id !== target.id));
+});
+
 test('NL-NEW-CONVERSATION pending suggestions remain isolated from a new conversation', async ({ page }) => {
   const s = await setup(page), a = s.byKey('TC-LOGIN-01'), b = s.byKey('TC-LOGIN-02');
   const initial = await send(page, '把 TC-LOGIN-01 的标题改为“旧对话未采纳标题”，其他字段不变。', true, 2);
