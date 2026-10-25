@@ -515,3 +515,52 @@ test('NL-PARTIAL-RECOVERY retries an existing incomplete result without changing
   expect(changedB.priority).toBe('P2'); unchangedExcept(b, changedB, ['priority']);
   expect(saved.filter((c: any) => c.id !== b.id)).toEqual(journal.partialReview.cases.filter((c: any) => c.id !== b.id));
 });
+
+test('NL-MUL-11 modification then deletion waits for both reviews and completes the whole request', async ({ page }) => {
+  const s = await setup(page), a = s.byKey('TC-LOGIN-01'), b = s.byKey('TC-LOGIN-02'), payment = s.byKey('TC-PAY-01');
+  const first = await send(page, '把登录模块全部优先级改为P0，再删除支付模块中的用例 TC-PAY-01，保留退款用例。', false, 2);
+  expect(first.operation_plan.operations.map((op: any) => op.intent)).toEqual(['CASE_MODIFY', 'CASE_DELETE']);
+  const [modify, deletion] = first.operation_plan.operations;
+  expect(deletion.status).toBe('queued');
+  expect(first.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  expect(new Set(first.assistant_message.target_case_ids)).toEqual(new Set([a.id, b.id]));
+  expect(await s.read()).toEqual(journal.original);
+  const confirming = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/resume'), { timeout: 180000 });
+  await page.getByRole('button', { name: '确认修改并生成建议', exact: true }).last().click();
+  const confirmedResponse = await confirming;
+  const confirmedBody = observedBodies.get(confirmedResponse.url()) ?? await confirmedResponse.text();
+  expect(confirmedResponse.ok(), confirmedBody).toBeTruthy();
+  const confirmed = JSON.parse(confirmedBody); journal.turns.push({ confirmation: confirmed });
+  const change = await ready(page, confirmed);
+  expect(change.items.every((item: any) => item.quality?.passed !== false), JSON.stringify(change)).toBeTruthy();
+  expect(new Set(change.items.map((item: any) => item.ref))).toEqual(new Set([a.id, b.id]));
+  expect(await s.read()).toEqual(journal.original);
+  await apply(page);
+  const afterModify = await s.read();
+  for (const original of [a, b]) {
+    const saved = afterModify.find((c: any) => c.id === original.id);
+    expect(saved.priority).toBe('P0'); unchangedExcept(original, saved, ['priority']);
+  }
+  expect(afterModify.filter((c: any) => ![a.id, b.id].includes(c.id))).toEqual(journal.original.filter((c: any) => ![a.id, b.id].includes(c.id)));
+  let pending: any;
+  await expect.poll(async () => {
+    const state = await get(page, `/conversations/${first.conversation_id}`);
+    pending = state.operation_history.find((op: any) => op.id === deletion.id);
+    return pending.status;
+  }, { timeout: 180000 }).toBe('awaiting_confirmation');
+  expect(pending.related_change_set_id).toBeTruthy();
+  const deleteChange = await ready(page, { action: { change_set_id: pending.related_change_set_id } });
+  expect(deleteChange.items.map((item: any) => item.ref)).toEqual([payment.id]);
+  expect(await s.read()).toEqual(afterModify);
+  await page.reload();
+  const notice = page.getByTestId('active-mutation-task-notice');
+  if (await notice.isVisible()) await notice.getByRole('button', { name: '前往工作区审阅', exact: true }).click();
+  const applying = page.waitForResponse(r => r.request().method() === 'POST' && /\/case-change-sets\/[^/]+\/apply$/.test(new URL(r.url()).pathname));
+  await page.locator('.collection-changes__review').getByRole('button', { name: '确认删除已选用例', exact: true }).click();
+  const applied = await applying; expect(applied.ok(), await applied.text()).toBeTruthy();
+  await page.reload();
+  expect(await s.read()).toEqual(afterModify.filter((c: any) => c.id !== payment.id));
+  const state = await get(page, `/conversations/${first.conversation_id}`);
+  journal.completedOperations = state.operation_history.filter((op: any) => [modify.id, deletion.id].includes(op.id));
+  expect(journal.completedOperations.map((op: any) => op.status)).toEqual(['completed', 'completed']);
+});

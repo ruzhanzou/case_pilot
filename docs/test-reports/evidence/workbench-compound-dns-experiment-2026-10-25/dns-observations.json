@@ -1,0 +1,33 @@
+{
+  "original_getaddrinfo_seconds": [
+    4.054,
+    4.056,
+    4.05
+  ],
+  "direct_dns_probe": {
+    "embedded_127.0.0.11": "A/AAAA timed out at 2 seconds",
+    "upstream_192.168.0.1": "A/AAAA timed out at 2 seconds",
+    "upstream_8.8.8.8": {
+      "A_seconds": 0.048,
+      "AAAA_seconds": 0.062
+    }
+  },
+  "experimental_resolver": "nameserver 127.0.0.11; nameserver 8.8.8.8; options ndots:0 timeout:1 attempts:1",
+  "experimental_internal_resolution_seconds": {
+    "database": 0.008,
+    "queue": 0.001
+  },
+  "experimental_model_resolution_seconds": [
+    2.068,
+    1.024,
+    1.069,
+    1.02,
+    2.019,
+    1.113,
+    1.06,
+    1.02
+  ],
+  "browser_revalidation": "failed at scope analysis; returned clarification without mutation",
+  "api_and_worker_resolver_restored": true,
+  "causality": "Faster DNS did not establish full-flow reliability; the experiment is not proof that DNS caused the scope failure."
+}
