@@ -162,3 +162,30 @@ def test_bound_collection_switch_requires_original_user_evidence(
             interpret_generation_choice('切换到订单集合', settings, **arguments)
     else:
         assert interpret_generation_choice('切换到订单集合', settings, **arguments).target_collection_id == expected
+
+
+@pytest.mark.parametrize('catalog,case_ids,narrow', [(None, None, False), ([], None, True),
+                                                    ([], ['a'], False)])
+def test_collection_only_interpretation_omits_unrelated_generation_decisions(monkeypatch, catalog, case_ids, narrow):
+    from types import SimpleNamespace
+    from agents import Runner
+    from casepilot_api.config import get_settings
+    from casepilot_api.generation_strategy import interpret_generation_choice
+
+    def run(agent, prompt, **kwargs):
+        fields = set(agent.output_type.model_fields)
+        collection_fields = {'target_collection_id', 'collection_reference', 'target_collection_evidence'}
+        if narrow:
+            assert fields == collection_fields
+            assert 'requested_count' not in agent.instructions
+            assert 'brief_action' not in agent.instructions
+        else:
+            assert fields > collection_fields
+            assert 'selected_ids' in fields and 'brief_action' in fields
+        return SimpleNamespace(final_output=agent.output_type())
+
+    monkeypatch.setattr(Runner, 'run_sync', run)
+    settings = get_settings().model_copy(update={'agent_provider': 'openai_compatible', 'agent_api_key': 'fixture'})
+    result = interpret_generation_choice('查询当前集合', settings, case_ids=case_ids, collection_catalog=catalog)
+    assert result.target_collection_id is None
+    assert result.strategy == 'generate'

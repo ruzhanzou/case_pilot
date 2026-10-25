@@ -155,8 +155,7 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
 
     from casepilot_api.agent_router import _run_routing_agent
 
-    class Choice(BaseModel):
-        strategy: Literal["generate", "select", "select_and_generate"] = "generate"
+    class CollectionReference(BaseModel):
         target_collection_id: str | None = Field(default=None, description=(
             "明确作为本次操作目标的用例集合ID。普通业务名称、测试对象、参考来源、"
             "否定切换以及要求继续当前集合时均为null。不能仅按名称重合选集合。"
@@ -165,6 +164,9 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
         target_collection_evidence: str = Field(default="", description=(
             "仅named时填写：用户本轮明确指定目标集合的连续原文片段。不得抄目录名称或改写原话。"
         ))
+
+    class Choice(CollectionReference):
+        strategy: Literal["generate", "select", "select_and_generate"] = "generate"
         strategy_change_requested: bool = Field(default=False, description="仅当前用户明确要求切换生成策略、搜索或选择历史用例资产时为true；编辑测试规划、保留测试点、复用登录会话均为false。")
         strategy_question: bool = False
         brief_action: Literal["none", "revise", "confirm"] = Field(
@@ -199,24 +201,28 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
     client = AsyncOpenAI(api_key=settings.agent_api_key,
                          base_url=settings.agent_base_url.rstrip("/"),
                          timeout=settings.routing_timeout_seconds, max_retries=0)
+    collection_instructions = (
+        "target_collection_id仅返回用户指向的目标用例集合ID，来自collection_catalog；"
+        "没有明确指向、多个集合或只是提到同名业务时返回null。"
+        "explicit_collection_only为true时，必须明确将该名称当作集合，普通测试对象名称不算。"
+        "current_collection_id是当前对话绑定的集合。当前集合/这个集合是collection_reference=current，target_collection_id=null。"
+        "例如查询当前集合的登录用例，即使目录有账号登录验收用例集，也不得改指那个集合。"
+        "明确指定其他目标集合才是named，并填写target_collection_evidence为用户本轮连续原文；没有目标集合引用是none。"
+        "参考来源集合不是要切换的目标集合；否定切换、引用示例也不是目标。"
+        "例如目录有订单集合，用户说为订单业务增加用例，继续维护当前集合，"
+        "target_collection_id必须是null；只有说在订单集合操作才选对应ID。"
+    )
+    # Collection gates need no generation, retry, or numeric-selection decisions.
+    collection_only = collection_catalog is not None and case_ids is None and not conversation_memory
     agent = Agent(
-        name="Generation and asset choice",
-        instructions=(
+        name="Collection reference" if collection_only else "Generation and asset choice",
+        instructions=collection_instructions if collection_only else (
             "理解当前用户的生成策略和已展示资产的选择。默认generate。"
             "用例太少、17个case增加到30个、继续补充用例属于continue_cases=true，brief_action=none；"
             "不要把增加用例数量理解为修改测试点数量。明确修改测试点或需求时continue_cases=false。"
             "保留当前已有用例再补数量不是搜索或复用历史资产，strategy=generate、strategy_change_requested=false。"
             "仅修改测试点、替换测试点、保留原有规划不是复用历史用例资产，也不是切换生成模式。"
             "这些情况brief_action=revise、strategy_change_requested=false；复用退出前同一会话是业务动作，不是复用用例。"
-            "target_collection_id仅返回用户指向的目标用例集合ID，来自collection_catalog；"
-            "没有明确指向、多个集合或只是提到同名业务时返回null。"
-            "explicit_collection_only为true时，必须明确将该名称当作集合，普通测试对象名称不算。"
-            "current_collection_id是当前对话绑定的集合。当前集合/这个集合是collection_reference=current，target_collection_id=null。"
-            "例如查询当前集合的登录用例，即使目录有账号登录验收用例集，也不得改指那个集合。"
-            "明确指定其他目标集合才是named，并填写target_collection_evidence为用户本轮连续原文；没有目标集合引用是none。"
-            "参考来源集合不是要切换的目标集合；否定切换、引用示例也不是目标。"
-            "例如目录有订单集合，用户说为订单业务增加用例，继续维护当前集合，"
-            "target_collection_id必须是null；只有说在订单集合操作才选对应ID。"
             "confirms_brief表示明确认可当前测试说明或测试规划并要求继续生成用例。"
             "否定确认、仅询问确认方法、引用他人确认、附加修改条件都不算确认。"
             "先判断brief_action，revise和confirm互斥。增加/删除/修改测试点必须revise，"
@@ -243,9 +249,9 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
             "Never replace the user's requested count with the number of available IDs. "
             "If the user says use these three but only two IDs exist, return requested_count=3, "
             "ambiguous=true and selected_ids=null."
-        ),
+        ) + collection_instructions,
         model=OpenAIChatCompletionsModel(model=settings.routing_model, openai_client=client),
-        output_type=Choice,
+        output_type=CollectionReference if collection_only else Choice,
     )
     result = _run_routing_agent(Runner, agent, json.dumps(
             {"message": content, "available_ids": case_ids or [],
@@ -253,7 +259,10 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
              "collection_catalog": collection_catalog or [],
              "explicit_collection_only": explicit_collection_only,
              "current_collection_id": current_collection_id}, ensure_ascii=False),
-            stage="generation_choice", model_name=settings.routing_model, client=client)
+            stage="collection_reference" if collection_only else "generation_choice",
+            model_name=settings.routing_model, client=client)
+    if collection_only:
+        result = Choice.model_validate(result.model_dump())
     result.confirms_brief = result.confirms_brief and result.brief_action == "confirm"
     if (result.target_collection_id is not None
             and result.target_collection_id not in {item["id"] for item in collection_catalog or []}):
