@@ -33,7 +33,7 @@ async function setup(page: Page, count = 2, previousTask = false, unresolvedCurr
   await page.goto('/workbench/collections/alpha');
   const checks = page.locator('.principle-case-row input[type=checkbox]');
   await expect(checks).toHaveCount(count);
-  return { calls, checks, confirm: page.getByRole('button', { name: 'Confirm modification', exact: true }) };
+  return { calls, cases, checks, confirm: page.getByRole('button', { name: 'Confirm modification', exact: true }) };
 }
 test('removing a grouped case and confirming previews the changed scope', async ({ page }) => {
   const s = await setup(page);
@@ -146,4 +146,21 @@ test('model outage preserves correction and selection through reload and retry',
   expect(s.calls[0].content).toBe(correction);
   expect(s.calls[0].targets).toEqual(failedBodies[0].targets);
   await expect(composer).toBeEnabled();
+});
+
+
+test('restored target labels use current case titles and confirmation retains the same scope', async ({ page }) => {
+  const s = await setup(page, 1);
+  await expect(page.locator('.principle-target-context button')).toHaveText('Case 0');
+  s.cases[0].title = 'Renamed after adoption';
+  await page.reload();
+  await expect(page.locator('.principle-target-context button')).toHaveText('Renamed after adoption');
+  await expect(page.locator('.principle-composer textarea')).toHaveAttribute('placeholder', 'Describe how you want to modify “Renamed after adoption”…');
+  await expect(page.locator('.principle-case-row input:checked')).toHaveCount(1);
+  const confirming = page.waitForRequest(r => r.method() === 'POST' && r.url().endsWith('/conversation-operations/operation/resume'));
+  await s.confirm.click();
+  await confirming;
+  await expect.poll(() => s.calls.length).toBe(1);
+  expect(s.calls[0].confirm_modification).toBe(true);
+  expect(s.calls[0].targets).toEqual([]); // Unchanged confirmation uses the server's original scope.
 });

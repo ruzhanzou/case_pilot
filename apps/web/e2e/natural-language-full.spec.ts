@@ -625,6 +625,8 @@ test('NL-DRAFT-LANGUAGE Chinese preview preserves literal English title through 
   await apply(page); await page.reload();
   await expect(page.locator('.principle-composer textarea')).toBeEnabled();
   const saved = await s.read(), changed = saved.find((c:any) => c.id === target.id);
+  await expect(page.locator('.principle-target-context button')).toHaveText(title);
+  await expect(page.locator('.principle-composer textarea')).toHaveAttribute('placeholder', `描述你希望如何修改「${title}」…`);
   expect(changed.title).toBe(title);
   expect(changed.priority).toBe('P0');
   unchangedExcept(target, changed, ['title', 'priority']);

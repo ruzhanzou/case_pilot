@@ -33,3 +33,16 @@ export function matchesRewriteScope(targets: ConversationTarget[], scope: Record
   return same(targets.flatMap(target => target.case_ids ?? []), scope.case_ids)
     && same(targets.flatMap(target => target.candidate_refs ?? []), scope.candidate_refs);
 }
+
+/** Saved labels are display fallbacks; current asset titles own the live label. */
+export function rewriteSelectionLabel(selection: RewriteSelection,
+  cases: { id: string; title: string }[], candidates: { id: string; ref: string; snapshot: { title: string } }[]): string {
+  const { target, label } = selection;
+  if (target.kind !== 'case' || target.collection_id) return label;
+  const ids = target.case_ids ?? [], refs = target.candidate_refs ?? [];
+  if (ids.length + refs.length !== 1) return label;
+  const title = ids.length
+    ? cases.find(item => item.id === ids[0])?.title ?? candidates.find(item => item.id === ids[0])?.snapshot.title
+    : candidates.find(item => item.ref === refs[0])?.snapshot.title;
+  return title ?? label;
+}

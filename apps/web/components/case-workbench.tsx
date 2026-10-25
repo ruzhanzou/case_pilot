@@ -13,7 +13,7 @@ import { nanoid } from "nanoid/non-secure";
 import { WorkspaceFiles } from "@/components/workspace-files";
 import { activeConversationAttachments, ConversationAttachments } from "@/components/conversation-attachments";
 import { planningModuleAliases } from "@/lib/case-module-tree";
-import { matchesRewriteScope, toggleRewriteSelection } from "@/lib/rewrite-selection";
+import { matchesRewriteScope, rewriteSelectionLabel, toggleRewriteSelection } from "@/lib/rewrite-selection";
 
 import { summarizeWorkflowStages } from "@/lib/workflow-stages";
 import { CasePolishDialog } from "@/components/case-polish-dialog";
@@ -498,9 +498,9 @@ export function CaseWorkbench({
     () => activeRewriteTargets.map((item) => item.target),
     [activeRewriteTargets],
   );
-  const displayedTargets = selectedTargets.length
-    ? selectedTargets
-    : rewriteTargets;
+  const displayedTargets = useMemo(() => (selectedTargets.length ? selectedTargets : rewriteTargets)
+    .map(item => ({ ...item, label: rewriteSelectionLabel(item, cases, candidates) })),
+  [selectedTargets, rewriteTargets, cases, candidates]);
   const workflowByMessageId = useMemo(
     () =>
       new Map(
