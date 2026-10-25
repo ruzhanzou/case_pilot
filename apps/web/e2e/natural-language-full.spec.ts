@@ -855,6 +855,51 @@ for (const remove of [true, false]) test(`NL-STEP-${remove ? 'REMOVE' : 'INSERT'
   expect(saved.filter((c:any) => c.id !== target.id)).toEqual(journal.original.filter((c:any) => c.id !== target.id));
 });
 
+test('NL-NEW-CONVERSATION pending suggestions remain isolated from a new conversation', async ({ page }) => {
+  const s = await setup(page), a = s.byKey('TC-LOGIN-01'), b = s.byKey('TC-LOGIN-02');
+  const initial = await send(page, '把 TC-LOGIN-01 的标题改为“旧对话未采纳标题”，其他字段不变。', true, 2);
+  const prior = await ready(page, initial);
+  expect(prior.items.map((item:any) => item.ref)).toEqual([a.id]);
+  expect(prior.items[0].proposed_snapshot.title).toBe('旧对话未采纳标题');
+  const oldConversation = await get(page, `/conversations/${initial.conversation_id}`);
+  expect(await s.read()).toEqual(journal.original);
+  await page.getByRole('button', { name: '创建新对话', exact: true }).click();
+  const composer = page.locator('.new-conversation__composer');
+  await composer.locator('textarea').fill(`把 ${b.case_key} 的优先级改为P0，其他字段不变。`);
+  const sent = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/messages'), { timeout: 180000 });
+  await composer.locator('button[type=submit]').click();
+  const response = await sent, body = observedBodies.get(response.url()) ?? await response.text();
+  expect(response.ok(), body).toBeTruthy();
+  const fresh = JSON.parse(body); journal.turns.push({ response: fresh });
+  expect(fresh.conversation_id).not.toBe(initial.conversation_id);
+  expect(fresh.intent).toBe('CASE_MODIFY');
+  const picker = page.locator('.conversation-collection-picker');
+  await picker.locator('select').selectOption(journal.collection.id);
+  const bound = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/confirm-collection'), { timeout: 180000 });
+  await picker.locator('button[type=submit]').click();
+  const binding = await bound;
+  expect(binding.ok(), await binding.text()).toBeTruthy();
+  const preview = await binding.json(); journal.turns.push({ collectionConfirmation: preview });
+  expect(preview.assistant_message.target_case_ids).toEqual([b.id]);
+  expect(preview.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled({ timeout: 60000 });
+  await page.reload();
+  const change = await ready(page, await send(page, '确认修改。', true, 2));
+  expect(change.items.map((item:any) => item.ref)).toEqual([b.id]);
+  expect(change.items[0].field_diff.map((diff:any) => diff.field)).toEqual(['priority']);
+  expect(await s.read()).toEqual(journal.original);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read(), changed = saved.find((item:any) => item.id === b.id);
+  expect(changed.priority).toBe('P0');
+  unchangedExcept(b, changed, ['priority']);
+  expect(saved.filter((item:any) => item.id !== b.id)).toEqual(journal.original.filter((item:any) => item.id !== b.id));
+  expect(await get(page, `/case-change-sets/${prior.id}`)).toEqual(prior);
+  const oldAfter = await get(page, `/conversations/${initial.conversation_id}`);
+  expect(oldAfter.operation_history).toEqual(oldConversation.operation_history);
+  expect(oldAfter.messages).toEqual(oldConversation.messages);
+});
+
 test('NL-TAG-REPLACE removing one tag and adding another preserves unrelated tags and cases', async ({ page }) => {
   const s = await setup(page, false, false, item => {
     if (item.case_key === 'TC-LOGIN-01') item.tags = ['冒烟', '旧版', '回归'];
