@@ -1178,6 +1178,42 @@ test('NL-REQUIREMENTS-LABEL refreshed review shows the latest requirements inste
   expect(after.messages).toEqual(before.messages);
 });
 
+test('NL-EMPTY-QUERY-RECOVERY empty query references never expand to all cases and can be corrected', async ({ page }) => {
+  const s = await setup(page), target = s.byKey('TC-LOGIN-01');
+  const query = await send(page, '查询当前集合中优先级为P0的用例，只查询不修改。', false, 2);
+  expect(query.intent).toBe('CASE_QUERY');
+  expect(query.assistant_message.target_case_ids).toEqual([]);
+  expect(await s.read()).toEqual(journal.original);
+  await page.reload();
+  const first = await send(page, '把刚才查出的这些用例优先级改成P2，其他字段不变。', false, 2);
+  const operationId = first.assistant_message.metadata.operation_id;
+  expect(first.intent).toBe('CASE_MODIFY');
+  expect(first.action.job_id).toBeFalsy();
+  expect(first.action.change_set_id).toBeFalsy();
+  expect(first.assistant_message.metadata.modification_confirmation).toBeFalsy();
+  expect(first.assistant_message.status).toBe('awaiting_clarification');
+  expect(first.assistant_message.target_case_ids).toEqual([]);
+  expect(await s.read()).toEqual(journal.original);
+  await page.reload();
+  const corrected = await send(page, '那就明确改 TC-LOGIN-01 这一条，优先级仍改成P2，其他字段不变。', false, 2);
+  expect(corrected.assistant_message.metadata.operation_id).toBe(operationId);
+  expect(corrected.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  expect(corrected.assistant_message.target_case_ids).toEqual([target.id]);
+  expect(corrected.action.job_id).toBeFalsy();
+  expect(await s.read()).toEqual(journal.original);
+  const change = await ready(page, await send(page, '确认修改。', true, 2));
+  expect(change.items.map((item:any) => item.ref)).toEqual([target.id]);
+  expect(change.items[0].field_diff.map((diff:any) => diff.field)).toEqual(['priority']);
+  expect(change.items[0].quality?.passed).not.toBe(false);
+  expect(await s.read()).toEqual(journal.original);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read(), changed = saved.find((item:any) => item.id === target.id);
+  expect(changed.priority).toBe('P2');
+  unchangedExcept(target, changed, ['priority']);
+  expect(saved.filter((item:any) => item.id !== target.id)).toEqual(journal.original.filter((item:any) => item.id !== target.id));
+});
+
 test('NL-MIXED-ID-RECOVERY a partially missing target list requires clarification before any proposal', async ({ page }) => {
   const s = await setup(page), target = s.byKey('TC-LOGIN-01');
   const first = await send(page, '把 TC-LOGIN-01 和 TC-NOT-999 都改成P0，其他字段不变。', false, 2);
