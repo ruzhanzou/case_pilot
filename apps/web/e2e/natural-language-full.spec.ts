@@ -855,6 +855,37 @@ for (const remove of [true, false]) test(`NL-STEP-${remove ? 'REMOVE' : 'INSERT'
   expect(saved.filter((c:any) => c.id !== target.id)).toEqual(journal.original.filter((c:any) => c.id !== target.id));
 });
 
+test('NL-TAG-REPLACE removing one tag and adding another preserves unrelated tags and cases', async ({ page }) => {
+  const s = await setup(page, false, false, item => {
+    if (item.case_key === 'TC-LOGIN-01') item.tags = ['冒烟', '旧版', '回归'];
+  });
+  const target = s.byKey('TC-LOGIN-01');
+  const preview = await send(page, '把 TC-LOGIN-01 的“旧版”标签删掉，再加上“新版”标签；“冒烟”和“回归”标签保留。只调整标签，不删除用例，其他字段不变。', false, 2);
+  expect(preview.intent).toBe('CASE_MODIFY');
+  expect(preview.operation_plan.operations.map((op:any) => op.intent)).toEqual(['CASE_MODIFY']);
+  expect(preview.assistant_message.target_case_ids).toEqual([target.id]);
+  expect(preview.assistant_message.metadata.modification_confirmation).toBeTruthy();
+  expect(preview.action.job_id).toBeFalsy();
+  expect(await s.read()).toEqual(journal.original);
+  await page.reload();
+  const change = await ready(page, await send(page, '确认修改。', true, 2));
+  expect(change.items.map((item:any) => item.ref)).toEqual([target.id]);
+  expect(change.items[0].field_diff.map((diff:any) => diff.field)).toEqual(['tags']);
+  const expected = new Set(['冒烟', '回归', '新版']);
+  expect(new Set(change.items[0].proposed_snapshot.tags)).toEqual(expected);
+  expect(change.items[0].proposed_snapshot.tags).toHaveLength(3);
+  expect(change.items[0].quality?.passed).not.toBe(false);
+  expect(await s.read()).toEqual(journal.original);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await s.read(), changed = saved.find((item:any) => item.id === target.id);
+  expect(saved).toHaveLength(journal.original.length);
+  expect(new Set(changed.tags)).toEqual(expected);
+  expect(changed.tags).toHaveLength(3);
+  unchangedExcept(target, changed, ['tags']);
+  expect(saved.filter((item:any) => item.id !== target.id)).toEqual(journal.original.filter((item:any) => item.id !== target.id));
+});
+
 test('NL-MOVE-MODULE moving a case changes only its module without switching collections', async ({ page }) => {
   const s = await setup(page), target = s.byKey('TC-LOGIN-01');
   const destination = '账号中心/短信登录';
