@@ -900,6 +900,44 @@ test('NL-NEW-CONVERSATION pending suggestions remain isolated from a new convers
   expect(oldAfter.messages).toEqual(oldConversation.messages);
 });
 
+test('NL-RETURN-OLD-CONVERSATION applying an older pending proposal preserves newer saved work', async ({ page }) => {
+  test.skip(!process.env.CASEPILOT_OLD_CONVERSATION_EVIDENCE || !process.env.CASEPILOT_TEST_EMAIL, 'Requires an isolated pending old proposal from NL-NEW-CONVERSATION; consumes that pending fixture');
+  const fixture = JSON.parse(readFileSync(process.env.CASEPILOT_OLD_CONVERSATION_EVIDENCE!, 'utf8'));
+  journal.collection = fixture.collection;
+  journal.sourceFixture = process.env.CASEPILOT_OLD_CONVERSATION_EVIDENCE;
+  const login = await page.request.post(`${api}/auth/login`, { data: { email: process.env.CASEPILOT_TEST_EMAIL, password: 'CasePilot123!' } });
+  expect(login.ok()).toBeTruthy();
+  await page.addInitScript(() => localStorage.setItem('casepilot.locale.v1', 'zh-CN'));
+  const cid = fixture.turns.find((turn:any) => turn.response)?.response.conversation_id;
+  const old = await get(page, `/conversations/${cid}`);
+  const operation = old.operation_history.find((op:any) => op.intent === 'CASE_MODIFY');
+  const change = await get(page, `/case-change-sets/${operation.related_change_set_id}`);
+  expect(change.status).toBe('ready');
+  const baseline = await get(page, `/collections/${fixture.collection.id}/test-cases`);
+  journal.original = baseline;
+  const a = baseline.find((item:any) => item.case_key === fixture.keyMap['TC-LOGIN-01']);
+  const b = baseline.find((item:any) => item.case_key === fixture.keyMap['TC-LOGIN-02']);
+  expect(b.priority).toBe('P0');
+  expect(change.items.map((item:any) => item.ref)).toEqual([a.id]);
+  const newerCid = fixture.turns.find((turn:any) => turn.response?.conversation_id && turn.response.conversation_id !== cid).response.conversation_id;
+  const newer = await get(page, `/conversations/${newerCid}`);
+  await page.goto(`/workbench/conversations/${cid}`);
+  await ready(page, { action: { change_set_id: change.id } });
+  await expect(page.locator('.collection-changes__review')).toContainText('旧对话未采纳标题');
+  expect(await get(page, `/collections/${fixture.collection.id}/test-cases`)).toEqual(baseline);
+  await apply(page); await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled();
+  const saved = await get(page, `/collections/${fixture.collection.id}/test-cases`);
+  const changed = saved.find((item:any) => item.id === a.id);
+  expect(changed.title).toBe('旧对话未采纳标题');
+  unchangedExcept(a, changed, ['title']);
+  expect(saved.filter((item:any) => item.id !== a.id)).toEqual(baseline.filter((item:any) => item.id !== a.id));
+  expect((await get(page, `/case-change-sets/${change.id}`)).status).toBe('applied');
+  const newerAfter = await get(page, `/conversations/${newerCid}`);
+  expect(newerAfter.operation_history).toEqual(newer.operation_history);
+  expect(newerAfter.messages).toEqual(newer.messages);
+});
+
 test('NL-TAG-REPLACE removing one tag and adding another preserves unrelated tags and cases', async ({ page }) => {
   const s = await setup(page, false, false, item => {
     if (item.case_key === 'TC-LOGIN-01') item.tags = ['冒烟', '旧版', '回归'];
