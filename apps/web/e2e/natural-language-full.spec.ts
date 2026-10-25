@@ -167,6 +167,7 @@ for (const id of ['NL-EDT-04', 'NL-EDT-06']) test(`${id} preserves action expect
     actual[1].expected = expected[1].expected;
   }
   expect(actual).toEqual(expected); unchangedExcept(old, changed, ['steps']);
+  expect(s.after.filter((c:any) => c.id !== old.id)).toEqual(journal.original.filter((c:any) => c.id !== old.id));
 });
 test('NL-EDT-05 semantic addition and title both persist', async ({ page }) => {
   const s = await edit(page, 'NL-EDT-05'), old = s.byKey('TC-LOGIN-01');
@@ -204,13 +205,24 @@ test('NL-EDT-08 no-op and repeat create no formal revision', async ({ page }) =>
   const s = await setup(page, false, false, item => {if (item.case_key === 'TC-LOGIN-01') item.priority = 'P0';});
   for (let i=0; i<2; i++) {
     const turn = await send(page, prompt('NL-EDT-08')[0]);
+    expect(turn.intent).toBe('CASE_MODIFY');
+    expect(turn.action.change_set_id).toBeTruthy();
     if (turn.action.change_set_id) {
       await expect.poll(async () => (await get(page, `/case-change-sets/${turn.action.change_set_id}`)).status, {timeout:480000}).not.toBe('generating');
-      const change = await get(page, `/case-change-sets/${turn.action.change_set_id}`); journal.proposals = [change];
-      expect(change.items.every((item: any) => !item.diff?.length)).toBeTruthy();
+      const change = await get(page, `/case-change-sets/${turn.action.change_set_id}`); (journal.proposals ??= []).push(change);
+      expect(change.status).toBe('no_changes');
+      expect(change.items.map((item:any) => item.ref)).toEqual([s.byKey('TC-LOGIN-01').id]);
+      for (const item of change.items) {
+        expect(item.field_diff).toEqual([]);
+        expect(item.quality?.passed).not.toBe(false);
+      }
     }
+    await expect(page.locator('.principle-composer textarea')).toBeEnabled({ timeout: 60000 });
     expect(await s.read()).toEqual(journal.original);
   }
+  await page.reload();
+  await expect(page.locator('.principle-composer textarea')).toBeEnabled({ timeout: 60000 });
+  expect(await s.read()).toEqual(journal.original);
 });
 for (const id of ['NL-MUL-01','NL-MUL-10']) test(`${id} accumulated pending changes survive continuation`, async ({ page }) => {
   const s = await edit(page, id), a = s.byKey('TC-LOGIN-01');
