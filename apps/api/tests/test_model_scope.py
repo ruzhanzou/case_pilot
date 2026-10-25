@@ -606,3 +606,31 @@ def test_complex_large_scope_uses_filter_selector(scope, monkeypatch):
     assert list(map(str, result.target_case_ids)) == [catalog[-1]['id']]
     filtered.assert_called_once()
     selector.assert_not_called()
+
+
+def test_previous_query_scope_preserves_display_order(scope):
+    db, conversation, cases, selector = scope
+    # Reverse lexical UUID order so sorting cannot accidentally satisfy the test.
+    ordered = sorted([c['id'] for c in cases], reverse=True)
+    db.scalar.return_value = SimpleNamespace(
+        id=uuid4(), conversation_id=conversation.id,
+        target={'case_ids': ordered, 'candidate_refs': []},
+    )
+    conversations._resolve_model_scope(db, conversation,
+        ConversationMessageCreate(content='刚才列出的第二条改成P0'), 'CASE_MODIFY')
+    assert selector.call_args.args[2]['latest_query']['ids'] == ordered
+
+
+def test_previous_query_order_places_candidates_before_formal_cases(scope):
+    db, conversation, cases, selector = scope
+    candidate_id = uuid4()
+    db.scalars.return_value = [SimpleNamespace(
+        id=candidate_id, ref='CAND-ORDER', snapshot={'title': '候选'}, version=1,
+    )]
+    db.scalar.return_value = SimpleNamespace(
+        id=uuid4(), conversation_id=conversation.id,
+        target={'case_ids': [cases[0]['id']], 'candidate_refs': ['CAND-ORDER']},
+    )
+    conversations._resolve_model_scope(db, conversation,
+        ConversationMessageCreate(content='刚列出的第一条'), 'CASE_QUERY')
+    assert selector.call_args.args[2]['latest_query']['ids'] == [str(candidate_id), cases[0]['id']]

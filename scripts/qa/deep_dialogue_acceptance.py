@@ -88,14 +88,18 @@ class Journey:
             points[:selected_count] if selected_count is not None else points
         )
         expected_candidates = len(selected_points) if case_count is None else case_count
-        turn = await self.req(
-            "POST",
-            f"/workspaces/{self.cid}/test-briefs/confirm",
-            {
-                "version": brief["version"],
-                "model_id": self.model,
-                "selected_test_point_ids": [p["id"] for p in selected_points],
-            },
+        turn = (
+            await self.say("就按当前测试点开始生成用例吧。", "CASE_GENERATE")
+            if getattr(self, "natural_brief_confirmation", False) and selected_count is None
+            else await self.req(
+                "POST",
+                f"/workspaces/{self.cid}/test-briefs/confirm",
+                {
+                    "version": brief["version"],
+                    "model_id": self.model,
+                    "selected_test_point_ids": [p["id"] for p in selected_points],
+                },
+            )
         )
         await self.run(turn, tasks.generate_test_cases)
         state = await self.state()
@@ -133,7 +137,7 @@ class Journey:
         return change
 
 
-async def scenario(kind, model, output):
+async def scenario(kind, model, output, natural_confirmation=False):
     record = {"kind": kind, "model": model, "passed": False, "turns": []}
     started = time.monotonic()
     account = None
@@ -141,6 +145,7 @@ async def scenario(kind, model, output):
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         j = Journey(client, record, model)
+        j.natural_brief_confirmation = kind == "natural_generate"
         try:
             account = await j.req(
                 "POST",
@@ -170,6 +175,10 @@ async def scenario(kind, model, output):
             j.cid = conv["id"]
             if kind == "qa":
                 await qa_journey(j, collection)
+            elif kind in {"range_expression", "correction_expression", "ambiguous_expression", "ellipsis_expression"}:
+                await expression_journey(j, collection, kind)
+            elif kind == "ordinal":
+                await ordinal_journey(j, collection)
             elif kind == "scope":
                 await scope_journey(j, collection)
             elif kind in {"select", "select_and_generate"}:
@@ -238,10 +247,13 @@ async def scenario(kind, model, output):
                     *([extra["id"]] if extra else []),
                 }
                 record["selected_from"] = deepcopy(selection["sources"])
-                turn = await j.req(
-                    "POST",
-                    f"/workspaces/{j.cid}/generation-assets/confirm",
-                    {"version": brief["version"], "case_ids": [old["id"]]},
+                turn = (
+                    await j.say("就用正确密码登录那条，其他不要。确认选这条。", "CASE_GENERATE")
+                    if natural_confirmation else await j.req(
+                        "POST",
+                        f"/workspaces/{j.cid}/generation-assets/confirm",
+                        {"version": brief["version"], "case_ids": [old["id"]]},
+                    )
                 )
                 if kind == "select":
                     assert turn["action"]["type"] == "assets_selected"
@@ -264,14 +276,16 @@ async def scenario(kind, model, output):
                     and unchanged["current_revision_id"] == old["current_revision_id"]
                 )
             else:
-                count = 2 if kind in {"dialogue", "planning", "retry", "subset", "quantities", "candidate", "allocation_retry", "allocation_clarification", "subset_quantities"} else 1
+                count = 2 if kind in {"expression_generate", "append", "colloquial_planning", "colloquial", "dialogue", "planning", "retry", "subset", "quantities", "candidate", "allocation_retry", "allocation_clarification", "subset_quantities"} else 1
                 prompt = (
                     "为账号系统规划两个测试点并生成两条用例：正确密码登录成功、错误密码登录失败；仅覆盖这两种场景。"
                     if count == 2
                     else "为账号系统规划一个测试点并生成一条用例：有效账号使用正确密码登录成功，进入首页并建立会话。仅这一个场景。"
                 )
-                if kind in {"quantities", "allocation_retry", "subset_quantities"}:
+                if kind in {"quantities", "allocation_retry", "subset_quantities", "expression_generate"}:
                     prompt = "为账号系统规划两个测试点：正确密码登录成功、错误密码登录失败。基于这两个测试点总共生成四条用例，每个测试点分别覆盖普通账号、管理员账号，两种账号均适用相同登录规则。测试点严格两个，用例严格四条。"
+                if kind == "expression_generate":
+                    prompt = "给账号系统做登录用例。密码对了能进去、密码错了进不去，就这俩测试点，别拆更多。每个点普通账号和管理员账号各来一条，两种账号用同一套登录规则。不是每点四条，是加起来四条。"
                 if kind == "allocation_clarification":
                     prompt = "为账号系统规划两个测试点：正确密码登录成功、错误密码登录失败。后续严格生成四条用例，每个点需要覆盖两种账号类型；具体账号类型尚未确定，稍后补充。请不要自行假设账号类型。"
                 if kind == "quantities_fewer":
@@ -281,7 +295,7 @@ async def scenario(kind, model, output):
                     prompt, "CASE_GENERATE", generation_strategy="generate"
                 )
                 await j.run(turn, tasks.draft_test_brief)
-                if kind in {"dialogue", "planning"}:
+                if kind in {"dialogue", "planning", "colloquial_planning"}:
                     first = (await j.state())["test_briefs"][-1]["content"]["planning"][
                         "test_points"
                     ]
@@ -298,11 +312,13 @@ async def scenario(kind, model, output):
                     added = next(
                         p for p in points if p["id"] not in {x["id"] for x in first}
                     )
-                    if kind == "planning":
+                    if kind in {"planning", "colloquial_planning"}:
                         turn = await j.say(
-                            f"仅修改测试规划中的测试点 {added['id']}：改为用户退出登录后，"
-                            "用退出前的同一会话访问受保护页面，返回登录页且会话失效。"
-                            "仅替换这一个测试点，不新增测试点，其他两个测试点保持不变。",
+                            ("刚加的退出那个点改一下：退出后再用原来的会话访问受保护页面，应返回登录页且会话失效。别加点，原来两个不动。"
+                             if kind == "colloquial_planning" else
+                             f"仅修改测试规划中的测试点 {added['id']}：改为用户退出登录后，"
+                             "用退出前的同一会话访问受保护页面，返回登录页且会话失效。"
+                             "仅替换这一个测试点，不新增测试点，其他两个测试点保持不变。"),
                             "CASE_GENERATE",
                         )
                         await j.run(turn, tasks.draft_test_brief)
@@ -317,7 +333,9 @@ async def scenario(kind, model, output):
                         )
                         record["edited_point"] = added
                     turn = await j.say(
-                        f"从测试规划中删除测试点 {added['id']}（退出登录），其他两个测试点保持不变。",
+                        ("算了，退出的那个点先不要了，就留最开始的两个。"
+                         if kind == "colloquial_planning" else
+                         f"从测试规划中删除测试点 {added['id']}（退出登录），其他两个测试点保持不变。"),
                         "CASE_GENERATE",
                     )
                     await j.run(turn, tasks.draft_test_brief)
@@ -334,9 +352,29 @@ async def scenario(kind, model, output):
                     if kind == "retry"
                     else await j.generate(
                         count, selected_count=1 if kind in {"subset", "subset_quantities"} else None,
-                        case_count=4 if kind == "quantities" else 2 if kind in {"quantities_fewer", "subset_quantities"} else None
+                        case_count=4 if kind in {"quantities", "expression_generate"} else 2 if kind in {"quantities_fewer", "subset_quantities"} else None
                     )
                 )
+                if kind == "append":
+                    original_cases = await j.req("POST", f"/workspaces/{j.cid}/candidates/commit",
+                        {"candidate_ids": [c["id"] for c in candidates]})
+                    assert len(original_cases) == 2
+                    turn = await j.say(
+                        "原来的两条留着，再补两条退出登录用例，集合一共四条就够。新增两个测试点："
+                        "退出后回到登录页；退出后原会话访问受保护页面被拒绝。每个新点一条用例，别重做登录的两条。",
+                        "CASE_GENERATE")
+                    await j.run(turn, tasks.draft_test_brief)
+                    added = await j.generate(2, case_count=2)
+                    assert not {c["id"] for c in candidates} & {c["id"] for c in added}
+                    for old in original_cases:
+                        assert await j.req("GET", f"/test-cases/{old['id']}") == old
+                    await j.req("POST", f"/workspaces/{j.cid}/candidates/commit",
+                        {"candidate_ids": [c["id"] for c in added]})
+                    final_cases = await j.req("GET", f"/collections/{collection['id']}/test-cases")
+                    assert len(final_cases) == 4, "append confused final total with new output count"
+                    record["final_collection"] = final_cases
+                if kind == "colloquial":
+                    await colloquial_journey(j, candidates)
                 if kind in {"dialogue", "candidate"}:
                     base = {c["ref"]: deepcopy(c["snapshot"]) for c in candidates}
                     chosen, other = candidates
@@ -734,6 +772,118 @@ async def qa_journey(j, collection):
     ]
 
 
+async def expression_journey(j, collection, kind):
+    cases = []
+    for title in ["正确密码登录", "错误密码登录", "退出登录"]:
+        cases.append(await j.req("POST", f"/collections/{collection['id']}/test-cases", {
+            "title": title, "module": "登录", "priority": "P1",
+            "preconditions": ["账号已存在"],
+            "steps": [{"action": f"执行{title}", "expected": "结果符合登录规则"}],
+        }))
+    baseline = {c["id"]: deepcopy(c) for c in cases}
+    query = await j.say("列出这个集合里所有用例。", "CASE_QUERY")
+    ordered = query["assistant_message"]["target_case_ids"]
+    assert len(ordered) == 3
+    j.record["visible_order"] = ordered
+    if kind == "range_expression":
+        first = await j.rewrite("头一条别动，剩下那两条的优先级都调成P2，其他字段照旧。")
+        expected_ids = set(ordered[1:])
+        assert {i["ref"] for i in first["items"]} == expected_ids, "exclusion/colloquial ordinal scope wrong"
+        change = await j.rewrite("刚才说错了，不是P2，是P0。就那两条，别扩大范围。")
+    elif kind == "correction_expression":
+        first = await j.rewrite("错误密码登录那条，优先级先调成P0，别改步骤。")
+        expected_ids = {cases[1]["id"]}
+        assert {i["ref"] for i in first["items"]} == expected_ids
+        change = await j.rewrite("不对，我要的是P2，不是P0；标题和步骤都照旧。")
+    else:
+        vague = await j.say("登录那条，优先级调成P0。", "CASE_MODIFY")
+        assert not vague["action"].get("job_id"), "ambiguous singular target dispatched rewrite"
+        assert not vague["assistant_message"]["metadata"].get("modification_confirmation"), "ambiguous target offered guessed preview"
+        for cid, old in baseline.items():
+            assert await j.req("GET", f"/test-cases/{cid}") == old
+        change = await j.rewrite(
+            "密码错了进不去的那个。" if kind == "ellipsis_expression"
+            else "我指的是错误密码登录失败的那条，优先级P0，别的不用改。")
+        expected_ids = {cases[1]["id"]}
+    assert {i["ref"] for i in change["items"]} == expected_ids, "correction lost target scope"
+    priority = "P2" if kind == "correction_expression" else "P0"
+    for item in change["items"]:
+        assert item["proposed_snapshot"]["priority"] == priority
+        assert {d["field"] for d in item["field_diff"]} == {"priority"}, "correction changed unrelated field"
+    await j.req("POST", f"/case-change-sets/{change['id']}/apply", {})
+    for cid, old in baseline.items():
+        actual = await j.req("GET", f"/test-cases/{cid}")
+        if cid not in expected_ids:
+            assert actual == old, "unselected formal case changed"
+        else:
+            assert actual["priority"] == priority
+            for field in ["title", "module", "preconditions", "steps"]:
+                assert actual[field] == old[field], f"unrequested field {field} changed"
+    j.record["expected_target_ids"] = sorted(expected_ids)
+
+
+async def ordinal_journey(j, collection):
+    cases = []
+    for title in ["正确密码登录", "错误密码登录", "退出登录"]:
+        cases.append(await j.req("POST", f"/collections/{collection['id']}/test-cases", {
+            "title": title, "module": "登录", "priority": "P1",
+            "preconditions": ["账号已存在"],
+            "steps": [{"action": f"执行{title}", "expected": "结果符合登录规则"}],
+        }))
+    baseline = {c["id"]: c for c in cases}
+    query = await j.say("把这个集合的用例列一下。", "CASE_QUERY")
+    ordered = query["assistant_message"]["target_case_ids"]
+    assert len(ordered) == 3
+    j.record["visible_order"] = ordered
+    change = await j.rewrite("刚列出来的第二条，优先级改成P0，其余都别动。")
+    assert len(change["items"]) == 1
+    item = change["items"][0]
+    assert item["ref"] == ordered[1], "ordinal did not match displayed query order"
+    assert {d["field"] for d in item["field_diff"]} == {"priority"}
+    assert item["proposed_snapshot"]["priority"] == "P0"
+    await j.req("POST", f"/case-change-sets/{change['id']}/apply", {})
+    for cid, old in baseline.items():
+        current = await j.req("GET", f"/test-cases/{cid}")
+        if cid != ordered[1]:
+            assert current == old, "ordinal edit changed unrelated case"
+        else:
+            assert current["priority"] == "P0"
+            for field in ["title", "module", "preconditions", "steps"]:
+                assert current[field] == old[field]
+
+
+async def colloquial_journey(j, candidates):
+    """Check referential language against exact snapshots, without explicit IDs."""
+    baseline = {c["ref"]: deepcopy(c["snapshot"]) for c in candidates}
+    # Ground the first reference in a unique user-visible title; subsequent turns
+    # intentionally omit identifiers and depend on dialogue memory.
+    chosen, other = candidates
+    title = chosen["snapshot"]["title"]
+    priority = "P2" if chosen["snapshot"]["priority"] != "P2" else "P0"
+    first = await j.rewrite(f"把‘{title}’那条的优先级调成{priority}，别的都别动。")
+    assert len(first["items"]) == 1, "title reference selected wrong number"
+    expected = {**baseline[chosen["ref"]], "priority": priority}
+    assert first["items"][0]["proposed_snapshot"] == expected, "title reference selected or changed wrong case"
+    second = await j.rewrite("刚才那条，标题改成‘登录检查’，其他保持刚才的结果。")
+    assert len(second["items"]) == 1, "anaphora selected wrong number"
+    expected = {**expected, "title": "登录检查"}
+    assert second["items"][0]["proposed_snapshot"] == expected, "anaphora lost previous edit or selected wrong case"
+    await j.req("POST", f"/case-change-sets/{second['id']}/apply", {})
+    now = {c["ref"]: c["snapshot"] for c in (await j.state())["candidates"]}
+    assert now == {**baseline, chosen["ref"]: expected}, "apply changed unrelated candidate"
+    before = deepcopy((await j.state())["candidates"])
+    qa = await j.say("先别改。如果把它改成P0，会有什么影响？只解释一下。", "KNOWLEDGE_QA")
+    await j.run(qa, tasks.answer_knowledge_question)
+    assert (await j.state())["candidates"] == before, "hypothetical discussion mutated candidates"
+    other_priority = "P2" if baseline[other["ref"]]["priority"] != "P2" else "P0"
+    third = await j.rewrite(f"换另一条，标题叫‘{other['snapshot']['title']}’的那条，只把优先级改成{other_priority}，刚才那条别动。")
+    assert len(third["items"]) == 1
+    assert third["items"][0]["proposed_snapshot"] == {**baseline[other["ref"]], "priority": other_priority}, "corrected target retained stale scope"
+    await j.req("POST", f"/case-change-sets/{third['id']}/apply", {})
+    final = {c["ref"]: c["snapshot"] for c in (await j.state())["candidates"]}
+    assert final == {chosen["ref"]: expected, other["ref"]: {**baseline[other["ref"]], "priority": other_priority}}
+
+
 async def main(args):
     assert (
         conversations.settings.agent_provider != "mock"
@@ -754,7 +904,7 @@ async def main(args):
 
         async def bounded(kind, model):
             async with semaphore:
-                return await scenario(kind, model, Path(args.output))
+                return await scenario(kind, model, Path(args.output), args.natural_confirmation)
 
         records = await asyncio.gather(*(bounded(k, m) for k, m in specs))
         return int(not all(r["passed"] for r in records))
@@ -769,14 +919,24 @@ if __name__ == "__main__":
         "--kind",
         choices=[
             "models",
+            "natural_generate",
             "dialogue",
             "candidate",
+            "colloquial",
+            "append",
             "planning",
+            "colloquial_planning",
             "retry",
             "scope",
+            "ordinal",
+            "range_expression",
+            "correction_expression",
+            "ambiguous_expression",
+            "ellipsis_expression",
             "subset",
             "subset_quantities",
             "quantities",
+            "expression_generate",
             "quantities_fewer",
             "allocation_retry",
             "allocation_clarification",
@@ -787,6 +947,7 @@ if __name__ == "__main__":
         default="models",
     )
     p.add_argument("--models", nargs="+")
+    p.add_argument("--natural-confirmation", action="store_true")
     p.add_argument("--concurrency", type=int, choices=range(1, 4), default=1)
     p.add_argument("--output", default="artifacts/deep-dialogue-acceptance")
     raise SystemExit(asyncio.run(main(p.parse_args())))

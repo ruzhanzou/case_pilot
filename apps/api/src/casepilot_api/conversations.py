@@ -1653,9 +1653,13 @@ def _resolve_model_scope(db, conversation, payload, intent):
     latest_query = None
     if latest is not None and latest.conversation_id == conversation.id:
         target = dict(latest.target)
-        query_ids = {str(ref) for ref in target.get("case_ids", [])}
-        query_ids.update(ref_ids[ref] for ref in target.get("candidate_refs", []) if ref in ref_ids)
-        latest_query = {"ids": sorted(query_ids & allowed), "operation_id": str(latest.id)}
+        # Query responses display candidates first, then formal cases, retaining
+        # each target list's order. Ordinal references must use that same order,
+        # never lexical UUID order or the current catalog's order.
+        query_ids = [ref_ids[ref] for ref in target.get("candidate_refs", []) if ref in ref_ids]
+        query_ids.extend(str(ref) for ref in target.get("case_ids", []))
+        latest_query = {"ids": list(dict.fromkeys(ref for ref in query_ids if ref in allowed)),
+                        "operation_id": str(latest.id)}
     source = db.get(ConversationOperation, payload.source_operation_id) if payload.source_operation_id else None
     if source is not None and source.conversation_id != conversation.id:
         return payload, "引用的结果不属于当前对话，请重新选择。"
@@ -4437,6 +4441,13 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
             chosen = interpret_generation_choice(
                 payload.content, settings,
                 [source["case_id"] for source in pending_selection.get("sources", [])],
+                conversation_memory=[{
+                    "role": "assistant",
+                    "content": "当前待确认的用例资产（仅供选择的数据，按展示顺序）：" + json.dumps([
+                        {"case_id": source["case_id"], "snapshot": source.get("snapshot", {})}
+                        for source in pending_selection.get("sources", [])
+                    ], ensure_ascii=False),
+                }],
             ).selected_ids
             if chosen is not None:
                 return confirm_generation_assets(conversation_id,

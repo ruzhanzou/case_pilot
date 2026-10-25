@@ -1,0 +1,412 @@
+{
+  "status": "passed_with_operational_limitations",
+  "summary": {
+    "live_workflows_passed": 8,
+    "quantity_probes_passed": 8,
+    "fixed_product_defects": 4
+  },
+  "scope": "真实模型/API/worker验收，不使用浏览器端到端；不代表任意自然语言均可靠",
+  "model": "doubao-seed-2.0-lite",
+  "journeys": [
+    {
+      "kind": "ordinal",
+      "status": "passed",
+      "runs": [
+        {
+          "evidence": "artifacts/natural-language-freedom/round-1/ordinal-doubao-seed-2.0-lite.json",
+          "sha256": "4228d52192eaf6697753b7b38d6069b416aba7f283de5bcc7b23e4749f65e796",
+          "passed": false,
+          "seconds": 93.73,
+          "error": "ordinal did not match displayed query order",
+          "prompts": [
+            "把这个集合的用例列一下。",
+            "刚列出来的第二条，优先级改成P0，其余都别动。"
+          ],
+          "cleaned_up": true,
+          "explicit_job_retries": 0
+        },
+        {
+          "evidence": "artifacts/natural-language-freedom/round-2/ordinal-doubao-seed-2.0-lite.json",
+          "sha256": "92ccdbde8225cf61f400854788e8942ed93f5c3e90daa98697365465ee364823",
+          "passed": true,
+          "seconds": 141.84,
+          "error": null,
+          "prompts": [
+            "把这个集合的用例列一下。",
+            "刚列出来的第二条，优先级改成P0，其余都别动。"
+          ],
+          "cleaned_up": true,
+          "explicit_job_retries": 0
+        }
+      ]
+    },
+    {
+      "kind": "colloquial",
+      "status": "passed",
+      "runs": [
+        {
+          "evidence": "artifacts/natural-language-freedom/round-1/colloquial-doubao-seed-2.0-lite.json",
+          "sha256": "24fe772d13738fa80869248a860e595bd1cb26b60d991c6d07c8a41e744fcb7e",
+          "passed": false,
+          "seconds": 395.4,
+          "error": "no_changes",
+          "prompts": [
+            "为账号系统规划两个测试点并生成两条用例：正确密码登录成功、错误密码登录失败；仅覆盖这两种场景。",
+            "把‘正确账号正确密码登录成功验证’那条的优先级调成P2，别的都别动。",
+            "刚才那条，标题改成‘登录检查’，其他保持刚才的结果。",
+            "先别改。如果把它改成P0，会有什么影响？只解释一下。",
+            "换另一条，标题叫‘正确账号错误密码登录失败验证’的那条，只把优先级改成P0，刚才那条别动。"
+          ],
+          "cleaned_up": true,
+          "explicit_job_retries": 0
+        },
+        {
+          "evidence": "artifacts/natural-language-freedom/round-2/colloquial-doubao-seed-2.0-lite.json",
+          "sha256": "afd543b9d81f20d326b297e8c6bec81587e24d3ca535070e0624917b1b07245e",
+          "passed": false,
+          "seconds": 166.03,
+          "error": "intent UNRESOLVED != CASE_MODIFY",
+          "prompts": [
+            "为账号系统规划两个测试点并生成两条用例：正确密码登录成功、错误密码登录失败；仅覆盖这两种场景。",
+            "把‘正确账号正确密码登录验证’那条的优先级调成P2，别的都别动。"
+          ],
+          "cleaned_up": true,
+          "explicit_job_retries": 0
+        },
+        {
+          "evidence": "artifacts/natural-language-freedom/round-3/colloquial-doubao-seed-2.0-lite.json",
+          "sha256": "446f111d7a03fd5d985edf102614f084f8dfc1fa45bdfccdcd447bdfc71c61f9",
+          "passed": true,
+          "seconds": 339.48,
+          "error": null,
+          "prompts": [
+            "为账号系统规划两个测试点并生成两条用例：正确密码登录成功、错误密码登录失败；仅覆盖这两种场景。",
+            "把‘已注册账号正确密码登录验证’那条的优先级调成P2，别的都别动。",
+            "刚才那条，标题改成‘登录检查’，其他保持刚才的结果。",
+            "先别改。如果把它改成P0，会有什么影响？只解释一下。",
+            "换另一条，标题叫‘已注册账号错误密码登录验证’的那条，只把优先级改成P2，刚才那条别动。"
+          ],
+          "cleaned_up": true,
+          "explicit_job_retries": 0
+        }
+      ]
+    },
+    {
+      "kind": "colloquial_planning",
+      "status": "passed",
+      "runs": [
+        {
+          "evidence": "artifacts/natural-language-freedom/round-1/colloquial_planning-doubao-seed-2.0-lite.json",
+          "sha256": "b27d77b112c4a2a5560e2d25d12d4309eb0a38bdfe4d5c1c1baeaef5e8f603af",
+          "passed": false,
+          "seconds": 188.25,
+          "error": "addition count 5",
+          "prompts": [
+            "为账号系统规划两个测试点并生成两条用例：正确密码登录成功、错误密码登录失败；仅覆盖这两种场景。",
+            "在现有测试规划上增加一个测试点：用户登录后点击退出，返回登录页，会话失效。原有两个测试点保持不变。"
+          ],
+          "cleaned_up": true,
+          "explicit_job_retries": 0
+        },
+        {
+          "evidence": "artifacts/natural-language-freedom/round-2/colloquial_planning-doubao-seed-2.0-lite.json",
+          "sha256": "97c33ed9a324a878bb6ae02d56bcf45c4c990a289058ee645bd5135bae0f006a",
+          "passed": true,
+          "seconds": 342.11,
+          "error": null,
+          "prompts": [
+            "为账号系统规划两个测试点并生成两条用例：正确密码登录成功、错误密码登录失败；仅覆盖这两种场景。",
+            "在现有测试规划上增加一个测试点：用户登录后点击退出，返回登录页，会话失效。原有两个测试点保持不变。",
+            "刚加的退出那个点改一下：退出后再用原来的会话访问受保护页面，应返回登录页且会话失效。别加点，原来两个不动。",
+            "算了，退出的那个点先不要了，就留最开始的两个。"
+          ],
+          "cleaned_up": true,
+          "explicit_job_retries": 0
+        }
+      ]
+    },
+    {
+      "kind": "append",
+      "status": "passed",
+      "runs": [
+        {
+          "evidence": "artifacts/natural-language-freedom/round-1/append-doubao-seed-2.0-lite.json",
+          "sha256": "cd76ea8d4dc2b96fed30092a0f925121b69d43ad325c54fc6850c3fd33802529",
+          "passed": false,
+          "seconds": 156.5,
+          "error": "no job: {'type': 'clarification'}",
+          "prompts": [
+            "为账号系统规划两个测试点并生成两条用例：正确密码登录成功、错误密码登录失败；仅覆盖这两种场景。",
+            "原来的两条留着，再补两条退出登录用例，集合一共四条就够。新增两个测试点：退出后回到登录页；退出后原会话访问受保护页面被拒绝。每个新点一条用例，别重做登录的两条。"
+          ],
+          "cleaned_up": true,
+          "explicit_job_retries": 0
+        },
+        {
+          "evidence": "artifacts/natural-language-freedom/round-2/append-doubao-seed-2.0-lite.json",
+          "sha256": "06a2fbe06039890c756f47569c709b5fdd33244d296f24ac1ffb7f52ff22e321",
+          "passed": true,
+          "seconds": 227.87,
+          "error": null,
+          "prompts": [
+            "为账号系统规划两个测试点并生成两条用例：正确密码登录成功、错误密码登录失败；仅覆盖这两种场景。",
+            "原来的两条留着，再补两条退出登录用例，集合一共四条就够。新增两个测试点：退出后回到登录页；退出后原会话访问受保护页面被拒绝。每个新点一条用例，别重做登录的两条。"
+          ],
+          "cleaned_up": true,
+          "explicit_job_retries": 0
+        }
+      ]
+    },
+    {
+      "kind": "select",
+      "status": "passed",
+      "runs": [
+        {
+          "evidence": "artifacts/natural-language-freedom/round-1/select-doubao-seed-2.0-lite.json",
+          "sha256": "6f708a7b882d71b19d11cc22f86a82a4ae9b49bee462802acd991016ce063ff3",
+          "passed": false,
+          "seconds": 114.86,
+          "error": "POST /conversations/464205f2-fe7c-474c-9d19-b63053a251d8/messages: 409 {\"detail\":\"generation_asset_confirmation_required\"}",
+          "prompts": [
+            "测试对象是账号系统。选用已有的登录用例组成新集合，先展示资产让我选择，不生成新用例。"
+          ],
+          "cleaned_up": true,
+          "explicit_job_retries": 0
+        },
+        {
+          "evidence": "artifacts/natural-language-freedom/round-2/select-doubao-seed-2.0-lite.json",
+          "sha256": "f47ee630ff4f6a24c25e4da7c4022249516ebbfb4d7a1d0cb3772e2ed72d36b1",
+          "passed": true,
+          "seconds": 137.13,
+          "error": null,
+          "prompts": [
+            "测试对象是账号系统。选用已有的登录用例组成新集合，先展示资产让我选择，不生成新用例。",
+            "就用正确密码登录那条，其他不要。确认选这条。"
+          ],
+          "cleaned_up": true,
+          "explicit_job_retries": 0
+        }
+      ]
+    },
+    {
+      "kind": "select_and_generate",
+      "status": "passed",
+      "runs": [
+        {
+          "evidence": "artifacts/natural-language-freedom/round-1/select_and_generate-doubao-seed-2.0-lite.json",
+          "sha256": "8cb16301907f7b9715f867040c5886d66db840ba319f13828a8987ae5c48bafa",
+          "passed": true,
+          "seconds": 227.84,
+          "error": null,
+          "prompts": [
+            "测试对象是账号系统。选用已有用例并补充生成，规划两个测试点：正确密码登录成功、错误密码登录失败；总共两条用例。",
+            "就用正确密码登录那条，其他不要。确认选这条。"
+          ],
+          "cleaned_up": true,
+          "explicit_job_retries": 0
+        }
+      ]
+    },
+    {
+      "kind": "retry",
+      "status": "passed",
+      "runs": [
+        {
+          "evidence": "artifacts/natural-language-freedom/round-1/retry-doubao-seed-2.0-lite.json",
+          "sha256": "7675c38dc1e6e96dff50e293c9b8fac82c24a4b0eddf8de503beb7e648dbdd79",
+          "passed": true,
+          "seconds": 161.38,
+          "error": null,
+          "prompts": [
+            "为账号系统规划两个测试点并生成两条用例：正确密码登录成功、错误密码登录失败；仅覆盖这两种场景。",
+            "重试未完成的生成，只补齐失败的测试点，已经成功的用例保持不变。"
+          ],
+          "cleaned_up": true,
+          "explicit_job_retries": 0
+        }
+      ]
+    },
+    {
+      "kind": "natural_generate",
+      "status": "passed",
+      "runs": [
+        {
+          "evidence": "artifacts/natural-language-freedom/round-1/natural_generate-doubao-seed-2.0-lite.json",
+          "sha256": "5360dcde26b97b1ae5bbfc4cd46acc1018a1dedfd617a53109c4ee160269cc4f",
+          "passed": true,
+          "seconds": 145.55,
+          "error": null,
+          "prompts": [
+            "为账号系统规划一个测试点并生成一条用例：有效账号使用正确密码登录成功，进入首页并建立会话。仅这一个场景。",
+            "就按当前测试点开始生成用例吧。"
+          ],
+          "cleaned_up": true,
+          "explicit_job_retries": 0
+        }
+      ]
+    }
+  ],
+  "quantity_probes": [
+    {
+      "prompt": "不用五条了，三条就行，测试点还是原来的两个。",
+      "history": "规划两个测试点，生成五条用例",
+      "expected": {
+        "case_count": 3,
+        "test_point_count": 2
+      },
+      "actual": {
+        "case_count": 3,
+        "test_point_count": 2
+      },
+      "passed": true
+    },
+    {
+      "prompt": "就按刚才的数量生成。",
+      "history": "规划两个测试点，生成四条用例",
+      "expected": {
+        "case_count": 4,
+        "test_point_count": 2
+      },
+      "actual": {
+        "case_count": 4,
+        "test_point_count": 2
+      },
+      "passed": true
+    },
+    {
+      "prompt": "每个点各来两条，普通账号和管理员账号各一条。",
+      "history": "确认两个测试点：成功登录、失败登录",
+      "expected": {
+        "case_count": 4,
+        "test_point_count": 2
+      },
+      "actual": {
+        "case_count": 4,
+        "test_point_count": 2
+      },
+      "passed": true
+    },
+    {
+      "prompt": "先别生成，只解释四条是否够用。",
+      "history": "规划两个测试点，生成四条用例",
+      "expected": {
+        "case_count": null,
+        "test_point_count": null
+      },
+      "actual": {
+        "case_count": null,
+        "test_point_count": null
+      },
+      "passed": true
+    },
+    {
+      "prompt": "不是改成两条，是再生成两条，已有的三条别动。",
+      "history": "已经生成三条用例",
+      "expected": {
+        "case_count": 2,
+        "test_point_count": null
+      },
+      "actual": {
+        "case_count": 2,
+        "test_point_count": null
+      },
+      "passed": true
+    },
+    {
+      "prompt": "用例一共四条就够，原有的两条保留，再补缺少的。",
+      "history": "已有两条用例",
+      "expected": {
+        "case_count": 2,
+        "test_point_count": null
+      },
+      "actual": {
+        "case_count": 2,
+        "test_point_count": null
+      },
+      "passed": true
+    },
+    {
+      "prompt": "两个测试点不变，别增加测试点，每个点普通账号和管理员账号各一条。",
+      "history": "规划两个测试点，生成两条用例",
+      "expected": {
+        "case_count": 4,
+        "test_point_count": 2
+      },
+      "actual": {
+        "case_count": 4,
+        "test_point_count": 2
+      },
+      "passed": true
+    },
+    {
+      "prompt": "只把第二条标题改了，不新增。",
+      "history": "生成四条用例",
+      "expected": {
+        "case_count": null,
+        "test_point_count": null
+      },
+      "actual": {
+        "case_count": null,
+        "test_point_count": null
+      },
+      "passed": true
+    }
+  ],
+  "findings": [
+    {
+      "id": "query_order",
+      "problem": "上次查询结果按UUID排序，导致第二条引用选错用例",
+      "fix": "保持实际显示顺序，并明确序号不是数量"
+    },
+    {
+      "id": "incremental_points",
+      "problem": "原2点加1点，最终3被当成新增3，合并变5",
+      "fix": "传入原规划、合并方式和被替换点，明确本轮增量数量"
+    },
+    {
+      "id": "append_scope",
+      "problem": "保留2条新增2条最终4条，被当成已有目标数量4而澄清",
+      "fix": "区分新增输出、最终集合规模和已有资产修改范围"
+    },
+    {
+      "id": "selection_titles",
+      "problem": "资产选择模型只有ID，看不到标题，按标题确认报409",
+      "fix": "传递当前候选资产内容及展示顺序"
+    }
+  ],
+  "test_oracle_corrections": [
+    "quantity-round-1 第3项历史已明确两个点，应允许继承2；原始错误预期null保留，round-2修正后8项通过。",
+    "colloquial round-1 第三轮目标本来已为P0，系统正确返回no_changes；修正测试为不同优先级。"
+  ],
+  "provider_failures": [
+    "colloquial round-2 模型返回非法JSON，安全降级UNRESOLVED；保留失败，不能把后续重跑成功解释为首次成功。"
+  ],
+  "limitations": [
+    "本轮为有限表达和对话的真实模型/API验收，不能保证任意表达均正确。",
+    "保留模型非法JSON导致UNRESOLVED的失败记录；该降级未触发资产修改。",
+    "模型理解和生成仍有延迟，结果需按产品流程确认采纳。"
+  ],
+  "manual_reviews": {
+    "select_and_generate": "复用正确密码登录用例的前置与步骤保持来源内容；补充错误密码拒绝登录、不建立会话；来源正式用例保持不变。",
+    "append": "复核最终四条：原登录成功/失败两条保持原样；新增退出回登录页、退出后原会话受保护页面被拒绝两条，与要求一致。",
+    "colloquial_planning": "复核退出测试点替换内容准确覆盖原会话访问被拒绝；删除后最初两个点逐字段保持。",
+    "colloquial": "每轮完整快照比较，保证仅指定字段改变、前轮编辑保留且其他候选不变。"
+  },
+  "regressions": {
+    "api": 838,
+    "agent": 513,
+    "latest_api_targeted": 183,
+    "notes": "API全量838；后续资产标题上下文和生成范围提示改动通过183项定向测试；Agent最终513项通过"
+  },
+  "implementation_sha256": {
+    "apps/api/src/casepilot_api/conversations.py": "d464e5354a1382bb9cb2e77471eb33c3b221407382ee5917fb50c7cc402c3b48",
+    "apps/api/src/casepilot_api/agent_router.py": "a03fae56bdf7e3e242af64a9473873c854f9f9ebf181eb0a4969c961bb01359f",
+    "apps/agent/src/casepilot_agent/quantity.py": "c76c01b9940ecfeff6835fb38dc2646f7b634b0f27c68648d2fbcb74a999a35e",
+    "apps/agent/src/casepilot_agent/planning.py": "35098cdae8a31f0af4d53c0f1091213f398da592cecac6e4bafdcb05465d7c4c",
+    "apps/agent/src/casepilot_agent/tasks.py": "a2c77e1dd2f9ce40e5e82a1aad4541203aa2f47a3d93f76f95f9195bac2a4bc5",
+    "scripts/qa/deep_dialogue_acceptance.py": "ee4997baf38d27b7c2d82d52e494112ae3d1c2839fb7a025b474f2eb9feb62a6",
+    "scripts/qa/colloquial_quantity_acceptance.py": "20fb1c921d3e56057a7bfdf64626dfe2257135ce808b1ce4a5e33f3523b6d80b",
+    "apps/agent/tests/test_quantity.py": "f9c5a3e4a23aa9fbd19c2416b151f5d7b5b600029402ae8f6cc3d95f5afffaf6",
+    "apps/api/tests/test_model_scope.py": "ddc4712780dfe4d4aa6c4ea295046652787b07aedd64a4d4f0fc451698d1a595"
+  }
+}

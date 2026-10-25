@@ -275,6 +275,8 @@ def _validate_model_plan(
         operation.requires_confirmation |= operation.intent in {
             "CASE_MODIFY", "CASE_DELETE", "UNRESOLVED"
         }
+        if operation.intent == "UNRESOLVED":
+            operation.resume_operation_id = None
         operation.action = DEFAULT_ACTIONS[operation.intent]
     return IntentPlanDraft(operations=plan.operations)
 
@@ -438,6 +440,8 @@ def sdk_plan(
             "只有列表中status严格为awaiting_target的任务才可续接。已完成规划的增删改是CASE_GENERATE/BRIEF_UPDATE，"
             "resume_operation_id必须null；不得引用历史消息中的旧任务或awaiting_confirmation任务。"
             "续接任务的intent保持原任务类型，不得把另一个新任务附到旧任务。"
+            "澄清回答可以省略动作动词，例如‘我指的是错误密码那条，优先级P0’；"
+            "action_evidence引用本轮补充句原文，不能从历史复制‘优先级调成P0’或自行补词。"
             "继续修改已生成的候选或已有修改建议属于新一轮CASE_MODIFY，resume_operation_id=null；"
             "通过target_kind=previous_result或当前明确编号定位，不把上一轮已完成任务当作待澄清任务。"
             "allowed_resume_operations为空时，所有resume_operation_id必须为null。"
@@ -520,6 +524,16 @@ def plan_intents(
             validated = _validate_model_plan(
                 content, model_plan, has_targets=has_targets, phase=phase,
             )
+            if not attempt and any(
+                "ACTION_EVIDENCE_NOT_IN_REQUEST" in op.reason_codes for op in validated.operations
+            ):
+                feedback = (
+                    "上次action_evidence不是本轮消息的连续原文。不要引用上一轮动作或自行补上动词。"
+                    "用户补充范围/字段值时，可引用本轮完整补充句（如‘优先级P0’），"
+                    "并通过允许的resume_operation_id续接原任务；target_text也必须来自本轮原文。"
+                    "重新输出完整JSON，保留正确的原任务引用，不要因动作证据错误更换任务。"
+                )
+                continue
             resumable = {
                 str(item["id"]): item["intent"]
                 for item in active_operations or []
@@ -542,14 +556,7 @@ def plan_intents(
                     "；空映射表示只能输出null。重新理解完整请求。"
                 )
                 continue
-            if attempt or not any(
-                "ACTION_EVIDENCE_NOT_IN_REQUEST" in op.reason_codes for op in validated.operations
-            ):
-                return validated
-            feedback = (
-                "上次action_evidence不是原文连续片段。请重新理解用户意图并返回完整原文动作句，"
-                "不要省略范围、数量、否定词，不要改写或拼接；其他字段也须忠实于原文。"
-            )
+            return validated
         raise RuntimeError("intent_routing_repair_exhausted")
     except Exception as error:
         logger.warning("agent_router_failed", exc_info=error)
@@ -678,9 +685,13 @@ def select_case_scope(instruction: str, cases: list[dict], context: dict, *, int
             'requested_count是用户限定已有目标数量的完整整数（包括中文数字），没有数量则null。新增/生成数量不是已有目标数量，必须设为null。'
             '这两条、那二十二条也明确指定数量，分别返回2、22；不能因目标是历史查询结果而省略数量。'
             '只返回空列表代表明确无匹配，不要回退到全量。创建全新用例无需选择已有用例，返回空列表即可。'
+            'CASE_GENERATE中要求保留已有用例、再新增若干条时，保留不是修改或复用目标，返回ids=[]、requested_count=null。'
+            '例如已有2条保留再补2条最终共4条：4是最终集合规模，2是新增预算，都不是已有资产筛选数量；不得选择旧2条来修改或用4校验已有范围。'
             '目录同时含正式用例和候选。候选审阅阶段默认操作候选，除非明确要求正式用例或二者。'
             '查询汇总按用户所说的正式/候选范围选择，不得遗漏。'
             '指代刚才查询的结果时reference=previous_query，仅使用latest_query.ids；'
+            'latest_query.ids保持用户看到的查询列表顺序；第一条、第二条、最后一条按该顺序定位，不能按目录顺序或编号重新排序。'
+            '序号是位置不是目标数量，例如第二条只选一条，requested_count为null；这两条才是数量2。'
             '最新查询为空必须保持为空，不得引用更早查询或相同标题。'
             '指代当前/勾选用例时reference=selection，用selected_ids或current_case_id。'
             '继续改写/未采纳建议时reference=previous_proposal，参考proposal及其pending_ids。'

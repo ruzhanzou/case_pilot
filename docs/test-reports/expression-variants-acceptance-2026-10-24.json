@@ -1,0 +1,279 @@
+{
+  "status": "passed_with_scope_limitations",
+  "model": "doubao-seed-2.0-lite",
+  "scope": "新增口语表达的真实模型/API/worker验收；不使用浏览器；不等同于任意表达或所有模型均可靠。",
+  "summary": {
+    "workflows_passed": 5,
+    "workflows_total": 5,
+    "quantity_probes_passed": 10,
+    "quantity_probes_total": 10
+  },
+  "journeys": [
+    {
+      "kind": "range_expression",
+      "status": "passed",
+      "runs": [
+        {
+          "evidence": "artifacts/expression-variants/round-1/range_expression-doubao-seed-2.0-lite.json",
+          "sha256": "010daa9ae85bacae24807d2c05c4dd6faec466092c2d37be196bbef681c73d5a",
+          "passed": true,
+          "error": null,
+          "seconds": 239.23,
+          "prompts": [
+            "列出这个集合里所有用例。",
+            "头一条别动，剩下那两条的优先级都调成P2，其他字段照旧。",
+            "刚才说错了，不是P2，是P0。就那两条，别扩大范围。"
+          ],
+          "cleaned_up": true,
+          "job_retries": 0
+        }
+      ]
+    },
+    {
+      "kind": "correction_expression",
+      "status": "passed",
+      "runs": [
+        {
+          "evidence": "artifacts/expression-variants/round-1/correction_expression-doubao-seed-2.0-lite.json",
+          "sha256": "cb121b0d0357a0a8edcb9cf8af61d980f13a38d2c97be611af0231c1d78963ca",
+          "passed": true,
+          "error": null,
+          "seconds": 183.19,
+          "prompts": [
+            "列出这个集合里所有用例。",
+            "错误密码登录那条，优先级先调成P0，别改步骤。",
+            "不对，我要的是P2，不是P0；标题和步骤都照旧。"
+          ],
+          "cleaned_up": true,
+          "job_retries": 0
+        }
+      ]
+    },
+    {
+      "kind": "ambiguous_expression",
+      "status": "passed",
+      "runs": [
+        {
+          "evidence": "artifacts/expression-variants/round-1/ambiguous_expression-doubao-seed-2.0-lite.json",
+          "sha256": "056f317f1e9fdef3244b07b432f8060fa1050af08072e0c804b240900e321a39",
+          "passed": false,
+          "error": "intent UNRESOLVED != CASE_MODIFY",
+          "seconds": 126.31,
+          "prompts": [
+            "列出这个集合里所有用例。",
+            "登录那条，优先级调成P0。",
+            "我指的是错误密码登录失败的那条，优先级P0，别的不用改。"
+          ],
+          "cleaned_up": true,
+          "job_retries": 0
+        },
+        {
+          "evidence": "artifacts/expression-variants/round-2/ambiguous_expression-doubao-seed-2.0-lite.json",
+          "sha256": "40b3d8c63dc9317df70748fce2a5cc4bb5894f3c6b416e666fb12b7bfc9b65c5",
+          "passed": true,
+          "error": null,
+          "seconds": 226.7,
+          "prompts": [
+            "列出这个集合里所有用例。",
+            "登录那条，优先级调成P0。",
+            "我指的是错误密码登录失败的那条，优先级P0，别的不用改。"
+          ],
+          "cleaned_up": true,
+          "job_retries": 0
+        }
+      ]
+    },
+    {
+      "kind": "ellipsis_expression",
+      "status": "passed",
+      "runs": [
+        {
+          "evidence": "artifacts/expression-variants/round-1/ellipsis_expression-doubao-seed-2.0-lite.json",
+          "sha256": "3cdea04ad2fab6a3a60263ba0aa95aa2533748bc2193f40d53f8a61bcebc5506",
+          "passed": true,
+          "error": null,
+          "seconds": 211.53,
+          "prompts": [
+            "列出这个集合里所有用例。",
+            "登录那条，优先级调成P0。",
+            "密码错了进不去的那个。"
+          ],
+          "cleaned_up": true,
+          "job_retries": 0
+        }
+      ]
+    },
+    {
+      "kind": "expression_generate",
+      "status": "passed",
+      "runs": [
+        {
+          "evidence": "artifacts/expression-variants/round-1/expression_generate-doubao-seed-2.0-lite.json",
+          "sha256": "345c1e68393275f6d9246bc868bf6dd370a83d210888642451390d1ca7e9fadc",
+          "passed": true,
+          "error": null,
+          "seconds": 111.83,
+          "prompts": [
+            "给账号系统做登录用例。密码对了能进去、密码错了进不去，就这俩测试点，别拆更多。每个点普通账号和管理员账号各来一条，两种账号用同一套登录规则。不是每点四条，是加起来四条。"
+          ],
+          "cleaned_up": true,
+          "job_retries": 0
+        }
+      ]
+    }
+  ],
+  "quantity_probes": [
+    {
+      "prompt": "两点，每点各来三条，普通、管理员、访客各一条；别拆成六个点。",
+      "history": "",
+      "expected": {
+        "case_count": 6,
+        "test_point_count": 2
+      },
+      "actual": {
+        "case_count": 6,
+        "test_point_count": 2
+      },
+      "passed": true
+    },
+    {
+      "prompt": "五条太多，留三条就行，我说的是要生成的用例数。",
+      "history": "要生成五条用例",
+      "expected": {
+        "case_count": 3,
+        "test_point_count": null
+      },
+      "actual": {
+        "case_count": 3,
+        "test_point_count": null
+      },
+      "passed": true
+    },
+    {
+      "prompt": "凑够六条就停，已经有四条了，只补差的。",
+      "history": "当前集合已有四条用例",
+      "expected": {
+        "case_count": 2,
+        "test_point_count": null
+      },
+      "actual": {
+        "case_count": 2,
+        "test_point_count": null
+      },
+      "passed": true
+    },
+    {
+      "prompt": "不是再加四条，是加完一共四条；原来的三条留着。",
+      "history": "当前已有三条用例",
+      "expected": {
+        "case_count": 1,
+        "test_point_count": null
+      },
+      "actual": {
+        "case_count": 1,
+        "test_point_count": null
+      },
+      "passed": true
+    },
+    {
+      "prompt": "Don't make five. Generate three cases for the same two test points.",
+      "history": "Plan two test points and five cases",
+      "expected": {
+        "case_count": 3,
+        "test_point_count": 2
+      },
+      "actual": {
+        "case_count": 3,
+        "test_point_count": 2
+      },
+      "passed": true
+    },
+    {
+      "prompt": "先来一打用例，测试点别限定数量。",
+      "history": "",
+      "expected": {
+        "case_count": 12,
+        "test_point_count": null
+      },
+      "actual": {
+        "case_count": 12,
+        "test_point_count": null
+      },
+      "passed": true
+    },
+    {
+      "prompt": "账号三种，各两条，用例一共六条；测试点就两个。",
+      "history": "",
+      "expected": {
+        "case_count": 6,
+        "test_point_count": 2
+      },
+      "actual": {
+        "case_count": 6,
+        "test_point_count": 2
+      },
+      "passed": true
+    },
+    {
+      "prompt": "密码错三回锁五分钟，密码八到二十位。帮我生成用例，数量按覆盖需要来。",
+      "history": "",
+      "expected": {
+        "case_count": null,
+        "test_point_count": null
+      },
+      "actual": {
+        "case_count": null,
+        "test_point_count": null
+      },
+      "passed": true
+    },
+    {
+      "prompt": "一条也别新增，现有第二条的标题改一下。",
+      "history": "刚生成四条用例",
+      "expected": {
+        "case_count": null,
+        "test_point_count": null
+      },
+      "actual": {
+        "case_count": null,
+        "test_point_count": null
+      },
+      "passed": true
+    },
+    {
+      "prompt": "先别执行，我只是问：如果生成十条够不够？",
+      "history": "",
+      "expected": {
+        "case_count": null,
+        "test_point_count": null
+      },
+      "actual": {
+        "case_count": null,
+        "test_point_count": null
+      },
+      "passed": true
+    }
+  ],
+  "product_defect": {
+    "problem": "澄清回答省略动作动词时，模型引用历史动作文本，原文校验将意图置为UNRESOLVED；续接引用校验却把它误判为任务引用错误，导致模型两次纠正错误字段，无法续接。",
+    "reproduction": [
+      "登录那条，优先级调成P0。",
+      "我指的是错误密码登录失败的那条，优先级P0，别的不用改。"
+    ],
+    "diagnostic_evidence": "artifacts/expression-variants/clarification-router-replay.json",
+    "fix": "优先修复原文动作证据，明确澄清回答可引用当前完整补充句；未识别意图清除续接引用；仍不允许执行无法验证的动作或引用。"
+  },
+  "manual_review": {
+    "expression_generate": "核对2个原始测试点、4条用例，分别为普通/管理员账号×正确/错误密码；每条映射到对应测试点，未误生成每点4条。"
+  },
+  "regressions": {
+    "targeted_router": 122,
+    "full_api": 840
+  },
+  "implementation_sha256": {
+    "apps/api/src/casepilot_api/agent_router.py": "2453d223e17aeac34e517b16a0912459ca49cdb828b2a4de6ca69d6992e78d7b",
+    "apps/api/tests/test_semantic_routing_contract.py": "61526a49bd3d76992f71ed5e92be60d0c5eac84fc6c36c7f8eb14b6bf7f00f7d",
+    "scripts/qa/deep_dialogue_acceptance.py": "b4d7312deea477e13e9396578c609c4ee9c381e850ca0a8c06c4225d0ffb1a14",
+    "scripts/qa/colloquial_quantity_acceptance.py": "e55b936ff9ef48e22ccbbecc9f12eeee7f97ce3f730f8628829dd485bdae97b7"
+  }
+}

@@ -60,3 +60,15 @@ def test_selected_scope_is_forwarded_for_model_budget_interpretation():
         'selection_context':context,'test_points':[{'id':'P1'}]})
     assert requested_case_count(request, execute) == 1
     assert execute.call_args.args[2]['selection_context'] == context
+
+
+def test_incremental_point_budget_receives_retained_plan_and_replacements():
+    execute = Mock(return_value=OutputQuantity(test_point_count=1))
+    context = {
+        'previous_test_points': [{'id': 'P1'}, {'id': 'P2'}],
+        'update_mode': 'merge', 'superseded_test_point_ids': [],
+        'revision_actions': ['upsert'],
+    }
+    assert requested_point_count('原来的两个不动，再加一个', execute,
+                                 planning_context=context) == 1
+    assert execute.call_args.args[2]['planning_context'] == context

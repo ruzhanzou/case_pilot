@@ -291,3 +291,28 @@ def test_planning_revision_preserves_strategy_unless_model_detects_explicit_swit
         'CASE_GENERATE', 1.0)
     assert result == sentinel
     assert captured[0].generation_strategy == ('select_and_generate' if explicit_change else current)
+
+
+@pytest.mark.parametrize('repaired', [True, False])
+def test_clarification_evidence_repair_does_not_misdiagnose_valid_resume(monkeypatch, repaired):
+    content = '我指的是错误密码登录失败的那条，优先级P0，别的不用改。'
+    def draft(evidence):
+        return router.IntentPlanDraft(operations=[router.IntentOperationDraft(
+            intent='CASE_MODIFY', instruction=content, confidence=1,
+            action_evidence=evidence, resume_operation_id='pending-modification',
+        )])
+    semantic = Mock(side_effect=[
+        draft('优先级调成P0'),
+        draft('优先级P0' if repaired else '优先级调成P0'),
+    ])
+    monkeypatch.setattr(router, 'sdk_plan', semantic)
+    result = router.plan_intents(content, Mock(side_effect=AssertionError('No rules')),
+        has_targets=False, phase='maintenance', target_context=[],
+        active_operations=[{'id':'pending-modification','status':'awaiting_target','intent':'CASE_MODIFY'}],
+        provider='openai_compatible', model_name='fixture', base_url='https://example.test',
+        api_key='fixture', timeout_seconds=20, tracing_enabled=False)
+    assert 'action_evidence' in semantic.call_args.kwargs['validation_feedback']
+    assert '上次resume_operation_id' not in semantic.call_args.kwargs['validation_feedback']
+    op = result.operations[0]
+    assert op.intent == ('CASE_MODIFY' if repaired else 'UNRESOLVED')
+    assert op.resume_operation_id == ('pending-modification' if repaired else None)

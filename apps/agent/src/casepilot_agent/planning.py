@@ -154,10 +154,11 @@ class PlanningAnalysis(ReuseAnalysis):
         return self
 
 
-def requested_point_count(prompt: str, execute, conversation_memory=None) -> int | None:
+def requested_point_count(prompt: str, execute, conversation_memory=None, planning_context=None) -> int | None:
     from casepilot_agent.quantity import interpret_quantity
     return interpret_quantity(execute, {"prompt": prompt,
-        "conversation_memory": conversation_memory or []}).test_point_count
+        "conversation_memory": conversation_memory or [],
+        "planning_context": planning_context}).test_point_count
 
 
 def reconcile_planning(previous, incoming, analyses):

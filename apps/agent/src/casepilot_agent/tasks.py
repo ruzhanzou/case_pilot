@@ -1555,7 +1555,14 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                 )
 
             count = requested_point_count(str(payload["prompt"]), complete_plan,
-                                          payload.get("conversation_memory", []))
+                payload.get("conversation_memory", []), planning_context={
+                    "previous_test_points": previous_planning.get("test_points", []),
+                    "update_mode": "merge" if analyses and all(
+                        getattr(item, "planning_update_mode", "replace") == "merge" for item in analyses) else "replace",
+                    "superseded_test_point_ids": list(dict.fromkeys(
+                        ref for item in analyses for ref in getattr(item, "superseded_test_point_ids", []))),
+                    "revision_actions": [getattr(item, "planning_revision_action", "upsert") for item in analyses],
+                })
             if payload.get("asset_selection_confirmed") and previous_planning.get("test_points"):
                 # Asset comparison must not silently replan already reviewed coverage.
                 content["planning"] = previous_planning
