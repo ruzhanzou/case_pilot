@@ -1,5 +1,13 @@
 "use client";
 
+import { DurableAgentProgress } from "@/components/durable-agent-progress";
+import { durableFromConversation } from "@/lib/workbench-durable-run";
+import { CollectionProposalConfirmation } from "@/components/collection-proposal-confirmation";
+import { parseCollectionProposal } from "@/lib/workbench-collection-proposal";
+import { LiveAgentProgress } from "@/components/live-agent-progress";
+import { useWorkbenchAgentRun } from "@/lib/use-workbench-agent-run";
+import { WorkbenchAgentActivity } from "@/components/workbench-agent-activity";
+
 // UI identifiers must also work on HTTP origins without crypto.randomUUID.
 import { attachmentAccept, clipboardImages, isImageAttachment } from "@/lib/image-attachments";
 import { nanoid } from "nanoid/non-secure";
@@ -15,6 +23,7 @@ import {
   type ConversationDto,
   type ConversationIntent,
   type ConversationTurnDto,
+  type ConversationRequestObserver,
 } from "@/lib/casepilot-api";
 import { conversationExamples } from "@/content/conversation-examples";
 import { useI18n, type TranslationKey } from "@/lib/i18n";
@@ -48,13 +57,16 @@ type NewConversationProps = {
   pendingMessage: string | null;
   conversation: ConversationDto | null;
   collections: CaseCollectionDto[];
+  onAgentRefresh: (conversationId: string, isCurrent?: () => boolean) => Promise<void>;
   onSend: (input: {
+    observer?: ConversationRequestObserver;
     content: string;
     modelId: AgentModelId;
     useSpaceKnowledge: boolean;
     generationStrategy: GenerationStrategy;
     sourceCollectionIds: string[];
   }) => Promise<void>;
+  onCollectionProposalResolved: () => Promise<void>;
   onRemoveAttachment: (id: string) => Promise<void>;
   onUploadFiles: (files: File[], onProgress?: (percent: number) => void) => Promise<void>;
   onOpenLibrary: () => void;
@@ -110,8 +122,10 @@ export function NewConversation({
   conversation,
   collections,
   onSend,
+  onAgentRefresh,
   onUploadFiles,
   onRemoveAttachment,
+  onCollectionProposalResolved,
   onOpenLibrary,
   onOpenHistory,
   onConfirmCollection,
@@ -121,6 +135,7 @@ export function NewConversation({
   onConfirmOperation,
 }: NewConversationProps) {
   const { t, pick, locale } = useI18n();
+  const agentRun = useWorkbenchAgentRun(conversation?.id, onAgentRefresh);
   const [useSpaceKnowledge, setUseSpaceKnowledge] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [generationStrategy, setGenerationStrategy] = useState<GenerationStrategy>("generate");
@@ -230,7 +245,7 @@ export function NewConversation({
     const content = prompt.trim() || (hasPendingImage ? pick("Please analyze the attached image.", "请分析附件中的图片。") : "");
     if (!content || saving || uploading || imageBlocked) return;
     setPrompt("");
-    void onSend({ content, modelId, useSpaceKnowledge, generationStrategy, sourceCollectionIds: generationStrategy === "generate" ? [] : sourceCollectionIds }).catch(() => {
+    void onSend({ observer: agentRun.createObserver(), content, modelId, useSpaceKnowledge, generationStrategy, sourceCollectionIds: generationStrategy === "generate" ? [] : sourceCollectionIds }).catch(() => {
       setPrompt(content);
     });
   };
@@ -300,6 +315,8 @@ export function NewConversation({
         rows={3}
         autoFocus={!hasConversation}
       />
+      <LiveAgentProgress run={agentRun.view} onCancel={() => void agentRun.cancel()} durableRun={durableFromConversation(conversation)} />
+      {conversation && <DurableAgentProgress conversationId={conversation.id} value={durableFromConversation(conversation)} onRefresh={onAgentRefresh} />}
       <footer>
         <input
           ref={fileRef}
@@ -544,6 +561,8 @@ export function NewConversation({
                       {message.content}
                     </Streamdown>
                   )}
+                  {message.role === "assistant" && parseCollectionProposal(message.metadata.workbench_collection_proposal)?.id === parseCollectionProposal(conversation.context.workbench_collection_proposal)?.id && <CollectionProposalConfirmation key={parseCollectionProposal(conversation.context.workbench_collection_proposal)?.id} value={conversation.context.workbench_collection_proposal} conversationId={conversation.id} busy={saving} onResolved={onCollectionProposalResolved} />}
+                  {message.role === "assistant" && <WorkbenchAgentActivity value={message.metadata.workbench_agent} />}
                   {message.status === "awaiting_intent" && (
                     <div className="conversation-intent-confirmation">
                       <span>{t("conversation.intentUnknown")}</span>

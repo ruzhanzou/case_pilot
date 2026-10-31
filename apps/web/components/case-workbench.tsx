@@ -1,5 +1,7 @@
 "use client";
 
+import { DurableAgentProgress } from "@/components/durable-agent-progress";
+import { durableFromConversation } from "@/lib/workbench-durable-run";
 import { attachmentAccept, clipboardImages, isImageAttachment } from "@/lib/image-attachments";
 import { CaseSource, type AssetProvenance } from "@/components/workspace-case-sources";
 import { CompactModificationConfirmation } from "@/components/compact-modification-confirmation";
@@ -19,12 +21,25 @@ import { summarizeWorkflowStages } from "@/lib/workflow-stages";
 import { CasePolishDialog } from "@/components/case-polish-dialog";
 import { CaseContentFields } from "@/components/case-content-fields";
 import { CaseTaskArtifacts } from "@/components/case-task-artifacts";
+import { LiveAgentProgress } from "@/components/live-agent-progress";
+import { createJobObserverGuard, refreshCurrentWorkspace } from "@/lib/workbench-refresh";
+import { useWorkbenchAgentRun } from "@/lib/use-workbench-agent-run";
+import { WorkbenchAgentActivity } from "@/components/workbench-agent-activity";
+import { CollectionProposalConfirmation } from "@/components/collection-proposal-confirmation";
+import { parseCollectionProposal } from "@/lib/workbench-collection-proposal";
+import { ConversationCandidates } from "@/components/conversation-candidates";
+import { ConversationReview } from "@/components/conversation-review";
+import { canonicalSelection, createSelectionQueue, legacySelectionTargets } from "@/lib/workbench-selection";
+import { reviewableChangeRefs, selectedReviewFields } from "@/lib/workbench-review";
 import { ConversationTaskFlow } from "@/components/conversation-task-flow";
 import { CaseTaskWorkspace } from "@/components/case-task-workspace";
 import { candidatesForTask, workspaceTasks, workspaceIsRunning, workspaceJobNeedsWatch, taskScopeChanged, nextWorkspaceOperation, type WorkspaceTask } from "@/lib/workspace-tasks";
 import { operationStatusLabels } from "@/lib/operation-status";
 import { consumptionSummary } from "@/lib/planning-consumption";
 import { TestPlanningMap } from "@/components/test-planning-map";
+import { PlanningReviewPanel } from "@/components/planning-review-panel";
+import { PlanningCoverageReview } from "@/components/planning-coverage-review";
+import { PlanningBoundarySamples } from "@/components/planning-point-samples";
 import { CaseMindMap } from "@/components/case-mind-map";
 import { CaseCollectionChanges } from "@/components/case-collection-changes";
 import { CaseEditorDialog } from "@/components/case-editor-dialog";
@@ -57,6 +72,7 @@ import {
   type TaskReviewDecisions,
   updateWorkspaceCandidate,
   updateWorkspaceState,
+  updateWorkbenchSelection,
   uploadConversationAttachments,
   detachConversationAttachment,
   waitForKnowledgeSource,
@@ -103,6 +119,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -130,6 +147,7 @@ type CaseWorkbenchProps = {
   onEditCase: (testCase: TestCaseDto) => void;
   onSaveCase: (testCase: TestCaseDto, input: TestCaseInput) => Promise<void>;
   onCasesChanged: () => Promise<void>;
+  onCollectionsChanged: (conversationId: string) => Promise<void>;
   onImportCases: (
     collectionId: string,
     inputs: TestCaseInput[],
@@ -314,6 +332,7 @@ export function CaseWorkbench({
   onCreateCaseInline,
   onSaveCase,
   onCasesChanged,
+  onCollectionsChanged,
   onNewConversation,
   onContinueInNewConversation,
   onCancelOperation,
@@ -383,7 +402,8 @@ export function CaseWorkbench({
   const [planningFocusPointId, setPlanningFocusPointId] = useState("");
   const [artifactOpen, setArtifactOpen] = useState(false);
   const [briefView, setBriefView] = useState<"map" | "text">("map");
-  const [chatWidth, setChatWidth] = useState(400);
+  const [chatWidth, setChatWidth] = useState(480);
+  const [mobilePane, setMobilePane] = useState<"conversation" | "results">("conversation");
   const [inspectorWidth, setInspectorWidth] = useState(300);
   const [inspectorHidden, setInspectorHidden] = useState(false);
   const [activeChangeSet, setActiveChangeSet] =
@@ -541,8 +561,8 @@ export function CaseWorkbench({
     ?? resultTasks.find((task) => task.status === "running")
     ?? resultTasks.find((task) => task.status.startsWith("awaiting_")) ?? resultTasks[0];
   const activePlanMessage = selectedTask?.message;
-  const conversationRunning = busy || queueRunning || workspaceIsRunning(workspace);
-  const runningLabel = pendingMessage !== null
+  const conversationRunning = pendingMessage !== null || busy || queueRunning || workspaceIsRunning(workspace);
+  const runningLabel = pendingMessage !== null && !currentJobId
     ? pick("Thinking — understanding your request and selecting cases", "正在思考 · 理解需求并筛选用例")
     : progress?.analysis_progress
       ? pick(`Reviewing cases · ${progress.analysis_progress.completed_batches}/${progress.analysis_progress.total_batches} batches complete`, `分析用例 · 已完成 ${progress.analysis_progress.completed_batches}/${progress.analysis_progress.total_batches} 批`)
@@ -641,7 +661,7 @@ export function CaseWorkbench({
     target?.focus({ preventScroll: true });
     target?.closest(".principle-case-area")?.scrollTo({ top: 0, behavior: "instant" });
   });
-  const navigateToReview = (id?: string) => { openReviewPlan(id); focusWorkspace(); };
+  const navigateToReview = (id?: string) => { setMobilePane("results"); openReviewPlan(id); focusWorkspace(); };
   const focusBrief = () => requestAnimationFrame(() => document.querySelector<HTMLElement>(".principle-brief")?.focus({ preventScroll: true }));
   const focusCaseView = () => requestAnimationFrame(() => document.querySelector<HTMLElement>(".principle-viewbar button.is-active")?.focus({ preventScroll: true }));
   const focusInspector = () => requestAnimationFrame(() => {
@@ -695,29 +715,40 @@ export function CaseWorkbench({
     return () => { active = false; };
   }, []);
 
-  const selectionSave = useRef<Promise<unknown>>(Promise.resolve());
+  const selectionSync = useRef(createSelectionQueue(
+    (version: number, input: { id: string; targets: ConversationTarget[] }) => updateWorkbenchSelection(input.id, {
+      base_version: version, action: "replace", targets: input.targets,
+    }), result => canonicalSelection(result.context.workbench_selection)?.version ?? 0,
+  ));
+  const restoreCanonicalTargets = useCallback((result: ConversationDto) => {
+    const canonical = canonicalSelection(result.context.workbench_selection);
+    if (!canonical) return;
+    const targets = canonical.targets.map(target => ({ target, key: JSON.stringify(target),
+      label: canonical.items.filter(item => target.case_ids?.includes(item.case_id ?? "") || target.candidate_refs?.includes(item.candidate_ref ?? "")).map(item => item.label).join(" · ") || target.module || pick("Selected cases", "已选用例"),
+    }));
+    setSelectedTargets(targets);
+    setRewriteTargets(targets);
+  }, [pick]);
   const persistTargetSelection = useCallback((next: typeof selectedTargets) => {
     if (!workspace) return;
-    const workspaceId = workspace.id;
-    selectionSave.current = selectionSave.current.catch(() => undefined).then(() =>
-      updateWorkspaceState(workspaceId, {
-        selected_targets: next.map(({ label, target }) => ({ label, target })),
-      })
-    );
-    void selectionSave.current.catch((caught) =>
-      setError(caught instanceof Error ? caught.message : pick("Could not save selection", "保存选择失败"))
-    );
-  }, [workspace, pick]);
+    const id = workspace.id;
+    void selectionSync.current.submit({ id, targets: next.map(item => item.target) }).then(result => {
+      if (!selectionSync.current.pending) {
+        setWorkspace(current => current?.id === id ? { ...current, context: { ...current.context, workbench_selection: result.context.workbench_selection } } : current);
+        restoreCanonicalTargets(result);
+      }
+    }).catch(async caught => {
+      setError(caught instanceof Error ? caught.message : pick("Selection changed. Review the latest selection.", "选择范围已变化，请检查最新范围。"));
+      const current = await getConversation(id).catch(() => null);
+      if (current && (canonicalSelection(current.context.workbench_selection)?.version ?? 0) >= selectionSync.current.version) {
+        selectionSync.current.rebase(canonicalSelection(current.context.workbench_selection)?.version ?? 0);
+        restoreCanonicalTargets(current);
+        setWorkspace(previous => previous?.id === id ? { ...previous, context: current.context } : previous);
+      }
+    });
+  }, [workspace, restoreCanonicalTargets, pick]);
 
-  const ensureTargetSelectionSaved = async () => {
-    if (!workspace) return;
-    // Retry a failed persistence request with the current selection. A rejected
-    // promise must not permanently block sending or confirming the same scope.
-    selectionSave.current = selectionSave.current.catch(() => updateWorkspaceState(workspace.id, {
-      selected_targets: selectedTargets.map(({ label, target }) => ({ label, target })),
-    }));
-    await selectionSave.current;
-  };
+  const ensureTargetSelectionSaved = async () => { await selectionSync.current.wait(); };
 
   const toggleTarget = useCallback(
     (target: ConversationTarget, label: string) => {
@@ -775,27 +806,29 @@ export function CaseWorkbench({
       lastWorkspacePhaseRef.current = workspacePhase;
       setArtifactOpen(result.context.phase === "brief_review");
     }
-    const savedChatWidth = Number(result.context.chat_width ?? 400);
+    const savedChatWidth = Number(result.context.chat_width ?? 480);
     setChatWidth(savedChatWidth < 320 || savedChatWidth === 520 ? 400 : clampPanelWidth("chat", savedChatWidth));
     setInspectorWidth(
       clampPanelWidth("inspector", Number(result.context.inspector_width ?? 300)),
     );
     const restoredCaseId = String(result.context.selected_case_id ?? "");
     setSelectedCaseId(restoredCaseId);
-    const restoredTargets = Array.isArray(result.context.selected_targets)
-      ? (result.context.selected_targets as {
-          label: string;
-          target: ConversationTarget;
-        }[])
-      : [];
-    const normalizedTargets = restoredTargets.map((item) => ({
-      ...item,
-      label: item.target.kind === "case" && /^\d+ cases$/.test(item.label)
-        ? pick(item.label, `${item.label.split(" ")[0]} 条用例`) : item.label,
-      key: JSON.stringify(item.target),
-    }));
-    setSelectedTargets(normalizedTargets);
-    setRewriteTargets(normalizedTargets);
+    if (!selectionSync.current.pending) {
+      const canonical = canonicalSelection(result.context.workbench_selection);
+      if (!canonical || canonical.version >= selectionSync.current.version) {
+        selectionSync.current.rebase(canonical?.version ?? 0);
+        if (canonical) restoreCanonicalTargets(result);
+        else {
+          const normalizedTargets = legacySelectionTargets(result.context, pick("Selected cases", "已选用例")).map(item => ({
+            ...item,
+            label: item.target.kind === "case" && /^\d+ cases$/.test(item.label)
+              ? pick(item.label, `${item.label.split(" ")[0]} 条用例`) : item.label,
+          }));
+          setSelectedTargets(normalizedTargets);
+          setRewriteTargets(normalizedTargets);
+        }
+      }
+    }
     const activeJobId = String(result.context.active_job_id ?? "");
     const jobIsRunning = workspaceJobNeedsWatch(result, activeJobId);
     setCurrentJobId(jobIsRunning ? activeJobId : "");
@@ -807,29 +840,42 @@ export function CaseWorkbench({
     setCandidateDraft(
       restoredCandidate ? structuredClone(restoredCandidate) : null,
     );
-  }, [selectedCollectionId, setCandidateDraft, setSelectedBriefVersion, setArtifactOpen, pick]);
+  }, [selectedCollectionId, setCandidateDraft, setSelectedBriefVersion, setArtifactOpen, pick, restoreCanonicalTargets]);
+  // A new epoch also invalidates an A → B → A navigation and unmount.
+  const refreshNavigation = useRef({ conversationId, selectedCollectionId, epoch: 0, active: false });
+  useLayoutEffect(() => {
+    const identity = { conversationId, selectedCollectionId, epoch: refreshNavigation.current.epoch + 1, active: true };
+    refreshNavigation.current = identity;
+    return () => { identity.active = false; watchedJobRef.current = ""; };
+  }, [conversationId, selectedCollectionId]);
   const refreshWorkspace = useCallback(async () => {
     if (!selectedCollectionId) return null;
-    const result = conversationId
-      ? await getConversation(conversationId)
-      : await getOrCreateWorkspace(selectedCollectionId);
-    applyWorkspaceResult(result);
-    const review = result.operation_plan?.operations.find(
-      (item) => item.status === "awaiting_confirmation" && item.related_change_set_id,
-    );
-    if (review?.related_change_set_id) {
-      const changeSet = await getCaseChangeSet(review.related_change_set_id);
-      if (changeSet.status === "ready") {
+    const navigation = refreshNavigation.current;
+    const isCurrent = () => navigation.active && refreshNavigation.current === navigation
+      && navigation.conversationId === conversationId && navigation.selectedCollectionId === selectedCollectionId;
+    return refreshCurrentWorkspace({
+      isCurrent,
+      loadWorkspace: () => conversationId
+        ? getConversation(conversationId)
+        : getOrCreateWorkspace(selectedCollectionId),
+      applyWorkspace: applyWorkspaceResult,
+      loadChangeSet: getCaseChangeSet,
+      applyChangeSet: changeSet => {
         setActiveChangeSet(changeSet);
         setAcceptedFields(reviewSelections.current[changeSet.id] ?? defaultReviewFields(changeSet));
-      }
-    }
-    return result;
+      },
+    });
   }, [applyWorkspaceResult, conversationId, selectedCollectionId]);
+  const agentRun = useWorkbenchAgentRun(workspace?.id, async id => {
+    if (workspace?.id === id) await refreshWorkspace();
+  });
   const waitAndRefresh = useCallback(
     async (jobId: string, conversationId = workspace?.id ?? "") => {
       if (!conversationId || watchedJobRef.current === jobId) return;
+      const navigation = refreshNavigation.current;
+      if (!navigation.active) return;
       watchedJobRef.current = jobId;
+      const isCurrentJob = createJobObserverGuard(navigation, refreshNavigation, watchedJobRef, jobId);
       viewTouchedRef.current = true;
       setViewMode("plan");
       setArtifactOpen(false);
@@ -838,20 +884,23 @@ export function CaseWorkbench({
       setBusy(true);
       setCurrentJobId(jobId);
       setProgress({ name: "queued", progress: 0 });
+      setLiveStages([]);
       let previewRefresh: Promise<void> | null = null;
       let lastPreviewCount = 0;
       try {
         const job = await watchGeneration(
           jobId,
           (stage) => {
+            if (!isCurrentJob()) return;
             if (stage.generated_count && stage.generated_count > lastPreviewCount && !previewRefresh) {
               const count = stage.generated_count;
               previewRefresh = getConversation(conversationId).then(async (result) => {
+                if (!isCurrentJob()) return;
                 setWorkspace((current) => current?.id === result.id ? result : current);
                 const operation = result.operation_history?.find(item => item.related_job_id === jobId);
                 if (operation?.related_change_set_id && watchedJobRef.current === jobId) {
                   const preview = await getCaseChangeSet(operation.related_change_set_id);
-                  if (watchedJobRef.current === jobId) setActiveChangeSet(preview);
+                  if (isCurrentJob()) setActiveChangeSet(preview);
                 }
                 lastPreviewCount = count;
               }).catch(() => undefined).finally(() => { previewRefresh = null; });
@@ -884,6 +933,7 @@ export function CaseWorkbench({
             });
           },
           (content) => {
+            if (!isCurrentJob()) return;
             setWorkspace((current) =>
               current
                 ? {
@@ -900,22 +950,25 @@ export function CaseWorkbench({
           },
         );
         await previewRefresh;
+        if (!isCurrentJob()) return;
         if (job.status === "failed") {
           throw new Error(job.error_code ?? pick("Task failed. Try again later.", "任务处理失败，请稍后重试"));
         }
         await refreshWorkspace();
       } catch (caught) {
         await previewRefresh;
+        if (!isCurrentJob()) return;
         await refreshWorkspace().catch(() => undefined);
+        if (!isCurrentJob()) return;
         throw caught;
       } finally {
-        if (watchedJobRef.current === jobId) {
+        if (isCurrentJob()) {
           watchedJobRef.current = "";
+          setBusy(false);
+          setCurrentJobId("");
+          setProgress(null);
+          setLiveStages([]);
         }
-        setBusy(false);
-        setCurrentJobId("");
-        setProgress(null);
-        setLiveStages([]);
       }
     },
     [pick, refreshWorkspace, workspace, setArtifactOpen],
@@ -1187,12 +1240,15 @@ export function CaseWorkbench({
     setError("");
     setPlanMessageId("");
     try {
+      const targets: ConversationTarget[] = selectedIds.length ? Array.from({ length: Math.ceil(selectedIds.length / 100) }, (_, index) => ({ kind: "case" as const, case_ids: selectedIds.slice(index * 100, (index + 1) * 100) }))
+        : selectedTask.operation ? [{ kind: "previous_result", source_operation_id: selectedTask.operation.id }] : [];
+      await selectionSync.current.submit({ id: workspace.id, targets });
       const turn = await sendConversationMessage(workspace.id, {
         content,
         modelId, scope: "current", intentOverride: intent,
+        selectionVersion: selectionSync.current.version,
         sourceOperationId: selectedTask.operation?.id,
-        targets: selectedIds.length ? Array.from({ length: Math.ceil(selectedIds.length / 100) }, (_, index) => ({ kind: "case" as const, case_ids: selectedIds.slice(index * 100, (index + 1) * 100) }))
-          : selectedTask.operation ? [{ kind: "previous_result", source_operation_id: selectedTask.operation.id }] : [],
+        targets,
       });
       await refreshWorkspace();
       if (turn.action.job_id) await waitAndRefresh(turn.action.job_id);
@@ -1220,8 +1276,9 @@ export function CaseWorkbench({
         setCandidateDraft(structuredClone(saved));
         await refreshWorkspace();
       }
+      await selectionSync.current.submit({ id: workspace.id, targets: [target] });
       const turn = await sendConversationMessage(workspace.id, {
-        content, modelId, scope: "current", intentOverride: "CASE_MODIFY", targetScope: "selected",
+        content, modelId, scope: "current", intentOverride: "CASE_MODIFY", targetScope: "selected", selectionVersion: selectionSync.current.version,
         targets: [target], knowledgeSourceIds: sourceIds, documentIds: pendingDocumentIds, useSpaceKnowledge,
       });
       setPolishOpen(false);
@@ -1287,6 +1344,7 @@ export function CaseWorkbench({
       (!effectivePendingOperationId && !prompt.trim() && !hasPendingImage) ||
       (effectivePendingOperationId && !selectedTargets.length && !prompt.trim() && !hasPendingImage)
     ) return;
+    const requestObserver = agentRun.createObserver();
     setPlanMessageId("");
     const content = prompt.trim() || (hasPendingImage ? pick("Please analyze the attached image.", "请分析附件中的图片。") : "");
     // Explicit UI selections are context; the server model resolves the request.
@@ -1307,6 +1365,7 @@ export function CaseWorkbench({
     setNotice("");
     try {
       await ensureTargetSelectionSaved();
+      if (requestObserver.isCurrent?.() === false) return;
       const turn = effectivePendingOperationId
         ? await resumeConversationOperation(effectivePendingOperationId, {
             documentIds: pendingDocumentIds,
@@ -1322,8 +1381,10 @@ export function CaseWorkbench({
             documentIds: pendingDocumentIds,
             useSpaceKnowledge,
             sourceOperationId: refinementSourceId || undefined,
+            selectionVersion: selectionSync.current.version,
             targets: structuredTargets,
-          });
+          }, requestObserver);
+      if (requestObserver.isCurrent?.() === false) return;
       messageAccepted = true;
       // Replace the optimistic echo with the server's messages before any
       // follow-up requests, so slow state saves do not hide the accepted turn.
@@ -1381,8 +1442,7 @@ export function CaseWorkbench({
           : [];
       setSelectedTargets(retainedSelections);
       setRewriteTargets(retainedSelections);
-      setWorkspace(
-        await updateWorkspaceState(workspace.id, {
+      const updatedWorkspace = await updateWorkspaceState(workspace.id, {
           draft_text: "",
           active_view: nextView,
           selected_case_id: resolvedCaseId,
@@ -1390,28 +1450,35 @@ export function CaseWorkbench({
             label: item.label,
             target: item.target,
           })),
-        }),
-      );
+        });
+      if (requestObserver.isCurrent?.() === false) return;
+      setWorkspace(updatedWorkspace);
       const jobId = turn.action.job_id;
       if (jobId) {
         await waitAndRefresh(jobId);
       }
+      if (requestObserver.isCurrent?.() === false) return;
       if (turn.action.change_set_id) {
         const changeSet = await getCaseChangeSet(turn.action.change_set_id);
+        if (requestObserver.isCurrent?.() === false) return;
         setActiveChangeSet(changeSet);
         setAcceptedFields(defaultReviewFields(changeSet));
       }
       if (effectivePendingOperationId) setResumeTaskId("");
-      if (!turn.action.change_set_id) {
+      if (!turn.action.change_set_id && requestObserver.isCurrent?.() !== false) {
         await continueTaskQueue(await refreshWorkspace());
       }
     } catch (caught) {
+      if (requestObserver.isCurrent?.() === false) return;
       if (!messageAccepted) editPrompt(content);
       else await refreshWorkspace().catch(() => undefined);
+      if (requestObserver.isCurrent?.() === false) return;
       setError(caught instanceof Error ? caught.message : pick("Failed to process message", "消息处理失败"));
     } finally {
-      setPendingMessage(null);
-      setBusy(false);
+      if (requestObserver.isCurrent?.() !== false) {
+        setPendingMessage(null);
+        setBusy(false);
+      }
     }
   };
 
@@ -1475,24 +1542,36 @@ export function CaseWorkbench({
   const stopGeneration = async () => {
     if (!currentJobId) return;
     const jobId = currentJobId;
+    const navigation = refreshNavigation.current;
+    const isCurrent = () => navigation.active && refreshNavigation.current === navigation
+      && (!watchedJobRef.current || watchedJobRef.current === jobId);
+    let ended = false;
     setError("");
     try {
-      await cancelGeneration(jobId);
+      const result = await cancelGeneration(jobId);
+      if (!isCurrent()) return;
+      ended = terminalWorkflowStatuses.has(result.status);
       await refreshWorkspace();
-      setNotice(pick("Task ended. You can continue the conversation.", "任务已结束，可继续对话。"));
+      if (!isCurrent()) return;
+      setNotice(result.status === "cancelled"
+        ? pick("Draft task stopped. No formal changes were applied by stopping it.", "草稿任务已停止，停止操作未应用正式变更。")
+        : ended ? pick("This task has already finished.", "本次任务已结束。")
+        : pick("Stop requested. Waiting for the task's actual state.", "已请求停止，等待任务实际状态。"));
     } catch (caught) {
+      if (!isCurrent()) return;
       const refreshed = await refreshWorkspace().catch(() => null);
-      if (refreshed?.workflow_runs.some((run) =>
+      if (!isCurrent()) return;
+      ended = Boolean(refreshed?.workflow_runs.some((run) =>
         run.job_id === jobId && terminalWorkflowStatuses.has(run.status)
-      )) {
-        setNotice(pick("This task has already finished.", "本次任务已结束。"));
-      } else {
-        setError(caught instanceof Error ? caught.message : pick("Failed to end task", "结束任务失败"));
-      }
+      ));
+      if (ended) setNotice(pick("This task has already finished.", "本次任务已结束。"));
+      else setError(caught instanceof Error ? caught.message : pick("Failed to stop task; it may still be running.", "停止任务失败，任务可能仍在执行。"));
     } finally {
-      setBusy(false);
-      setCurrentJobId("");
-      setProgress(null);
+      if (isCurrent() && ended) {
+        setBusy(false);
+        setCurrentJobId("");
+        setProgress(null);
+      }
     }
   };
 
@@ -1511,8 +1590,12 @@ export function CaseWorkbench({
     } finally { setBusy(false); }
   };
 
-  const confirmBriefAndGenerate = async (selectedPointIds: string[] = [], reuseConfirmation?: "reuse" | "fresh") => {
-    if (!workspace) return;
+  const confirmBriefAndGenerate = async (selectedPointIds: string[] = [], reuseConfirmation?: "reuse" | "fresh", expectedVersion?: number) => {
+    if (!workspace || conversationRunning) return;
+    if (expectedVersion !== undefined && activeBrief?.version !== expectedVersion) {
+      setError(pick("The plan changed. Review the latest version before confirming.", "测试规划已更新，请审阅最新版本后确认。"));
+      return;
+    }
     if (assetSelection) { setArtifactOpen(false); return; }
     if (assetReuseDecisions.some((item) => !selectedPointIds.length || selectedPointIds.includes(item.point_id)) && !reuseConfirmation) {
       setPendingReuseSelection({ version: activeBrief!.version, ids: selectedPointIds });
@@ -1628,10 +1711,13 @@ export function CaseWorkbench({
   };
 
   const commitCandidates = async (candidateIds?: string[]) => {
-    if (!workspace || candidateIds?.length === 0) return;
+    if (!workspace || candidateIds?.length === 0 || conversationRunning) return;
+    const ids = candidateIds ?? candidates.filter(candidate => candidate.included).map(candidate => candidate.id);
+    const versions = Object.fromEntries(ids.map(id => [id, candidates.find(candidate => candidate.id === id)?.version]));
+    if (!ids.length || Object.values(versions).some(version => version === undefined)) return;
     setBusy(true);
     try {
-      const committed = await commitWorkspaceCandidates(workspace.id, candidateIds);
+      const committed = await commitWorkspaceCandidates(workspace.id, ids, versions as Record<string, number>);
       await onCasesChanged();
       setSelectedCaseId(committed[0]?.id ?? "");
       setSelectedTargets([]);
@@ -1653,7 +1739,7 @@ export function CaseWorkbench({
   };
 
   const applyChangeSet = async (selection = acceptedFields, reviewRefs?: string[]) => {
-    if (!selectedTaskChangeSet) return;
+    if (!selectedTaskChangeSet || historicalVersion || conversationRunning) return;
     setBusy(true);
     setError("");
     try {
@@ -1691,8 +1777,15 @@ export function CaseWorkbench({
     }
   };
 
+  const applySelectedReview = async () => {
+    if (!selectedTaskChangeSet || historicalVersion || selectedScopeChanged || conversationRunning) return;
+    const refs = reviewableChangeRefs(selectedTaskChangeSet);
+    if (!refs.length) return;
+    return applyChangeSet(selectedReviewFields(selectedTaskChangeSet, acceptedFields), refs);
+  };
+
   const rejectChangeSet = async () => {
-    if (!selectedTaskChangeSet) return;
+    if (!selectedTaskChangeSet || historicalVersion || conversationRunning) return;
     setBusy(true);
     setError("");
     try {
@@ -1714,7 +1807,9 @@ export function CaseWorkbench({
     setError("");
     setNotice("");
     try {
+      await selectionSync.current.submit({ id: workspace.id, targets: Array.from({ length: Math.ceil(caseIds.length / 100) }, (_, index) => ({ kind: "case" as const, case_ids: caseIds.slice(index * 100, (index + 1) * 100) })) });
       const turn = await sendConversationMessage(workspace.id, {
+        selectionVersion: selectionSync.current.version,
         content: duplicate
           ? "删除选中的重复用例；保留用例已在检查计划中指定。"
           : "删除选中的用例。",
@@ -1819,13 +1914,14 @@ export function CaseWorkbench({
   };
 
   const resetPanelWidth = (panel: "chat" | "inspector") => {
-    const defaultWidth = panel === "chat" ? 400 : 300;
+    const defaultWidth = panel === "chat" ? 480 : 300;
     if (panel === "chat") setChatWidth(defaultWidth);
     else setInspectorWidth(defaultWidth);
     persistPanelWidth(panel, defaultWidth);
   };
 
   const selectBriefVersion = (version: number, moveFocus = true) => {
+    if (moveFocus) setMobilePane("results");
     setSelectedBriefVersion(version);
     setArtifactOpen(true);
     if (moveFocus) focusBrief();
@@ -1874,6 +1970,7 @@ export function CaseWorkbench({
       className="principle-workbench"
       aria-busy={busy}
       data-inspector-collapsed={inspectorCollapsed}
+      data-mobile-pane={mobilePane}
       style={
         {
           "--chat-width": `${chatWidth}px`,
@@ -1881,10 +1978,15 @@ export function CaseWorkbench({
         } as CSSProperties
       }
     >
-      <aside className="principle-chat">
+      <nav className="workbench-mobile-nav" aria-label={pick("Workbench panels", "工作区面板")}>
+        <button type="button" aria-pressed={mobilePane === "conversation"} onClick={() => setMobilePane("conversation")}>{pick("Conversation", "对话")}</button>
+        <button type="button" aria-pressed={mobilePane === "results"} onClick={() => setMobilePane("results")}>{pick("Results & review", "结果与审阅")}</button>
+      </nav>
+      <aside className="principle-chat" aria-label={pick("CasePilot conversation", "CasePilot 对话")}>
         <div className="principle-context-card" title={spaceName}>
-          <span>{pick("Current workspace", "当前工作区")}</span>
-          <strong>{selectedCollection.name}</strong>
+          <div className="workbench-agent-heading"><Bot size={19} /><strong>CasePilot</strong><span>{conversationRunning ? pick("Working", "处理中") : pick("Ready", "就绪")}</span></div>
+          <div className="workbench-context-scope"><span>{pick("Collection", "当前集合")}</span><strong>{selectedCollection.name}</strong></div>
+          <small>{pick("Plan together. Preview changes. You decide what is saved.", "一起规划，预览变更，由你确认保存。")}</small>
         </div>
 
         <div
@@ -1907,7 +2009,6 @@ export function CaseWorkbench({
                 </div>
               </div>
             )}
-            <ConversationTaskFlow tasks={tasks} labels={localizedIntentLabels} statusLabels={localizedOperationStatusLabels} busy={conversationRunning} onResume={(task) => void resumeTask(task)} onResult={navigateToReview} />
             {messages.map((message) => {
             const workflow = workflowByMessageId.get(message.id);
             const isLiveWorkflow = Boolean(currentJobId) &&
@@ -2180,12 +2281,31 @@ export function CaseWorkbench({
                     {pick("Structured test brief", "结构化测试说明")} V{artifactVersion}.md
                   </button>
                 )}
+                {workspace && activeBrief?.content.planning && activeBrief.status === "draft" && artifactVersion === activeBrief.version && message.metadata.artifact_type === "test_brief" &&
+                  <PlanningReviewPanel key={`${workspace.id}:${activeBrief.version}`} workspaceId={workspace.id} version={activeBrief.version}
+                    planning={activeBrief.content.planning} onApplied={() => void refreshWorkspace()} />}
                 {conversationTask && message.role === "assistant" && !["KNOWLEDGE_QA", "UNRESOLVED"].includes(message.intent ?? "") && !hasAnalysisReport && !querySnapshots && message.metadata.artifact_type !== "test_brief" && !message.metadata.workstation_task_id && (
                   <button type="button" className="principle-artifact-link" onClick={() => navigateToReview(message.id)}>
                     <Sparkles size={14} />{pick("View case result", "查看用例结果")}
                   </button>
                 )}
                 {Boolean(message.metadata.workstation_task_id) && <button type="button" className="principle-artifact-link" onClick={() => navigateToReview(String(message.metadata.workstation_task_id))}>{pick("Go to workstation review", "前往工作区审阅")}</button>}
+                {message.role === "assistant" && message.metadata.artifact_type === "test_brief" && artifactVersion === activeBrief?.version && activeBrief.status === "draft" && <div className="conversation-plan-approval">
+                  <strong>{pick(`Test plan V${artifactVersion}`, `测试规划 V${artifactVersion}`)}</strong>
+                  <p>{activeBrief.content.test_object}</p>
+                  <small>{pick("Confirm this version to prepare candidates, not save formal cases.", "确认此版本后准备候选，不会直接保存正式用例。")}</small>
+                  <div><button type="button" onClick={() => selectBriefVersion(artifactVersion)}>{pick("Inspect plan & selections", "查看规划与选择")}</button><button type="button" disabled={conversationRunning || Boolean(assetSelection) || blockingQuestions.length > 0 || Boolean(activeBrief.content.planning?.reuse && !consumptionSummary(activeBrief.content.planning).included)} onClick={() => void confirmBriefAndGenerate([], undefined, artifactVersion)}>{pick(`Confirm V${artifactVersion} & generate`, `确认 V${artifactVersion} 并生成候选`)}</button></div>
+                </div>}
+                {conversationTask?.message.id === message.id && <ConversationTaskFlow tasks={[conversationTask]} labels={localizedIntentLabels} statusLabels={localizedOperationStatusLabels} busy={conversationRunning} onResume={(task) => void resumeTask(task)} onResult={navigateToReview} />}
+                {conversationTask?.message.id === message.id && conversationTask.id === selectedTask?.id && selectedTaskChangeSet && !historicalVersion && !selectedScopeChanged && <ConversationReview changeSet={selectedTaskChangeSet} selection={acceptedFields} busy={conversationRunning} onApply={applySelectedReview} onInspect={() => navigateToReview(conversationTask.id)} />}
+                {conversationTask?.message.id === message.id && !["failed", "cancelled", "superseded", "not_applied"].includes(conversationTask.status) && <ConversationCandidates
+                  candidates={candidatesForTask(conversationTask, workspace).flatMap(item => {
+                    const current = candidates.find(candidate => candidate.id === item.id);
+                    return current?.included && !pendingCandidateRefs.includes(current.ref) ? [current] : [];
+                  })} busy={conversationRunning} onCommit={ids => void commitCandidates(ids)} onInspect={() => navigateToReview(conversationTask.id)} />}
+                {message.role === "assistant" && workspace && parseCollectionProposal(message.metadata.workbench_collection_proposal)?.id === parseCollectionProposal(workspace.context.workbench_collection_proposal)?.id && <CollectionProposalConfirmation
+                  key={parseCollectionProposal(workspace.context.workbench_collection_proposal)?.id} value={workspace.context.workbench_collection_proposal} conversationId={workspace.id} busy={conversationRunning} onResolved={async () => { const refreshed = await refreshWorkspace(); if (refreshed) await onCollectionsChanged(refreshed.id); }} />}
+                {message.role === "assistant" && <WorkbenchAgentActivity value={message.metadata.workbench_agent} />}
                 {message.citations.length > 0 && (
                   <small>
                     {pick("Sources: ", "来源：")}
@@ -2195,6 +2315,7 @@ export function CaseWorkbench({
               </article>
             );
             })}
+            <ConversationTaskFlow tasks={tasks.filter(task => !messages.some(message => message.id === task.message.id))} labels={localizedIntentLabels} statusLabels={localizedOperationStatusLabels} busy={conversationRunning} onResume={(task) => void resumeTask(task)} onResult={navigateToReview} />
             {assetSelection && activeBrief && <article className="principle-message is-assistant">
               <p>{assetSelection.sources.length ? pick(`Found ${assetSelection.sources.length} same-object assets. Confirm the sources in the workspace before continuing.`, `找到 ${assetSelection.sources.length} 条同测试对象的可参考用例，请在工作区确认来源范围后继续。`) : pick("No eligible assets found. Open the workspace to choose the next step.", "未找到测试对象一致的可用资产，请在工作区查看下一步。")}</p>
               <button type="button" onClick={() => selectBriefVersion(activeBrief.version)}>{pick("Review sources in workspace", "在工作区确认来源")}</button>
@@ -2220,7 +2341,7 @@ export function CaseWorkbench({
             )}
             {pendingMessage !== null && (
               <article className="principle-message is-assistant" role="status" aria-live="polite" data-testid="scope-thinking">
-                <span><LoaderCircle className="auth-spinner" size={16} /> {pick("Thinking…", "正在思考…")}</span>
+                <span><LoaderCircle className="auth-spinner" size={16} /> {pick("Preparing your request…", "正在准备任务…")}</span>
                 <p>{pick("Understanding your request and selecting relevant cases…", "正在理解你的需求并筛选相关用例…")}</p>
                 <small aria-hidden="true">{pick(`Elapsed ${runningSeconds}s`, `已等待 ${runningSeconds} 秒`)}</small>
                 {runningSeconds >= 20 && <p>{pick("Still analyzing. Selected cases will appear when ready.", "仍在分析中，完成后会展示选中的用例。")}</p>}
@@ -2343,7 +2464,9 @@ export function CaseWorkbench({
           <ConversationAttachments pending onRemove={id => { void removeAttachment(id); }} disabled={conversationRunning || uploading} metadata={{ attachments: (
             Array.isArray(workspace?.context.pending_attachments) ? workspace.context.pending_attachments : []
           ).filter((file: { name: string }) => !attachments.some(local => local.name === file.name && local.status !== "failed")) }} />
-          <ConversationAttachments active onRemove={id => { void removeAttachment(id); }} disabled={conversationRunning || uploading} metadata={{ attachments: activeAttachments }} />
+          {activeAttachments.length > 0 && <details className="workbench-reference-files"><summary>{pick(`Reference files · ${activeAttachments.length}`, `引用文件 · ${activeAttachments.length}`)}</summary><ConversationAttachments active onRemove={id => { void removeAttachment(id); }} disabled={conversationRunning || uploading} metadata={{ attachments: activeAttachments }} /></details>}
+          <LiveAgentProgress run={agentRun.view} onCancel={() => void agentRun.cancel()} durableRun={durableFromConversation(workspace)} />
+          {workspace && <DurableAgentProgress conversationId={workspace.id} value={durableFromConversation(workspace)} onRefresh={async id => { if (workspace.id === id) await refreshWorkspace(); }} />}
           {resumeTaskId && <div className="case-conversation-running"><span>{pick("Replying to task clarification", "正在补充当前任务信息")}</span><button type="button" disabled={conversationRunning} onClick={() => setResumeTaskId("")}>{pick("Cancel reply", "取消补充")}</button></div>}
           {conversationRunning && <div className="case-conversation-running" role="status">
             <LoaderCircle size={16} className="auth-spinner" />
@@ -2378,9 +2501,10 @@ export function CaseWorkbench({
             aria-label={singleRewriteTarget
               ? pick("Modify selected case with natural language", "用自然语言修改选中用例")
               : pick("Conversation message", "对话消息")}
-            rows={4}
+            rows={3}
             disabled={(conversationRunning && !currentJobId) || !workspace}
           />
+          <p className="workbench-composer-hint">{pick("PDF, text, Excel, PNG / JPEG · Images require a vision-capable model", "支持 PDF、文本、Excel、PNG / JPEG · 图片需使用支持视觉的模型")}</p>
           <div>
             <input
               ref={fileRef}
@@ -2438,7 +2562,7 @@ export function CaseWorkbench({
                 className="principle-stop"
                 onClick={() => void stopGeneration()}
               >
-                <Square size={16} /> {prompt.trim() ? pick("Pause to adjust", "暂停并调整") : pick("End task", "结束任务")}
+                <Square size={16} /> {pick("Stop running task", "停止运行中的任务")}
               </button>
             ) : conversationRunning ? (
               <button type="button" disabled>
@@ -2657,6 +2781,10 @@ export function CaseWorkbench({
             {assetSelection && activeBrief && <GenerationAssets selection={assetSelection} scope={selectedAssetScope} onScopeChange={ids => setAssetScope({ version: activeBrief.version, ids })} selected={selectedAssetIds} busy={busy || conversationRunning} preview
               onChange={ids => setAssetChoice({ version: activeBrief.version, ids })} onConfirm={() => void confirmAssetSelection()} />}
             {notice && <p role="status" className="principle-brief-guidance">{notice}</p>}
+            <PlanningCoverageReview planning={selectedBrief.content.planning} />
+            {workspace && selectedBrief.content.planning && selectedBrief.status === "draft" &&
+              <PlanningReviewPanel key={`${workspace.id}:${selectedBrief.version}`} workspaceId={workspace.id} version={selectedBrief.version}
+                planning={selectedBrief.content.planning} onApplied={() => void refreshWorkspace()} />}
             {selectedBrief.content.planning?.reuse && <details className="principle-brief-guidance principle-brief-strategy">
               <summary>{pick("Generation strategy", "生成策略")} · {({fresh: pick("Fresh", "全新生成"), regression: pick("Regression", "回归补充"), change: pick("Change-based", "按变更生成")})[selectedBrief.content.planning.reuse.strategy]}</summary>
               <p>{pick("Inspect each test point to review the original case and choose reuse, regeneration, or exclusion. Confirm after reviewing your choices.", "点击测试点的「查看关联与复用依据」，检查历史用例，选择使用建议、重新生成或不纳入本次，再确认生成候选。")}</p>
@@ -2668,6 +2796,7 @@ export function CaseWorkbench({
               key={`${workspace?.id}:${selectedBrief.version}:${planningFocusPointId}`}
               initialPointId={planningFocusPointId}
               planning={selectedBrief.content.planning}
+              showCoverageReview={false}
               caseLinks={(workspace?.planning_case_links ?? []).filter(link => link.brief_version === selectedBrief.version)}
               existingCases={cases}
               onOpenCase={(id) => { setArtifactOpen(false); setViewMode("list"); setSelectedCaseId(id); setCandidateDraft(null); setInspectorHidden(false); focusInspector(); }}
@@ -2750,6 +2879,7 @@ export function CaseWorkbench({
                 } finally { setBusy(false); }
               }}
             />}
+            {(!selectedBrief.content.planning?.test_points?.length || briefView === "text") && <PlanningBoundarySamples planning={selectedBrief.content.planning} />}
             {(!selectedBrief.content.planning?.test_points?.length || briefView === "text") && <article className="principle-markdown" aria-label={pick("Structured test brief", "结构化测试说明")}>
               <Streamdown key={selectedBrief.id}>
                 {selectedBrief.markdown_content}
@@ -2846,6 +2976,7 @@ export function CaseWorkbench({
               onDiscard={(task) => void discardTask(task)}
               activeTaskId={activeMutationTask?.id}
               onConversation={(id) => {
+                setMobilePane("conversation");
                 if (id) {
                   const message = document.getElementById(`case-message-${id}`);
                   message?.focus({ preventScroll: true });
@@ -2916,12 +3047,7 @@ export function CaseWorkbench({
                 reviewSelections.current[selectedTaskChangeSet.id] = next;
                 setAcceptedFields(next);
               }}
-              onApply={() => {
-                const refs = selectedTaskChangeSet.items.filter((item) =>
-                  !["applied", "rejected"].includes(item.status ?? "") && item.quality?.passed !== false,
-                ).map(item => item.ref);
-                return applyChangeSet(acceptedFields, refs);
-              }}
+              onApply={applySelectedReview}
               onAcceptAll={() => {
                 const items = selectedTaskChangeSet.items.filter((item) =>
                   !["applied", "rejected"].includes(item.status ?? "") && item.quality?.passed !== false);

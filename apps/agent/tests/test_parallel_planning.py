@@ -4,6 +4,7 @@ from threading import Barrier, Event, Lock
 import pytest
 
 from casepilot_agent.contracts import FeaturePlan, RequirementAnalysis
+from casepilot_agent.contracts import TestPoint as BasePoint
 from casepilot_agent.contracts import TestPointPlan as PointPlan
 from casepilot_agent.planning import build_planning
 
@@ -18,7 +19,7 @@ def features(count):
                     "module": "登录",
                     "description": f"规则{i}",
                     "requirement_refs": [f"R{i}"],
-                    "source_refs": [{"label": f"来源{i}"}],
+                    "source_refs": [{"label": f"来源{i}", "locator": "source:0"}],
                 }
                 for i in range(count)
             ]
@@ -26,10 +27,19 @@ def features(count):
     )
 
 
+class FixturePoint(BasePoint):
+    primary_feature_id: str
+    primary_binding: str | None = None
+
+
+class FixturePointPlan(PointPlan):
+    test_points: list[FixturePoint]
+
+
 def points(payload, fill_budget=False):
     group = payload["feature_points"]["feature_points"]
     count = payload["batch_count"] if fill_budget else len(group)
-    return PointPlan.model_validate(
+    return FixturePointPlan.model_validate(
         {
             "test_points": [
                 {
@@ -41,6 +51,21 @@ def points(payload, fill_budget=False):
                     "priority": "P1",
                     "priority_reason": "用户规则",
                     "feature_point_ids": [group[i % len(group)]["id"]],
+                    "primary_feature_id": group[i % len(group)]["id"],
+                    "primary_binding": next(
+                        (
+                            binding["id"]
+                            for binding in payload.get("primary_bindings", [])
+                            if binding["feature_id"] == group[i % len(group)]["id"]
+                        ),
+                        None,
+                    ),
+                    "source_refs": [
+                        {"label": "selection", "locator": slot}
+                        for slot in payload.get("feature_source_slots", {}).get(
+                            group[i % len(group)]["id"], ["source:0"]
+                        )
+                    ],
                 }
                 for i in range(count)
             ]
@@ -71,7 +96,9 @@ def test_parallel_out_of_order_batches_publish_stable_ids_and_exact_total_budget
             second_published.set()
 
     result = build_planning(
-        RequirementAnalysis(summary="50条用例"), {}, complete, target_count=50, on_progress=publish
+        RequirementAnalysis(summary="50条用例"),
+        {"user_input": "合成登录需求：验证规则和所请求的测试点数量。"},
+        complete, target_count=50, on_progress=publish
     )
     assert sum(quotas) == 50
     assert len(result["test_points"]) == 50
@@ -108,7 +135,11 @@ def test_failure_does_not_publish_invalid_batch_or_drop_completed_snapshot():
             published.set()
 
     with pytest.raises(ValueError, match="planning_feature_reference_invalid"):
-        build_planning(RequirementAnalysis(summary="登录"), {}, complete, on_progress=publish)
+        build_planning(
+            RequirementAnalysis(summary="登录"),
+            {"user_input": "合成登录需求：验证规则和所请求的测试点数量。"},
+            complete, on_progress=publish,
+        )
     assert len(snapshots[-1]["test_points"]) == 3
     assert all(
         "foreign-feature" not in p["feature_point_ids"] for p in snapshots[-1]["test_points"]
@@ -138,7 +169,7 @@ def test_cancellation_stops_dispatch_after_first_wave():
     with pytest.raises(RuntimeError, match="cancelled"):
         build_planning(
             RequirementAnalysis(summary="登录"),
-            {},
+            {"user_input": "合成登录需求：验证取消时不再派发规划。"},
             complete,
             check_cancelled=check,
             on_progress=publish,
@@ -155,7 +186,11 @@ def test_missing_feature_is_rejected_instead_of_reported_complete():
         return result
 
     with pytest.raises(ValueError, match="planning_feature_uncovered"):
-        build_planning(RequirementAnalysis(summary="登录"), {}, complete)
+        build_planning(
+            RequirementAnalysis(summary="登录"),
+            {"user_input": "合成登录需求：验证规则和所请求的测试点数量。"},
+            complete,
+        )
 
 
 def test_test_point_planning_retries_transient_connection_loss(monkeypatch):
@@ -176,7 +211,11 @@ def test_test_point_planning_retries_transient_connection_loss(monkeypatch):
             raise APIConnectionError(request=httpx.Request("POST", "https://example.test"))
         return points(payload)
 
-    result = build_planning(RequirementAnalysis(summary="登录"), {}, complete)
+    result = build_planning(
+        RequirementAnalysis(summary="登录"),
+        {"user_input": "合成登录需求：验证规则和所请求的测试点数量。"},
+        complete,
+    )
     assert calls == 2
     assert len(result["test_points"]) == 3
 
@@ -299,7 +338,11 @@ def test_explicit_point_quantity_rejects_short_batches():
         if stage == 'feature.generated': return features(2)
         return points(payload)  # Only two, although user explicitly requested four.
     with pytest.raises(ValueError, match='planning_point_batch_size_invalid'):
-        build_planning(RequirementAnalysis(summary='四个测试点'), {}, complete, target_count=4)
+        build_planning(
+            RequirementAnalysis(summary='四个测试点'),
+            {"user_input": "合成登录需求：验证规则和所请求的测试点数量。"},
+            complete, target_count=4,
+        )
 
 
 def test_one_point_can_cover_multiple_features_without_inflating_quantity():
@@ -309,7 +352,11 @@ def test_one_point_can_cover_multiple_features_without_inflating_quantity():
         result = points(payload, fill_budget=True)
         result.test_points[0].feature_point_ids = [f['id'] for f in payload['feature_points']['feature_points']]
         return result
-    result = build_planning(RequirementAnalysis(summary='只要一个测试点'), {}, complete, target_count=1)
+    result = build_planning(
+        RequirementAnalysis(summary='只要一个测试点'),
+        {"user_input": "合成登录需求：验证规则和所请求的测试点数量。"},
+        complete, target_count=1,
+    )
     assert len(result['test_points']) == 1
     assert set(result['test_points'][0]['feature_point_ids']) == {f['id'] for f in result['feature_points']}
 
@@ -321,4 +368,8 @@ def test_final_deduplication_cannot_silently_shrink_explicit_quantity():
         result.test_points[1] = result.test_points[0].model_copy(deep=True)
         return result
     with pytest.raises(ValueError, match='planning_duplicate_test_point'):
-        build_planning(RequirementAnalysis(summary='两个不同测试点'), {}, complete, target_count=2)
+        build_planning(
+            RequirementAnalysis(summary='两个不同测试点'),
+            {"user_input": "合成登录需求：验证规则和所请求的测试点数量。"},
+            complete, target_count=2,
+        )

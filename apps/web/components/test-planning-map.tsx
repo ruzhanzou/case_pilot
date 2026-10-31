@@ -5,8 +5,11 @@ import { Background, Controls, Position, ReactFlow, type Node, type Edge, type R
 import "@xyflow/react/dist/style.css";
 import { consumptionSummary, planningActionLabels, pointAction, type PlanningAction } from "@/lib/planning-consumption";
 import type { TestPlanningDto, TestCaseDto, PlanningCaseLinkDto, WorkspaceCandidateDto } from "@/lib/casepilot-api";
+import { PlanningCoverageReview } from "./planning-coverage-review";
+import { PlanningPointSamples } from "./planning-point-samples";
 
-export function TestPlanningMap({ planning, title, busy, editable, onGenerate, onSavePoint, generatedPointIds, onChooseReuse, onChooseMany, caseLinks = [], candidates = [], onOpenCandidate, existingCases = [], onLinkCase, onOpenCase, initialPointId }: {
+export function TestPlanningMap({ planning, title, busy, editable, onGenerate, onSavePoint, generatedPointIds, onChooseReuse, onChooseMany, caseLinks = [], candidates = [], onOpenCandidate, existingCases = [], onLinkCase, onOpenCase, initialPointId, showCoverageReview = true }: {
+  showCoverageReview?: boolean;
   candidates?: WorkspaceCandidateDto[];
   onOpenCandidate?: (id: string) => void;
   onChooseMany?: (ids: string[], choice: "suggested" | "new" | "exclude" | "copy") => Promise<void>;
@@ -123,6 +126,7 @@ export function TestPlanningMap({ planning, title, busy, editable, onGenerate, o
   const uncovered = planning.test_points.filter(point => pointAction(planning, point.id) !== "exclude" && !formalIds.has(point.id) && !pendingIds.has(point.id));
   const decision = planning.reuse?.decisions.find(item => item.point_id === detailId);
   return <section ref={surface} className="test-planning" aria-label="测试规划脑图">
+    {showCoverageReview && <PlanningCoverageReview planning={planning} />}
     <div className="test-planning-toolbar">
       <strong>测试规划 · {planning.test_points.length} 个测试点 · 已关联正式用例 {new Set(caseLinks.filter(link => !link.stale).map(link => link.test_point_id)).size} 个测试点 · {generatedPointIds.length ? `${new Set(generatedPointIds).size} 个已生成候选` : caseLinks.length ? "无待审阅候选" : "尚未生成用例"}</strong>
       <input aria-label="搜索测试规划" placeholder="搜索功能、场景、测试点" value={search} onChange={(event) => setSearch(event.target.value)} />
@@ -159,6 +163,7 @@ export function TestPlanningMap({ planning, title, busy, editable, onGenerate, o
       {uncovered.length > 0 && <details><summary>查看待补齐测试点</summary>{uncovered.map(point => <button type="button" key={point.id} onClick={() => setDetailId(point.id)}>{point.title}</button>)}</details>}
     </div>
     {detail && <aside className="test-planning-detail" aria-label="测试点详情"><button type="button" onClick={() => setDetailId(null)} aria-label="关闭测试点详情">关闭详情</button><strong>{detail.title}</strong>{!planning.reuse && <p>{planning.feature_points.find((feature) => detail.feature_point_ids.includes(feature.id))?.module} / {planning.feature_points.find((feature) => detail.feature_point_ids.includes(feature.id))?.name} / {detail.scenario} / {detail.title}</p>}<p>{detail.objective}</p>
+      <PlanningPointSamples point={detail} />
       <section className="planning-case-links" aria-label="关联候选用例">
         <strong>候选用例（{detailCandidates.length}）</strong>
         {!detailCandidates.length && <p>此规划版本暂无待审阅候选。</p>}

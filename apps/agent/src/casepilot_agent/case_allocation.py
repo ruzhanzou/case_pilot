@@ -110,6 +110,7 @@ def run_allocated(request, provider, execute_stage, count):
                 "测试设计不等于新增产品规则：不得引入未声明的认证方式、账号角色、锁定阈值、错误码或具体时间。"
                 "未知业务阈值使用已配置边界作为条件，不虚构具体数值；检查已声明结果是否满足。"
                 "existing_cases为已覆盖场景，优先补齐不同输入或路径，不能重复已有用例。"
+                "reserved_outputs已由程序保留，不占当前requested_case_count预算，禁止再次分配。"
                 "不得创建或修改测试点ID；只有缺少影响预期的关键产品规则且无法在确认范围内设计时才澄清，"
                 "澄清问题须指出具体缺失规则，不能要求用户自行逐条设计全部用例。"
                 "每个已确认测试点至少关联一条用例，一条用例可覆盖多个有关联的测试点。"
@@ -122,6 +123,7 @@ def run_allocated(request, provider, execute_stage, count):
                  "confirmed_brief": request.markdown_content, "source_excerpts": source_excerpts, "reuse_decisions": list(source_decisions.values()),
                  "conversation_memory": request.conversation_memory,
                  "existing_cases": plan.get("existing_cases", []),
+                 "reserved_outputs": plan.get("reserved_output_context", []),
                  "test_points": [p.model_dump(mode="json") for p in originals],
                  "validation_feedback": feedback},
                 CaseAllocation, request.model_id,

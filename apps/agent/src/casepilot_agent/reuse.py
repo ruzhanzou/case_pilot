@@ -3,9 +3,11 @@
 import json
 import re
 from collections import Counter
+from hashlib import sha256
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
+from pydantic_core import PydanticCustomError
 
 from casepilot_agent.contracts import RequirementAnalysis, SourceRef, TestCaseDraft
 
@@ -144,9 +146,15 @@ def normalize_sources(case_context, evidence):
     for item in case_context:
         snapshot = dict(item.get("snapshot") or {})
         key = f"asset:{item['ref']}"
-        revision = snapshot.get("current_revision_id") or snapshot.get("revision_number")
+        revision = item.get("version") if item.get("target_type") == "candidate" else None
+        revision = (
+            revision or snapshot.get("current_revision_id") or snapshot.get("revision_number")
+        )
         sources[key] = {
             "key": key,
+            "canonical_ref": f"candidate:{item['ref']}"
+            if item.get("target_type") == "candidate"
+            else key,
             "snapshot": snapshot,
             "kind": item.get("target_type", "formal"),
             "case_id": item["ref"],
@@ -160,6 +168,8 @@ def normalize_sources(case_context, evidence):
             key = f"excel:{source['document_id']}:{source.get('sheet', '')}:{case['row']}"
             sources[key] = {
                 "key": key,
+                "canonical_ref": (f"upload:{source['document_id']}:"
+                    f"{sha256(str(source.get('sheet', '')).encode()).hexdigest()[:16]}:{case['row']}"),
                 "snapshot": case,
                 "kind": "excel",
                 "case_id": key,
@@ -172,8 +182,11 @@ def normalize_sources(case_context, evidence):
                 "label": source["label"],
                 "locator": (
                     f"Sheet {source.get('sheet', '')}，行 {case['row']}"
-                    + (f"-{case['row_end']}"
-                       if case.get("row_end", case["row"]) != case["row"] else "")
+                    + (
+                        f"-{case['row_end']}"
+                        if case.get("row_end", case["row"]) != case["row"]
+                        else ""
+                    )
                     + "；"
                     f"{case.get('original_id', '')}"
                 ),
@@ -271,16 +284,34 @@ def plan_reuse(
         incomplete_evidence = len(evidence) < len(relevant)
         allowed = {s["key"]: s for s in candidates}
 
+        decision_type = create_model(
+            "ScopedReuseDecision", __base__=ReuseDecision,
+            point_id=(Literal[tuple(p["id"] for p in group)], ...),
+            source_key=((Literal[tuple(allowed)] | None) if allowed else type(None), ...),
+        )
+
         class ScopedDecisions(ReuseDecisions):
+            decisions: list[decision_type] = Field(min_length=len(group), max_length=len(group))
+
             @model_validator(mode="after")
             def check_scope(self):
-                if Counter(d.point_id for d in self.decisions) != Counter(p["id"] for p in group):
-                    raise ValueError("reuse_point_coverage_invalid")
+                actual = Counter(d.point_id for d in self.decisions)
+                expected = Counter(p["id"] for p in group)
+                if actual != expected:
+                    raise PydanticCustomError(
+                        "reuse_point_coverage_invalid", "reuse_point_coverage_invalid", {
+                            "expected_count": len(group), "actual_count": len(self.decisions),
+                            "missing_count": sum((expected - actual).values()),
+                            "extra_count": sum((actual - expected).values()),
+                            "duplicate_count": sum(max(0, count - 1) for count in actual.values()),
+                        })
                 for decision in self.decisions:
                     if (decision.action == "new") != (decision.source_key is None):
-                        raise ValueError("reuse_source_action_invalid")
+                        raise PydanticCustomError(
+                            "reuse_source_action_invalid", "reuse_source_action_invalid")
                     if decision.source_key is not None and decision.source_key not in allowed:
-                        raise ValueError("reuse_source_not_in_scope")
+                        raise PydanticCustomError(
+                            "reuse_source_not_in_scope", "reuse_source_not_in_scope")
                 return self
 
         result = complete(

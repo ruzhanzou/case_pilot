@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -15,6 +16,9 @@ class AgentSettings(BaseSettings):
         validation_alias="CASEPILOT_ASSET_MATCH_CONCURRENCY",
     )
     provider: str = Field(default="mock", validation_alias="CASEPILOT_AGENT_PROVIDER")
+    api_type: Literal["chat_completions", "responses"] = Field(
+        default="chat_completions", validation_alias="CASEPILOT_AGENT_API_TYPE",
+    )
     base_url: str = Field(
         default="https://ark.cn-beijing.volces.com/api/coding/v3",
         validation_alias="CASEPILOT_AGENT_BASE_URL",

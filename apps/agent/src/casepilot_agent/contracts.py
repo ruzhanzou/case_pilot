@@ -2,7 +2,10 @@ from collections.abc import Callable
 from enum import StrEnum
 from typing import Any, Literal, Protocol, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+from pydantic_core import PydanticCustomError
+
+from casepilot_agent.planning_boundary import BoundarySample
 
 EMBEDDING_DIMENSIONS = 2048
 
@@ -135,6 +138,30 @@ class TestPoint(BaseModel):
     executable_analysis: str = ""
     feature_point_ids: list[str]
     source_refs: list[SourceRef] = Field(default_factory=list)
+    primary_feature_id: str | None = None
+    boundary_samples: list[BoundarySample] | None = None
+
+    @model_validator(mode="after")
+    def validate_primary_feature(self):
+        if (
+            self.primary_feature_id is not None
+            and self.primary_feature_id not in self.feature_point_ids
+        ):
+            raise PydanticCustomError(
+                "planning_primary_feature_invalid", "Primary feature must be an owner"
+            )
+        return self
+
+    @model_serializer(mode="wrap")
+    def serialize_legacy_compatible(self, handler):
+        # Pydantic >=2.11 supports wrap serializers; exclude_if requires a newer
+        # version. Missing historical ownership must not alter stored fingerprints.
+        data = handler(self)
+        if self.primary_feature_id is None:
+            data.pop("primary_feature_id", None)
+        if self.boundary_samples is None:
+            data.pop("boundary_samples", None)
+        return data
 
 
 class TestStep(BaseModel):

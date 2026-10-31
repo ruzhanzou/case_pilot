@@ -1,3 +1,4 @@
+from casepilot_api.planning_review import router as planning_review_router
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -18,6 +19,7 @@ from casepilot_api.database import check_database
 from casepilot_api.generation import router as generation_router
 from casepilot_api.integrations import router as integrations_router
 from casepilot_api.knowledge import router as knowledge_router
+from casepilot_api.workbench_events import router as workbench_events_router
 
 settings = get_settings()
 
@@ -48,6 +50,7 @@ app.include_router(generation_router)
 app.include_router(knowledge_router)
 app.include_router(candidate_router)
 app.include_router(conversation_router)
+app.include_router(workbench_events_router)
 app.include_router(integrations_router)
 
 
@@ -96,3 +99,5 @@ async def ready() -> Response:
     status_code = 200 if all(value == "ok" for value in checks.values()) else 503
     status_text = "ok" if status_code == 200 else "degraded"
     return JSONResponse(status_code=status_code, content={"status": status_text, **checks})
+
+app.include_router(planning_review_router)

@@ -50,7 +50,11 @@ def test_commit_160_candidates_validates_whole_batch_before_writing(monkeypatch,
     originals = deepcopy([item.snapshot for item in candidates])
     db = Mock()
     db.scalars.side_effect = [candidates, [], []]
-    db.scalar.side_effect = [None, None]
+    # No bound operation or remaining candidate for each synthetic source job.
+    db.scalar.return_value = None
+    from casepilot_api import workbench_continuation
+    monkeypatch.setattr(workbench_continuation, "record_approval", lambda *a, **k: None)
+    monkeypatch.setattr(workbench_continuation, "capture_approval_binding", lambda *a, **k: None)
     monkeypatch.setattr(conversations, "_ensure_conversation", lambda *args: conversation)
     monkeypatch.setattr(conversations, "_require_idle_conversation", lambda *args: None)
     monkeypatch.setattr(conversations, "ensure_collection", lambda *args: SimpleNamespace())

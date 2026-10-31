@@ -1,5 +1,6 @@
 """Apply reviewer choices to a confirmed plan without changing the source assets."""
 
+import json
 from collections import Counter
 from copy import deepcopy
 
@@ -39,6 +40,22 @@ def apply_reviewer_choices(planning):
     if not reuse:
         return result
     choices = reviewer_choices(result)
+    changed_keys = {
+        d.get("source", {}).get("key") or d.get("source_key")
+        for d in reuse.get("decisions", [])
+        if (d.get("source", {}).get("key") or d.get("source_key"))
+        and choices.get(d["point_id"]) in {"new", "exclude"}
+    }
+    if changed_keys:
+        result["excluded_reuse_source_keys"] = sorted(
+            set(result.get("excluded_reuse_source_keys", [])) | changed_keys
+        )
+        # Keep old mapping only for removed-point provenance; never enforce its stale budget.
+        if result.get("output_obligations"):
+            result["output_obligations"] = {
+                **result["output_obligations"],
+                "plan_fingerprint": "invalidated",
+            }
     points = {p["id"]: p for p in result["test_points"]}
     decisions = []
     for decision in reuse.get("decisions", []):
@@ -62,8 +79,55 @@ def confirm_asset_reuse(planning, confirmation, *, confirmed_keys=()):
     result = deepcopy(planning)
     reuse = result.get("reuse") or {}
     decisions = reuse.get("decisions", [])
-    inherited = [d for d in decisions if d.get("action") in {"reuse", "modify"}
-                 and (d.get("source") or {}).get("kind") == "formal"]
+    inherited = [
+        d
+        for d in decisions
+        if d.get("action") in {"reuse", "modify"}
+        and (d.get("source") or {}).get("kind") == "formal"
+    ]
+    reserved = [item for item in result.get("reserved_reuse_outputs", [])
+                if item.get("source", {}).get("kind") == "formal"]
+    if confirmation == "fresh" and (inherited or reserved):
+        from casepilot_agent.output_obligations import apply_reserved_review
+
+        revoked = {item["source"]["key"] for item in reserved}
+        revoked.update(d.get("source", {}).get("key") or d.get("source_key") for d in inherited)
+        revoked.discard(None)
+        for item in reserved:
+            for point_id in item["point_ids"]:
+                reuse.setdefault("user_choices", {})[point_id] = "new"
+        for decision in inherited:
+            reuse.setdefault("user_choices", {})[decision["point_id"]] = "new"
+        result["reuse"] = reuse
+        apply_reserved_review(result, reuse.get("user_choices", {}))
+        result = apply_reviewer_choices(result)
+        result["excluded_reuse_source_keys"] = sorted(
+            set(result.get("excluded_reuse_source_keys", [])) | revoked
+        )
+        result.pop("output_obligations", None)
+        # Remove stale reuse-provenance citations from regenerated coverage.
+        # This is not erasure of historical context or a blanket no-reference policy.
+        # Apply only that same reference withdrawal to the server's comparison
+        # snapshots; all coverage IDs and business fields remain unchanged.
+        snapshots = [*result["reuse"].get("feature_snapshots", []),
+                     *(decision["point_snapshot"]
+                       for decision in result["reuse"].get("decisions", [])
+                       if isinstance(decision.get("point_snapshot"), dict))]
+        for point in [*result.get("test_points", []), *result.get("feature_points", []),
+                      *snapshots]:
+            retained = []
+            for reference in point.get("source_refs", []):
+                try:
+                    provenance = json.loads(reference.get("excerpt") or "")
+                except (ValueError, TypeError):
+                    provenance = None
+                if isinstance(provenance, dict) and provenance.get("source_key") in revoked:
+                    continue
+                retained.append(reference)
+            if "source_refs" in point:
+                point["source_refs"] = retained
+        result["reuse"]["asset_confirmation"] = "fresh"
+        return result
     if not inherited:
         return result
     if confirmation is None and reuse.get("asset_confirmation") == "reuse":

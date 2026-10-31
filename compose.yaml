@@ -70,6 +70,36 @@ services:
       retries: 6
     restart: unless-stopped
 
+  workbench:
+    image: casepilot-api:local
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["celery", "-A", "casepilot_api.workbench_run_executor:app", "worker", "--queues=workbench", "--loglevel=WARNING", "--concurrency=2"]
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.local
+        required: false
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://casepilot:casepilot-local@postgres:5432/casepilot}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
+      CASEPILOT_KNOWLEDGE_STORAGE_PATH: ${CASEPILOT_KNOWLEDGE_STORAGE_PATH:-/var/lib/casepilot/knowledge}
+      OTEL_SDK_DISABLED: "true"
+      ORT_DISABLE_TELEMETRY: "1"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - casepilot_knowledge:/var/lib/casepilot/knowledge
+    restart: unless-stopped
+
   agent:
     image: casepilot-agent:local
     build:

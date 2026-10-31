@@ -44,10 +44,14 @@ def test_rewrite_reply_uses_original_task_model(monkeypatch, ai_settings, model_
             "scope_resolved": True, "requirements_ready": True,
         }},
     )
-    message = SimpleNamespace(content="修改步骤", message_metadata={"request": {"model_id": model_id}})
+    message = SimpleNamespace(
+        content="修改步骤", message_metadata={"request": {"model_id": model_id}})
     supplement = SimpleNamespace(confirm_modification=False, content="再详细一些")
+    db = Mock()
+    # This legacy model-routing fixture has no durable run to invalidate.
+    db.scalars.return_value = []
     conversations._resume_rewrite_draft(
-        Mock(), None, SimpleNamespace(id=uuid4()), operation, message, supplement,
+        db, None, SimpleNamespace(id=uuid4()), operation, message, supplement,
     )
     assert interpreter.call_args.kwargs["model_name"] == expected
 

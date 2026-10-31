@@ -12,6 +12,7 @@ from casepilot_agent.contracts import KnowledgeAnswer
 from casepilot_agent.providers.agents_sdk import AgentsSdkProvider
 
 
+@pytest.mark.parametrize("api_type", ["chat_completions", "responses"])
 @pytest.mark.parametrize("compact", [False, True])
 @pytest.mark.parametrize("stage,timeouts", [
     ("knowledge.answered", 0), ("test_case.generated", 1), ("test_case.generated", 2),
@@ -19,7 +20,7 @@ from casepilot_agent.providers.agents_sdk import AgentsSdkProvider
     ("test_point.generated", 0), ("feature.generated", 0),
 ])
 def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
-    monkeypatch: pytest.MonkeyPatch, stage: str, timeouts: int, compact: bool,
+    monkeypatch: pytest.MonkeyPatch, stage: str, timeouts: int, compact: bool, api_type: str,
 ) -> None:
     captured: dict = {}
     agents = ModuleType("agents")
@@ -72,6 +73,7 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
     agents.ModelSettings = SimpleNamespace
     agents.AgentOutputSchema = FakeAgentOutputSchema
     agents.ModelBehaviorError = RuntimeError
+    agents.OpenAIResponsesModel = FakeModel
     agents.OpenAIChatCompletionsModel = FakeModel
     agents.Runner = FakeRunner
     agents.set_tracing_disabled = lambda disabled: captured.update(
@@ -89,6 +91,7 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
         pro_model="doubao-pro",
         local_model="local",
         timeout=5,
+        api_type=api_type,
     )
     kwargs = dict(stage=stage, instruction="回答问题", payload={"question": "什么是边界值？", **({"batch_count": 20} if stage == "test_case.generated" else {})},
                   result_type=KnowledgeAnswer, model_id="auto")
@@ -108,8 +111,11 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
     assert captured["model"]["model"] == "doubao-test"
     output_schema = captured["agent"]["output_type"]
     assert output_schema.output_type is KnowledgeAnswer
-    assert captured["agent"]["model_settings"].extra_body == {"response_format": {"type": "json_object"}}
-    expected_budget = 32048 if stage == "test_case.generated" else 16384 if stage in {"test_point.generated", "feature.generated"} else None
+    assert captured["agent"]["model_settings"].extra_body == (
+        {} if api_type == "responses" else {"response_format": {"type": "json_object"}}
+    )
+    assert captured["agent"]["model_settings"].store is (False if api_type == "responses" else None)
+    expected_budget = 32048 if stage == "test_case.generated" else 16384 if stage in {"test_point.generated", "feature.generated"} else (8192 if api_type == "responses" else None)
     assert captured["agent"]["model_settings"].max_tokens == expected_budget
     assert output_schema.strict_json_schema is False
     assert captured["tracing_disabled"] is True
@@ -548,3 +554,33 @@ def test_basic_rewrite_does_not_upgrade_model_for_evidence_or_retry(monkeypatch,
     else:
         provider.complete(**kwargs)
     assert models == ['fast']
+
+
+def test_bounded_review_guard_runs_before_http_and_never_retries(monkeypatch):
+    import httpx
+    from agents import Runner
+    from agents.exceptions import ModelBehaviorError
+    from casepilot_agent.planning_review import Review
+    from casepilot_agent.providers import agents_sdk
+
+    real_client = httpx.AsyncClient
+    sent, reserved, turns = [], [], []
+    async def transport(request):
+        sent.append(request.url.path)
+        return httpx.Response(200, json={})
+    class client(real_client):
+        def __init__(self, **kwargs):
+            super().__init__(transport=httpx.MockTransport(transport), **kwargs)
+    monkeypatch.setattr(agents_sdk.httpx, 'AsyncClient', client)
+    async def run(agent, *args, **kwargs):
+        turns.append(kwargs['max_turns'])
+        await agent.model._client._client.post('https://example.test/v1/responses', json={})
+        raise ModelBehaviorError('synthetic schema failure')
+    monkeypatch.setattr(Runner, 'run', run)
+    provider = AgentsSdkProvider(base_url='https://example.test/v1', api_key='test-only',
+        model='fast', pro_model='quality', local_model='fast', timeout=5)
+    provider.request_guard = lambda: reserved.append(1)
+    with pytest.raises(ModelBehaviorError):
+        provider.complete(stage='planning_review.audit', instruction='review',payload={},
+            result_type=Review, model_id='auto')
+    assert turns == [1] and reserved == [1] and len(sent) == 1

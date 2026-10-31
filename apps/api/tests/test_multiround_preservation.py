@@ -273,6 +273,15 @@ async def test_planning_add_edit_delete_rounds_persist_history_and_select_latest
                                 "priority": "P1",
                                 "priority_reason": "核心流程",
                                 "feature_point_ids": [features[0]["id"]],
+                                "primary_binding": next(pair["id"]
+                                    for pair in payload["primary_bindings"]
+                                    if pair["feature_id"] == features[0]["id"]),
+                                "scenario": f"登录流程的{self.label}{i}场景",
+                                "source_refs": [{
+                                    "locator": payload["feature_source_slots"][
+                                        features[0]["id"]][0],
+                                    "label": "已提供的登录需求",
+                                }],
                             }
                             for i in range(payload["batch_count"])
                         ],

@@ -5,9 +5,17 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from casepilot_api.field_constraints import PRIORITY_ASSIGNMENT_DESCRIPTION, priority_assignment_error
 from casepilot_api.agent_router import _run_routing_agent
-from casepilot_api.collection_reference import CollectionReference, collection_instructions, validate_collection_reference
+from casepilot_api.collection_reference import (
+    CollectionReference,
+    collection_instructions,
+    validate_collection_reference,
+)
+from casepilot_api.field_constraints import (
+    PRIORITY_ASSIGNMENT_DESCRIPTION,
+    priority_assignment_error,
+)
+from casepilot_api.model_client import compatible_model, structured_model_settings
 
 
 class RewriteReply(BaseModel):
@@ -74,7 +82,7 @@ def interpret_rewrite_reply(content: str, state: dict, *, provider: str, model_n
                             scope_instruction=content if scope_change else "",
                             requirements=content if re.search(r"步骤|标题|优先级|预期|前置|简洁|清晰", content) else "",
                             requirements_ready=bool(state.get("requirements_ready") or re.search(r"步骤|标题|优先级|预期|前置|简洁|清晰", content)))
-    from agents import Agent, AgentOutputSchema, ModelSettings, OpenAIChatCompletionsModel, Runner, set_tracing_disabled
+    from agents import Agent, AgentOutputSchema, Runner, set_tracing_disabled
     from openai import AsyncOpenAI
 
     set_tracing_disabled(not tracing_enabled)
@@ -123,8 +131,8 @@ def interpret_rewrite_reply(content: str, state: dict, *, provider: str, model_n
             + (collection_instructions if "collection_catalog" in state else "")
             + "JSON Schema: " + json.dumps(output_model.model_json_schema(), ensure_ascii=False)
         ),
-        model=OpenAIChatCompletionsModel(model=model_name, openai_client=client),
-        model_settings=ModelSettings(extra_body={"response_format": {"type": "json_object"}}),
+        model=compatible_model(model=model_name, openai_client=client),
+        model_settings=structured_model_settings(),
         output_type=AgentOutputSchema(output_model, strict_json_schema=False),
     )
     # Reply interpretation needs identities and current constraints, not revision

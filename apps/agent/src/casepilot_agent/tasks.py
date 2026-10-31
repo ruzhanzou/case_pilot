@@ -1,6 +1,7 @@
 import json
 import logging
 from collections.abc import Callable
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from functools import wraps
 from hashlib import sha256
@@ -60,7 +61,7 @@ from casepilot_agent.planning import (
     build_planning,
     evidence_batches,
     reconcile_planning,
-    requested_point_count,
+    requested_planning_quantity,
     rewrite_evidence,
 )
 from casepilot_agent.providers import create_embedding_provider, create_provider
@@ -230,6 +231,18 @@ def recover_unclaimed_deliveries() -> dict[str, int]:
             knowledge_sources.c.deleted_at.is_(None),
         )
     )
+    from sqlalchemy import column, table
+    continuations = table("workbench_continuations", column("id"), column("status"))
+    continuation_waiting = exists(select(continuations.c.id).where(
+        cast(continuations.c.id, String) == task_outbox.c.task_args[0].astext,
+        continuations.c.status.in_(["pending", "running"]),
+    ))
+    reviews = table("planning_reviews", column("id"), column("status"))
+    review_waiting = exists(select(reviews.c.id).where(
+        cast(reviews.c.id, String) == task_outbox.c.task_args[0].astext,
+        or_(and_(task_outbox.c.task_args[1].astext == "audit", reviews.c.status == "audit_pending"),
+            and_(task_outbox.c.task_args[1].astext == "revision", reviews.c.status == "revision_pending")),
+    ))
     with store.connection() as connection:
         ids = list(
             connection.scalars(
@@ -238,6 +251,10 @@ def recover_unclaimed_deliveries() -> dict[str, int]:
                     task_outbox.c.status == "dispatched",
                     task_outbox.c.dispatched_at < now - timedelta(seconds=60),
                     or_(
+                        and_(task_outbox.c.task_name == "casepilot.workbench.planning_review",
+                             review_waiting),
+                        and_(task_outbox.c.task_name == "casepilot.workbench.continue",
+                             continuation_waiting),
                         and_(
                             task_outbox.c.task_name.in_(
                                 [
@@ -306,6 +323,8 @@ def dispatch_task_outbox() -> dict[str, int]:
                     row["task_name"],
                     args=list(row["task_args"]),
                     task_id=row["task_id"],
+                    **({"queue": "workbench"}
+                       if row["task_name"] in {"casepilot.workbench.continue", "casepilot.workbench.planning_review"} else {}),
                 )
                 connection.execute(
                     update(task_outbox)
@@ -787,6 +806,26 @@ def _apply_persisted_asset_quality(
         )
 
         def intentional_reuse(case, existing_case):
+            confirmed_plan = job.get("input_payload", {}).get("confirmed_plan") or {}
+            output_keys = set()
+            for ref in case.source_refs:
+                try:
+                    provenance = json.loads(ref.excerpt)
+                except (ValueError, TypeError):
+                    continue
+                if isinstance(provenance, dict) and provenance.get("action") == "reuse":
+                    output_keys.add(provenance.get("source_key"))
+            for reservation in confirmed_plan.get("reserved_reuse_outputs", []):
+                source = reservation["source"]
+                if (source["key"] in output_keys & trusted_keys
+                        and source.get("test_object_match") == "same"
+                        and set(case.test_point_ids) == set(reservation["point_ids"])
+                        and source.get("snapshot", {}).get("case_key") == existing_case["case_key"]
+                        and all(case.model_dump(mode="json").get(field)
+                                == source["snapshot"].get(field) for field in (
+                                    "title", "preconditions", "steps", "priority", "module",
+                                    "case_type", "tags"))):
+                    return True
             selected = [decisions.get(point, {}) for point in case.test_point_ids]
             if not selected:
                 return False
@@ -951,6 +990,37 @@ def recover_interrupted_jobs() -> dict[str, int]:
     return {"recovered": recovered}
 
 
+def _trusted_previous_reuse_mapping(plan, sources):
+    """Reuse only pinned source and point snapshots, never a new model's guessed mapping."""
+    points = {point["id"]: point for point in plan.get("test_points", [])}
+    allowed = {source["key"]: source for source in sources}
+    choices = plan.get("reuse", {}).get("user_choices", {})
+    excluded = set(plan.get("excluded_reuse_source_keys", []))
+    mapping = {}
+
+    def accept(source, ids, snapshots):
+        key = source.get("key")
+        current = allowed.get(key)
+        if (current is None or key in excluded or not ids or len(ids) != len(set(ids))
+                or not set(ids) <= points.keys()
+                or any(choices.get(point) in {"new", "exclude"} for point in ids)
+                or any(source.get(field) != current.get(field) for field in
+                       ("revision", "document_version", "document_checksum", "snapshot"))
+                or any(snapshots.get(point) != points[point] for point in ids)):
+            return
+        mapping.setdefault(key, []).extend(ids)
+
+    for item in plan.get("reserved_reuse_outputs", []):
+        if item.get("action") == "reuse":
+            accept(item.get("source", {}), item.get("point_ids", []),
+                   item.get("point_snapshots", {}))
+    for decision in plan.get("reuse", {}).get("decisions", []):
+        if decision.get("action") == "reuse" and decision.get("source"):
+            point = decision.get("point_id")
+            accept(decision["source"], [point], {point: decision.get("point_snapshot")})
+    return {key: list(dict.fromkeys(ids)) for key, ids in mapping.items()}
+
+
 @celery_app.task(name="casepilot.agent.draft_brief")
 @guarded_job
 def draft_test_brief(job_id: str) -> dict[str, Any]:
@@ -973,6 +1043,29 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
         context = _context_payload(store, job, embedding_provider, full_documents=True)
         ensure_not_cancelled(store, parsed_job_id)
         payload = job["input_payload"]
+        previous_planning = deepcopy(
+            (payload.get("current_test_brief") or {}).get("planning") or {}
+        )
+        excluded_source_keys = set(previous_planning.get("excluded_reuse_source_keys", []))
+        previous_point_ids = {point["id"] for point in previous_planning.get("test_points", [])}
+        previous_review_choices = {
+            point: choice for point, choice in
+            previous_planning.get("reuse", {}).get("user_choices", {}).items()
+            if point in previous_point_ids
+        }
+        from casepilot_agent.planning_boundary import sampling_instruction_sources
+
+        context = {**context, "user_input": str(payload["prompt"]),
+                   "sampling_instruction_sources": sampling_instruction_sources(payload["prompt"]),
+                   "planning_authorized_sources": [source for source in
+                       payload.get("confirmed_asset_sources", [])
+                       if source["key"] not in excluded_source_keys]
+                   if payload.get("asset_selection_confirmed") else []}
+        from casepilot_agent.planning_sources import (
+            payload_catalog,
+            project_feature_sources,
+            source_selection_schema,
+        )
         asset_preflight = payload.get("generation_strategy") in {
             "select",
             "select_and_generate",
@@ -1046,7 +1139,8 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                 "每条独立规则对应一个功能；重复样例不新增功能，不为用户全局数量补位。"
                 "name保留原始规则编号和名称，module沿用原文章节，description保留数值、例外和条件。"
                 "requirement_refs引用原始规则编号；无编号则使用准确规则名称。"
-                "source_refs必须逐字引用原文规则及相关例外，复用context.evidence的来源标识。"
+                "source_refs仅选择source_catalog中的slot并填入locator；"
+                "source_id、document_id、chunk_id必须为null，引用正文和真实标识由服务器填充。"
                 "当前分片没有相关功能则返回空列表；不生成测试点或用例正文。"
             )
 
@@ -1056,7 +1150,8 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                 "context": batch,
                 "model_id": model_id,
                 "instruction": instruction,
-                "analysis_version": 6 if asset_preflight else 5,
+                "analysis_version": 6 if asset_preflight else 7,
+                "source_catalog": payload_catalog(batch) if not asset_preflight else [],
                 "batch_index": index,
             }
 
@@ -1070,7 +1165,10 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                 )
             if cached:
                 return (
-                    analysis_type.model_validate(cached["output_payload"]),
+                    (project_feature_sources(
+                        analysis_type.model_validate(cached["output_payload"]), batch
+                    ) if not asset_preflight
+                        else analysis_type.model_validate(cached["output_payload"])),
                     UsageMetadata(
                         model=cached["model"],
                         latency_ms=cached["latency_ms"],
@@ -1083,10 +1181,14 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
             result, batch_usage = provider.complete(
                 stage="requirement.extracted" if len(batches) > 1 else "requirement.analyzed",
                 instruction=instruction,
-                payload={**stage_input, "context": batch},
-                result_type=analysis_type,
+                payload={**stage_input, "context": batch,
+                         "source_catalog": payload_catalog(batch) if not asset_preflight else []},
+                result_type=(analysis_type if asset_preflight
+                             else source_selection_schema(analysis_type, batch)),
                 model_id=model_id,
             )
+            if not asset_preflight:
+                result = project_feature_sources(result, batch)
             return analysis_type.model_validate(result.model_dump(mode="json")), batch_usage
 
         def save_batch(index, batch, result):
@@ -1293,6 +1395,10 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                 if payload.get("asset_selection_confirmed"):
                     # Resume only the reviewed snapshots; never widen the source scope.
                     sources = list(payload.get("confirmed_asset_sources", []))
+                # The current review can revoke an earlier source confirmation.
+                # Only a new server-authorized scope may omit these exclusions.
+                sources = [source for source in sources
+                           if source["key"] not in excluded_source_keys]
                 context = {
                     **context,
                     "generation_strategy": strategy,
@@ -1357,8 +1463,14 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                             stage,
                             legacy_input,
                         )
+                source_base = getattr(result_type, "__planning_source_base__", None)
                 if cached:
                     try:
+                        if source_base is not None:
+                            return project_feature_sources(
+                                source_base.model_validate(cached["output_payload"]),
+                                plan_payload["context"],
+                            )
                         return result_type.model_validate(cached["output_payload"])
                     except ValueError:
                         # Legacy checkpoints may predate semantic batch validation.
@@ -1373,6 +1485,8 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                 )
                 # Includes coverage/cardinality validators, before checkpointing.
                 result = result_type.model_validate(result.model_dump(mode="json"))
+                if source_base is not None:
+                    result = project_feature_sources(result, plan_payload["context"])
                 with store.connection() as connection:
                     locked_job = store.get_job_for_update(connection, parsed_job_id)
                     if (
@@ -1513,7 +1627,6 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                     },
                 )
 
-            previous_planning = (payload.get("current_test_brief") or {}).get("planning") or {}
             if payload.get("asset_selection_confirmed"):
                 context = {
                     **context,
@@ -1554,61 +1667,305 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                     },
                 )
 
-            count = requested_point_count(str(payload["prompt"]), complete_plan,
-                payload.get("conversation_memory", []), planning_context={
+            approved_catalog = [
+                {
+                    key: source.get(key)
+                    for key in (
+                        "key",
+                        "kind",
+                        "revision",
+                        "document_id",
+                        "document_version",
+                        "document_checksum",
+                        "label",
+                        "locator",
+                        "canonical_ref",
+                    )
+                }
+                | {"title": source.get("snapshot", {}).get("title", "")}
+                for source in sources
+            ]
+            planning_quantity = requested_planning_quantity(
+                str(payload["prompt"]),
+                complete_plan,
+                payload.get("conversation_memory", []),
+                planning_context={
                     "previous_test_points": previous_planning.get("test_points", []),
-                    "update_mode": "merge" if analyses and all(
-                        getattr(item, "planning_update_mode", "replace") == "merge" for item in analyses) else "replace",
-                    "superseded_test_point_ids": list(dict.fromkeys(
-                        ref for item in analyses for ref in getattr(item, "superseded_test_point_ids", []))),
-                    "revision_actions": [getattr(item, "planning_revision_action", "upsert") for item in analyses],
-                })
-            if payload.get("asset_selection_confirmed") and previous_planning.get("test_points"):
-                # Asset comparison must not silently replan already reviewed coverage.
-                content["planning"] = previous_planning
+                    "excluded_reuse_source_keys": sorted(excluded_source_keys),
+                    "reviewer_choices": previous_review_choices,
+                    "update_mode": "merge"
+                    if analyses
+                    and all(
+                        getattr(item, "planning_update_mode", "replace") == "merge"
+                        for item in analyses
+                    )
+                    else "replace",
+                    "superseded_test_point_ids": list(
+                        dict.fromkeys(
+                            ref
+                            for item in analyses
+                            for ref in getattr(item, "superseded_test_point_ids", [])
+                        )
+                    ),
+                    "revision_actions": [
+                        getattr(item, "planning_revision_action", "upsert") for item in analyses
+                    ],
+                    **({"fresh_source_confirmation": {
+                        "existing_test_point_count": 0,
+                        "test_point_count_scope": "complete_new_plan_before_source_reservation",
+                        "instruction": (
+                            "当前仅确认了来源，尚未创建任何测试点；来源用例不是已有测试点。"
+                            "test_point_count是本轮完整待建计划的测试点预算，不是仅新增用例缺口的点数。"
+                            "若用户明确要求的required_reuse_source_keys非空，此预算包含尚待创建的"
+                            "来源覆盖点；程序将在解释后扣除预留点一次，不要在这里预先扣减。"
+                            "confirmed来源只是允许参考，不代表全部必须复用；仍仅按用户明确要求填写"
+                            "required_reuse_source_keys。用例数量与测试点数量必须独立解释。"
+                        ),
+                    }} if payload.get("asset_selection_confirmed") and sources
+                        and not previous_planning.get("test_points") else {}),
+                },
+                approved_source_catalog=approved_catalog,
+            )
+            from casepilot_agent.output_obligations import (
+                append_reserved_source_point,
+                reserve_required_outputs,
+            )
+
+            pending = previous_planning.get("pending_reserved_outputs") or {}
+            pending_keys = set(pending.get("quantity", {}).get("required_reuse_source_keys", []))
+            pending_keys -= excluded_source_keys
+            interpreted_keys = list(planning_quantity.required_reuse_source_keys)
+            if payload.get("asset_selection_confirmed"):
+                confirmed_keys = {source["key"] for source in
+                                  payload.get("confirmed_asset_sources", [])}
+                # A genuine new source confirmation can narrow an older pending obligation.
+                revoked_pending = pending_keys - confirmed_keys
+                retained_pending = pending_keys & confirmed_keys
+                interpreted_keys = [key for key in interpreted_keys if key not in revoked_pending]
             else:
-                content["planning"] = build_planning(
-                    requirement,
-                    context,
+                # Absence from a retrieval catalog is not a human revocation.
+                retained_pending = pending_keys
+            planning_quantity = planning_quantity.model_copy(update={
+                "required_reuse_source_keys": list(dict.fromkeys(
+                    [*interpreted_keys, *sorted(retained_pending)]
+                )),
+            })
+            count = planning_quantity.test_point_count
+            required_keys = set(planning_quantity.required_reuse_source_keys)
+            reserve_sources = [source for source in sources if source["key"] in required_keys]
+            reserved_enabled = bool(payload.get("asset_selection_confirmed") and required_keys)
+            fresh_reserved = reserved_enabled and not previous_planning.get("test_points")
+            if reserved_enabled and len(reserve_sources) != len(required_keys):
+                raise ValueError("required_reuse_source_invalid")
+            previous_mapping = _trusted_previous_reuse_mapping(previous_planning, sources)
+            reservation_question = None
+            if retained_pending and not payload.get("asset_selection_confirmed"):
+                reserve_sources = [source for source in pending.get("required_sources", [])
+                                   if source["key"] in retained_pending]
+                reservation_question = (
+                    "reserved_reuse_mapping_requires_clarification",
+                    "尚无当前人工来源确认，不能从检索结果推断撤回必需复用要求。"
+                    "请重新确认来源或明确移除该要求，再预览测试点。",
+                )
+            elif (reserved_enabled and not fresh_reserved
+                    and not required_keys <= previous_mapping.keys()):
+                reservation_question = (
+                    "reserved_reuse_mapping_requires_clarification",
+                    "现有测试点没有与必需复用来源匹配的可信快照对应关系。"
+                    "已保留原测试点与输出预算，请重新预览并确认来源覆盖，或明确移除该复用要求；"
+                    "不会改写已审测试点或猜测来源映射。",
+                )
+            elif fresh_reserved and len(reserve_sources) != 1:
+                reservation_question = (
+                    "reserved_reuse_mapping_requires_clarification",
+                    "请确认多个必需复用来源分别对应哪些测试点，或调整本轮来源选择；"
+                    "不会把不同来源强行合成一个测试点。",
+                )
+            elif fresh_reserved and count == 1 and planning_quantity.new_case_count != 0:
+                reservation_question = (
+                    "reserved_reuse_point_budget_requires_clarification",
+                    "当前仅允许一个测试点，同时要求原样复用和新增缺口。"
+                    "请调整测试点预算或明确两类输出如何对应同一测试点；用例数量不会替代测试点数量。",
+                )
+            if reservation_question:
+                reason, question = reservation_question
+                content["open_questions"].append({
+                    "id": reason, "question": question, "blocking": True,
+                    "impact": "保留已确认来源与输出预算，确认覆盖关系后重新预览测试点。",
+                })
+                content["planning"] = {
+                    **deepcopy(previous_planning),
+                    "feature_points": deepcopy(previous_planning.get("feature_points", [])),
+                    "test_points": deepcopy(previous_planning.get("test_points", [])),
+                    "pending_reserved_outputs": {
+                        "reason": reason, "required_sources": reserve_sources,
+                        "quantity": planning_quantity.model_dump(mode="json"),
+                    },
+                    "approved_source_catalog": approved_catalog,
+                    "excluded_reuse_source_keys": sorted(excluded_source_keys),
+                    "reuse": {**deepcopy(previous_planning.get("reuse", {})),
+                              "user_choices": previous_review_choices},
+                }
+            else:
+                gap_point_count = count - 1 if fresh_reserved and count is not None else count
+                context = {
+                    **context,
+                    "required_reuse_source_keys": planning_quantity.required_reuse_source_keys,
+                    "output_case_count": planning_quantity.output_case_count,
+                    "new_case_count": planning_quantity.new_case_count,
+                    "reserved_output_context": reserve_sources if fresh_reserved else [],
+                    "reserved_output_instruction": (
+                        "所列来源将由程序原样保留为独立候选及真实待审核覆盖点；"
+                        "本次仅规划其余缺口，不重复这些来源。测试点数量与用例数量相互独立。"
+                    ) if fresh_reserved else "",
+                }
+                if (payload.get("asset_selection_confirmed")
+                        and previous_planning.get("test_points")):
+                    # Retain existing coverage; its presence does not assert human review.
+                    # New comparison must not mutate the prior pinned mapping used below.
+                    content["planning"] = deepcopy(previous_planning)
+                elif fresh_reserved and gap_point_count == 0:
+                    content["planning"] = {"feature_points": [], "test_points": []}
+                else:
+                    content["planning"] = build_planning(
+                        requirement,
+                        context,
+                        complete_plan,
+                        analyses,
+                        target_count=gap_point_count,
+                        on_progress=publish_planning,
+                        allow_empty=bool(previous_planning)
+                        and all(item.planning_update_mode == "merge" for item in analyses),
+                        on_feature_progress=publish_features,
+                        feature_plans=[
+                            FeaturePlan(feature_points=item.feature_points) for item in analyses
+                        ]
+                        if all(isinstance(item, PlanningAnalysis) for item in analyses)
+                        else None,
+                        check_cancelled=lambda: ensure_not_cancelled(store, parsed_job_id),
+                    )
+                    content["planning"] = reconcile_planning(
+                        previous_planning, content["planning"], analyses
+                    )
+                if excluded_source_keys:
+                    content["planning"]["excluded_reuse_source_keys"] = sorted(
+                        excluded_source_keys
+                        | set(content["planning"].get("excluded_reuse_source_keys", []))
+                    )
+                reserved_point_id = None
+                if fresh_reserved:
+                    reserved_point_id = append_reserved_source_point(
+                        content["planning"], reserve_sources
+                    )
+                content["planning"]["reuse"] = plan_reuse(
+                    content["planning"],
+                    strategy,
+                    sources,
                     complete_plan,
-                    analyses,
-                    target_count=count,
-                    on_progress=publish_planning,
-                    allow_empty=bool(previous_planning)
-                    and all(item.planning_update_mode == "merge" for item in analyses),
-                    on_feature_progress=publish_features,
-                    feature_plans=[
-                        FeaturePlan(feature_points=item.feature_points) for item in analyses
-                    ]
-                    if all(isinstance(item, PlanningAnalysis) for item in analyses)
-                    else None,
+                    str(payload["prompt"]),
+                    test_object=requirement.test_object,
+                    assets_confirmed=bool(payload.get("asset_selection_confirmed")),
+                    progress=lambda: publish_work(store, job, "reuse.comparing", 95),
                     check_cancelled=lambda: ensure_not_cancelled(store, parsed_job_id),
                 )
-                content["planning"] = reconcile_planning(
-                    previous_planning, content["planning"], analyses
+                if previous_review_choices:
+                    current_ids = {point["id"] for point in content["planning"]["test_points"]}
+                    content["planning"]["reuse"]["user_choices"] = {
+                        point: choice for point, choice in previous_review_choices.items()
+                        if point in current_ids
+                    }
+                from casepilot_agent.output_obligations import (
+                    bind_obligations,
+                    ensure_required_coverage,
+                    has_point_review_receipt,
                 )
-            content["planning"]["reuse"] = plan_reuse(
-                content["planning"],
-                strategy,
-                sources,
-                complete_plan,
-                str(payload["prompt"]),
-                test_object=requirement.test_object,
-                assets_confirmed=bool(payload.get("asset_selection_confirmed")),
-                progress=lambda: publish_work(store, job, "reuse.comparing", 95),
-                check_cancelled=lambda: ensure_not_cancelled(store, parsed_job_id),
-            )
-            if payload.get("asset_selection_confirmed"):
-                content["planning"]["reuse"]["asset_confirmation"] = "reuse"
-                content["planning"]["reuse"]["confirmed_asset_keys"] = [
-                    source["key"] for source in sources
+
+                content["planning"]["approved_source_catalog"] = approved_catalog
+
+                if reserved_enabled:
+                    mapping = {}
+                    if reserved_point_id:
+                        mapping = {key: [reserved_point_id] for key in required_keys}
+                    else:
+                        mapping = previous_mapping
+                    reserve_required_outputs(
+                        content["planning"], planning_quantity, sources, mapping
+                    )
+
+                def repair_required_coverage(current, missing):
+                    # Exactly one fresh planning attempt. Never rewrite user-reviewed point IDs.
+                    feedback = {
+                        "missing_required_reuse_source_keys": missing,
+                        "required_sources": [
+                            source for source in sources if source["key"] in missing
+                        ],
+                        "instruction": ("保留当前用户范围，补齐明确要求原样复用的来源覆盖"
+                                        "及新增缺口；"
+                                        "参考来源不等于全部必选。"),
+                    }
+                    corrected = build_planning(
+                        requirement,
+                        {**context, "required_coverage_feedback": feedback},
+                        complete_plan,
+                        analyses,
+                        target_count=count,
+                        check_cancelled=lambda: ensure_not_cancelled(store, parsed_job_id),
+                    )
+                    corrected["approved_source_catalog"] = approved_catalog
+                    corrected["excluded_reuse_source_keys"] = sorted(excluded_source_keys)
+                    corrected["reuse"] = plan_reuse(
+                        corrected,
+                        strategy,
+                        sources,
+                        complete_plan,
+                        (str(payload["prompt"])
+                         + "\n必须覆盖的已授权复用来源：" + ", ".join(missing)),
+                        test_object=requirement.test_object,
+                        assets_confirmed=bool(payload.get("asset_selection_confirmed")),
+                        check_cancelled=lambda: ensure_not_cancelled(store, parsed_job_id),
+                    )
+                    corrected_ids = {point["id"] for point in corrected["test_points"]}
+                    corrected["reuse"]["user_choices"] = {
+                        point: choice for point, choice in previous_review_choices.items()
+                        if point in corrected_ids
+                    }
+                    return corrected
+
+                content["planning"] = ensure_required_coverage(
+                    content["planning"],
+                    planning_quantity,
+                    reviewed=has_point_review_receipt(previous_planning),
+                    repair=repair_required_coverage,
+                )
+                if payload.get("asset_selection_confirmed"):
+                    content["planning"]["reuse"]["asset_confirmation"] = "reuse"
+                    content["planning"]["reuse"]["confirmed_asset_keys"] = [
+                        source["key"] for source in sources
+                    ]
+                content["planning"]["reuse"]["brief_snapshot"] = {
+                    k: v for k, v in content.items() if k != "planning"
+                }
+                content["planning"]["reuse"]["feature_snapshots"] = content["planning"][
+                    "feature_points"
                 ]
-            content["planning"]["reuse"]["brief_snapshot"] = {
-                k: v for k, v in content.items() if k != "planning"
-            }
-            content["planning"]["reuse"]["feature_snapshots"] = content["planning"][
-                "feature_points"
-            ]
+                bind_obligations(content['planning'], planning_quantity)
+                # Only a successful server preview can retire an earlier blocking marker.
+                content["planning"].pop("pending_reserved_outputs", None)
+        # A bounded planning stop is a reviewable clarification, never an empty
+        # successful plan or a reason to proceed into generation.
+        coverage = (content.get("planning") or {}).get("coverage_review") or {}
+        if "coverage_scope_limit" in coverage.get("warnings", []):
+            content["planning"]["pending_planning_clarification"] = {
+                "reason": "coverage_scope_limit"}
+            content["open_questions"] = [question for question in content["open_questions"]
+                if question.get("id") != "coverage_scope_limit"] + [{
+                    "id": "coverage_scope_limit", "blocking": True,
+                    "question": "当前规划范围超过单次安全预算，请缩小功能或资料范围后重新规划。",
+                    "impact": "尚未生成可确认的测试点，不能开始生成候选用例。",
+                }]
+        from casepilot_agent.planning_boundary import validate_persisted_quantity_links
+
+        validate_persisted_quantity_links(content.get("planning") or {})
         with store.connection() as connection:
             locked_job = store.get_job_for_update(connection, parsed_job_id)
             if str(getattr(locked_job["status"], "value", locked_job["status"])) == "cancelled":
@@ -1635,7 +1992,10 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                     )
                     + f"结构化测试说明 V{version} 已整理完成。"
                     + (
-                        "尚未明确测试对象，请补充后再生成用例。"
+                        "请先澄清：" + "；".join(
+                            item["question"] for item in content["open_questions"]
+                            if item.get("blocking")
+                        )
                         if blocker_count
                         else "你可以继续修改；确认无误后再开始生成候选用例。"
                     )

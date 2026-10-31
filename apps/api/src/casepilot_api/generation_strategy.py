@@ -1,10 +1,15 @@
 """Asset search requires an explicit user request, including natural language."""
 
-import re
 import json
+import re
 from contextvars import ContextVar
 
-from casepilot_api.collection_reference import CollectionReference, collection_instructions, validate_collection_reference
+from casepilot_api.collection_reference import (
+    CollectionReference,
+    collection_instructions,
+    validate_collection_reference,
+)
+from casepilot_api.model_client import compatible_model, optional_model_settings
 
 choice_request_cache = ContextVar("choice_request_cache", default=None)
 
@@ -151,7 +156,7 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
     import json
     from typing import Literal
 
-    from agents import Agent, OpenAIChatCompletionsModel, Runner, set_tracing_disabled
+    from agents import Agent, Runner, set_tracing_disabled
     from openai import AsyncOpenAI
     from pydantic import BaseModel, Field
 
@@ -235,7 +240,8 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
             "If the user says use these three but only two IDs exist, return requested_count=3, "
             "ambiguous=true and selected_ids=null."
         ) + collection_instructions + retry_instructions,
-        model=OpenAIChatCompletionsModel(model=settings.routing_model, openai_client=client),
+        model=compatible_model(model=settings.routing_model, openai_client=client, settings=settings),
+        **optional_model_settings(settings),
         output_type=RetryChoice if retry_only else CollectionReference if collection_only else Choice,
     )
     result = _run_routing_agent(Runner, agent, json.dumps(

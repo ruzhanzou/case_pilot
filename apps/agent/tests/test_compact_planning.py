@@ -37,6 +37,9 @@ def test_fused_analysis_reuses_features_and_reduces_point_input_without_losing_s
     result = build_planning(requirement, {'evidence': evidence}, complete,
                             [requirement] * 32, feature_plans=plans, target_count=1)
     assert len(calls) == 1
+    assert [s["excerpt"] for s in calls[0]["source_catalog"]] == [
+        e["excerpt"] for e in calls[0]["context"]["evidence"]
+    ]  # Point choices expose only compacted, actually shown evidence.
     assert len(result['feature_points']) == len(result['test_points']) == 1
     excerpts = calls[0]['context']['evidence']
     assert sum(len(s['excerpt']) for s in excerpts) < sum(len(s['excerpt']) for s in evidence) / 20
@@ -142,7 +145,8 @@ def test_fused_analysis_is_checkpointed_and_reused_on_retry(monkeypatch):
                 return OutputQuantity(), UsageMetadata(model="fixture")
             calls.append(stage)
             if stage == 'requirement.extracted':
-                assert result_type is PlanningAnalysis
+                assert issubclass(result_type, PlanningAnalysis)
+                assert result_type.__name__ == "SourceScopedPlanningAnalysis"
                 index = payload['context']['evidence'][0]['label']
                 feature = features(1).feature_points[0]
                 feature.name = f'功能{index}'
@@ -203,3 +207,29 @@ def test_truncated_sample_is_not_a_conflicting_rule_definition():
     assert source_rule_name(feature, context) == 'REFUND-2 退款金额不得超过实付金额'
     context['evidence'].append({'excerpt': 'REFUND-2: 退款金额不得超过100元。'})
     assert source_rule_name(feature, context) is None
+
+
+def test_server_full_reference_does_not_compact_away_distant_explicit_exception():
+    text = 'RULE-1： 连续5次错误锁定15分钟。' + '样例数据' * 150 + '管理员账户除外。'
+    source = {'source_id': 's', 'document_id': 'd', 'chunk_id': 'c',
+              'label': '原始规则', 'locator': 'page 1', 'excerpt': text}
+    common = {'requirement': {}, 'context': {'evidence': [source]}}
+    feature = features(1).feature_points[0]
+    feature.requirement_refs = ['RULE-1']
+    feature.source_refs = [SourceRef.model_validate(source)]
+    result = compact_planning_context(common, [feature])
+    assert result is common
+    assert '管理员账户除外。' in result['context']['evidence'][0]['excerpt']
+
+
+@pytest.mark.parametrize('remote', [
+    'Administrators are exempt', '除非管理员授权', '每日最多3次', '另一条完整规则。',
+])
+def test_canonical_rule_compaction_conservatively_retains_remote_qualifications(remote):
+    text = 'RULE-1： 正常流程允许。' + '样例数据' * 150 + remote
+    source = {'label': '规则', 'document_id': 'd', 'chunk_id': 'c', 'excerpt': text}
+    common = {'requirement': {}, 'context': {'evidence': [source]}}
+    feature = features(1).feature_points[0]
+    feature.requirement_refs = ['RULE-1']
+    feature.source_refs = [SourceRef.model_validate(source)]
+    assert compact_planning_context(common, [feature]) is common

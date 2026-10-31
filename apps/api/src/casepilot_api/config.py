@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, model_validator
@@ -22,6 +23,18 @@ class Settings(BaseSettings):
     agent_provider: str = Field(
         default="mock",
         validation_alias="CASEPILOT_AGENT_PROVIDER",
+    )
+    agent_api_type: Literal["chat_completions", "responses"] = Field(
+        default="chat_completions", validation_alias="CASEPILOT_AGENT_API_TYPE",
+    )
+    workbench_agent_enabled: bool = Field(
+        default=False, validation_alias="CASEPILOT_WORKBENCH_AGENT_ENABLED",
+    )
+    workbench_agent_max_turns: int = Field(
+        default=8, ge=1, le=20, validation_alias="CASEPILOT_WORKBENCH_AGENT_MAX_TURNS",
+    )
+    workbench_agent_max_tool_calls: int = Field(
+        default=16, ge=1, le=40, validation_alias="CASEPILOT_WORKBENCH_AGENT_MAX_TOOL_CALLS",
     )
     agent_base_url: str = Field(
         default="https://ark.cn-beijing.volces.com/api/coding/v3",

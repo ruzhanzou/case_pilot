@@ -1,3 +1,4 @@
+import type { CollectionConfirmationReceipt } from "./workbench-collection-proposal";
 import { createSubmissionSender } from "./submission-retry";
 
 const configuredApiBaseUrl =
@@ -546,7 +547,58 @@ export type ConversationHistoryPageDto = {
   next_cursor: string | null;
 };
 
+export type PlanningBoundaryContractDto = {
+  status: "model_proposed";
+  source_ref: SourceRefDto;
+  source_literal: string;
+  threshold: number;
+  unit: string;
+  comparator: "lt" | "lte" | "gt" | "gte" | "eq";
+  /** Server-bound numeric source identity, not semantic approval. Absent in legacy data. */
+  quantity_axis_id?: string;
+  /** Model-proposed display labels requiring human review. */
+  axis: string;
+  time_origin: string;
+  sampling_step: number | null;
+  sampling_literal: string;
+};
+
+export type PlanningBoundarySampleDto = {
+  obligation_id: string;
+  position: "before" | "at" | "after";
+  value: number;
+  unit: string;
+  /** Server-bound numeric source identity, not semantic approval. Absent in legacy data. */
+  quantity_axis_id?: string;
+  /** Model-proposed display labels requiring human review. */
+  axis: string;
+  time_origin: string;
+  initial_state: string;
+  assertion: string;
+  assertion_role: "primary" | "secondary";
+  assertion_feature_id: string;
+  assertion_source_ref: SourceRefDto;
+};
+
+export type PlanningCoverageReviewDto = {
+  status: "pending_independent_review";
+  source: "model_proposed";
+  batches: {
+    batch_index: number;
+    obligations: { id: string; feature_point_ids: string[]; dimension: "normal" | "boundary" | "exception" | "state";
+      basis: string; point_ids: string[]; clarification: string; boundary_contract?: PlanningBoundaryContractDto }[];
+    uncovered_ids: string[];
+    clarifications: string[];
+    duplicate_suggestions: { point_ids: string[]; reason: string }[];
+    completion_attempted: boolean;
+    warnings?: string[];
+  }[];
+  limits: { max_points: number; max_batches: number; max_completion_rounds: number };
+  warnings: string[];
+};
+
 export type TestPlanningDto = {
+  coverage_review?: PlanningCoverageReviewDto;
   reuse?: {
     strategy: "fresh" | "regression" | "change";
     source_count: number;
@@ -560,7 +612,7 @@ export type TestPlanningDto = {
       source?: { collections?: { id: string; name: string }[]; kind?: string; case_id?: string; label: string; locator: string; snapshot: { title: string; preconditions: string[]; steps: { action: string; expected: string }[] } } }[];
   };
   feature_points: { id: string; name: string; module: string; description: string; requirement_refs: string[] }[];
-  test_points: { id: string; title: string; scenario?: string; objective: string; feature_point_ids: string[]; source_refs?: { label: string; locator: string; excerpt: string }[] }[];
+  test_points: { id: string; title: string; scenario?: string; objective: string; feature_point_ids: string[]; primary_feature_id?: string; source_refs?: { label: string; locator: string; excerpt: string }[]; boundary_samples?: PlanningBoundarySampleDto[] }[];
   processed_batches?: number;
 };
 
@@ -1187,6 +1239,12 @@ export function listConversationHistory(input?: {
   return apiRequest(`/api/v1/conversations/history?${parameters.toString()}`);
 }
 
+export function updateWorkbenchSelection(conversationId: string, input: {
+  base_version: number; action: "replace" | "add" | "remove" | "clear"; targets: ConversationTarget[];
+}): Promise<ConversationDto> {
+  return apiRequest(`/api/v1/workspaces/${conversationId}/selection`, { method: "PATCH", body: JSON.stringify(input) });
+}
+
 export function updateWorkspaceState(
   conversationId: string,
   input: {
@@ -1277,12 +1335,13 @@ export function updateWorkspaceCandidate(
 export function commitWorkspaceCandidates(
   conversationId: string,
   candidateIds: string[] = [],
+  candidateVersions?: Record<string, number>,
 ): Promise<TestCaseDto[]> {
   return apiRequest(
     `/api/v1/workspaces/${conversationId}/candidates/commit`,
     {
       method: "POST",
-      body: JSON.stringify({ candidate_ids: candidateIds }),
+      body: JSON.stringify({ candidate_ids: candidateIds, candidate_versions: candidateVersions }),
     },
   );
 }
@@ -1304,6 +1363,14 @@ const sendSubmission = createSubmissionSender(
   () => crypto.randomUUID(),
 );
 
+export type ConversationRequestObserver = { isCurrent?: () => boolean; onRequest: (conversationId: string, requestId: string) => (() => void) | void };
+export function workbenchAgentEventsUrl(conversationId: string, requestId: string) {
+  return `${apiBaseUrl}/api/v1/conversations/${conversationId}/agent-runs/${requestId}/events`;
+}
+export function cancelWorkbenchAgentRun(conversationId: string, requestId: string): Promise<{status: "requested" | "already_terminal"; transport_aborted: false}> {
+  return apiRequest(`/api/v1/conversations/${conversationId}/agent-runs/${requestId}/cancel`, { method: "POST" });
+}
+
 export function sendConversationMessage(
   conversationId: string,
   input: {
@@ -1320,15 +1387,18 @@ export function sendConversationMessage(
     targetScope?: "inferred" | "selected";
     targets?: ConversationTarget[];
     sourceOperationId?: string;
+    selectionVersion?: number;
     generationStrategy?: GenerationStrategy;
     sourceCollectionIds?: string[];
   },
+  observer?: ConversationRequestObserver,
 ): Promise<ConversationTurnDto> {
   const body = JSON.stringify({
       content: input.content,
       generation_strategy: input.generationStrategy,
       source_collection_ids: input.sourceCollectionIds ?? [],
       source_operation_id: input.sourceOperationId,
+      selection_version: input.selectionVersion,
       model_id: input.modelId,
       scope: input.scope,
       target_case_ids: input.targetCaseIds ?? [],
@@ -1341,11 +1411,16 @@ export function sendConversationMessage(
       target_scope: input.targetScope ?? "inferred",
       targets: input.targets ?? [],
   });
-  return sendSubmission.send(conversationId, body, (requestId) =>
-    apiRequest(`/api/v1/conversations/${conversationId}/messages`, {
+  let cleanup: (() => void) | void;
+  let observed = false;
+  return sendSubmission.send(conversationId, body, (requestId) => {
+    // Share the idempotency identity before POST; transport retries keep one stream.
+    if (!observed) { observed = true; cleanup = observer?.onRequest(conversationId, requestId); }
+    return apiRequest<ConversationTurnDto>(`/api/v1/conversations/${conversationId}/messages`, {
       method: "POST",
       body: JSON.stringify({...JSON.parse(body), client_request_id: requestId}),
-    }));
+    });
+  }).finally(() => cleanup?.());
 }
 
 export function confirmConversationIntent(
@@ -1986,5 +2061,40 @@ export function savePlanningCaseLink(conversationId: string, payload: {
 export function confirmGenerationAssets(conversationId: string, version: number, caseIds: string[], testPointIds?: string[]): Promise<ConversationTurnDto> {
   return apiRequest(`/api/v1/workspaces/${conversationId}/generation-assets/confirm`, {
     method: "POST", body: JSON.stringify({ version, case_ids: caseIds, test_point_ids: testPointIds }),
+  });
+}
+
+export function confirmWorkbenchCollectionProposal(conversationId: string, proposalId: string, input: { name: string; collection_id?: string }): Promise<CollectionConfirmationReceipt> {
+  return apiRequest(`/api/v1/workspaces/${conversationId}/collection-proposals/${proposalId}/confirm`, { method: "POST", body: JSON.stringify(input) });
+}
+export function rejectWorkbenchCollectionProposal(conversationId: string, proposalId: string): Promise<{status: string}> {
+  return apiRequest(`/api/v1/workspaces/${conversationId}/collection-proposals/${proposalId}/reject`, { method: "POST" });
+}
+
+export type PlanningReviewRecord = {
+  id: string; base_version: number; status: string; requests_used: number; request_limit: number;
+  error_code: string | null; proposal_hash: string | null; applied_brief_id: string | null;
+  sources: { excerpt: string; label?: string; locator?: string }[];
+  selected: string[];
+  review: { findings: { id: string; kind: string; point_ids: string[]; obligation_keys: string[];
+    explanation: string; citations: { source: number; quote: string }[] }[]; unresolved: string[] } | null;
+  proposal: { points: { point_id: string; action: string; title: string; scenario: string; objective: string;
+    feature_ids: string[]; primary_feature_id: string; sources: number[]; issue_ids: string[] }[];
+    obligations: { key: string; point_ids: string[]; feature_ids: string[]; basis: string;
+    clarification: string; issue_ids: string[] }[]; unresolved: string[] } | null;
+};
+export function listPlanningReviews(workspaceId: string): Promise<PlanningReviewRecord[]> {
+  return apiRequest(`/api/v1/workspaces/${workspaceId}/planning-reviews`);
+}
+export function startPlanningReview(workspaceId: string, baseVersion: number): Promise<PlanningReviewRecord> {
+  return apiRequest(`/api/v1/workspaces/${workspaceId}/planning-reviews`, {
+    method: "POST", body: JSON.stringify({base_version: baseVersion}),
+  });
+}
+export function decidePlanningReview(workspaceId: string, review: PlanningReviewRecord,
+  action: "revise" | "apply" | "cancel", issueIds: string[] = [], confirmCountChange = false): Promise<PlanningReviewRecord> {
+  return apiRequest(`/api/v1/workspaces/${workspaceId}/planning-reviews/${review.id}/${action}`, {
+    method: "POST", body: JSON.stringify({base_version: review.base_version, issue_ids: issueIds,
+      confirm: action === "apply", confirm_count_change: confirmCountChange, proposal_hash: review.proposal_hash ?? ""}),
   });
 }

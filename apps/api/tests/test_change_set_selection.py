@@ -6,8 +6,38 @@ from uuid import uuid4
 import pytest
 
 from casepilot_api import conversations
-from casepilot_api.models import ConversationMessage, TestCaseRevision as Revision
+from casepilot_api.models import Account, Conversation, ConversationMessage
+from casepilot_api.models import TestCaseRevision as Revision
 from casepilot_api.schemas import ChangeSetApplyRequest
+
+
+def _authorized_workspace(db, monkeypatch, change, existing=None):
+    """Supply concrete ownership/membership while retaining real authorization guards.
+
+    These review-selection units isolate revision writes, not auth SQL. Membership
+    uses an exact identity assertion rather than a permissive authorization stub.
+    Cross-tenant rejection is exercised by database-backed integration tests.
+    """
+    account = Account(id=uuid4())
+    conversation = Conversation(id=change.conversation_id, account_id=account.id,
+                                space_id=uuid4(), context=dict(existing.context) if existing else {})
+    previous_get = db.get.side_effect
+    previous_value = db.get.return_value
+
+    def get(model, key, *args, **kwargs):
+        if model is Conversation:
+            assert key == conversation.id
+            return conversation
+        return previous_get(model, key, *args, **kwargs) if callable(previous_get) else previous_value
+
+    def membership(_db, account_id, space_id):
+        assert _db is db
+        assert account_id == account.id
+        assert space_id == conversation.space_id
+
+    db.get.side_effect = get
+    monkeypatch.setattr(conversations, "require_space_membership", membership)
+    return account, conversation
 
 
 @pytest.fixture(autouse=True)
@@ -16,6 +46,11 @@ def legacy_mock_scope(monkeypatch):
     # by test_model_scope and real-model acceptance.
     from casepilot_api import conversations
     monkeypatch.setattr(conversations.settings, "agent_provider", "mock")
+    # These units isolate selection/revision writes. Durable transactional hooks
+    # have real PostgreSQL coverage in test_workbench_approval_hooks.
+    from casepilot_api import workbench_continuation
+    monkeypatch.setattr(workbench_continuation, "record_approval", lambda *a, **k: None)
+    monkeypatch.setattr(workbench_continuation, "capture_approval_binding", lambda *a, **k: None)
 
 
 def test_conflicting_proposal_stops_waiting_for_confirmation():
@@ -44,8 +79,9 @@ def test_unselected_case_does_not_write_revision_or_delete(monkeypatch, operatio
     db = Mock()
     db.scalar.return_value = None
     monkeypatch.setattr(conversations, "_ensure_change_set", lambda *args: change)
+    account, conversation = _authorized_workspace(db, monkeypatch, change)
     result = conversations.apply_change_set(change.id,
-        ChangeSetApplyRequest(accepted_fields={str(case_id): fields}), SimpleNamespace(id=uuid4()), db)
+        ChangeSetApplyRequest(accepted_fields={str(case_id): fields}), account, db)
     assert db.scalar.call_count == 1  # Only the operation lookup; no case lock.
     assert case.current_revision_id == revision_id
     assert case.deleted_at is None
@@ -81,7 +117,7 @@ def test_single_discard_keeps_other_items_pending_and_retry_is_idempotent(monkey
     operation = SimpleNamespace(id=uuid4(), intent='CASE_MODIFY', status='awaiting_confirmation', result={})
     db = Mock(); db.scalar.return_value = operation
     monkeypatch.setattr(conversations, '_ensure_change_set', lambda *args: change)
-    account = SimpleNamespace(id=uuid4())
+    account, conversation = _authorized_workspace(db, monkeypatch, change)
     request = ChangeSetApplyRequest(accepted_fields={refs[0]: []}, review_refs=[refs[0]])
     conversations.apply_change_set(change.id, request, account, db)
     assert change.status == 'ready'
@@ -98,10 +134,12 @@ def test_single_discard_keeps_other_items_pending_and_retry_is_idempotent(monkey
 
 def test_single_review_rejects_unknown_refs(monkeypatch):
     from fastapi import HTTPException
-    change = SimpleNamespace(status='ready', items=[{'ref':'known'}])
+    change = SimpleNamespace(id=uuid4(), conversation_id=uuid4(), status='ready', items=[{'ref':'known'}])
     monkeypatch.setattr(conversations, '_ensure_change_set', lambda *args: change)
+    db = Mock()
+    account, conversation = _authorized_workspace(db, monkeypatch, change)
     with pytest.raises(HTTPException) as error:
-        conversations.apply_change_set(uuid4(), ChangeSetApplyRequest(review_refs=['other']), SimpleNamespace(id=uuid4()), Mock())
+        conversations.apply_change_set(uuid4(), ChangeSetApplyRequest(review_refs=['other']), account, db)
     assert error.value.status_code == 422
 
 
@@ -114,7 +152,8 @@ def test_discard_remaining_preserves_already_accepted_items(monkeypatch):
     operation = SimpleNamespace(id=uuid4(), intent='CASE_MODIFY', status='awaiting_confirmation', result={})
     db = Mock(); db.scalar.return_value = operation
     monkeypatch.setattr(conversations, '_ensure_change_set', lambda *args: change)
-    result = conversations.reject_change_set(change.id, SimpleNamespace(id=uuid4()), db)
+    account, conversation = _authorized_workspace(db, monkeypatch, change)
+    result = conversations.reject_change_set(change.id, account, db)
     assert result.status == 'applied'
     assert [item['status'] for item in result.items] == ['applied','rejected']
     assert operation.status == 'completed'
@@ -132,7 +171,8 @@ def test_reject_middle_change_stops_only_queued_followers(monkeypatch, followers
     db = Mock(); db.scalar.return_value = operation
     db.execute.return_value.rowcount = followers
     monkeypatch.setattr(conversations, '_ensure_change_set', lambda *args: change)
-    conversations.reject_change_set(change.id, SimpleNamespace(id=uuid4()), db)
+    account, _ = _authorized_workspace(db, monkeypatch, change)
+    conversations.reject_change_set(change.id, account, db)
     assert operation.status == 'cancelled'
     statement = db.execute.call_args.args[0]
     parameters = statement.compile().params
@@ -234,7 +274,8 @@ def test_candidate_selection_does_not_invalidate_content_revision(monkeypatch, e
 def test_candidate_commit_cannot_bypass_pending_ai_review(monkeypatch):
     from fastapi import HTTPException
     from casepilot_api.schemas import WorkspaceCandidateCommitRequest
-    conversation=SimpleNamespace(id=uuid4(),collection_id=uuid4())
+    conversation=Conversation(id=uuid4(), collection_id=uuid4(), account_id=uuid4(),
+                              space_id=uuid4(), context={})
     candidate=SimpleNamespace(id=uuid4(),ref='TC-002')
     change=SimpleNamespace(items=[{'ref':'TC-002','target_type':'candidate','status':'ready'}])
     db=Mock();db.scalars.side_effect=[[candidate],[change]]
@@ -466,8 +507,9 @@ def test_unchecked_stale_case_requires_no_version_lookup(monkeypatch, target_typ
     db = Mock()
     db.scalar.return_value = None
     monkeypatch.setattr(conversations, "_ensure_change_set", lambda *args: change)
+    account, conversation = _authorized_workspace(db, monkeypatch, change)
     result = conversations.apply_change_set(
-        change.id, ChangeSetApplyRequest(accepted_fields={ref: []}), SimpleNamespace(id=uuid4()), db
+        change.id, ChangeSetApplyRequest(accepted_fields={ref: []}), account, db
     )
     assert result.change_set.status == "rejected"
     assert db.scalar.call_count == 1
@@ -526,8 +568,9 @@ def test_candidate_delete_is_reviewed_and_idempotent(monkeypatch, accept):
         {'target': {'kind': 'case', 'candidate_refs': [ref], 'case_ids': []}}]})
     db.get.return_value = conversation
     monkeypatch.setattr(conversations, '_ensure_change_set', lambda *args: change)
+    account, conversation = _authorized_workspace(db, monkeypatch, change, existing=conversation)
     request = ChangeSetApplyRequest(accepted_fields={ref: ['delete'] if accept else []})
-    conversations.apply_change_set(change.id, request, SimpleNamespace(id=uuid4()), db)
+    conversations.apply_change_set(change.id, request, account, db)
     assert candidate.status == ('discarded' if accept else 'candidate')
     assert candidate.version == (4 if accept else 3)
     assert candidate.snapshot == {'title': 'Keep snapshot'}
@@ -535,7 +578,7 @@ def test_candidate_delete_is_reviewed_and_idempotent(monkeypatch, accept):
         assert conversation.context['selected_targets'] == []
         assert conversation.context['selected_case_id'] == ''
     calls = db.add.call_count
-    conversations.apply_change_set(change.id, request, SimpleNamespace(id=uuid4()), db)
+    conversations.apply_change_set(change.id, request, account, db)
     assert db.add.call_count == calls
 
 
@@ -548,11 +591,12 @@ def test_candidate_delete_conflict_prevents_any_write(monkeypatch):
     db = Mock()
     db.scalar.return_value = candidate
     monkeypatch.setattr(conversations, '_ensure_change_set', lambda *args: change)
+    account, conversation = _authorized_workspace(db, monkeypatch, change)
     conflict = Mock()
     monkeypatch.setattr(conversations, '_mark_change_set_conflict', conflict)
     with pytest.raises(HTTPException) as error:
         conversations.apply_change_set(change.id, ChangeSetApplyRequest(),
-                                       SimpleNamespace(id=uuid4()), db)
+                                       account, db)
     assert error.value.detail == 'candidate_changed'
     assert candidate.status == 'candidate'
     db.add.assert_not_called()

@@ -166,6 +166,7 @@ def inherit_unchanged_links(db, previous, current):
 
 def reusable_current_case(db, conversation, candidate, cache):
     """Link only an unchanged candidate to its pinned, live, same-collection asset."""
+    import json
     from uuid import UUID
 
     from casepilot_api.models import GenerationJob
@@ -178,17 +179,49 @@ def reusable_current_case(db, conversation, candidate, cache):
     job = cache[job_id]
     if job is None:
         return None
-    reuse = (job.input_payload.get("confirmed_plan") or {}).get("reuse") or {}
+    plan = job.input_payload.get("confirmed_plan") or {}
+    reuse = plan.get("reuse") or {}
     decisions = {item["point_id"]: item for item in reuse.get("decisions", [])}
     points = candidate.snapshot["test_point_ids"]
-    selected = [decisions.get(point) for point in points]
-    if any(not item or item.get("action") != "reuse" for item in selected):
-        return None
     if any(reuse.get("user_choices", {}).get(point) == "copy" for point in points):
         return None
-    sources = [item.get("source") or {} for item in selected]
-    source = sources[0]
-    if source.get("kind") != "formal" or any(s.get("key") != source.get("key") for s in sources):
+    reserved = {item["source"]["key"]: item
+                for item in plan.get("reserved_reuse_outputs", [])}
+    claimed = set()
+    for reference in candidate.snapshot.get("source_refs", []):
+        try:
+            value = json.loads(reference.get("excerpt") or "")
+        except (ValueError, TypeError):
+            continue
+        if isinstance(value, dict) and value.get("action") == "reuse":
+            key = value.get("source_key")
+            if isinstance(key, str) and key in reserved:
+                claimed.add(key)
+    if claimed:
+        if len(claimed) != 1:
+            raise HTTPException(409, "reserved_reuse_binding_changed")
+        reservation = reserved[next(iter(claimed))]
+        actual_points = {point["id"]: point for point in plan.get("test_points", [])}
+        ids = reservation.get("point_ids", [])
+        if (reservation.get("action") != "reuse" or len(points) != len(set(points))
+                or set(points) != set(ids)
+                or set(reservation.get("point_snapshots", {})) != set(ids)
+                or any(reservation["point_snapshots"][pid] != actual_points.get(pid) for pid in ids)
+                or any(reuse.get("user_choices", {}).get(pid) in {"new", "exclude"}
+                       for pid in ids)):
+            raise HTTPException(409, "reserved_reuse_binding_changed")
+        source = reservation["source"]
+        same_object = source.get("test_object_match") == "same"
+    else:
+        selected = [decisions.get(point) for point in points]
+        if any(not item or item.get("action") != "reuse" for item in selected):
+            return None
+        sources = [item.get("source") or {} for item in selected]
+        source = sources[0]
+        if any(s.get("key") != source.get("key") for s in sources):
+            return None
+        same_object = all(item.get("test_object_match") == "same" for item in selected)
+    if source.get("kind") != "formal":
         return None
     try:
         case_id, revision_id = UUID(source["case_id"]), UUID(str(source["revision"]))
@@ -203,7 +236,7 @@ def reusable_current_case(db, conversation, candidate, cache):
     if membership is None and (
         reuse.get("asset_confirmation") != "reuse"
         or source.get("key") not in reuse.get("confirmed_asset_keys", [])
-        or any(item.get("test_object_match") != "same" for item in selected)
+        or not same_object
     ):
         return None
     case = db.scalar(

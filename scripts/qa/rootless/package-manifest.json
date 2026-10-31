@@ -1,0 +1,53 @@
+{
+  "index": "https://deb.debian.org/debian/dists/trixie/main/binary-amd64/Packages.xz",
+  "packages": [
+    {
+      "Package": "libjemalloc2",
+      "Version": "5.3.0-3",
+      "Filename": "pool/main/j/jemalloc/libjemalloc2_5.3.0-3_amd64.deb",
+      "SHA256": "e7d64919e620e8ea46960104efe1e9c977d751e5b610a5d89b0b51aeae9530d7"
+    },
+    {
+      "Package": "liblzf1",
+      "Version": "3.6-4+b3",
+      "Filename": "pool/main/libl/liblzf/liblzf1_3.6-4+b3_amd64.deb",
+      "SHA256": "1f7677f1098f9f643806d64a2ed54d14bcd5954e71b63c2aa1e9bb7bcd84d783"
+    },
+    {
+      "Package": "postgresql-17-pgvector",
+      "Version": "0.8.0-1",
+      "Filename": "pool/main/p/pgvector/postgresql-17-pgvector_0.8.0-1_amd64.deb",
+      "SHA256": "6e8a457eb252617b66cf7b2908c736127eae43703fffec94492ac131ca921515"
+    },
+    {
+      "Package": "libpq5",
+      "Version": "17.11-0+deb13u1",
+      "Filename": "pool/main/p/postgresql-17/libpq5_17.11-0+deb13u1_amd64.deb",
+      "SHA256": "20a4c9ef58b4baf90deda67cfb2cc062871c062830dddc234d28f5ac7931b86b"
+    },
+    {
+      "Package": "postgresql-17",
+      "Version": "17.11-0+deb13u1",
+      "Filename": "pool/main/p/postgresql-17/postgresql-17_17.11-0+deb13u1_amd64.deb",
+      "SHA256": "d2ce1ddffafa783f9acda4c92c86fc21e8288bff3782d739294f14fa797d7886"
+    },
+    {
+      "Package": "postgresql-client-17",
+      "Version": "17.11-0+deb13u1",
+      "Filename": "pool/main/p/postgresql-17/postgresql-client-17_17.11-0+deb13u1_amd64.deb",
+      "SHA256": "9d8558f8dd57c8e92e218a20698383575d53742ca3f9e7c2b7fe5f246d5216ae"
+    },
+    {
+      "Package": "redis-server",
+      "Version": "5:8.0.2-3+deb13u2",
+      "Filename": "pool/main/r/redis/redis-server_8.0.2-3+deb13u2_amd64.deb",
+      "SHA256": "0edc72458f66c68f2d4ccd0c9959a85a81f4ec7de410a28861cde4a2059f245c"
+    },
+    {
+      "Package": "redis-tools",
+      "Version": "5:8.0.2-3+deb13u2",
+      "Filename": "pool/main/r/redis/redis-tools_8.0.2-3+deb13u2_amd64.deb",
+      "SHA256": "9d7cbe20963c8bfc00af3e8a3a33451bb815f7501b12e55583f9e942a767859b"
+    }
+  ]
+}

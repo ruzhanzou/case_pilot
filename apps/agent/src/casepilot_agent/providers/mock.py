@@ -212,6 +212,15 @@ class MockProvider:
                 case.source_refs = [source_ref]
 
         from casepilot_agent.reuse import ReuseDecisions
+        if payload.get("source_catalog") and "feature_points" in result_type.model_fields:
+            # Planning-only schema selects a slot; real provenance is server-hydrated.
+            catalog = payload["source_catalog"]
+            index = 1 if payload.get("context", {}).get("evidence") and len(catalog) > 1 else 0
+            for feature in baseline.feature_points:
+                feature.source_refs = [
+                    SourceRef(label="selection", locator=catalog[index]["slot"])
+                ]
+
         if issubclass(result_type, ReuseDecisions):
             result = ReuseDecisions(decisions=[{"point_id": point["id"], "action": "new",
                 "source_key": None, "reason": "Mock模式不推断历史用例适用性"} for point in payload["test_points"]])
@@ -297,14 +306,29 @@ class MockProvider:
                 **requirement.model_dump(),
                 "feature_points": [feature.model_dump() for feature in baseline.feature_points],
             })
-        elif result_type is FeaturePlan:
-            result = FeaturePlan(feature_points=baseline.feature_points)
+        elif issubclass(result_type, FeaturePlan):
+            result = result_type.model_validate({"feature_points": [
+                feature.model_dump() for feature in baseline.feature_points
+            ]})
         elif issubclass(result_type, TestPointPlan):
             scoped_features = payload.get("feature_points", {}).get("feature_points", [])
             if scoped_features:
                 for point in baseline.test_points:
                     point.feature_point_ids = [scoped_features[0]["id"]]
                     point.scenario = "业务规则校验"
+            if payload.get("source_catalog"):
+                slot = payload["source_catalog"][
+                    1 if payload.get("context", {}).get("evidence") else 0
+                ]["slot"]
+                for point in baseline.test_points:
+                    owned_slots = payload.get("feature_source_slots", {}).get(
+                        point.feature_point_ids[0], []
+                    )
+                    point.source_refs = [
+                        SourceRef(
+                            label="selection", locator=owned_slots[0] if owned_slots else slot
+                        )
+                    ]
             result = TestPointPlan(
                 test_points=baseline.test_points,
                 coverage_matrix=[
@@ -315,6 +339,31 @@ class MockProvider:
                     }
                 ],
             )
+            point_schema = result_type.model_fields["test_points"].annotation.__args__[0]
+            if "primary_feature_id" in point_schema.model_fields:
+                result = result_type.model_validate(
+                    {
+                        **result.model_dump(mode="json"),
+                        "test_points": [
+                            {
+                                **point.model_dump(mode="json"),
+                                "primary_feature_id": point.feature_point_ids[0],
+                                **(
+                                    {
+                                        "primary_binding": next(
+                                            item["id"]
+                                            for item in payload["primary_bindings"]
+                                            if item["feature_id"] == point.feature_point_ids[0]
+                                        )
+                                    }
+                                    if "primary_binding" in point_schema.model_fields
+                                    else {}
+                                ),
+                            }
+                            for point in result.test_points
+                        ],
+                    }
+                )
         elif result_type is TestCaseBatch:
             scoped_points = payload.get("test_points", {}).get("test_points", [])
             if payload.get("brief_version") and scoped_points:

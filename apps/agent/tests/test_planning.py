@@ -35,7 +35,7 @@ def test_planning_does_not_request_cases_and_generation_reuses_selected_point():
 
     planning = build_planning(
         RequirementAnalysis(summary="登录", test_object="登录", test_object_specified=True),
-        {"evidence": []},
+        {"user_input": "登录功能", "evidence": []},
         complete,
     )
     assert stages == ["feature.generated", "test_point.generated"]
@@ -154,7 +154,7 @@ def test_confirmed_points_supersede_earlier_requested_count():
 
 
 def test_planning_batches_features_without_losing_ids_or_coverage():
-    from casepilot_agent.contracts import FeaturePlan, TestPointPlan
+    from casepilot_agent.contracts import FeaturePlan
     seen = []
 
     def complete(stage, instruction, payload, result_type):
@@ -166,14 +166,18 @@ def test_planning_batches_features_without_losing_ids_or_coverage():
         features = payload['feature_points']['feature_points']
         assert len(features) <= 3
         seen.extend(f['name'] for f in features)
-        return TestPointPlan.model_validate({'test_points': [
+        return result_type.model_validate({'test_points': [
             {'id': 'provider-reuses-id', 'title': f['name'], 'scenario': f['name'],
              'objective': '验证登录', 'category': '功能', 'priority': 'P1',
-             'priority_reason': '业务规则', 'feature_point_ids': [f['id']]}
+             'priority_reason': '业务规则', 'feature_point_ids': [f['id']],
+             'primary_binding': next(pair['id'] for pair in payload['primary_bindings']
+                                     if pair['feature_id'] == f['id']),
+             'source_refs': [{'label': 'selection',
+                              'locator': payload['feature_source_slots'][f['id']][0]}]}
             for f in features
         ]})
 
-    plan = build_planning(RequirementAnalysis(summary='登录'), {'evidence': []}, complete)
+    plan = build_planning(RequirementAnalysis(summary='登录'), {'user_input': '登录方式规则', 'evidence': []}, complete)
     assert sorted(seen) == [f'方式{i}' for i in range(5)]
     assert len({p['id'] for p in plan['test_points']}) == 5
     feature_ids = {f['id'] for f in plan['feature_points']}

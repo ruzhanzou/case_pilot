@@ -12,6 +12,9 @@ class OutputQuantity(BaseModel):
     preserve_existing: bool = False
     count_includes_reuse: bool = True
     test_point_count: int | None = Field(default=None, ge=1)
+    required_reuse_source_keys: list[str] = Field(default_factory=list, max_length=100)
+    output_case_count: int | None = Field(default=None, ge=1)
+    new_case_count: int | None = Field(default=None, ge=0)
 
 
 QUANTITY_INSTRUCTION = """理解当前用户要求的输出数量，分别返回用例总数和测试点总数。
@@ -37,13 +40,25 @@ update_mode=merge时，previous_test_points中未被superseded_test_point_ids移
 selection_context是用户在界面实际确认的范围，优先于历史全文范围。selected_test_point_ids只是original_test_point_ids的子集时，
 case_count只对应选中测试点的用例量，不能把未选测试点的原预算强加给选中点。例如原2点2条、当前只选1点，输出1条；
 原2点每点分别普通/管理员共4条，当前只选1点，输出2条。未选点不得补回；全部选中时仍遵循原始独立数量要求。
+approved_source_catalog仅表示允许参考的资产，不意味着每条都必须输出。
+required_reuse_source_keys只列当前用户明确要求原样复用输出的精确source key。
+必须来自approved_source_catalog，禁止重复。
+用户说“复用这1条，再生成1条缺口”时required_reuse_source_keys为那1条，output_case_count=2，new_case_count=1。
+output_case_count是本轮最终候选总数（复用、修改参考、新增之和），new_case_count仅无历史源的新生成量，modify不算new。
+只确认可参考资产不代表要求全部输出；没有明确数量/强制复用则对应数量null、keys=[]。
+reviewer_choices和selection_context是最新人工范围，new/exclude或未选点对应的历史强制复用已失效，不能复活。
 超过500仍返回真实数量，由程序校验，不得截断或改成null。"""
 
 
 def interpret_quantity(execute, payload):
     result = execute("output_quantity.interpreted", QUANTITY_INSTRUCTION, payload, OutputQuantity)
     result = OutputQuantity.model_validate(result.model_dump())
-    quantities = (result.case_count, result.test_point_count)
+    quantities = (
+        result.case_count,
+        result.test_point_count,
+        result.output_case_count,
+        result.new_case_count,
+    )
     if any(value is not None and value > 500 for value in quantities):
         raise ValueError("单次最多支持500条用例或500个测试点，请缩小范围后重试")
     return result

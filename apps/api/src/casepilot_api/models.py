@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 from pgvector.sqlalchemy import HALFVEC
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     Computed,
     DateTime,
     Enum,
@@ -1143,3 +1144,86 @@ class ConversationSubmission(TimestampMixin, Base):
     request_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     response: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+
+class WorkbenchRun(TimestampMixin, Base):
+    """Durable authority and cumulative budget for one real user's agent goal."""
+
+    __tablename__ = "workbench_runs"
+    __table_args__ = (
+        UniqueConstraint("conversation_id", "request_id", name="uq_workbench_run_request"),
+        Index("ix_workbench_run_conversation_status", "conversation_id", "status"),
+    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    account_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    space_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    root_message_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("conversation_messages.id"), nullable=False
+    )
+    request_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
+    epoch: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    cursor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    plan: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    binding: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    checkpoint: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    budget: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    used: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class WorkbenchContinuation(TimestampMixin, Base):
+    """A unique domain observation, claimed separately from slow model execution."""
+
+    __tablename__ = "workbench_continuations"
+    __table_args__ = (
+        UniqueConstraint("run_id", "event_kind", "source_id", "source_version",
+                         name="uq_workbench_continuation_source"),
+        Index("ix_workbench_continuation_status", "status"),
+    )
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("workbench_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    event_kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    source_version: Mapped[str] = mapped_column(String(160), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
+    expected_epoch: Mapped[int] = mapped_column(Integer, nullable=False)
+    cursor: Mapped[int] = mapped_column(Integer, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    receipt: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    claim_token: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class WorkbenchReservation(TimestampMixin, Base):
+    """Independent first-segment spend; intentionally no uncommitted-root FKs."""
+
+    __tablename__ = "workbench_reservations"
+    account_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    conversation_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    request_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    budget: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    used: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PlanningReview(TimestampMixin, Base):
+    __tablename__ = "planning_reviews"
+    __table_args__ = (CheckConstraint("requests_used >= 0 AND requests_used <= 2",
+                                    name="ck_planning_review_budget"),)
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), index=True)
+    account_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("accounts.id"))
+    brief_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("workspace_test_briefs.id"))
+    base_version: Mapped[int] = mapped_column(Integer)
+    binding: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(32), default="audit_pending")
+    requests_used: Mapped[int] = mapped_column(Integer, default=0)
+    data: Mapped[dict] = mapped_column(JSONB, default=dict)
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    applied_brief_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))

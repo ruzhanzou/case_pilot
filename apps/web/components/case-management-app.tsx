@@ -1,5 +1,6 @@
 "use client";
 
+import { collectionDecisionDestination, loadCollectionDecisionSnapshot } from "@/lib/workbench-collection-proposal";
 import { CaseEditorDialog } from "@/components/case-editor-dialog";
 import { CaseImportDialog } from "@/components/case-import-dialog";
 import { CaseLibrary } from "@/components/case-library";
@@ -28,6 +29,7 @@ import {
   publicErrorMessage,
   resumeConversationOperation,
   sendConversationMessage,
+  type ConversationRequestObserver,
   updateCollection,
   updateTestCase,
   uploadConversationAttachments,
@@ -57,7 +59,7 @@ import {
   X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 type CaseManagementAppProps = {
   account: Account;
@@ -194,10 +196,42 @@ export function CaseManagementApp({
     return result;
   };
 
+  const collectionDecisionNavigation = useRef({ active: false });
+  useLayoutEffect(() => {
+    const identity = { active: true };
+    collectionDecisionNavigation.current = identity;
+    return () => { identity.active = false; };
+  }, [page, workbenchMode, landingConversation?.id, selectedCollectionId, activeSpaceId]);
+  const refreshCollectionDecision = async (conversationId: string) => {
+    if (!space) return;
+    const identity = collectionDecisionNavigation.current;
+    await loadCollectionDecisionSnapshot({
+      isCurrent: () => identity.active && collectionDecisionNavigation.current === identity,
+      loadCollections: () => listCollections(space.id),
+      loadConversation: () => getConversation(conversationId),
+      apply: (catalog, conversation) => {
+        setCollections(catalog);
+        setLandingConversation(conversation);
+        setSelectedCollectionId(current => collectionDecisionDestination(current, catalog));
+        if (!conversation.collection_id) {
+          setCases([]);
+          setSelectedCaseId("");
+          setWorkbenchMode("create");
+        }
+        setHistoryRevision(current => current + 1);
+      },
+    });
+  };
+
+  const displayedCollectionRef = useRef(selectedCollectionId);
+  useEffect(() => { displayedCollectionRef.current = selectedCollectionId; }, [selectedCollectionId]);
+
   const refreshCases = async (collectionId: string, preferredId?: string) => {
+    const navigationVersion = collectionSelectionRef.current;
     const [result, refreshedCollection] = await Promise.all([
       listTestCases(collectionId), getCollection(collectionId),
     ]);
+    if (navigationVersion !== collectionSelectionRef.current || collectionId !== displayedCollectionRef.current) return result;
     setCases(result);
     setSelectedCaseId((current) => {
       if (preferredId && result.some((item) => item.id === preferredId)) {
@@ -279,6 +313,7 @@ export function CaseManagementApp({
   };
 
   const sendNewConversationMessage = async (input: {
+    observer?: ConversationRequestObserver;
     content: string;
     modelId: AgentModelId;
     useSpaceKnowledge: boolean;
@@ -286,6 +321,7 @@ export function CaseManagementApp({
     sourceCollectionIds: string[];
   }) => {
     if (!space) return;
+    const requestIsCurrent = () => input.observer?.isCurrent?.() ?? true;
     let messageAccepted = false;
     setPendingLandingMessage(input.content);
     setSaving(true);
@@ -297,6 +333,7 @@ export function CaseManagementApp({
           spaceId: space.id,
           title: pick("New conversation", "新对话"),
         });
+        if (!requestIsCurrent()) return;
         setLandingConversation(conversation);
       }
 
@@ -307,7 +344,8 @@ export function CaseManagementApp({
         sourceCollectionIds: input.sourceCollectionIds,
         scope: "current",
         useSpaceKnowledge: input.useSpaceKnowledge,
-      });
+      }, input.observer);
+      if (!requestIsCurrent()) return;
       messageAccepted = true;
       setPendingLandingMessage(null);
       setLandingConversation(current => current?.id === conversation.id
@@ -320,7 +358,8 @@ export function CaseManagementApp({
           ...(turn.assistant_message ? [turn.assistant_message] : [])]}
         : current);
       let refreshedConversation = await getConversation(conversation.id);
-      setLandingConversation(refreshedConversation);
+      if (!requestIsCurrent()) return;
+      setLandingConversation(current => current?.id === refreshedConversation.id ? refreshedConversation : current);
 
       setHistoryRevision((current) => current + 1);
 
@@ -330,8 +369,10 @@ export function CaseManagementApp({
       ) {
         if (refreshedConversation.collection_id) {
           await refreshCollections(refreshedConversation.collection_id);
+          if (!requestIsCurrent()) return;
           await selectCollection(refreshedConversation.collection_id);
         }
+        if (!requestIsCurrent()) return;
         setWorkbenchMode("workspace");
         setPage("workbench");
         return;
@@ -347,21 +388,26 @@ export function CaseManagementApp({
         refreshedConversation = await getConversation(
           refreshedConversation.id,
         );
-        setLandingConversation(refreshedConversation);
+        if (!requestIsCurrent()) return;
+        setLandingConversation(current => current?.id === refreshedConversation.id ? refreshedConversation : current);
         setHistoryRevision((current) => current + 1);
       }
       for (let index = 0; index < 3; index += 1) {
+        if (!requestIsCurrent()) return;
         const nextOperation = nextRunnableOperation(refreshedConversation);
         if (!nextOperation) break;
         const resumed = await resumeConversationOperation(nextOperation.id);
         refreshedConversation = await getConversation(refreshedConversation.id);
-        setLandingConversation(refreshedConversation);
+        if (!requestIsCurrent()) return;
+        setLandingConversation(current => current?.id === refreshedConversation.id ? refreshedConversation : current);
         setHistoryRevision((current) => current + 1);
         if (shouldOpenWorkspace(resumed.intent, refreshedConversation)) {
           if (refreshedConversation.collection_id) {
             await refreshCollections(refreshedConversation.collection_id);
+            if (!requestIsCurrent()) return;
             await selectCollection(refreshedConversation.collection_id);
           }
+          if (!requestIsCurrent()) return;
           setWorkbenchMode("workspace");
           setPage("workbench");
           return;
@@ -376,15 +422,16 @@ export function CaseManagementApp({
           );
         }
         refreshedConversation = await getConversation(refreshedConversation.id);
-        setLandingConversation(refreshedConversation);
+        if (!requestIsCurrent()) return;
+        setLandingConversation(current => current?.id === refreshedConversation.id ? refreshedConversation : current);
         setHistoryRevision((current) => current + 1);
       }
     } catch (caught) {
+      if (!requestIsCurrent()) return;
       setError(caught instanceof Error ? caught.message : pick("Failed to process message", "消息处理失败"));
       if (!messageAccepted) throw caught;
     } finally {
-      setPendingLandingMessage(null);
-      setSaving(false);
+      if (requestIsCurrent()) { setPendingLandingMessage(null); setSaving(false); }
     }
   };
 
@@ -599,6 +646,8 @@ export function CaseManagementApp({
           ));
           setCases(conversationCases);
           setHistoryOpen(false);
+          setPendingLandingMessage(null);
+          setSaving(false);
           setLandingConversation(conversation);
           setSelectedSpaceId(conversation.space_id);
           setDeepLinkedCollectionId(conversation.collection_id ?? "");
@@ -613,6 +662,8 @@ export function CaseManagementApp({
           if (!active) return;
           setHistoryOpen(false);
           setLandingConversation(null);
+          setPendingLandingMessage(null);
+          setSaving(false);
           setError(
             caught instanceof Error
               ? pick(`Failed to load conversation: ${publicErrorMessage(caught.message)}`, `对话加载失败：${publicErrorMessage(caught.message)}`)
@@ -843,6 +894,8 @@ export function CaseManagementApp({
     if (spaceId === space?.id) return;
     if (!confirmDiscardPageChanges()) return;
     setLandingConversation(null);
+    setPendingLandingMessage(null);
+    setSaving(false);
     setHistoryOpen(false);
     setWorkbenchMode("create");
     setPage("workbench");
@@ -859,6 +912,8 @@ export function CaseManagementApp({
     conversation: ConversationSummaryDto,
   ) => {
     const detail = await getConversation(conversation.id);
+    setPendingLandingMessage(null);
+    setSaving(false);
     setLandingConversation(detail);
     if (conversation.collection_id) {
       await selectCollection(conversation.collection_id);
@@ -1186,6 +1241,8 @@ export function CaseManagementApp({
           onClose={() => setHistoryOpen(false)}
           onNewConversation={() => {
             setLandingConversation(null);
+            setPendingLandingMessage(null);
+            setSaving(false);
             setWorkbenchMode("create");
             setPage("workbench");
           }}
@@ -1205,6 +1262,14 @@ export function CaseManagementApp({
             conversation={landingConversation}
             collections={collections}
             onSend={sendNewConversationMessage}
+            onAgentRefresh={async (id, isCurrent) => {
+              const current = await getConversation(id);
+              if (isCurrent && !isCurrent()) return;
+              setLandingConversation(previous => previous?.id === id ? current : previous);
+            }}
+            onCollectionProposalResolved={async () => {
+              if (landingConversation) await refreshCollectionDecision(landingConversation.id);
+            }}
             onRemoveAttachment={async (id) => {
               if (!landingConversation || saving) return;
               setSaving(true);
@@ -1226,6 +1291,7 @@ export function CaseManagementApp({
           />
         ) : page === "workbench" ? (
           <CaseWorkbench
+            key={`${selectedCollectionId}:${landingConversation?.collection_id === selectedCollectionId ? landingConversation.id : "workspace"}`}
             spaceId={space?.id ?? ""}
             spaceName={space?.name ?? t("common.localSpace")}
             selectedCollection={selectedCollection}
@@ -1253,10 +1319,13 @@ export function CaseManagementApp({
                 await refreshCases(selectedCollection.id, selectedCaseId);
               }
             }}
+            onCollectionsChanged={async id => { if (id) await refreshCollectionDecision(id); }}
             onImportCases={importGeneratedCases}
             onOpenLibrary={() => void openLibraryWithFreshCases()}
             onNewConversation={() => {
               setLandingConversation(null);
+              setPendingLandingMessage(null);
+              setSaving(false);
               setWorkbenchMode("create");
             }}
             onContinueInNewConversation={continueLandingInNewConversation}

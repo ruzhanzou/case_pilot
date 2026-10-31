@@ -586,33 +586,83 @@ def _merge_by_id(current: list[Any], enhanced: list[Any]) -> list[Any]:
 
 
 def requested_case_count(request: GenerationRequest, execute_stage) -> int | None:
+    from casepilot_agent.output_obligations import (
+        approved_catalog,
+        bind_obligations,
+        plan_fingerprint,
+    )
     from casepilot_agent.quantity import interpret_quantity, resolve_case_budget
+
+    previous = request.confirmed_plan.get("output_obligations")
+    if previous and previous.get("plan_fingerprint") != plan_fingerprint(request.confirmed_plan):
+        previous = None  # Current reviewed scope supersedes the old obligation.
     quantity = interpret_quantity(
         lambda stage, instruction, payload, schema: execute_stage(
             stage, instruction, payload, schema, request.model_id
         ),
-        {"prompt": request.prompt, "markdown_content": request.markdown_content,
-         "conversation_memory": request.conversation_memory,
-         "existing_cases": request.confirmed_plan.get("existing_cases"),
-         "reuse_sources": request.confirmed_plan.get("reuse", {}).get("decisions", []),
-         "selection_context": request.confirmed_plan.get("selection_context"),
-         "confirmed_test_points": [{"id": p["id"], "title": p.get("title", "")}
-                                   for p in request.confirmed_plan.get("test_points", [])]},
+        {
+            "prompt": request.prompt,
+            "markdown_content": request.markdown_content,
+            "conversation_memory": request.conversation_memory,
+            "existing_cases": request.confirmed_plan.get("existing_cases"),
+            "reuse_sources": request.confirmed_plan.get("reuse", {}).get("decisions", []),
+            "selection_context": request.confirmed_plan.get("selection_context"),
+            "approved_source_catalog": approved_catalog(request.confirmed_plan),
+            "reviewer_choices": request.confirmed_plan.get("reuse", {}).get("user_choices", {}),
+            "frozen_output_obligations": previous,
+            "confirmed_test_points": [
+                {"id": p["id"], "title": p.get("title", "")}
+                for p in request.confirmed_plan.get("test_points", [])
+            ],
+        },
     )
+    if previous:
+        quantity = quantity.model_copy(
+            update={
+                "required_reuse_source_keys": list(
+                    dict.fromkeys(
+                        [
+                            *previous["required_reuse_source_keys"],
+                            *quantity.required_reuse_source_keys,
+                        ]
+                    )
+                ),
+                "output_case_count": previous["output_case_count"]
+                if previous["output_case_count"] is not None
+                else quantity.output_case_count,
+                "new_case_count": previous["new_case_count"]
+                if previous["new_case_count"] is not None
+                else quantity.new_case_count,
+            }
+        )
     count = resolve_case_budget(quantity, request.confirmed_plan.get("existing_cases"))
     reuse_keys = {
         (d["action"], d["source"]["key"] if d["action"] == "reuse" else d["point_id"])
         for d in request.confirmed_plan.get("reuse", {}).get("decisions", [])
         if d.get("action") in {"reuse", "modify"}
     }
+    reuse_keys.update(("reuse", item["source"]["key"])
+                      for item in request.confirmed_plan.get("reserved_reuse_outputs", []))
     if count is not None and not quantity.count_includes_reuse:
         count += len(reuse_keys)
+    if quantity.output_case_count is not None:
+        count = quantity.output_case_count
+    if (
+        quantity.new_case_count is not None
+        and count is not None
+        and count - len(reuse_keys) != quantity.new_case_count
+    ):
+        raise ValueError("output_obligation_new_count_conflict")
+    bind_obligations(request.confirmed_plan, quantity)
     if count is not None and count > 500:
         raise ValueError("本轮新增及复用输出合计超过500条")
     request.confirmed_plan["generation_budget"] = {
         "output_count": count,
-        "preserve_existing": (quantity.preserve_existing or quantity.case_count_mode == "total"
-                              or request.confirmed_plan.get("generation_operation") == "append"),
+        "preserve_existing": (
+            quantity.preserve_existing
+            or quantity.case_count_mode == "total"
+            or request.confirmed_plan.get("generation_operation") == "append"
+        ),
         "scope_case_ids": quantity.scope_case_ids,
     }
     return count
@@ -649,12 +699,22 @@ class GenerationPipeline:
         self.provider = provider
 
     def run_planned(self, request: GenerationRequest, execute_stage: StageExecutor, on_batch=None):
-        if request.output_contract == "case_batch_v2":
+        if (request.output_contract == "case_batch_v2"
+                or request.confirmed_plan.get("reserved_reuse_outputs")):
             from casepilot_agent.compact_generation import run_compact
+
             scoped_request = request.model_copy(deep=True)
             count = requested_case_count(scoped_request, execute_stage)
             result = run_compact(scoped_request, self.provider, execute_stage, on_batch, count)
-            result.model_metadata["generation_budget"] = scoped_request.confirmed_plan.get("generation_budget", {})
+            from casepilot_agent.output_obligations import validate_output_obligations
+
+            validate_output_obligations(scoped_request.confirmed_plan, result.test_cases)
+            result.model_metadata["output_obligations"] = scoped_request.confirmed_plan.get(
+                "output_obligations", {}
+            )
+            result.model_metadata["generation_budget"] = scoped_request.confirmed_plan.get(
+                "generation_budget", {}
+            )
             return result
         plan = request.confirmed_plan
         features = FeaturePlan.model_validate(plan).feature_points
@@ -786,6 +846,8 @@ class GenerationPipeline:
         warnings = len(result.quality.issues) - errors
         result.quality.passed = errors == 0
         result.quality.score = max(0, 100 - errors * 25 - warnings * 8)
+        from casepilot_agent.output_obligations import validate_output_obligations
+        validate_output_obligations(request.confirmed_plan, result.test_cases)
         return result
 
     def run(

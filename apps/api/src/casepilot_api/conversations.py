@@ -419,6 +419,11 @@ def _test_object_from_messages(
     return ""
 
 
+def _generation_test_object(details, memory):
+    current = str(getattr(details, "test_object", "") or "").strip()
+    return current if current else _test_object_from_memory(memory)
+
+
 def _test_object_from_memory(memory: list[dict[str, str]]) -> str:
     if settings.agent_provider != "mock":
         if not memory:
@@ -725,6 +730,10 @@ def render_test_brief_markdown(version: int, content: dict[str, Any]) -> str:
                 if feature["id"] in point["feature_point_ids"]:
                     scenario = point.get("scenario") or feature["name"]
                     lines.append(f"  - {scenario} / {point['title']}（待生成）")
+                    if point.get("boundary_samples"):
+                        from casepilot_agent.planning_boundary import point_boundary_markdown
+                        lines.extend(["", point_boundary_markdown(point), ""])
+
     return "\n".join(lines).strip() + "\n"
 
 
@@ -1066,7 +1075,15 @@ def _conversation_view(db: Session, conversation: Conversation) -> ConversationV
         job.id: dict(job.output_payload or {}).get("quality", {}).get("issues", [])
         for job in jobs if job.operation == "generate"
     }
+    from casepilot_api.workbench_tools import refresh_agent_domain_state
+    from casepilot_api.workbench_run_projection import project_durable_state
+
     for view in message_views:
+        agent_state = view.metadata.get("workbench_agent")
+        if isinstance(agent_state, dict):
+            view.metadata = {**view.metadata, "workbench_agent":
+                             project_durable_state(db, conversation,
+                                 refresh_agent_domain_state(db, conversation, agent_state))}
         issues = quality_by_job.get(view.related_job_id)
         if issues:
             view.metadata = {**view.metadata, "generation_quality_issues": issues}
@@ -1078,13 +1095,22 @@ def _conversation_view(db: Session, conversation: Conversation) -> ConversationV
         ).order_by(Conversation.created_at)):
             provenance.update(dict(source_context or {}))
     provenance.update(dict(conversation.context).get("selected_asset_provenance", {}))
+    projected_context = {key: value for key, value in dict(conversation.context).items()
+                         if key != "_workbench_collection_delete_impact"}
+    if isinstance(projected_context.get("workbench_agent"), dict):
+        projected_context["workbench_agent"] = project_durable_state(
+            db, conversation, refresh_agent_domain_state(
+                db, conversation, projected_context["workbench_agent"],
+            ), latest=True,
+        )
     return ConversationView(
         id=conversation.id,
         space_id=conversation.space_id,
         collection_id=conversation.collection_id,
         title=conversation.title,
         status=conversation.status,
-        context={**dict(conversation.context), "pending_attachments": pending_attachments,
+        context={**projected_context,
+                 "pending_attachments": pending_attachments,
                  "selected_asset_provenance": provenance},
         planning_case_links=links_view(db, conversation),
         messages=message_views,
@@ -1464,13 +1490,93 @@ def _load_scope_snapshots(db: Session, conversation: Conversation) -> list[dict]
     return [dict(row) for row in rows]
 
 
+def _canonical_target_payload(db, conversation, payload):
+    from casepilot_api.models import Account
+    from casepilot_api.workbench_selection import canonical_scope_payload
+
+    # Entry points already authorize this conversation. Reload its real owner
+    # for the canonical resolver rather than inventing a principal or bypassing membership.
+    owner = db.get(Account, conversation.account_id)
+    if owner is None:
+        raise HTTPException(404, "conversation_not_found")
+    return canonical_scope_payload(db, owner, conversation, payload)
+
+
+def _load_canonical_scope(db, conversation, payload):
+    """Reload only exact authorized selection identities, independent of destination."""
+    scoped = _canonical_target_payload(db, conversation, payload)
+    rows = db.execute(select(
+        TestCase.id, TestCase.case_key, TestCaseRevision.title, TestCaseRevision.module,
+        TestCaseRevision.priority, TestCaseRevision.description, TestCaseRevision.case_type,
+        TestCaseRevision.tags, TestCaseRevision.preconditions, TestCaseRevision.steps,
+    ).join(TestCaseRevision, TestCaseRevision.id == TestCase.current_revision_id).where(
+        TestCase.id.in_(scoped.target_case_ids), TestCase.space_id == conversation.space_id,
+        TestCase.deleted_at.is_(None),
+    ).order_by(TestCase.id)).mappings()
+    formal = [dict(row) for row in rows]
+    if {row["id"] for row in formal} != set(scoped.target_case_ids):
+        raise HTTPException(409, "workbench_source_changed")
+    versions = {item.ref: item.version for item in scoped.target_candidate_snapshots}
+    candidates = list(db.scalars(select(WorkspaceCandidate).where(
+        WorkspaceCandidate.conversation_id == conversation.id,
+        WorkspaceCandidate.ref.in_(versions), WorkspaceCandidate.status == "candidate",
+    ).order_by(WorkspaceCandidate.ref)))
+    if ({item.ref for item in candidates} != set(versions)
+            or any(item.version != versions[item.ref] for item in candidates)):
+        raise HTTPException(409, "workbench_source_changed")
+    return formal, candidates
+
+
+def _workbench_operation_binding_matches(conversation, operation):
+    state = dict(conversation.context).get("workbench_selection")
+    if not state:
+        return True
+    payload = dict(operation.payload or {})
+    return (payload.get("selection_version", 0) == state["version"]
+            and payload.get("destination_collection_id") == (
+                str(conversation.collection_id) if conversation.collection_id else None))
+
+
+def _canonical_change_identity(item):
+    """Change refs are typed; a formal item's display ref cannot alias another ID."""
+    kind, ref = item.get("target_type"), item.get("ref")
+    if kind == "formal":
+        try:
+            identifier = str(UUID(str(item["test_case_id"])))
+            if str(UUID(str(ref))) != identifier:
+                raise ValueError("mismatched formal identity")
+        except (ValueError, TypeError, KeyError) as error:
+            raise HTTPException(409, "workbench_selection_target_conflict") from error
+        return f"asset:{identifier}", str(item.get("base_revision_id", ""))
+    if kind == "candidate" and isinstance(ref, str) and ref:
+        return f"candidate:{ref}", str(item.get("base_version", ""))
+    raise HTTPException(409, "workbench_selection_target_conflict")
+
+
+def _assert_canonical_write_items(conversation, items):
+    state = dict(conversation.context).get("workbench_selection")
+    if not state:
+        return  # Existing non-workbench review contracts remain unchanged.
+    allowed = {item["ref"]: item for item in state.get("items", [])}
+    for item in items:
+        ref, version = _canonical_change_identity(item)
+        source = allowed.get(ref)
+        expected_kind = "asset" if item["target_type"] == "formal" else "candidate"
+        if source is None or source.get("kind") != expected_kind:
+            raise HTTPException(409, "workbench_selection_target_conflict")
+        if version != str(source.get("version", "")):
+            raise HTTPException(409, "workbench_source_changed")
+
+
 def _open_mutation_operation(db, conversation, exclude_id=None):
     context = dict(conversation.context)
     if "active_mutation_task_id" in context:
         operation_id = context.get("active_mutation_operation_id")
         if not operation_id or str(operation_id) == str(exclude_id):
             return None
-        return db.get(ConversationOperation, UUID(str(operation_id)))
+        operation = db.get(ConversationOperation, UUID(str(operation_id)))
+        return operation if operation and _workbench_operation_binding_matches(
+            conversation, operation) else None
     # Restore older conversations that predate explicit task lifecycles.
     pending = list(db.scalars(select(ConversationOperation).where(
         ConversationOperation.conversation_id == conversation.id,
@@ -1478,7 +1584,8 @@ def _open_mutation_operation(db, conversation, exclude_id=None):
         ConversationOperation.status == "awaiting_confirmation",
         ConversationOperation.id != exclude_id,
     ).order_by(ConversationOperation.created_at.desc())))
-    return pending[0] if pending else None
+    return next((item for item in pending
+                 if _workbench_operation_binding_matches(conversation, item)), None)
 
 
 def _rewrite_proposal_source(db, source):
@@ -1532,6 +1639,13 @@ def _link_rewrite_round(db, conversation, operation, payload, original_instructi
     """A mutation task stays open until a review action closes it."""
     if operation is None or operation.intent not in {"CASE_MODIFY", "CASE_GENERATE"}:
         return payload
+    if dict(conversation.context).get("workbench_selection") and payload.source_operation_id:
+        explicit_source = db.get(ConversationOperation, payload.source_operation_id)
+        if (explicit_source is None or explicit_source.conversation_id != conversation.id
+                or not _workbench_operation_binding_matches(conversation, explicit_source)):
+            # A historic explicit source is evidence, not authority to restore
+            # an earlier selection/task. The new canonical request starts anew.
+            payload = payload.model_copy(update={"source_operation_id": None})
     if not dict(operation.payload).get("task_id"):
         source = _open_mutation_operation(db, conversation, operation.id)
         operation.payload = {
@@ -1544,6 +1658,9 @@ def _link_rewrite_round(db, conversation, operation, payload, original_instructi
             else operation.intent,
             "task_revision": int(dict(source.payload).get("task_revision", 1)) + 1 if source else 1,
             "source_operation_id": str(source.id) if source else None,
+            **({"preparation_mode": "canonical_draft_compute"}
+               if source and dict(source.payload).get("preparation_mode")
+               == "canonical_draft_compute" else {}),
             "asset_reference_sources": dict(operation.payload).get("asset_reference_sources",
                 dict(source.payload).get("asset_reference_sources", []) if source else []),
             "asset_reference_target_scope": dict(operation.payload).get("asset_reference_target_scope",
@@ -1636,16 +1753,20 @@ def _inventory_summary(case_context: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _resolve_model_scope(db, conversation, payload, intent):
+def _resolve_model_scope(db, conversation, payload, intent, *, canonical_only=False):
     from agents import ModelBehaviorError
     from openai import APIConnectionError, InternalServerError, RateLimitError
     from pydantic import ValidationError
 
-    formal = [{**case, "kind": "formal"} for case in _load_scope_snapshots(db, conversation)]
-    candidates = list(db.scalars(select(WorkspaceCandidate).where(
-        WorkspaceCandidate.conversation_id == conversation.id,
-        WorkspaceCandidate.status == "candidate",
-    )))
+    if canonical_only:
+        formal, candidates = _load_canonical_scope(db, conversation, payload)
+    else:
+        formal = _load_scope_snapshots(db, conversation)
+        candidates = list(db.scalars(select(WorkspaceCandidate).where(
+            WorkspaceCandidate.conversation_id == conversation.id,
+            WorkspaceCandidate.status == "candidate",
+        )))
+    formal = [{**case, "kind": "formal"} for case in formal]
     catalog = formal + [{**dict(c.snapshot), "id": str(c.id), "case_key": c.ref,
                         "kind": "candidate"} for c in candidates]
     # There are no existing assets to select in a new collection.
@@ -1780,6 +1901,34 @@ def _resolve_model_scope(db, conversation, payload, intent):
         "target_candidate_snapshots": [ConversationTargetSnapshot(
             ref=c.ref, version=c.version, snapshot=dict(c.snapshot))
             for c in candidates if str(c.id) in ids],
+    }), None
+
+
+def _resolve_workbench_scope(db, conversation, payload, intent):
+    """NL predicates narrow canonical selection; selection is never blanket approval."""
+    if settings.agent_provider != "mock":
+        return _resolve_model_scope(db, conversation, payload, intent, canonical_only=True)
+    formal, candidates = _load_canonical_scope(db, conversation, payload)
+    snapshots = formal + [{**dict(item.snapshot), "id": str(item.id), "case_key": item.ref}
+                          for item in candidates]
+    scope = resolve_scope(payload.content, snapshots)
+    if scope and scope.get("error"):
+        return payload, scope["error"]
+    if unsupported_mutation_condition(payload.content) and not (
+            scope and scope.get("exclusion_scope_text")):
+        return payload, "请明确当前选择范围内符合条件的具体用例；本次没有修改或删除用例。"
+    ids = set(map(str, scope["ids"])) if scope is not None else {str(item["id"]) for item in snapshots}
+    selected = filter_priority((scope or {}).get("exclusion_scope_text", payload.content),
+                               [item for item in snapshots if str(item["id"]) in ids], mutation=True)
+    ids = {str(item["id"]) for item in selected}
+    if not ids:
+        return payload, "当前选择范围没有匹配用例；本次没有修改或删除用例。"
+    return payload.model_copy(update={
+        "targets": [], "target_case_ids": [UUID(str(item["id"])) for item in formal
+                                           if str(item["id"]) in ids],
+        "target_candidate_snapshots": [ConversationTargetSnapshot(ref=item.ref,
+            version=item.version, snapshot=dict(item.snapshot)) for item in candidates
+            if str(item.id) in ids],
     }), None
 
 
@@ -2064,6 +2213,21 @@ def _resolve_action_scope(
     ), None
 
 
+def _assert_workbench_selection(db, conversation, operation=None, *, account=None):
+    db.refresh(conversation, with_for_update=True)
+    if not dict(conversation.context).get("workbench_selection"):
+        return
+    from casepilot_api.workbench_selection import assert_selection_binding, _resolve_sources
+    if account is not None:
+        _resolve_sources(db, account, conversation,
+                         dict(conversation.context)["workbench_selection"].get("items", []))
+    if operation is None:
+        operation_id = dict(conversation.context).get("active_mutation_operation_id")
+        operation = db.get(ConversationOperation, UUID(str(operation_id))) if operation_id else None
+    if operation is not None:
+        assert_selection_binding(conversation, operation)
+
+
 def _start_action(
     db: Session,
     account: Any,
@@ -2076,6 +2240,7 @@ def _start_action(
     confirmed_targets: bool = False,
     confirm_modification: bool = False,
     resolved_collection: tuple[list[dict[str, str]], UUID | None] | None = None,
+    controlled_workbench: bool = False,
 ) -> tuple[ConversationMessage, dict[str, Any], str | None]:
     instruction = user_message.content if user_message is not None else payload.content
     generation_details = (interpret_generation_choice(instruction, settings)
@@ -2178,6 +2343,8 @@ def _start_action(
         r"空模块|(?:只|仅)(?:需|要)?(?:创建|新增|增加|添加).{0,20}模块|不生成.{0,8}用例",
         payload.content,
     )):
+        if controlled_workbench:
+            raise HTTPException(409, "workbench_module_creation_requires_explicit_control")
         if new_module == "空":
             assistant = _new_assistant_message(
                 conversation.id, content="请提供新模块名称。", intent=intent,
@@ -2210,6 +2377,16 @@ def _start_action(
         return assistant, {"type": "module_created", "module_path": new_module}, None
     operation = db.get(ConversationOperation, operation_id) if operation_id else None
     payload = _link_rewrite_round(db, conversation, operation, payload)
+    canonical = dict(conversation.context).get("workbench_selection") or {}
+    compute_mode = bool(
+        intent == "CASE_MODIFY" and operation is not None and canonical.get("items")
+        and (controlled_workbench or dict(operation.payload).get("preparation_mode")
+             == "canonical_draft_compute")
+    )
+    if compute_mode:
+        controlled_workbench = True
+        operation.payload = {**dict(operation.payload),
+                             "preparation_mode": "canonical_draft_compute"}
     plan = dict(operation.payload).get("plan", {}) if operation else {}
     questions = plan.get("clarification_questions", [])
     if settings.agent_provider == "mock" and intent == "CASE_MODIFY" and re.fullmatch(
@@ -2256,6 +2433,9 @@ def _start_action(
     scope_text = plan.get("target_text") if plan.get("routing_source") == "semantic" else None
     if confirmed_targets:
         payload, scope_error = _expand_conversation_targets(db, conversation, payload), None
+    elif (controlled_workbench and dict(conversation.context).get("workbench_selection")
+          and intent in {"CASE_MODIFY", "CASE_DELETE"}):
+        payload, scope_error = _resolve_workbench_scope(db, conversation, payload, intent)
     else:
         # Semantic selection needs the original scope as well as the latest change.
         payload, scope_error = _resolve_action_scope(
@@ -2376,13 +2556,38 @@ def _start_action(
                         test_case,
                         prepared=(
                             revision,
-                            [conversation.collection_id],
+                            list(db.scalars(select(CollectionCaseMembership.collection_id).join(
+                                CaseCollection, CaseCollection.id == CollectionCaseMembership.collection_id
+                            ).where(
+                                CollectionCaseMembership.test_case_id == test_case.id,
+                                CaseCollection.space_id == conversation.space_id,
+                                CaseCollection.deleted_at.is_(None),
+                            ).order_by(CollectionCaseMembership.collection_id)))
+                            if dict(conversation.context).get("workbench_selection")
+                            else [conversation.collection_id],
                             [],
                             None,
                         ),
                     ).model_dump(mode="json"),
                 }
             )
+
+    canonical = dict(conversation.context).get("workbench_selection")
+    if canonical:
+        # Canonical projection and semantic selectors may order identical refs
+        # differently; confirmation equality is about exact content, not ordering.
+        case_context.sort(key=lambda item: (item["target_type"], item["ref"]))
+    if canonical and intent in {"CASE_MODIFY", "CASE_DELETE"}:
+        from casepilot_api.workbench_selection import _resolve_sources
+        _resolve_sources(db, account, conversation, canonical.get("items", []))
+        allowed = {item["ref"]: str(item["version"]) for item in canonical.get("items", [])}
+        for item in case_context:
+            key = f"{'asset' if item['target_type'] == 'formal' else 'candidate'}:{item['ref']}"
+            if key not in allowed:
+                raise HTTPException(409, "workbench_selection_target_conflict")
+            if item["target_type"] == "formal" and str(
+                    item["snapshot"].get("current_revision_id")) != allowed[key]:
+                raise HTTPException(409, "workbench_source_changed")
 
     if operation_id:
         operation = db.get(ConversationOperation, operation_id)
@@ -2569,7 +2774,8 @@ def _start_action(
             "cases": case_context,
         }
         pending = dict(operation.payload).get("modification_confirmation")
-        if not confirm_modification or pending != confirmation:
+        compute_draft = compute_mode and bool(case_context) and bool(payload.content.strip())
+        if not compute_draft and (not confirm_modification or pending != confirmation):
             operation.payload = {
                 **dict(operation.payload), "modification_confirmation": confirmation,
                 "rewrite_draft": settle_draft({
@@ -2605,10 +2811,39 @@ def _start_action(
             db.add(assistant)
             db.flush()
             return assistant, {"type": "clarification"}, None
-        operation.payload = {
-            **dict(operation.payload), "modification_confirmation": None,
-            "last_confirmed_modification": confirmation,
-        }
+        if compute_draft:
+            # This authorizes private draft computation, NOT human approval.
+            # Final reviewed writes still require apply_change_set's exact gates.
+            operation.payload = {
+                **dict(operation.payload), "modification_confirmation": None,
+                "prepared_modification": {
+                    **confirmation,
+                    "selection_version": canonical["version"],
+                    "destination_collection_id": str(conversation.collection_id)
+                    if conversation.collection_id else None,
+                    "sources": [{
+                        "ref": f"{'asset' if item['target_type'] == 'formal' else 'candidate'}:"
+                        + item["ref"],
+                        "version": str(item["snapshot"]["current_revision_id"])
+                        if item["target_type"] == "formal" else str(next(
+                            value.version for value in payload.target_candidate_snapshots
+                            if value.ref == item["ref"])),
+                    } for item in case_context],
+                    "document_ids": list(map(str, payload.document_ids)),
+                    "knowledge_source_ids": list(map(str, payload.knowledge_source_ids)),
+                },
+                "rewrite_draft": settle_draft({
+                    **dict(operation.payload).get("rewrite_draft", {}),
+                    "version": 1,
+                    "scope_instruction": str(plan.get("target_text") or payload.content),
+                    "requirements": payload.content, "requirements_ready": True,
+                }, scope_resolved=True, confirmation=None, dispatched=True),
+            }
+        else:
+            operation.payload = {
+                **dict(operation.payload), "modification_confirmation": None,
+                "last_confirmed_modification": confirmation,
+            }
     asset_references = dict(operation.payload).get("asset_reference_sources", []) if operation else []
     if intent == "CASE_MODIFY":
         for source in asset_references:
@@ -2617,7 +2852,8 @@ def _start_action(
     # Only generation planning consumes a newly inferred test object. Existing
     # asset edits/analyses already have their resolved scope and persisted brief.
     provided_test_object = (
-        _test_object_from_memory(conversation_memory) if intent == "CASE_GENERATE" else ""
+        _generation_test_object(generation_details, conversation_memory)
+        if intent == "CASE_GENERATE" else ""
     )
     input_payload = {
         "prompt": payload.content.strip(),
@@ -2647,14 +2883,29 @@ def _start_action(
         previous = db.get(CaseChangeSet, source.related_change_set_id) if (
             source and source.related_change_set_id
         ) else None
-        if previous and previous.status == "ready":
-            previous_items = {item["ref"]: item for item in previous.items}
+        if (previous and previous.status == "ready"
+                and _workbench_operation_binding_matches(conversation, source)):
+            carried_items = list(previous.items)
+            canonical = dict(conversation.context).get("workbench_selection")
+            if canonical:
+                allowed_refs = {item["ref"] for item in canonical.get("items", [])}
+                # The selection is an upper bound, not permission to retain old
+                # siblings excluded by this round's resolved NL predicate.
+                round_refs = {
+                    f"{'asset' if item['target_type'] == 'formal' else 'candidate'}:{item['ref']}"
+                    for item in case_context
+                }
+                carried_items = [item for item in carried_items
+                    if _canonical_change_identity(item)[0] in allowed_refs & round_refs]
+                _assert_canonical_write_items(conversation, [item for item in carried_items
+                    if item.get("status") not in {"applied", "rejected"}])
+            previous_items = {item["ref"]: item for item in carried_items}
             if operation is not None:
                 operation.target = {**dict(operation.target),
                     "case_ids": list(dict.fromkeys([*dict(operation.target).get("case_ids", []),
-                        *[item["ref"] for item in previous.items if item["target_type"] == "formal"]])),
+                        *[item["ref"] for item in carried_items if item["target_type"] == "formal"]])),
                     "candidate_refs": list(dict.fromkeys([*dict(operation.target).get("candidate_refs", []),
-                        *[item["ref"] for item in previous.items if item["target_type"] == "candidate"]]))}
+                        *[item["ref"] for item in carried_items if item["target_type"] == "candidate"]]))}
             for current in case_context:
                 earlier = previous_items.get(current["ref"])
                 if earlier is None or earlier.get("status") in {"applied", "rejected"}:
@@ -2745,6 +2996,10 @@ def _start_action(
             latest_brief = None
     if latest_brief is not None:
         current_test_brief = dict(latest_brief.content)
+        from casepilot_api.workbench_plan_authority import inherit_point_review
+        if current_test_brief.get("planning"):
+            current_test_brief["planning"] = inherit_point_review(
+                current_test_brief["planning"], latest_brief)
         if provided_test_object and not str(current_test_brief.get("test_object") or "").strip():
             current_test_brief["test_object"] = provided_test_object
             current_test_brief["open_questions"] = []
@@ -3104,6 +3359,59 @@ def bind_conversation_collection(
     return _conversation_view(db, conversation)
 
 
+@router.post("/workspaces/{conversation_id}/collection-proposals/{proposal_id}/confirm")
+def approve_workbench_collection_proposal(
+    conversation_id: UUID, proposal_id: UUID, payload: dict, account: CurrentAccount, db: DbSession,
+):
+    from casepilot_api.workbench_tools import confirm_collection_proposal
+    conversation = _ensure_conversation(db, account.id, conversation_id)
+    proposal = dict(conversation.context).get("workbench_collection_proposal") or {}
+    if proposal.get("action") == "delete":
+        from casepilot_api.workbench_collection_delete import lock_nowait
+        lock_nowait(db, conversation)
+    else:
+        db.refresh(conversation, with_for_update=True)
+    proposal = dict(conversation.context).get("workbench_collection_proposal") or {}
+    if proposal.get("status") != "confirmed":
+        _require_idle_conversation(db, conversation)
+    return confirm_collection_proposal(db, account, conversation, proposal_id, payload)
+
+
+@router.post("/workspaces/{conversation_id}/collection-proposals/{proposal_id}/reject")
+def reject_workbench_collection_proposal(
+    conversation_id: UUID, proposal_id: UUID, account: CurrentAccount, db: DbSession,
+):
+    conversation = _ensure_conversation(db, account.id, conversation_id)
+    db.refresh(conversation, with_for_update=True)
+    proposal = dict(conversation.context).get("workbench_collection_proposal") or {}
+    if proposal.get("id") != str(proposal_id):
+        raise HTTPException(404, "collection_proposal_not_found")
+    if proposal.get("status") not in {"pending", "rejected"}:
+        raise HTTPException(409, "collection_proposal_not_pending")
+    conversation.context = {**dict(conversation.context), "workbench_collection_proposal": {
+        **proposal, "status": "rejected"}}
+    db.commit()
+    return {"status": "rejected"}
+
+
+@router.patch("/workspaces/{conversation_id}/selection", response_model=ConversationView)
+def update_workbench_selection(
+    conversation_id: UUID, payload: dict, account: CurrentAccount, db: DbSession,
+) -> ConversationView:
+    from pydantic import ValidationError
+    from casepilot_api.workbench_selection import SelectionUpdate, update_selection
+    conversation = _ensure_conversation(db, account.id, conversation_id)
+    db.refresh(conversation, with_for_update=True)
+    _require_idle_conversation(db, conversation)
+    try:
+        update = SelectionUpdate.model_validate(payload)
+    except ValidationError as error:
+        raise HTTPException(422, "invalid_workbench_selection") from error
+    update_selection(db, account, conversation, update)
+    db.commit()
+    return _conversation_view(db, conversation)
+
+
 @router.post(
     "/conversations/{conversation_id}/attachments",
     response_model=KnowledgeUploadView,
@@ -3390,6 +3698,32 @@ def create_test_brief(
     ) or 0
     if payload.base_version is not None and payload.base_version != latest_version:
         raise HTTPException(status_code=409, detail="test_brief_version_changed")
+    previous = db.scalar(select(WorkspaceTestBrief).where(
+        WorkspaceTestBrief.conversation_id == conversation.id,
+        WorkspaceTestBrief.version == latest_version))
+    content_data = payload.content.model_dump(mode="json")
+    from casepilot_api.workbench_plan_authority import edited_plan
+    try:
+        content_data["planning"] = edited_plan(content_data.get("planning"),
+            (previous.content.get("planning") or {}) if previous else {},
+            reviewer_choices(content_data.get("planning") or {}))
+    except ValueError as error:
+        raise HTTPException(409, error.args[0]) from error
+    # Client draft edits cannot hide an unresolved server-owned obligation.
+    pending = content_data["planning"].get("pending_reserved_outputs")
+    if pending and previous:
+        reason = pending.get("reason")
+        preserved = [question for question in previous.content.get("open_questions", [])
+                     if question.get("id") == reason and question.get("blocking")]
+        content_data["open_questions"] = [
+            question for question in content_data.get("open_questions", [])
+            if question.get("id") != reason
+        ] + preserved
+    if content_data["planning"].get("pending_planning_clarification") and previous:
+        content_data["open_questions"] = [q for q in content_data.get("open_questions", [])
+            if q.get("id") != "coverage_scope_limit"] + [
+                q for q in previous.content.get("open_questions", [])
+                if q.get("id") == "coverage_scope_limit" and q.get("blocking")]
     db.execute(
         update(WorkspaceTestBrief)
         .where(
@@ -3398,15 +3732,11 @@ def create_test_brief(
         )
         .values(status="superseded")
     )
-    reviewer_choices(payload.content.planning)
     brief = WorkspaceTestBrief(
         conversation_id=conversation.id,
         version=latest_version + 1,
-        content=payload.content.model_dump(mode="json"),
-        markdown_content=render_test_brief_markdown(
-            latest_version + 1,
-            payload.content.model_dump(mode="json"),
-        ),
+        content=content_data,
+        markdown_content=render_test_brief_markdown(latest_version + 1, content_data),
         status="draft",
         created_by=account.id,
     )
@@ -3486,11 +3816,72 @@ def validate_reuse_confirmation(content, planning):
     snapshots = reuse.get("brief_snapshot", {})
     features = {f["id"]: f for f in reuse.get("feature_snapshots", [])}
     decisions = {d["point_id"]: d for d in reuse.get("decisions", [])}
+    reserved_points = {key: value for item in planning.get("reserved_reuse_outputs", [])
+                       for key, value in item.get("point_snapshots", {}).items()}
     if (any(content.get(k) != v for k, v in snapshots.items())
             or any(features.get(f["id"]) != f for f in planning.get("feature_points", []))
             or any(decisions.get(p["id"], {}).get("point_snapshot") != p
-                   for p in inherited_points)):
+                   and reserved_points.get(p["id"]) != p for p in inherited_points)):
         raise HTTPException(status_code=409, detail="reuse_plan_changed_reanalyze_required")
+
+
+def _operation_prepared_request(operation, user_message) -> dict:
+    """Resume the server's validated tool request, never rewrite the user's goal."""
+    prepared = dict(operation.payload or {}).get("prepared_request") if operation else None
+    if isinstance(prepared, dict):
+        return copy.deepcopy(prepared)
+    if user_message is None:
+        return {}
+    return copy.deepcopy(dict(user_message.message_metadata or {}).get("request", {}))
+
+
+def _capture_workbench_approval(db, conversation, kind, artifact_id, version):
+    from casepilot_api.workbench_continuation import capture_approval_binding
+    return capture_approval_binding(db, conversation, kind, artifact_id, version)
+
+
+def _record_workbench_change_review(db, conversation, change_set, reviewed_version, *,
+                                    complete=True, rejected=False, preapproval_binding=None,
+                                    approved_updates=None, removed_refs=None):
+    from casepilot_api.models import WorkbenchRun
+    from casepilot_api.workbench_artifact_version import change_set_version
+    from casepilot_api.workbench_continuation import record_approval
+
+    event = record_approval(db, conversation, "change_set", change_set.id, reviewed_version,
+                            complete=complete, rejected=rejected,
+                            preapproval_binding=preapproval_binding,
+                            approved_updates=approved_updates, removed_refs=removed_refs)
+    if event is not None and not complete and not rejected:
+        # The exact reviewed version authorized this partial write. Future review
+        # must bind to the newly persisted artifact version, not the stale one.
+        db.flush()
+        run = db.get(WorkbenchRun, event.run_id)
+        run.checkpoint = {**dict(run.checkpoint),
+                          "waiting_artifact_version": change_set_version(change_set)}
+    return event
+
+
+def _cancel_operation_workbench_runs(db, conversation, operation):
+    from casepilot_api.models import WorkbenchRun
+    from casepilot_api.workbench_continuation import TERMINAL, cancel_run
+
+    runs = db.scalars(select(WorkbenchRun).where(
+        WorkbenchRun.conversation_id == conversation.id,
+        WorkbenchRun.status.not_in(TERMINAL)).with_for_update())
+    for run in runs:
+        checkpoint = dict(run.checkpoint)
+        matches = str(checkpoint.get("waiting_operation_id")) == str(operation.id)
+        if operation.related_job_id:
+            matches = matches or str(checkpoint.get("waiting_job_id")) == str(
+                operation.related_job_id)
+            matches = matches or (checkpoint.get("waiting_artifact_kind") == "candidates"
+                and str(checkpoint.get("waiting_artifact_id")) == str(operation.related_job_id))
+        if operation.related_change_set_id:
+            matches = matches or (checkpoint.get("waiting_artifact_kind") == "change_set"
+                and str(checkpoint.get("waiting_artifact_id"))
+                    == str(operation.related_change_set_id))
+        if matches:
+            cancel_run(db, run.id)
 
 
 @router.post(
@@ -3505,6 +3896,7 @@ def confirm_test_brief(
     db: DbSession,
 ) -> ConversationTurnView:
     conversation = _ensure_conversation(db, account.id, conversation_id)
+    _assert_workbench_selection(db, conversation, account=account)
     _require_idle_conversation(db, conversation)
     db.scalar(select(Conversation).where(Conversation.id == conversation.id).with_for_update())
     if not settings.is_agent_model_allowed(payload.model_id):
@@ -3517,6 +3909,13 @@ def confirm_test_brief(
     )
     if brief is None:
         raise HTTPException(status_code=404, detail="test_brief_not_found")
+    source_operation = (db.get(ConversationOperation, brief.source_operation_id)
+                        if brief.source_operation_id else None)
+    if brief.source_operation_id and (source_operation is None
+            or source_operation.conversation_id != conversation.id):
+        raise HTTPException(409, "test_brief_source_operation_changed")
+    if source_operation is not None:
+        _assert_workbench_selection(db, conversation, source_operation, account=account)
     latest_version = db.scalar(
         select(func.max(WorkspaceTestBrief.version)).where(
             WorkspaceTestBrief.conversation_id == conversation.id
@@ -3524,10 +3923,16 @@ def confirm_test_brief(
     )
     if brief.version != latest_version or brief.status not in {"draft", "confirmed"}:
         raise HTTPException(status_code=409, detail="test_brief_version_changed")
+    approval_binding = _capture_workbench_approval(
+        db, conversation, "test_brief", brief.id, str(brief.version))
     brief_content = dict(brief.content)
     if brief_content.get("asset_selection", {}).get("status") == "awaiting_confirmation":
         raise HTTPException(409, "generation_asset_confirmation_required")
     planning = dict(brief_content.get("planning") or {})
+    if planning.get("pending_reserved_outputs"):
+        raise HTTPException(409, "reserved_reuse_clarification_required")
+    if planning.get("pending_planning_clarification"):
+        raise HTTPException(409, "planning_scope_clarification_required")
     if planning:
         points = planning.get("test_points", [])
         choices = reviewer_choices(planning)
@@ -3560,6 +3965,11 @@ def confirm_test_brief(
         }
     elif payload.selected_test_point_ids:
         raise HTTPException(status_code=422, detail="planning_selection_invalid")
+    from casepilot_agent.output_obligations import apply_reserved_review
+    try:
+        apply_reserved_review(planning, choices if planning else {})
+    except ValueError as error:
+        raise HTTPException(409, error.args[0]) from error
     planning = apply_reviewer_choices(planning)
     planning = confirm_asset_reuse(planning, payload.reuse_confirmation,
         confirmed_keys=(dict(conversation.context).get("confirmed_asset_keys", [])
@@ -3596,6 +4006,11 @@ def confirm_test_brief(
         if active_status in {"queued", "running", "awaiting_input"}:
             raise HTTPException(status_code=409, detail="workspace_generation_in_progress")
 
+    from casepilot_api.workbench_plan_authority import stamp_point_review
+    stamp_point_review(planning, brief, kind="points")
+    if planning.get("point_review_receipt"):
+        brief_content["planning"] = {**dict(brief_content.get("planning") or {}),
+            "point_review_receipt": copy.deepcopy(planning["point_review_receipt"])}
     brief.content = brief_content
     brief.markdown_content = render_test_brief_markdown(
         brief.version,
@@ -3746,6 +4161,14 @@ def confirm_test_brief(
     }
     conversation.updated_at = datetime.now(UTC)
     enqueue_task(db, "casepilot.agent.generate", [str(job.id)], task_id=job.id)
+    from casepilot_api.workbench_continuation import record_approval
+    approval_event = record_approval(
+        db, conversation, "test_brief", brief.id, str(brief.version), next_job_id=job.id,
+        preapproval_binding=approval_binding)
+    if approval_event is not None:
+        system_user.role = "assistant"
+        system_user.message_metadata = {**dict(system_user.message_metadata),
+            "human_approval_event_id": str(approval_event.id), "approved_by": str(account.id)}
     db.commit()
     db.refresh(assistant)
     db.refresh(system_user)
@@ -3850,6 +4273,8 @@ def commit_workspace_candidates(
     db: DbSession,
 ) -> list[TestCaseView]:
     conversation = _ensure_conversation(db, account.id, conversation_id)
+    db.refresh(conversation, with_for_update=True)
+    _assert_workbench_selection(db, conversation, account=account)
     _require_idle_conversation(db, conversation)
     if conversation.collection_id is None:
         raise HTTPException(status_code=409, detail="conversation_collection_required")
@@ -3866,6 +4291,10 @@ def commit_workspace_candidates(
             .with_for_update()
         )
     )
+    expected_versions = payload.candidate_versions
+    if expected_versions and (set(expected_versions) != {item.id for item in candidates}
+            or any(expected_versions[item.id] != item.version for item in candidates)):
+        raise HTTPException(409, "candidate_version_conflict")
     if not candidates:
         raise HTTPException(status_code=409, detail="no_included_workspace_candidates")
     selected_refs = {candidate.ref for candidate in candidates}
@@ -3909,6 +4338,9 @@ def commit_workspace_candidates(
                 status_code=422, detail="invalid_workspace_candidate",
             ) from error
         validated_candidates.append(validated)
+    approval_bindings = {
+        job_id: _capture_workbench_approval(db, conversation, "candidates", job_id, str(job_id))
+        for job_id in {item.generation_job_id for item in candidates} if job_id}
     created: list[TestCase] = []
     link_context: dict = {}
     reuse_context: dict = {}
@@ -3956,6 +4388,45 @@ def commit_workspace_candidates(
             if not remaining:
                 active = _open_mutation_operation(db, conversation)
                 _finish_mutation_task(db, active or operation)
+    if dict(conversation.context).get("workbench_selection") and source_generation is not None:
+        from casepilot_api.workbench_selection import refresh_selection_after_apply
+        refresh_selection_after_apply(db, account, conversation, source_generation, [],
+            removed_refs=[f"candidate:{item.ref}" for item in candidates])
+    elif dict(conversation.context).get("workbench_selection"):
+        # Uploaded private drafts have no generation job ancestry. Adoption still
+        # removes their stale candidate identities from canonical selection.
+        from casepilot_api.workbench_selection import SelectionUpdate, update_selection
+
+        state = dict(conversation.context)["workbench_selection"]
+        removed = {f"candidate:{item.ref}" for item in candidates}
+        update_selection(
+            db, account, conversation,
+            SelectionUpdate(
+                base_version=state["version"], action="replace",
+                sources=[
+                    {"ref": item["ref"], "version": item["version"]}
+                    for item in state["items"] if item["ref"] not in removed
+                ],
+            ),
+            changed_by="agent",
+        )
+    from casepilot_api.workbench_continuation import record_approval
+    db.flush()
+    for generation_job_id in sorted((value for value in generation_job_ids if value), key=str):
+        pending_for_job = db.scalar(select(WorkspaceCandidate.id).where(
+            WorkspaceCandidate.conversation_id == conversation.id,
+            WorkspaceCandidate.generation_job_id == generation_job_id,
+            WorkspaceCandidate.status.in_(["candidate", "generating"])).limit(1))
+        record_approval(db, conversation, "candidates", generation_job_id, str(generation_job_id),
+                        complete=pending_for_job is None,
+                        preapproval_binding=approval_bindings[generation_job_id],
+                        removed_refs=[f"candidate:{item.ref}" for item in candidates
+                                      if item.generation_job_id == generation_job_id],
+                        adopted_sources={f"candidate:{item.ref}": {
+                            "ref": f"asset:{case.id}", "version": str(case.current_revision_id)}
+                            for item, case in zip(candidates, created, strict=True)
+                            if item.generation_job_id == generation_job_id
+                            and approval_bindings[generation_job_id] is not None})
     conversation.updated_at = datetime.now(UTC)
     db.add(
         ConversationMessage(
@@ -3987,6 +4458,10 @@ def _expand_conversation_targets(
     conversation: Conversation,
     payload: ConversationMessageCreate,
 ) -> ConversationMessageCreate:
+    if dict(conversation.context).get("workbench_selection"):
+        # Only persisted, exact-version canonical identities may cross collection
+        # boundaries. Legacy selectors still use the original membership checks.
+        return _canonical_target_payload(db, conversation, payload)
     case_ids = list(payload.target_case_ids)
     candidate_snapshots = list(payload.target_candidate_snapshots)
     candidate_refs = {item.ref for item in candidate_snapshots}
@@ -4551,13 +5026,43 @@ def _resume_model_selected_operation(db, account, conversation, payload, operati
     return None
 
 
-def _send_message(conversation_id, payload, account, db) -> ConversationTurnView:
+def prepare_workbench_action(db, account, conversation, payload, root_message_id):
+    """Prepare a domain action under an existing real user's immutable authority.
+
+    This private service is shared by initial and resumed workbench segments. It
+    deliberately has no approval flags: exact human confirmations use their own
+    HTTP transaction handlers. It does not manufacture conversation input.
+    """
+    return _send_message(
+        conversation.id, payload, account, db,
+        _workbench_dispatch=True, _workbench_root_message_id=root_message_id,
+    )
+
+
+def _send_message(
+    conversation_id, payload, account, db, *, _workbench_dispatch=False,
+    _workbench_root_message_id: UUID | None = None,
+) -> ConversationTurnView:
     conversation = _ensure_conversation(db, account.id, conversation_id)
+    # A continuation is an observation of the original request, never a new user
+    # instruction. Only the controlled preparation entry point may supply it.
+    root_message = None
+    if _workbench_root_message_id is not None:
+        if not _workbench_dispatch or not payload.intent_override:
+            raise HTTPException(422, "workbench_root_requires_controlled_preparation")
+        root_message = db.get(ConversationMessage, _workbench_root_message_id)
+        if (root_message is None or root_message.conversation_id != conversation.id
+                or root_message.role != "user"
+                or root_message.content.strip() != payload.content.strip()):
+            raise HTTPException(409, "workbench_original_authority_mismatch")
     # Reject busy or invalid requests before any paid/slow routing call.
     if not settings.is_agent_model_allowed(payload.model_id):
         raise HTTPException(status_code=422, detail="generation_model_not_configured")
     if settings.agent_provider != "mock":
         _require_idle_conversation(db, conversation)
+    if dict(conversation.context).get("workbench_selection"):
+        from casepilot_api.workbench_selection import resolve_selection_payload
+        payload = resolve_selection_payload(db, account, conversation, payload)
     # A strategy label is not authorization to cancel an active task.
     # Preserve the deterministic demo flow only for the mock provider.
     phase = str(dict(conversation.context).get("phase", "idle"))
@@ -4566,9 +5071,11 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
     # rewrites must not pay for an unrelated model round trip.
     generation_choice = (
         interpret_generation_choice(payload.content, settings)
-        if settings.agent_provider == "mock" or phase == "brief_review" else None
+        if not _workbench_dispatch
+        and (settings.agent_provider == "mock" or phase == "brief_review") else None
     )
-    if settings.agent_provider == "mock" and generation_choice.strategy != "generate":
+    if (generation_choice and settings.agent_provider == "mock"
+            and generation_choice.strategy != "generate"):
         active_id = dict(conversation.context).get("active_job_id")
         if active_id:
             from casepilot_api.generation import cancel_generation
@@ -4579,7 +5086,8 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
                 conversation.context = {**dict(conversation.context), "pending_predecessor_job_id": str(active.id)}
                 db.flush()
     _require_idle_conversation(db, conversation)
-    retry_turn = _retry_generation_from_text(db, account, conversation, payload)
+    retry_turn = (None if _workbench_dispatch else
+                  _retry_generation_from_text(db, account, conversation, payload))
     if retry_turn is not None:
         return retry_turn
     if payload.source_operation_id:
@@ -4590,7 +5098,7 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
             raise HTTPException(status_code=409, detail="source_task_not_ready")
     strategy = generation_choice.strategy if generation_choice else payload.generation_strategy
     strategy_update = {"generation_strategy": strategy}
-    if settings.agent_provider == "mock" and not payload.intent_override:
+    if generation_choice and settings.agent_provider == "mock" and not payload.intent_override:
         strategy_update.update(
             {"intent_override": "CASE_GENERATE"}
             if strategy != "generate"
@@ -4607,7 +5115,7 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
         "model_id": payload.model_id,
     }
     phase = str(dict(conversation.context).get("phase", "idle"))
-    if phase == "brief_review":
+    if not _workbench_dispatch and phase == "brief_review":
         pending_brief = db.scalar(select(WorkspaceTestBrief).where(
             WorkspaceTestBrief.conversation_id == conversation.id).order_by(WorkspaceTestBrief.version.desc()))
         pending_selection = (pending_brief.content.get("asset_selection") or {}) if pending_brief else {}
@@ -4630,7 +5138,7 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
         _looks_like_brief_confirmation(payload.content)
         if settings.agent_provider == "mock" else bool(generation_choice and generation_choice.confirms_brief)
     )
-    if phase == "brief_review" and confirms_brief:
+    if not _workbench_dispatch and phase == "brief_review" and confirms_brief:
         latest_brief = db.scalar(
             select(WorkspaceTestBrief)
             .where(WorkspaceTestBrief.conversation_id == conversation.id)
@@ -4647,6 +5155,13 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
             account,
             db,
         )
+    # Pending reviews retain their exact approval/version state machines, but
+    # must not divert free-form navigation or queries back to the old classifier.
+    # Controlled tools may change selection/prepare work, never approve or apply.
+    if (settings.workbench_agent_enabled and not _workbench_dispatch
+            and not payload.intent_override):
+        from casepilot_api.workbench_tools import run_workbench_turn
+        return run_workbench_turn(db, account, conversation, payload, settings)
     has_targets = bool(
         payload.target_case_ids
         or payload.target_candidate_snapshots
@@ -4720,7 +5235,8 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
         raise HTTPException(
             status_code=503, detail="模型服务暂时不可用，未执行本次操作，请稍后重试。"
         )
-    resumed = _resume_model_selected_operation(db, account, conversation, payload, operation_drafts)
+    resumed = (None if _workbench_dispatch else
+               _resume_model_selected_operation(db, account, conversation, payload, operation_drafts))
     if resumed is not None:
         return resumed
     # A single action must retain the user's exact identifiers and constraints.
@@ -4745,24 +5261,26 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
     confidence = float(operation_drafts[0]["confidence"])
     if intent not in INTENTS:
         raise HTTPException(status_code=422, detail="invalid_conversation_intent")
-    request_metadata = {"request": payload.model_dump(mode="json")}
-    user_message = ConversationMessage(
-        conversation_id=conversation.id,
-        role="user",
-        content=payload.content.strip(),
-        intent=intent,
-        intent_confidence=confidence,
-        status=(
-            "awaiting_intent"
-            if draft_needs_confirmation(operation_drafts[0])
-            else "completed"
-        ),
-        target_case_ids=[str(item) for item in payload.target_case_ids],
-        citations=[],
-        message_metadata=request_metadata,
-    )
-    db.add(user_message)
-    db.flush()
+    user_message = root_message
+    if user_message is None:
+        request_metadata = {"request": payload.model_dump(mode="json")}
+        user_message = ConversationMessage(
+            conversation_id=conversation.id,
+            role="user",
+            content=payload.content.strip(),
+            intent=intent,
+            intent_confidence=confidence,
+            status=(
+                "awaiting_intent"
+                if draft_needs_confirmation(operation_drafts[0])
+                else "completed"
+            ),
+            target_case_ids=[str(item) for item in payload.target_case_ids],
+            citations=[],
+            message_metadata=request_metadata,
+        )
+        db.add(user_message)
+        db.flush()
     if blocked_new_task:
         assistant = _new_assistant_message(conversation.id,
             content="当前任务尚未采纳或放弃。请先前往工作区处理当前结果，再开始新的生成或删除任务；继续修改会保留在当前任务中。",
@@ -4774,7 +5292,13 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
             assistant_message=_message_view(assistant), intent=intent, intent_confidence=confidence,
             requires_intent_confirmation=False, action={"type": "task_review_required"}, operation_plan=None)
     operations: list[ConversationOperation] = []
-    for sequence, draft in enumerate(operation_drafts):
+    # Multiple durable segments share the same real user message. Preserve the
+    # unique operation sequence without replacing old operations or their gates.
+    previous_sequence = db.scalar(select(func.max(ConversationOperation.sequence)).where(
+        ConversationOperation.message_id == user_message.id,
+    )) if root_message is not None else None
+    sequence_offset = previous_sequence + 1 if previous_sequence is not None else 0
+    for sequence, draft in enumerate(operation_drafts, start=sequence_offset):
         use_input_targets = (
             draft.get("routing_source") != "semantic"
             or draft.get("target_kind") == "previous_result"
@@ -4801,6 +5325,10 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
                 if use_input_targets else [],
             },
             payload={
+                # Root authority stays immutable. Server-resolved preparation
+                # choices belong to the specific operation and its human gate.
+                **({"prepared_request": payload.model_dump(mode="json")}
+                   if root_message is not None else {}),
                 "plan": {"version": 2, **draft},
                 "instruction": str(draft["instruction"]),
                 "action": str(draft.get("action") or ""),
@@ -4840,6 +5368,7 @@ def _send_message(conversation_id, payload, account, db) -> ConversationTurnView
             intent,
             confidence,
             operations[0].id,
+            controlled_workbench=_workbench_dispatch,
         )
         _operation_runtime_status(operations[0], assistant, action)
     else:
@@ -4886,9 +5415,6 @@ def confirm_message_intent(
     _require_idle_conversation(db, conversation)
     if user_message.status != "awaiting_intent":
         raise HTTPException(status_code=409, detail="message_not_awaiting_intent")
-    request_payload = dict(user_message.message_metadata.get("request", {}))
-    request_payload["intent_override"] = payload.intent
-    message_input = ConversationMessageCreate.model_validate(request_payload)
     user_message.intent = payload.intent
     user_message.intent_confidence = 1.0
     user_message.status = "completed"
@@ -4900,6 +5426,9 @@ def confirm_message_intent(
         )
         .order_by(ConversationOperation.sequence)
     )
+    request_payload = _operation_prepared_request(operation, user_message)
+    request_payload["intent_override"] = payload.intent
+    message_input = ConversationMessageCreate.model_validate(request_payload)
     if operation is not None:
         operation.intent = payload.intent
         operation.confidence = 1.0
@@ -4964,6 +5493,7 @@ def confirm_conversation_operation_collection(
     if operation is None:
         raise HTTPException(status_code=404, detail="conversation_operation_not_found")
     conversation = _ensure_conversation(db, account.id, operation.conversation_id)
+    db.refresh(conversation, with_for_update=True)
     choice = payload.model_dump(mode="json")
     receipt = dict(operation.payload).get("collection_confirmation_receipt")
     if receipt:
@@ -5004,9 +5534,11 @@ def confirm_conversation_operation_collection(
             detail="conversation_operation_predecessor_pending",
         )
     original_message = db.get(ConversationMessage, operation.message_id)
-    request = dict(original_message.message_metadata).get("request", {}) if original_message else {}
+    request = _operation_prepared_request(operation, original_message)
     if payload.collection_id is not None and request.get("generation_strategy") in {"select", "select_and_generate"}:
         raise HTTPException(422, "generation_new_collection_required")
+    approval_binding = _capture_workbench_approval(
+        db, conversation, "operation_collection", operation.id, str(operation.id))
     if payload.collection_id is not None:
         collection = ensure_collection(db, account, payload.collection_id)
         if collection.space_id != conversation.space_id:
@@ -5053,12 +5585,34 @@ def confirm_conversation_operation_collection(
         "confirmed_collection_id": str(collection.id),
     }
     db.flush()
-    return resume_conversation_operation(
-        operation.id,
-        ConversationOperationResumeRequest(),
-        account,
-        db,
+    from casepilot_api.submissions import SubmissionTransaction
+    from casepilot_api.workbench_continuation import record_approval
+    owns_transaction = not isinstance(db, SubmissionTransaction)
+    transaction = SubmissionTransaction(db) if owns_transaction else db
+    turn = resume_conversation_operation(
+        operation.id, ConversationOperationResumeRequest(), account, transaction,
     )
+    intermediate = not turn.action.get("job_id") and turn.action.get("type") in {
+        "clarification", "collection_confirmation"}
+    event = record_approval(
+                    db, conversation, "operation_collection", operation.id, str(operation.id),
+                    next_job_id=turn.action.get("job_id"), complete=not intermediate,
+                    preapproval_binding=approval_binding,
+                    approved_destination_id=str(collection.id))
+    if event is not None and intermediate:
+        from casepilot_api.models import WorkbenchRun
+        from casepilot_api.workbench_artifact_version import operation_review_version
+        run = db.get(WorkbenchRun, event.run_id)
+        kind = ("operation_collection" if turn.action.get("type") == "collection_confirmation"
+                else "operation_confirmation")
+        run.checkpoint = {**run.checkpoint, "waiting_artifact_kind": kind,
+            "waiting_artifact_id": str(operation.id),
+            "waiting_artifact_version": (str(operation.id) if kind == "operation_collection"
+                                         else operation_review_version(operation))}
+    db.commit()
+    if owns_transaction:
+        transaction.publish_committed_effects()
+    return turn
 
 
 @router.post(
@@ -5193,6 +5747,7 @@ def cancel_conversation_operation(
             status_code=409,
             detail="conversation_operation_not_cancellable",
         )
+    _cancel_operation_workbench_runs(db, conversation, operation)
     if operation.related_change_set_id:
         change_set = db.get(CaseChangeSet, operation.related_change_set_id)
         if change_set is not None and change_set.status == "ready":
@@ -5262,7 +5817,24 @@ def _rewrite_reply_turn(db, conversation, operation, user_message, assistant, ac
     )
 
 
+def _invalidate_refined_workbench_operation(db, conversation, operation, reviewed_version):
+    from casepilot_api.models import WorkbenchRun
+    from casepilot_api.workbench_artifact_version import operation_review_version
+    from casepilot_api.workbench_continuation import TERMINAL, invalidate_run
+
+    if operation_review_version(operation) == reviewed_version:
+        return
+    runs = list(db.scalars(select(WorkbenchRun).where(
+        WorkbenchRun.conversation_id == conversation.id,
+        WorkbenchRun.status.not_in(TERMINAL)).with_for_update()))
+    for run in runs:
+        if str(run.checkpoint.get("waiting_operation_id")) == str(operation.id):
+            invalidate_run(db, run.id, reason="new_mutating_instruction")
+
+
 def _resume_rewrite_draft(db, account, conversation, operation, user_message, supplement):
+    from casepilot_api.workbench_artifact_version import operation_review_version
+    reviewed_version = operation_review_version(operation)
     legacy_draft = not dict(operation.payload).get("rewrite_draft")
     pending = dict(operation.payload).get("modification_confirmation")
     if supplement.confirm_modification and (not pending or supplement.content or supplement.intent
@@ -5301,11 +5873,12 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
                     if conversation.collection_id else None, "explicit_collection_only": conversation.collection_id is not None}
                    if catalog is not None else {}),
                 "available_attachments": dict(operation.payload).get("attachment_context") or {
-                    key: dict(user_message.message_metadata).get("request", {}).get(key, [])
+                    key: _operation_prepared_request(operation, user_message).get(key, [])
                     for key in ("document_ids", "knowledge_source_ids")},
-                "scope_cases": (pending or {}).get("cases", []) or dict(operation.target),
+                "scope_cases": (pending or dict(operation.payload).get("prepared_modification")
+                                or {}).get("cases", []) or dict(operation.target),
             }, provider=settings.agent_provider, model_name=settings.resolve_agent_model(
-                dict(user_message.message_metadata).get("request", {}).get("model_id", "auto")),
+                _operation_prepared_request(operation, user_message).get("model_id", "auto")),
                 base_url=settings.agent_base_url, api_key=settings.agent_api_key,
                 timeout_seconds=settings.agent_timeout_seconds,
                 tracing_enabled=settings.agent_tracing_enabled)
@@ -5344,9 +5917,14 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
             status="awaiting_clarification", target_case_ids=[])
         db.add(assistant)
         db.flush()
+        if text or selection_changed:
+            _invalidate_refined_workbench_operation(db, conversation, operation, reviewed_version)
         return _rewrite_reply_turn(db, conversation, operation, user_message, assistant, {"type": "clarification"})
     scope_changed = reply.scope_action == "replace" or selection_changed
     confirm = transition == "confirm" and not scope_changed
+    approval_binding = (_capture_workbench_approval(
+        db, conversation, "operation_confirmation", operation.id, reviewed_version)
+        if confirm else None)
     pending = reduction.confirmation
     if pending:
         pending = {**pending, "instruction": _without_confirmation_supplements(pending["instruction"])}
@@ -5366,7 +5944,7 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
                      for i in range(0, max(len(dict(operation.target).get("case_ids", [])),
                                           len(dict(operation.target).get("candidate_refs", []))), 100)]
     fixed_scope = state["scope_resolved"] or (selection_changed and reply.scope_action != "replace")
-    data = {**dict(user_message.message_metadata).get("request", {}),
+    data = {**_operation_prepared_request(operation, user_message),
         **dict(operation.payload).get("attachment_context", {}),
         "content": state["requirements"] if fixed_scope else state["scope_instruction"],
         "intent_override": "CASE_MODIFY", "target_scope": "inferred",
@@ -5374,7 +5952,7 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
     if legacy_draft and not prior_targets and reply.scope_action != "replace" and not selection_changed:
         # Older pending tasks may predate scope persistence. Recover only their
         # original explicit selectors, never an unrelated current UI selection.
-        request = dict(user_message.message_metadata).get("request", {})
+        request = _operation_prepared_request(operation, user_message)
         data.update(targets=request.get("targets") or dict(operation.target).get("selectors", []),
                     target_case_ids=request.get("target_case_ids", []),
                     target_candidate_snapshots=request.get("target_candidate_snapshots", []))
@@ -5396,6 +5974,13 @@ def _resume_rewrite_draft(db, account, conversation, operation, user_message, su
         dispatched=bool(action.get("job_id")),
         clarification=assistant.content if action.get("type") == "clarification" else "")
     operation.payload = {**dict(operation.payload), "rewrite_draft": state}
+    if not confirm and (text or selection_changed):
+        _invalidate_refined_workbench_operation(db, conversation, operation, reviewed_version)
+    if confirm and action.get("job_id"):
+        from casepilot_api.workbench_continuation import record_approval
+        record_approval(db, conversation, "operation_confirmation", operation.id,
+                        reviewed_version, next_job_id=action["job_id"],
+                        preapproval_binding=approval_binding)
     return _rewrite_reply_turn(db, conversation, operation, user_message, assistant, action, task_name)
 
 
@@ -5464,6 +6049,7 @@ def resume_conversation_operation(
     if operation is None:
         raise HTTPException(status_code=404, detail="conversation_operation_not_found")
     conversation = _ensure_conversation(db, account.id, operation.conversation_id)
+    _assert_workbench_selection(db, conversation, operation, account=account)
     _require_idle_conversation(db, conversation)
     if operation.status not in {
         "queued",
@@ -5488,7 +6074,7 @@ def resume_conversation_operation(
     if user_message is None:
         raise HTTPException(status_code=404, detail="conversation_message_not_found")
     if supplement.document_ids or supplement.knowledge_source_ids:
-        previous = {**dict(user_message.message_metadata).get("request", {}),
+        previous = {**_operation_prepared_request(operation, user_message),
                     **dict(operation.payload).get("attachment_context", {})}
         for field in ("document_ids", "knowledge_source_ids"):
             previous[field] = list(dict.fromkeys([
@@ -5501,17 +6087,19 @@ def resume_conversation_operation(
                               "knowledge_source_ids": list(map(str, attachments.knowledge_source_ids))}
         changed = any(set(previous_ids) != set(attachment_context[field]) for field, previous_ids in (
             ("document_ids", dict(operation.payload).get("attachment_context", {}).get(
-                "document_ids", dict(user_message.message_metadata).get("request", {}).get("document_ids", []))),
+                "document_ids", _operation_prepared_request(operation, user_message).get("document_ids", []))),
             ("knowledge_source_ids", dict(operation.payload).get("attachment_context", {}).get(
-                "knowledge_source_ids", dict(user_message.message_metadata).get("request", {}).get("knowledge_source_ids", []))),
+                "knowledge_source_ids", _operation_prepared_request(operation, user_message).get("knowledge_source_ids", []))),
         ))
         operation.payload = {**dict(operation.payload), "attachment_context": attachment_context,
-                             **({"modification_confirmation": None, "last_confirmed_modification": None}
-                                if changed else {})}
+                             **({"modification_confirmation": None, "last_confirmed_modification": None,
+                                 "prepared_modification": None} if changed else {})}
     if (operation.status == "failed" and operation.intent == "CASE_MODIFY"
             and not any((supplement.intent, supplement.content, supplement.confirm_modification,
                          supplement.targets, supplement.target_case_ids, supplement.target_candidate_snapshots))):
-        approved = dict(operation.payload).get("last_confirmed_modification")
+        approved = (dict(operation.payload).get("last_confirmed_modification")
+                    if dict(operation.payload).get("preparation_mode")
+                    != "canonical_draft_compute" else None)
         if approved:
             operation.payload = {**dict(operation.payload), "modification_confirmation": copy.deepcopy(approved)}
             supplement = supplement.model_copy(update={"confirm_modification": True})
@@ -5587,7 +6175,7 @@ def resume_conversation_operation(
                 resume_targets = [
                     ConversationTarget(kind="previous_result", source_operation_id=previous.id)
                 ]
-    request_data = {**dict(user_message.message_metadata).get("request", {}),
+    request_data = {**_operation_prepared_request(operation, user_message),
                     **dict(operation.payload).get("attachment_context", {})}
     request_data.update(
         {
@@ -5778,7 +6366,7 @@ def retry_conversation_message(
             intent="CASE_GENERATE", intent_confidence=1.0,
             action={"type": "generation", "job_id": str(failed_job.id)},
         )
-    request_payload = dict(user_message.message_metadata.get("request", {}))
+    request_payload = _operation_prepared_request(operation, user_message)
     request_payload["intent_override"] = user_message.intent
     message_input = _resolve_turn_attachments(
         db, conversation, ConversationMessageCreate.model_validate(request_payload), resuming=True,
@@ -5835,16 +6423,21 @@ def answer_conversation_generation(
     db: DbSession,
 ) -> ConversationView:
     conversation = _ensure_conversation(db, account.id, conversation_id)
+    db.refresh(conversation, with_for_update=True)
     job = db.get(GenerationJob, job_id)
     if job is None or job.collection_id != conversation.collection_id:
         raise HTTPException(status_code=404, detail="generation_job_not_found")
     status = job.status.value if hasattr(job.status, "value") else str(job.status)
     if status != "awaiting_input":
         raise HTTPException(status_code=409, detail="generation_not_awaiting_input")
+    reviewed_revision = str(job.input_payload.get("task_revision", 1))
+    approval_binding = _capture_workbench_approval(
+        db, conversation, "generation_job", job.id, reviewed_revision)
     input_payload = dict(job.input_payload)
     answers = dict(input_payload.get("answers", {}))
     answers.update({item.question_id: item.answer.strip() for item in payload.answers})
     input_payload["answers"] = answers
+    input_payload["task_revision"] = int(reviewed_revision) + 1
     job.input_payload = input_payload
     job.status = "queued"
     job.stage = "requirement.analyzed"
@@ -5878,6 +6471,10 @@ def answer_conversation_generation(
         assistant.content = "已收到澄清信息，正在从需求分析阶段继续原任务。"
     conversation.updated_at = datetime.now(UTC)
     enqueue_task(db, "casepilot.agent.generate", [str(job.id)], task_id=job.id)
+    from casepilot_api.workbench_continuation import record_approval
+    record_approval(db, conversation, "generation_job", job.id,
+                    reviewed_revision, next_job_id=job.id,
+                    preapproval_binding=approval_binding)
     db.commit()
     after_commit(db, lambda: Redis.from_url(settings.redis_url).delete(
         f"casepilot:generation:{job.id}:events"))
@@ -5954,9 +6551,19 @@ def apply_change_set(
     db: DbSession,
 ) -> CaseChangeSetApplyView:
     change_set = _ensure_change_set(db, account.id, change_set_id)
+    bound_conversation = _ensure_conversation(db, account.id, change_set.conversation_id)
+    db.refresh(bound_conversation, with_for_update=True)
     db.refresh(change_set, with_for_update=True)
+    from casepilot_api.workbench_artifact_version import change_set_version
+    reviewed_version = change_set_version(change_set)
     if change_set.status in {"applied", "rejected"}:
         return CaseChangeSetApplyView(change_set=_change_set_view(change_set))
+    approval_binding = _capture_workbench_approval(
+        db, bound_conversation, "change_set", change_set.id, reviewed_version)
+    if dict(bound_conversation.context).get("workbench_selection"):
+        bound_operation = db.scalar(select(ConversationOperation).where(
+            ConversationOperation.related_change_set_id == change_set.id))
+        _assert_workbench_selection(db, bound_conversation, bound_operation, account=account)
     pending_incomplete = [
         item
         for item in change_set.items
@@ -5978,6 +6585,9 @@ def apply_change_set(
         db.add(_new_assistant_message(change_set.conversation_id, content=summary,
             intent="CASE_MODIFY", confidence=1.0, status="completed", target_case_ids=[],
             metadata={"change_set_id": str(change_set.id), "operation_id": str(operation.id) if operation else None, "action": "applied"}))
+        _record_workbench_change_review(
+            db, bound_conversation, change_set, reviewed_version,
+            preapproval_binding=approval_binding)
         db.commit()
         return CaseChangeSetApplyView(change_set=_change_set_view(change_set))
     if change_set.status != "ready":
@@ -6012,6 +6622,9 @@ def apply_change_set(
             item["ref"], [diff["field"] for diff in item.get("field_diff", [])]
         )) & {diff["field"] for diff in item.get("field_diff", [])}
     ]
+    # Validate only actual writes: rejecting an out-of-scope item is safe, and
+    # partial approval of an authorized subset must not apply carried siblings.
+    _assert_canonical_write_items(bound_conversation, write_items)
     formal_items = [item for item in write_items if item["target_type"] == "formal"]
     formal_cases: dict[str, TestCase] = {}
     for item in formal_items:
@@ -6101,6 +6714,11 @@ def apply_change_set(
 
         if item["target_type"] == "candidate":
             candidate = candidate_cases[item["ref"]]
+            # Source lineage is server-owned metadata, not a rewritable case field.
+            # Worker draft normalization intentionally excludes these extra keys.
+            for key in ("source_provenance", "source_version"):
+                if key in candidate.snapshot:
+                    merged[key] = copy.deepcopy(candidate.snapshot[key])
             candidate.snapshot = merged
             candidate.version += 1
             candidate.updated_at = datetime.now(UTC)
@@ -6282,6 +6900,30 @@ def apply_change_set(
             },
         )
     )
+    if operation is not None and dict(bound_conversation.context).get("workbench_selection"):
+        from casepilot_api.workbench_selection import refresh_selection_after_apply
+        affected = [f"{'asset' if item['target_type'] == 'formal' else 'candidate'}:{item['ref']}"
+                    for item in updated_items if item.get("status") == "applied"]
+        removed = [f"asset:{value}" for value in deleted_ids]
+        removed += [f"candidate:{value}" for value in discarded_refs]
+        db.flush()  # Preserve pending revision writes before authoritative source reload.
+        refresh_selection_after_apply(db, account, bound_conversation, operation, affected, removed)
+    _record_workbench_change_review(db, bound_conversation, change_set, reviewed_version,
+                                    complete=not pending_count,
+                                    rejected=not pending_count and not has_applied,
+                                    preapproval_binding=approval_binding,
+                                    approved_updates={
+                                        **{f"asset:{case.id}": str(case.current_revision_id)
+                                           for case in created_cases},
+                                        **{f"candidate:{item['ref']}": str(item['version'])
+                                           for item in candidate_snapshots}},
+                                    removed_refs=[
+                                        "{}:{}".format(
+                                            ("asset" if item["target_type"] == "formal"
+                                             else "candidate"),
+                                            item["ref"])
+                                        for item in write_items
+                                        if item.get("operation") == "delete"])
     db.commit()
     for test_case in created_cases:
         db.refresh(test_case)
@@ -6302,13 +6944,19 @@ def reject_change_set(
     db: DbSession,
 ) -> CaseChangeSetView:
     change_set = _ensure_change_set(db, account.id, change_set_id)
+    from casepilot_api.workbench_artifact_version import change_set_version
     db.refresh(change_set, with_for_update=True)
+    reviewed_version = change_set_version(change_set)
     if change_set.status == "ready" and any(item.get("status") == "applied" for item in change_set.items):
         refs = [item["ref"] for item in change_set.items if item.get("status") not in {"applied", "rejected"}]
         return apply_change_set(change_set_id, ChangeSetApplyRequest(
             accepted_fields={ref: [] for ref in refs}, review_refs=refs,
         ), account, db).change_set
     if change_set.status in {"generating", "ready", "no_changes"}:
+        conversation = _ensure_conversation(db, account.id, change_set.conversation_id)
+        db.refresh(conversation, with_for_update=True)
+        approval_binding = _capture_workbench_approval(
+            db, conversation, "change_set", change_set.id, reviewed_version)
         change_set.status = "rejected"
         operation = db.scalar(
             select(ConversationOperation).where(
@@ -6354,6 +7002,9 @@ def reject_change_set(
                 },
             )
         )
+        conversation = _ensure_conversation(db, account.id, change_set.conversation_id)
+        _record_workbench_change_review(db, conversation, change_set, reviewed_version,
+                                        rejected=True, preapproval_binding=approval_binding)
         db.commit()
         db.refresh(change_set)
     return _change_set_view(change_set)
@@ -6418,7 +7069,7 @@ def confirm_generation_assets(
     account: CurrentAccount, db: DbSession,
 ) -> ConversationTurnView:
     conversation = _ensure_conversation(db, account.id, conversation_id)
-    db.scalar(select(Conversation).where(Conversation.id == conversation.id).with_for_update())
+    db.refresh(conversation, with_for_update=True)
     _require_idle_conversation(db, conversation)
     brief = db.scalar(select(WorkspaceTestBrief).where(
         WorkspaceTestBrief.conversation_id == conversation.id
@@ -6439,6 +7090,18 @@ def confirm_generation_assets(
             or brief.content.get("test_object") != selection.get("test_object")
             or (brief.content.get("asset_base_planning") or {}) != (original.output_payload.get("test_brief", {}).get("asset_base_planning") or {})):
         raise HTTPException(409, "reuse_plan_changed_reanalyze_required")
+    if original.collection_id != conversation.collection_id:
+        raise HTTPException(409, "workbench_destination_changed")
+    source_operation = (db.get(ConversationOperation, brief.source_operation_id)
+                        if brief.source_operation_id else None)
+    if source_operation is not None and source_operation.conversation_id != conversation.id:
+        raise HTTPException(409, "reuse_plan_changed_reanalyze_required")
+    if dict(conversation.context).get("workbench_selection"):
+        if source_operation is None or "selection_version" not in dict(source_operation.payload):
+            raise HTTPException(409, "workbench_selection_unbound")
+        _assert_workbench_selection(db, conversation, source_operation, account=account)
+    approval_binding = _capture_workbench_approval(
+        db, conversation, "test_brief", brief.id, str(brief.version))
     allowed = {source["case_id"]: source for source in selection["sources"]}
     chosen = list(dict.fromkeys(str(value) for value in payload.case_ids))
     if set(chosen) - allowed.keys():
@@ -6467,6 +7130,11 @@ def confirm_generation_assets(
     for source in sources:
         _validate_reuse_source(db, conversation, account, source)
     operation = db.get(ConversationOperation, brief.source_operation_id) if brief.source_operation_id else None
+    from casepilot_api.workbench_plan_authority import stamp_point_review
+    if allowed_points:
+        stamp_point_review(base_plan, brief, kind="asset_points")
+    else:
+        base_plan.pop("point_review_receipt", None)
     user_message = ConversationMessage(conversation_id=conversation.id, role="user",
         content=f"确认选用 {len(sources)} 条现有用例资产。", intent="CASE_GENERATE",
         intent_confidence=1.0, status="completed", target_case_ids=formal_ids, citations=[],
@@ -6509,6 +7177,27 @@ def confirm_generation_assets(
         conversation.context = {**dict(conversation.context), "phase": "maintenance",
             "active_job_id": None, "active_operation_id": str(operation.id)}
         db.add(assistant)
+        from casepilot_api.workbench_continuation import record_approval
+        approval_event = record_approval(
+            db, conversation, "test_brief", brief.id, str(brief.version),
+            next_job_id=action.get("job_id"), preapproval_binding=approval_binding,
+            complete=bool(action.get("job_id")) or action.get("type") not in {
+                "clarification", "collection_confirmation"})
+        if approval_event is not None and not action.get("job_id"):
+            from casepilot_api.models import WorkbenchRun
+            from casepilot_api.workbench_artifact_version import operation_review_version
+            run = db.get(WorkbenchRun, approval_event.run_id)
+            if run is not None:
+                kind = ("operation_collection" if action.get("type") == "collection_confirmation"
+                        else "operation_confirmation")
+                run.checkpoint = {**run.checkpoint, "waiting_operation_id": str(operation.id),
+                    "waiting_artifact_kind": kind, "waiting_artifact_id": str(operation.id),
+                    "waiting_artifact_version": (str(operation.id) if kind == "operation_collection"
+                                                 else operation_review_version(operation))}
+        if approval_event is not None:
+            user_message.role = "assistant"
+            user_message.message_metadata = {**dict(user_message.message_metadata),
+                "human_approval_event_id": str(approval_event.id), "approved_by": str(account.id)}
         db.commit()
         return ConversationTurnView(conversation_id=conversation.id,
             user_message=_message_view(user_message), assistant_message=_message_view(assistant),
@@ -6558,6 +7247,14 @@ def confirm_generation_assets(
         enqueue_task(db, "casepilot.agent.draft_brief", [str(job.id)], task_id=job.id)
         action = {"type": "test_brief", "job_id": str(job.id)}
     db.add(assistant)
+    from casepilot_api.workbench_continuation import record_approval
+    approval_event = record_approval(
+        db, conversation, "test_brief", brief.id, str(brief.version),
+        next_job_id=action.get("job_id"), preapproval_binding=approval_binding)
+    if approval_event is not None:
+        user_message.role = "assistant"
+        user_message.message_metadata = {**dict(user_message.message_metadata),
+            "human_approval_event_id": str(approval_event.id), "approved_by": str(account.id)}
     db.commit()
     db.refresh(user_message)
     db.refresh(assistant)

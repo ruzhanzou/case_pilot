@@ -34,6 +34,8 @@ from sqlalchemy.dialects.postgresql import ENUM, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.engine import Connection
 
+from casepilot_agent.planning_boundary import point_boundary_markdown
+
 metadata = MetaData()
 
 _execution_connection: ContextVar[Connection | None] = ContextVar("job_execution_connection", default=None)
@@ -141,6 +143,7 @@ def lexical_search_terms(search_query: str) -> list[str]:
     return terms[:32]
 
 
+
 def render_test_brief_markdown(version: int, content: dict[str, Any]) -> str:
     lines = [
         f"# 结构化测试说明 V{version}",
@@ -185,6 +188,9 @@ def render_test_brief_markdown(version: int, content: dict[str, Any]) -> str:
                 if feature["id"] in point["feature_point_ids"]:
                     scenario = point.get("scenario") or feature["name"]
                     lines.append(f"  - {scenario} / {point['title']}（待生成）")
+                    samples = point_boundary_markdown(point)
+                    if samples:
+                        lines.extend("    " + line for line in samples.splitlines())
     return "\n".join(lines).strip() + "\n"
 
 
@@ -599,6 +605,8 @@ class JobStore:
         if "status" not in values:
             return
         job = self.get_job(connection, job_id)
+        from casepilot_agent.workbench_events import emit_job_completion
+        emit_job_completion(connection, job)
         operation_id = dict(job.get("input_payload") or {}).get("conversation_operation_id")
         if not operation_id:
             return

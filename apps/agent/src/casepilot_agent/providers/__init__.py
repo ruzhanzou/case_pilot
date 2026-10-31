@@ -15,6 +15,7 @@ def create_provider(name: str) -> AgentProvider:
         settings = get_settings()
         return AgentsSdkProvider(
             base_url=settings.base_url,
+            api_type=settings.api_type,
             api_key=settings.api_key,
             model=settings.model,
             pro_model=settings.pro_model,

@@ -22,6 +22,7 @@ def test_completed_job_waits_for_asset_confirmation(operation, output, status):
     store.get_job = Mock(
         return_value={
             "operation": operation,
+            "status": "completed",
             "input_payload": {"conversation_operation_id": str(uuid4())},
         }
     )
