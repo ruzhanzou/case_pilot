@@ -1,7 +1,8 @@
 import { parseDurableRun, type DurableRun } from "./workbench-durable-run";
 export type AgentEvent = { sequence: number; type: string; tool?: string };
-export type AgentReceipt = { id: string; tool: string; effect: "read" | "prepare" };
-export type AgentActivity = { status: string; durable_run?: DurableRun; domain_status?: string; agent_turn_status?: string; events: AgentEvent[]; receipts: AgentReceipt[]; final: { kind: "answer" | "clarify" | "action"; effect: "none" | "read" | "prepare"; message: string; receipt_ids: string[] } | null };
+export type AgentReceipt = { id: string; tool: string; effect: "read" | "plan" | "prepare" };
+export type BusinessOutcome = { plan_coverage?: "not_planned" | "pending_steps" | "steps_verified"; activity: "not_executed" | "context_observed" | "read_completed" | "workspace_updated" | "planned" | "preparation_verified"; run_id: string; receipt_ids: string[]; authority: "server_tool_records" };
+export type AgentActivity = { business_outcome?: BusinessOutcome; status: string; durable_run?: DurableRun; domain_status?: string; agent_turn_status?: string; events: AgentEvent[]; receipts: AgentReceipt[]; final: { kind: "answer" | "clarify" | "action"; effect: "none" | "read" | "prepare"; message: string; receipt_ids: string[] } | null };
 export function parseAgentActivity(value: unknown): AgentActivity | null {
   if (!value || typeof value !== "object") return null;
   const input = value as Record<string, unknown>;
@@ -11,14 +12,22 @@ export function parseAgentActivity(value: unknown): AgentActivity | null {
     return [{ sequence: raw.sequence, type: raw.type, ...(typeof raw.tool === "string" ? {tool: raw.tool.slice(0, 80)} : {}) }];
   }).slice(0, 256);
   const receipts: AgentReceipt[] = Array.isArray(input.receipts) ? input.receipts.flatMap(raw => {
-    if (!raw || typeof raw !== "object" || typeof raw.id !== "string" || typeof raw.tool !== "string" || !["read", "prepare"].includes(raw.effect)) return [];
+    if (!raw || typeof raw !== "object" || typeof raw.id !== "string" || typeof raw.tool !== "string" || !["read", "plan", "prepare"].includes(raw.effect)) return [];
     return [{ id: raw.id, tool: raw.tool, effect: raw.effect }];
   }) : [];
   const raw = input.final as AgentActivity["final"] | undefined;
   const final = raw && ["answer", "clarify", "action"].includes(raw.kind) && ["none", "read", "prepare"].includes(raw.effect) && typeof raw.message === "string" && Array.isArray(raw.receipt_ids)
     ? { kind: raw.kind, effect: raw.effect, message: raw.message, receipt_ids: raw.receipt_ids.filter(id => typeof id === "string") } : null;
   const durable = parseDurableRun(input.durable_run);
-  return { status: input.status, ...(durable ? { durable_run: durable } : {}), ...(typeof input.domain_status === "string" ? {domain_status: input.domain_status} : {}), ...(typeof input.agent_turn_status === "string" ? {agent_turn_status: input.agent_turn_status} : {}), events, receipts, final };
+  const business = input.business_outcome as BusinessOutcome | undefined;
+  const businessOutcome = business && business.authority === "server_tool_records"
+    && ["not_executed", "context_observed", "read_completed", "workspace_updated", "planned", "preparation_verified"].includes(business.activity)
+    && typeof business.run_id === "string" && business.run_id === input.run_id
+    && Array.isArray(business.receipt_ids) && business.receipt_ids.every(id => typeof id === "string" && receipts.some(receipt => receipt.id === id))
+    && (business.activity !== "not_executed" || business.receipt_ids.length === 0)
+    && (business.activity !== "preparation_verified" || business.receipt_ids.some(id => receipts.some(receipt => receipt.id === id && receipt.effect === "prepare")))
+    ? {activity: business.activity, run_id: business.run_id, receipt_ids: [...business.receipt_ids], authority: business.authority, ...(["not_planned", "pending_steps", "steps_verified"].includes(business.plan_coverage ?? "") ? {plan_coverage: business.plan_coverage} : {})} : undefined;
+  return { status: input.status, ...(businessOutcome ? {business_outcome: businessOutcome} : {}), ...(durable ? { durable_run: durable } : {}), ...(typeof input.domain_status === "string" ? {domain_status: input.domain_status} : {}), ...(typeof input.agent_turn_status === "string" ? {agent_turn_status: input.agent_turn_status} : {}), events, receipts, final };
 }
 export function verifiedAgentEffect(activity: AgentActivity): "read" | "prepare" | null {
   const final = activity.final;

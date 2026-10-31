@@ -337,3 +337,95 @@ def test_catalog_over_budget_rejects_without_truncation(data):
     data["sources"][0]["excerpt"] = "x\n" * 10000
     with pytest.raises(ValueError, match="planning_review_input_limit"):
         review_model_input({"snapshot": data})
+
+
+def test_bound_obligation_catalog_rejects_observed_prefix_and_foreign_key(data):
+    from casepilot_agent.planning_review import obligation_catalog, phase_schema
+
+    schema = phase_schema({"snapshot": data}, "audit")
+    value = selection(data).model_dump()
+    assert schema.model_validate(value).findings[0].obligation_keys == ["1:o1"]
+    assert obligation_catalog(data)[0]["key"] == "1:o1"
+    for invalid in ["batch_index:1:o1", "2:o1", "1:foreign"]:
+        value["findings"][0]["obligation_keys"] = [invalid]
+        with pytest.raises(ValidationError) as caught:
+            schema.model_validate(value)
+        assert caught.value.errors()[0]["loc"] == ("findings", 0, "obligation_keys", 0)
+        assert caught.value.errors()[0]["type"] == "literal_error"
+    defs = schema.model_json_schema()["$defs"]
+    assert defs["BoundFindingSelection"]["properties"]["obligation_keys"]["items"]["enum"] == [
+        "1:o1",
+        "1:o2",
+    ]
+
+
+def test_same_obligation_id_across_batches_keeps_exact_identity(data):
+    from casepilot_agent.planning_review import obligation_catalog, phase_schema, project_review
+
+    other = deepcopy(data["planning"]["coverage_review"]["batches"][0])
+    other["batch_index"] = 2
+    data["planning"]["coverage_review"]["batches"].append(other)
+    schema = phase_schema({"snapshot": data}, "audit")
+    value = selection(data).model_dump()
+    value["findings"][0]["obligation_keys"] = ["2:o1"]
+    result = project_review(schema.model_validate(value), data)
+    assert result.findings[0].obligation_keys == ["2:o1"]
+    assert [item["key"] for item in obligation_catalog(data)] == ["1:o1", "1:o2", "2:o1", "2:o2"]
+    changed = deepcopy(data)
+    changed["planning"]["coverage_review"]["batches"].pop()
+    with pytest.raises(ValueError, match="planning_review_reference_invalid"):
+        project_review(schema.model_validate(value), changed)
+
+
+def test_empty_catalog_allows_only_no_references(data):
+    from casepilot_agent.planning_review import phase_schema
+
+    data["planning"]["coverage_review"]["batches"] = []
+    value = selection(data).model_dump()
+    value["findings"][0]["obligation_keys"] = []
+    schema = phase_schema({"snapshot": data}, "audit")
+    assert schema.model_validate(value).findings[0].obligation_keys == []
+    value["findings"][0]["obligation_keys"] = ["1:o1"]
+    with pytest.raises(ValidationError):
+        schema.model_validate(value)
+    phase_data = {"snapshot": data, "review": {"findings": []}, "selected": []}
+    schema = phase_schema(phase_data, "revision")
+    assert schema.model_validate({"points": [], "obligations": [], "unresolved": []})
+    assert schema.model_json_schema()["properties"]["obligations"]["maxItems"] == 0
+
+
+def test_revision_enum_is_only_selected_issue_obligations(data):
+    from casepilot_agent.planning_review import phase_schema
+
+    schema = phase_schema(
+        {"snapshot": data, "review": review().model_dump(), "selected": ["issue-1"]}, "revision"
+    )
+    edit = dict(
+        key="1:o1",
+        point_ids=["p1"],
+        feature_ids=["A"],
+        basis="A accepts x",
+        clarification="",
+        issue_ids=["issue-1"],
+    )
+    value = dict(points=[], obligations=[edit], unresolved=[])
+    assert schema.model_validate(value).obligations[0].key == "1:o1"
+    for bad in ["batch_index:1:o1", "1:o2", "2:o1"]:
+        edit["key"] = bad
+        with pytest.raises(ValidationError):
+            schema.model_validate(value)
+
+
+def test_obligation_catalog_never_silently_truncates_or_collapses(data):
+    from casepilot_agent.planning_review import obligation_catalog
+
+    batch = data["planning"]["coverage_review"]["batches"][0]
+    batch["obligations"].append(deepcopy(batch["obligations"][0]))
+    with pytest.raises(ValueError, match="planning_review_duplicate_obligation"):
+        obligation_catalog(data)
+    batch["obligations"] = [{"id": f"o{i}"} for i in range(513)]
+    with pytest.raises(ValueError, match="planning_review_input_limit"):
+        obligation_catalog(data)
+    batch["obligations"] = [{"id": "x" * 161}]
+    with pytest.raises(ValueError, match="planning_review_input_limit"):
+        obligation_catalog(data)

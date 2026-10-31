@@ -731,6 +731,7 @@ export type CaseChangeItemDto = {
 };
 
 export type CaseChangeSetDto = {
+  reference_binding?: { collection_version: number; sources: CollectionReferenceSourceDto[] };
   id: string;
   conversation_id: string;
   generation_job_id: string | null;
@@ -2097,4 +2098,43 @@ export function decidePlanningReview(workspaceId: string, review: PlanningReview
     method: "POST", body: JSON.stringify({base_version: review.base_version, issue_ids: issueIds,
       confirm: action === "apply", confirm_count_change: confirmCountChange, proposal_hash: review.proposal_hash ?? ""}),
   });
+}
+
+export type CollectionReferenceSourceDto = {
+  source_id: string;
+  name: string;
+  available: boolean;
+  source_revision: number;
+  documents: { id: string; name: string; mime_type: string; version: number; checksum: string }[];
+};
+export type CollectionReferencesDto = {
+  collection_id: string;
+  version: number;
+  sources: CollectionReferenceSourceDto[];
+  authority_policy: string;
+};
+export type WorkspaceReferenceContextDto = {
+  selected_cases: { ref: string; version: string; snapshot: Record<string, unknown> }[];
+  sources: (CollectionReferenceSourceDto & { origin: "collection" | "conversation" })[];
+  warnings: string[];
+  authority_policy: string;
+};
+export function getCollectionReferences(collectionId: string): Promise<CollectionReferencesDto> {
+  return apiRequest(`/api/v1/collections/${collectionId}/references`);
+}
+export function updateCollectionReferences(
+  collectionId: string, baseVersion: number, sourceIds: string[],
+): Promise<CollectionReferencesDto> {
+  return apiRequest(`/api/v1/collections/${collectionId}/references`, {
+    method: "PUT", body: JSON.stringify({ base_version: baseVersion, source_ids: sourceIds }),
+  });
+}
+export function getWorkspaceReferenceContext(
+  conversationId: string,
+): Promise<WorkspaceReferenceContextDto> {
+  return apiRequest(`/api/v1/workspaces/${conversationId}/reference-context`);
+}
+
+export function getCollectionReferenceOptions(collectionId: string): Promise<KnowledgeSourceDto[]> {
+  return apiRequest(`/api/v1/collections/${collectionId}/reference-options`);
 }

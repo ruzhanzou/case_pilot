@@ -877,7 +877,8 @@ def build_planning(
                         },
                         "existing_plan": plan.model_dump(mode="json"),
                         "coverage_gaps": [
-                            item.model_dump(mode="json") for item in report.uncovered if item.id in fillable
+                            item.model_dump(mode="json") for item in report.uncovered
+                            if item.id in fillable
                         ],
                         "target_count": None,
                         "batch_count": count,
@@ -1281,7 +1282,8 @@ def rewrite_evidence(context, snapshot, complete):
             "保留数值、单位、例外和冲突；不相关则返回空列表。不修改用例、不扩大目标范围。"
             "business_rules逐条摘录context.evidence中的原文完整规则，不改写、不概括，保留规则编号和上下文条件。"
             "test_case只是检索范围，绝不是事实依据；禁止从用例标题、操作或前置条件推导业务规则。"
-            "不输出测试步骤或预期，不补全资料未规定的状态、会话、文案或副作用。",
+            "不生成新的测试步骤或预期；资料已有的相关预期断言可以逐字引用，不能因来自历史用例而忽略。"
+            "历史用例不自动高于其他来源；保留相互冲突的原文，不补全资料未规定的状态、会话、文案或副作用。",
             {"test_case": scope, "context": batch},
             RequirementAnalysis,
         )

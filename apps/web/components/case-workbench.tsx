@@ -2,6 +2,7 @@
 
 import { DurableAgentProgress } from "@/components/durable-agent-progress";
 import { durableFromConversation } from "@/lib/workbench-durable-run";
+import { CollectionReferencePanel } from "@/components/collection-reference-panel";
 import { attachmentAccept, clipboardImages, isImageAttachment } from "@/lib/image-attachments";
 import { CaseSource, type AssetProvenance } from "@/components/workspace-case-sources";
 import { CompactModificationConfirmation } from "@/components/compact-modification-confirmation";
@@ -2464,6 +2465,10 @@ export function CaseWorkbench({
           <ConversationAttachments pending onRemove={id => { void removeAttachment(id); }} disabled={conversationRunning || uploading} metadata={{ attachments: (
             Array.isArray(workspace?.context.pending_attachments) ? workspace.context.pending_attachments : []
           ).filter((file: { name: string }) => !attachments.some(local => local.name === file.name && local.status !== "failed")) }} />
+          {workspace?.collection_id && <CollectionReferencePanel
+            key={`${workspace.id}:${workspace.collection_id}`} spaceId={spaceId}
+            collectionId={workspace.collection_id} conversationId={workspace.id}
+            revision={workspace.updated_at} />}
           {activeAttachments.length > 0 && <details className="workbench-reference-files"><summary>{pick(`Reference files · ${activeAttachments.length}`, `引用文件 · ${activeAttachments.length}`)}</summary><ConversationAttachments active onRemove={id => { void removeAttachment(id); }} disabled={conversationRunning || uploading} metadata={{ attachments: activeAttachments }} /></details>}
           <LiveAgentProgress run={agentRun.view} onCancel={() => void agentRun.cancel()} durableRun={durableFromConversation(workspace)} />
           {workspace && <DurableAgentProgress conversationId={workspace.id} value={durableFromConversation(workspace)} onRefresh={async id => { if (workspace.id === id) await refreshWorkspace(); }} />}

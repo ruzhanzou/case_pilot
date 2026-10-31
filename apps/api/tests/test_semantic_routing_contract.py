@@ -269,6 +269,11 @@ def test_real_knowledge_question_never_enters_asset_scope_parser(monkeypatch, ph
 @pytest.mark.parametrize('current', ['generate', 'select', 'select_and_generate'])
 @pytest.mark.parametrize('explicit_change', [False, True])
 def test_planning_revision_preserves_strategy_unless_model_detects_explicit_switch(monkeypatch, current, explicit_change):
+    from casepilot_api import collection_references
+
+    # This unit double isolates legacy routing; real reference authorization has PG tests.
+    monkeypatch.setattr(collection_references, "merge_references", lambda db, c, p: p)
+
     from types import SimpleNamespace
     from uuid import uuid4
     from casepilot_api import conversations

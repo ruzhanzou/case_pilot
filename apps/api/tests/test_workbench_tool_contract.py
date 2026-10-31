@@ -54,7 +54,8 @@ def test_agent_selection_schema_excludes_legacy_targets():
 def test_collection_plan_actions_match_only_entity_proposal_tools(action):
     intent = "COLLECTION_" + action.upper()
     args = PlanArguments(
-        steps=["Prepare collection review"], plan_actions=[intent, "CASE_GENERATE"],
+        steps=["Prepare collection review", "Prepare later independent generation"],
+        plan_actions=[intent, "CASE_GENERATE"],
     )
     assert args.plan_actions == [intent, "CASE_GENERATE"]
     specs = {spec.name: spec for spec in WorkbenchTools(None, None, None, None).specs()}

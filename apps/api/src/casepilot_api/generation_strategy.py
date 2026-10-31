@@ -240,7 +240,9 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
             "If the user says use these three but only two IDs exist, return requested_count=3, "
             "ambiguous=true and selected_ids=null."
         ) + collection_instructions + retry_instructions,
-        model=compatible_model(model=settings.routing_model, openai_client=client, settings=settings),
+        model=compatible_model(
+            model=settings.routing_model, openai_client=client, settings=settings,
+        ),
         **optional_model_settings(settings),
         output_type=RetryChoice if retry_only else CollectionReference if collection_only else Choice,
     )

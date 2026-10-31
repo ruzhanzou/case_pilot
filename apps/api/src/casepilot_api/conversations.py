@@ -1075,8 +1075,8 @@ def _conversation_view(db: Session, conversation: Conversation) -> ConversationV
         job.id: dict(job.output_payload or {}).get("quality", {}).get("issues", [])
         for job in jobs if job.operation == "generate"
     }
-    from casepilot_api.workbench_tools import refresh_agent_domain_state
     from casepilot_api.workbench_run_projection import project_durable_state
+    from casepilot_api.workbench_tools import refresh_agent_domain_state
 
     for view in message_views:
         agent_state = view.metadata.get("workbench_agent")
@@ -1248,6 +1248,7 @@ def _change_set_view(change_set: CaseChangeSet) -> CaseChangeSetView:
         instruction=change_set.instruction,
         scope=change_set.scope,
         status=change_set.status,
+        reference_binding=getattr(change_set, "reference_binding", None) or {},
         items=list(change_set.items),
         created_at=change_set.created_at,
         applied_at=change_set.applied_at,
@@ -1917,9 +1918,11 @@ def _resolve_workbench_scope(db, conversation, payload, intent):
     if unsupported_mutation_condition(payload.content) and not (
             scope and scope.get("exclusion_scope_text")):
         return payload, "请明确当前选择范围内符合条件的具体用例；本次没有修改或删除用例。"
-    ids = set(map(str, scope["ids"])) if scope is not None else {str(item["id"]) for item in snapshots}
+    ids = (set(map(str, scope["ids"])) if scope is not None
+           else {str(item["id"]) for item in snapshots})
     selected = filter_priority((scope or {}).get("exclusion_scope_text", payload.content),
-                               [item for item in snapshots if str(item["id"]) in ids], mutation=True)
+                               [item for item in snapshots if str(item["id"]) in ids],
+                               mutation=True)
     ids = {str(item["id"]) for item in selected}
     if not ids:
         return payload, "当前选择范围没有匹配用例；本次没有修改或删除用例。"
@@ -2215,9 +2218,17 @@ def _resolve_action_scope(
 
 def _assert_workbench_selection(db, conversation, operation=None, *, account=None):
     db.refresh(conversation, with_for_update=True)
+    if operation is not None and account is not None:
+        from casepilot_api.workbench_skills import assert_bindings
+
+        assert_bindings(dict(operation.payload).get("skill_bindings"))
+        from casepilot_api.collection_references import assert_reference_binding
+
+        assert_reference_binding(db, account, conversation,
+                                 dict(operation.payload).get("reference_binding"))
     if not dict(conversation.context).get("workbench_selection"):
         return
-    from casepilot_api.workbench_selection import assert_selection_binding, _resolve_sources
+    from casepilot_api.workbench_selection import _resolve_sources, assert_selection_binding
     if account is not None:
         _resolve_sources(db, account, conversation,
                          dict(conversation.context)["workbench_selection"].get("items", []))
@@ -2242,6 +2253,9 @@ def _start_action(
     resolved_collection: tuple[list[dict[str, str]], UUID | None] | None = None,
     controlled_workbench: bool = False,
 ) -> tuple[ConversationMessage, dict[str, Any], str | None]:
+    from casepilot_api.collection_references import merge_references
+
+    payload = merge_references(db, conversation, payload)
     instruction = user_message.content if user_message is not None else payload.content
     generation_details = (interpret_generation_choice(instruction, settings)
                           if settings.agent_provider != "mock" and intent == "CASE_GENERATE" else None)
@@ -2557,7 +2571,8 @@ def _start_action(
                         prepared=(
                             revision,
                             list(db.scalars(select(CollectionCaseMembership.collection_id).join(
-                                CaseCollection, CaseCollection.id == CollectionCaseMembership.collection_id
+                                CaseCollection,
+                                CaseCollection.id == CollectionCaseMembership.collection_id
                             ).where(
                                 CollectionCaseMembership.test_case_id == test_case.id,
                                 CaseCollection.space_id == conversation.space_id,
@@ -2714,7 +2729,10 @@ def _start_action(
             }
             for item in case_context
         ]
+        from casepilot_api.collection_references import capture_reference_binding
+
         change_set = CaseChangeSet(
+            reference_binding=capture_reference_binding(db, conversation, payload),
             conversation_id=conversation.id,
             generation_job_id=None,
             instruction=payload.content.strip(),
@@ -2855,7 +2873,10 @@ def _start_action(
         _generation_test_object(generation_details, conversation_memory)
         if intent == "CASE_GENERATE" else ""
     )
+    from casepilot_api.collection_references import capture_reference_binding
+
     input_payload = {
+        "reference_binding": capture_reference_binding(db, conversation, payload),
         "prompt": payload.content.strip(),
         "markdown_content": payload.content.strip(),
         "file_names": [],
@@ -2903,9 +2924,11 @@ def _start_action(
             if operation is not None:
                 operation.target = {**dict(operation.target),
                     "case_ids": list(dict.fromkeys([*dict(operation.target).get("case_ids", []),
-                        *[item["ref"] for item in carried_items if item["target_type"] == "formal"]])),
+                        *[item["ref"] for item in carried_items
+                          if item["target_type"] == "formal"]])),
                     "candidate_refs": list(dict.fromkeys([*dict(operation.target).get("candidate_refs", []),
-                        *[item["ref"] for item in carried_items if item["target_type"] == "candidate"]]))}
+                        *[item["ref"] for item in carried_items
+                          if item["target_type"] == "candidate"]]))}
             for current in case_context:
                 earlier = previous_items.get(current["ref"])
                 if earlier is None or earlier.get("status") in {"applied", "rejected"}:
@@ -3164,7 +3187,10 @@ def _start_action(
             for item in case_context
             if item["target_type"] == "formal"
         ]
+        from casepilot_api.collection_references import capture_reference_binding
+
         change_set = CaseChangeSet(
+            reference_binding=capture_reference_binding(db, conversation, payload),
             conversation_id=conversation.id,
             generation_job_id=job.id,
             instruction=payload.content.strip(),
@@ -3399,6 +3425,7 @@ def update_workbench_selection(
     conversation_id: UUID, payload: dict, account: CurrentAccount, db: DbSession,
 ) -> ConversationView:
     from pydantic import ValidationError
+
     from casepilot_api.workbench_selection import SelectionUpdate, update_selection
     conversation = _ensure_conversation(db, account.id, conversation_id)
     db.refresh(conversation, with_for_update=True)
@@ -5236,7 +5263,8 @@ def _send_message(
             status_code=503, detail="模型服务暂时不可用，未执行本次操作，请稍后重试。"
         )
     resumed = (None if _workbench_dispatch else
-               _resume_model_selected_operation(db, account, conversation, payload, operation_drafts))
+               _resume_model_selected_operation(
+                   db, account, conversation, payload, operation_drafts))
     if resumed is not None:
         return resumed
     # A single action must retain the user's exact identifiers and constraints.
@@ -5304,6 +5332,8 @@ def _send_message(
             or draft.get("target_kind") == "previous_result"
             or bool(draft.get("uses_selected_targets"))
         )
+        from casepilot_api.collection_references import capture_reference_binding
+
         operation = ConversationOperation(
             conversation_id=conversation.id,
             message_id=user_message.id,
@@ -5329,6 +5359,7 @@ def _send_message(
                 # choices belong to the specific operation and its human gate.
                 **({"prepared_request": payload.model_dump(mode="json")}
                    if root_message is not None else {}),
+                "reference_binding": capture_reference_binding(db, conversation, payload),
                 "plan": {"version": 2, **draft},
                 "instruction": str(draft["instruction"]),
                 "action": str(draft.get("action") or ""),
@@ -6087,12 +6118,15 @@ def resume_conversation_operation(
                               "knowledge_source_ids": list(map(str, attachments.knowledge_source_ids))}
         changed = any(set(previous_ids) != set(attachment_context[field]) for field, previous_ids in (
             ("document_ids", dict(operation.payload).get("attachment_context", {}).get(
-                "document_ids", _operation_prepared_request(operation, user_message).get("document_ids", []))),
+                "document_ids", _operation_prepared_request(operation, user_message).get(
+                    "document_ids", []))),
             ("knowledge_source_ids", dict(operation.payload).get("attachment_context", {}).get(
-                "knowledge_source_ids", _operation_prepared_request(operation, user_message).get("knowledge_source_ids", []))),
+                "knowledge_source_ids", _operation_prepared_request(operation, user_message).get(
+                    "knowledge_source_ids", []))),
         ))
         operation.payload = {**dict(operation.payload), "attachment_context": attachment_context,
-                             **({"modification_confirmation": None, "last_confirmed_modification": None,
+                             **({"modification_confirmation": None,
+                                 "last_confirmed_modification": None,
                                  "prepared_modification": None} if changed else {})}
     if (operation.status == "failed" and operation.intent == "CASE_MODIFY"
             and not any((supplement.intent, supplement.content, supplement.confirm_modification,
@@ -6558,6 +6592,16 @@ def apply_change_set(
     reviewed_version = change_set_version(change_set)
     if change_set.status in {"applied", "rejected"}:
         return CaseChangeSetApplyView(change_set=_change_set_view(change_set))
+    from casepilot_api.collection_references import assert_reference_binding
+
+    assert_reference_binding(db, account, bound_conversation,
+                             getattr(change_set, "reference_binding", None))
+    from casepilot_api.workbench_skills import assert_bindings
+
+    bound_operation = db.scalar(select(ConversationOperation).where(
+        ConversationOperation.related_change_set_id == change_set.id))
+    if bound_operation is not None:
+        assert_bindings(dict(bound_operation.payload).get("skill_bindings"))
     approval_binding = _capture_workbench_approval(
         db, bound_conversation, "change_set", change_set.id, reviewed_version)
     if dict(bound_conversation.context).get("workbench_selection"):

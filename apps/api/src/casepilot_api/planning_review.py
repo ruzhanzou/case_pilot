@@ -9,10 +9,10 @@ from casepilot_agent.planning_review import (
     REVIEW_INSTRUCTION,
     REVISION_INSTRUCTION,
     Review,
-    ReviewSelection,
     Revision,
     candidate_plan,
     digest,
+    phase_schema,
     project_review,
     review_model_input,
     snapshot,
@@ -392,8 +392,8 @@ def _execute(review_id, phase, provider=None):
             provider = create_provider(get_settings().provider)
         # Every actual HTTP request reserves before sending, including retries.
         provider.request_guard = reserve
-        schema = ReviewSelection if phase == "audit" else Revision
-        model_input = review_model_input(data) if phase == "audit" else data
+        schema = phase_schema(data, phase)
+        model_input = review_model_input(data)
         instruction = REVIEW_INSTRUCTION if phase == "audit" else REVISION_INSTRUCTION
         failure_phase = "provider_call"
         result, usage = provider.complete(

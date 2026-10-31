@@ -1,5 +1,6 @@
 "use client";
 
+import { ReferenceSnapshot } from "@/components/reference-snapshot";
 import type { CaseChangeSetDto } from "@/lib/casepilot-api";
 import { reviewableChangeRefs, selectedReviewFields } from "@/lib/workbench-review";
 import { useI18n } from "@/lib/i18n";
@@ -17,6 +18,7 @@ export function ConversationReview({ changeSet, selection, busy, onApply, onInsp
   return <details className="conversation-review">
     <summary>{pick("Review this proposal in chat", "在对话中审阅这版变更")} · {selected.length}/{refs.length}</summary>
     <p>{changeSet.instruction}</p>
+    <ReferenceSnapshot binding={changeSet.reference_binding} />
     <small>{pick("Shares the result pane’s field selection. Unselected pending cases are rejected when you confirm. Formal revisions are checked by the server.", "与结果面板共享字段选择；确认时，未选择字段的待审阅用例将被拒绝。服务器会校验正式用例版本。")}</small>
     <div className="conversation-review__items">{changeSet.items.filter(item => refs.includes(item.ref)).map(item => <details key={item.ref}>
       <summary>{String(item.base_snapshot.case_key ?? item.proposed_snapshot.case_key ?? "")} · {String(item.proposed_snapshot.title ?? item.base_snapshot.title ?? item.ref)} · V{item.proposal_version ?? 1}</summary>

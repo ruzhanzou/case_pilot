@@ -234,11 +234,15 @@ def list_knowledge_sources(
     return [_source_view(db, source) for source in sources]
 
 
-def _get_source(db: Session, account_id: UUID, source_id: UUID) -> KnowledgeSource:
+def _get_source(
+    db: Session, account_id: UUID, source_id: UUID, *, lock=False,
+) -> KnowledgeSource:
     source = db.scalar(
         select(KnowledgeSource).where(
             KnowledgeSource.id == source_id,
             KnowledgeSource.deleted_at.is_(None),
+        ).with_for_update() if lock else select(KnowledgeSource).where(
+            KnowledgeSource.id == source_id, KnowledgeSource.deleted_at.is_(None),
         )
     )
     if source is None:
@@ -262,7 +266,8 @@ def reindex_knowledge_source(
     account: CurrentAccount,
     db: DbSession,
 ) -> KnowledgeSourceView:
-    source = _get_source(db, account.id, source_id)
+    source = _get_source(db, account.id, source_id, lock=True)
+    source.reference_revision += 1
     source.status = "uploaded"
     source.error_code = None
     for document in db.scalars(
@@ -286,7 +291,8 @@ def delete_knowledge_source(
     account: CurrentAccount,
     db: DbSession,
 ) -> None:
-    source = _get_source(db, account.id, source_id)
+    source = _get_source(db, account.id, source_id, lock=True)
+    source.reference_revision += 1
     source.status = "deleted"
     source.deleted_at = datetime.now(UTC)
     enqueue_task(

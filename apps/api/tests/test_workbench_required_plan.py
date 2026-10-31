@@ -399,13 +399,13 @@ async def test_collection_entity_query_completes_without_case_read(monkeypatch, 
             "client_request_id": str(uuid4()),
         })
         assert response.status_code == 202, response.text
-        assert len(provider.observations) == 3
+        assert len(provider.observations) == (3 if typed_plan else 2)
         with get_session_factory()() as db:
             run = db.scalar(select(WorkbenchRun).where(
                 WorkbenchRun.conversation_id == UUID(workspace["id"])))
-            assert run.status == ("completed" if typed_plan else "waiting_approval")
+            assert run.status == "completed"
             if not typed_plan:
-                assert run.checkpoint["completion"]["completion_code"] == "goal_unverified"
+                assert run.checkpoint["completion"]["completion_code"] == "read_result_only"
             assert run.cursor == int(typed_plan)
             assert db.scalar(select(func.count()).select_from(ConversationOperation).where(
                 ConversationOperation.conversation_id == UUID(workspace["id"]))) == 0

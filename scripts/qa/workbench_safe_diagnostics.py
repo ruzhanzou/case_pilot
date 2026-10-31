@@ -60,6 +60,10 @@ _COVERAGE_TYPES = frozenset({
     "planning_coverage_obligation_changed",
 })
 _TYPES = _TYPES | _COVERAGE_TYPES
+_ROOT_CODES = _COVERAGE_TYPES | frozenset({
+    "planning_point_batch_size_invalid", "planning_duplicate_test_point",
+    "planning_feature_reference_invalid", "planning_feature_uncovered",
+})
 _COUNTS = frozenset({"expected_count", "actual_count", "missing_count", "extra_count",
                      "duplicate_count"})
 _REUSE_ERRORS = frozenset({"reuse_point_coverage_invalid", "reuse_source_action_invalid",
@@ -149,6 +153,8 @@ def safe_structured_failure(error):
                     and item["type"] in _COVERAGE_TYPES else {})
         result["validation_errors"].append({
             **({"metadata": metadata} if metadata else {}),
+            **({"domain_code": item["domain_code"]} if type(item.get("domain_code")) is str
+               and item["domain_code"] in _ROOT_CODES else {}),
             **({"counts": counts} if counts else {}),
             "type": label(item.get("type"), _TYPES, "other_validation_error"),
             "loc": [part if type(part) is int and 0 <= part <= 10000 else

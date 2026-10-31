@@ -80,18 +80,21 @@ def latest(cid):
 
 
 @pytest.mark.asyncio
-async def test_unplanned_read_reproduction(monkeypatch):
+@pytest.mark.parametrize("prompt", ["只查询集合", "查询集合并删除目标集合"])
+async def test_unplanned_read_proves_only_read_not_mixed_goal(monkeypatch, prompt):
     provider = activate(monkeypatch, [("query_collections", {"search": ""}), "read"])
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         _, collection, workspace = await setup(client)
-        body = await send(client, workspace["id"])
+        body = await send(client, workspace["id"], prompt)
         state = latest(workspace["id"])
-        assert state["status"] != "completed"
-        assert state["checkpoint"]["completion"]["completion_code"] == "goal_unverified"
+        assert state["status"] == "completed"  # Answer ended, not a proven full business goal.
+        assert state["checkpoint"]["completion"]["completion_code"] == "read_result_only"
         assert not state["plan"].get("steps")
-        assert len(provider.observations) == 3
+        assert len(provider.observations) == 2
+        outcome = body["assistant_message"]["metadata"]["workbench_agent"]["business_outcome"]
+        assert outcome["activity"] == "read_completed" and outcome["plan_coverage"] == "not_planned"
         assert (
-            body["assistant_message"]["metadata"]["workbench_agent"]["final"]["kind"] == "clarify"
+            body["assistant_message"]["metadata"]["workbench_agent"]["final"]["kind"] == "answer"
         )
         with get_session_factory()() as db:
             assert db.get(CaseCollection, UUID(collection["id"])).deleted_at is None
@@ -103,7 +106,7 @@ async def test_query_only_plan_completes_from_real_receipt(monkeypatch, late_pla
     query = ("query_collections", {"search": ""})
     plan = ("plan_work", {"steps": ["Read collections"], "plan_actions": ["COLLECTION_QUERY"]})
     provider = activate(
-        monkeypatch, [query, "read", plan, "read"] if late_plan else [plan, query, "read"]
+        monkeypatch, [query, plan, "read"] if late_plan else [plan, query, "read"]
     )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         _, _, workspace = await setup(client)
@@ -112,7 +115,7 @@ async def test_query_only_plan_completes_from_real_receipt(monkeypatch, late_pla
         assert state["status"] == "completed" and state["cursor"] == 1
         assert len(state["plan"]["steps"][0]["receipt_ids"]) == 1
         assert state["checkpoint"]["completion"]["completion_code"] == "goal_satisfied"
-        assert len(provider.observations) == (4 if late_plan else 3)
+        assert len(provider.observations) == 3
         assert not body["action"].get("proposal")
 
 
@@ -125,7 +128,6 @@ async def test_corrected_full_goal_stops_at_pending_delete_then_reject_new_goal(
             monkeypatch,
             [
                 ("query_collections", {"search": ""}),
-                "read",
                 (
                     "plan_work",
                     {
@@ -144,7 +146,7 @@ async def test_corrected_full_goal_stops_at_pending_delete_then_reject_new_goal(
         assert state["status"] == "waiting_approval" and state["cursor"] == 1
         assert state["plan"]["steps"][0]["receipt_ids"]
         assert not state["plan"]["steps"][1].get("receipt_ids")
-        assert len(provider.observations) == 5
+        assert len(provider.observations) == 4
         rejected = await client.post(
             f"/api/v1/workspaces/{cid}/collection-proposals/{proposal['id']}/reject", json={}
         )
@@ -152,8 +154,8 @@ async def test_corrected_full_goal_stops_at_pending_delete_then_reject_new_goal(
         activate(monkeypatch, [("query_collections", {"search": ""}), "read"])
         await send(client, cid)
         fresh = latest(cid)
-        assert not fresh["plan"].get("steps") and fresh["status"] != "completed"
-        assert fresh["checkpoint"]["completion"]["completion_code"] == "goal_unverified"
+        assert not fresh["plan"].get("steps") and fresh["status"] == "completed"
+        assert fresh["checkpoint"]["completion"]["completion_code"] == "read_result_only"
         with get_session_factory()() as db:
             assert db.get(CaseCollection, UUID(collection["id"])).deleted_at is None
 
@@ -196,7 +198,7 @@ async def test_exhausted_existing_budget_does_not_add_goal_correction(monkeypatc
         assert len(provider.observations) == 2
         assert (
             latest(workspace["id"])["checkpoint"]["completion"]["completion_code"]
-            == "goal_unverified"
+            == "read_result_only"
         )
 
 
@@ -221,10 +223,11 @@ async def test_corrected_query_side_question_restores_old_goal_without_copying_i
         )
         await send(client, cid, "只是旁问：有哪些集合？不要推进之前的任务。")
         assert snapshot(old_run) == before
-        assert len(provider.observations) == 4
+        assert len(provider.observations) == 2
         fresh = latest(cid)
-        assert fresh["status"] == "completed" and fresh["cursor"] == 1
-        assert [s["action"] for s in fresh["plan"]["steps"]] == ["COLLECTION_QUERY"]
+        assert fresh["status"] == "completed" and fresh["cursor"] == 0
+        assert not fresh["plan"].get("steps")
+        assert fresh["checkpoint"]["completion"]["completion_code"] == "read_result_only"
 
 
 @pytest.mark.asyncio

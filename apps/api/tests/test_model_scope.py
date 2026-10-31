@@ -337,6 +337,11 @@ def test_scope_transient_failure_retries_without_changing_catalog(scope):
 
 
 def test_router_scope_question_cannot_bypass_catalog_selector(monkeypatch):
+    from casepilot_api import collection_references
+
+    # This unit double isolates legacy routing; real reference authorization has PG tests.
+    monkeypatch.setattr(collection_references, "merge_references", lambda db, c, p: p)
+
     monkeypatch.setattr(conversations.settings, "agent_provider", "openai_compatible")
     monkeypatch.setattr(conversations, "_collection_gate", lambda *args, resolved_collection=None: None)
     monkeypatch.setattr(conversations, "_link_rewrite_round", lambda db, c, op, p: p)

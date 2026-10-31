@@ -131,7 +131,9 @@ def _project_sources(plan, context, item_field, base_type):
                     elif not ref.locator:
                         # The legacy blank locator is an explicit user-input alias.
                         # Its model-authored label/excerpt are never retained.
-                        user_ref = next((item for item in catalog if item.locator == "user_input"), None)
+                        user_ref = next(
+                            (item for item in catalog if item.locator == "user_input"), None
+                        )
                         if user_ref is None:
                             raise ValueError("planning_source_reference_invalid")
                         selected.append(user_ref)

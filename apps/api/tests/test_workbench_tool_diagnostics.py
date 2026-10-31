@@ -151,3 +151,48 @@ def test_selection_argument_snapshot_does_not_leak_into_other_tools():
     assert 'argument_base_version' not in specs['select_collection'].diagnostic_context()
     assert 'argument_base_version' not in specs['query_assets'].diagnostic_context()
     assert 'argument_base_version' not in bridge.completion_state()
+
+
+
+def test_plan_argument_error_is_actionable_without_leaking_raw_values():
+    from test_workbench_agent import action
+
+    from casepilot_api.workbench_tools import PlanArguments
+
+    applied = []
+    provider = Provider(
+        call("plan_work", "bad", json.dumps({"steps": ["PRIVATE_SENTINEL"],
+             "plan_actions": ["CASE_QUERY", "CASE_REUSE"]})),
+        call("plan_work", "fixed", json.dumps({"steps": ["Read", "Reuse"],
+             "plan_actions": ["CASE_QUERY", "CASE_REUSE"]})),
+        action,
+    )
+    result = run(provider, [ToolSpec("plan_work", "Plan", PlanArguments,
+        lambda args: applied.append(args) or {"planned": True}, effect="plan")])
+    assert len(applied) == 1
+    rejected = next(e for e in result.events if e["type"] == "tool_rejected")
+    assert rejected["diagnostic"]["argument_errors"] == [{"type": "value_error", "loc": [],
+        "code": "workbench_plan_step_count_mismatch"}]
+    assert "PRIVATE_SENTINEL" not in json.dumps(rejected)
+    outputs = [json.loads(x["output"]) for x in provider.requests[1]
+               if x.get("type") == "function_call_output"]
+    assert outputs[0]["error_code"] == "invalid_tool_arguments"
+    assert outputs[0]["argument_errors"] == rejected["diagnostic"]["argument_errors"]
+    assert outputs[0].get("_receipt") is None
+
+
+def test_argument_diagnostics_filter_unknown_paths_values_and_codes():
+    from casepilot_api.workbench_tool_diagnostics import safe_argument_errors
+
+    result = safe_argument_errors([{"type": "missing", "loc": ["plan", "PRIVATE_SENTINEL"],
+                                  "input": "PRIVATE_SENTINEL", "code": "PRIVATE_SENTINEL"}])
+    assert result == [{"type": "missing", "loc": ["plan", "unknown_field"]}]
+    assert safe_argument_errors(result) == result
+
+
+
+def test_argument_diagnostics_reject_nested_untrusted_type_values():
+    from casepilot_api.workbench_tool_diagnostics import safe_argument_errors
+
+    assert safe_argument_errors([{"type": {"PRIVATE": "value"}, "loc": [True, -1]}]) == [
+        {"type": "unknown", "loc": ["unknown_field", "unknown_field"]}]

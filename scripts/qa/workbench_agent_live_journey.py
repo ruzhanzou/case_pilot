@@ -52,6 +52,7 @@ TASKS = {
 }
 TOOLS = frozenset(
     {
+        "load_workbench_skill",
         "plan_work",
         "query_collections",
         "query_candidates",
@@ -302,6 +303,7 @@ def safe_code(value):
 def runtime_diagnostics(metadata):
     events = metadata.get("events")
     observed, counts = [], []
+    receipt_checks = []
     terminal = None
     completion = None
     final_kind, final_effect = None, None
@@ -309,6 +311,10 @@ def runtime_diagnostics(metadata):
         if not isinstance(event, dict):
             continue
         kind = event.get("type")
+        if "receipt_validation" in event:
+            from casepilot_api.workbench_receipts import safe_receipt_diagnostic
+
+            receipt_checks.append(safe_receipt_diagnostic(event["receipt_validation"]))
         if kind in {
             "run_failed",
             "run_completed",
@@ -369,6 +375,7 @@ def runtime_diagnostics(metadata):
         "final_effect": final_effect,
         "tool_events": observed,
         "query_returned_counts": counts or None,
+        "receipt_checks": receipt_checks or None,
     }
 
 

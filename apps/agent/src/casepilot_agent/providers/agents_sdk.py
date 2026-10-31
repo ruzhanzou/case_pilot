@@ -262,7 +262,10 @@ class AgentsSdkProvider:
         async def run_once():
             try:
                 return await asyncio.wait_for(
-                    Runner.run(agent, self._image_prompt(prompt, resolved_model), max_turns=1 if self.request_guard is not None else 3),
+                    Runner.run(
+                        agent, self._image_prompt(prompt, resolved_model),
+                        max_turns=1 if self.request_guard is not None else 3,
+                    ),
                     timeout,
                 )
             except TimeoutError as error:

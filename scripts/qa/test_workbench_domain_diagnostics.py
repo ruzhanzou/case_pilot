@@ -149,3 +149,24 @@ def test_dynamic_stage_contract_messages_are_not_added_as_general_prefixes(prefi
     result = safe_domain_failure(StageContractError(prefix + "private-secret"))
     assert result["code"] == "unclassified_domain_failure"
     assert "private-secret" not in json.dumps(result)
+
+
+def test_root_code_filter_retains_only_known_static_validator_codes():
+    from workbench_safe_diagnostics import safe_structured_failure
+
+    class ModelBehaviorError(Exception):
+        pass
+
+    error = ModelBehaviorError()
+    error.casepilot_safe_diagnostic = {
+        'stage': 'test_point.generated', 'schema': 'BatchTestPointPlan',
+        'exception_chain': ['ValidationError'],
+        'validation_errors': [
+            {'type': 'value_error', 'loc': [], 'domain_code': 'planning_feature_uncovered'},
+            {'type': 'value_error', 'loc': [], 'domain_code': 'private-secret'},
+        ],
+    }
+    result = safe_structured_failure(error)
+    assert result['validation_errors'][0]['domain_code'] == 'planning_feature_uncovered'
+    assert 'domain_code' not in result['validation_errors'][1]
+    assert 'private-secret' not in json.dumps(result)

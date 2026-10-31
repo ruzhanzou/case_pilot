@@ -138,6 +138,7 @@ def execute_workbench_continuation(event_id, *, session_factory=None):
     with engine.connect() as guard:
         if not guard.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": guard_key}):
             return {"status": "busy"}
+        phase = "claim"
         try:
             with factory() as db:
                 recover_claim(db, event_id)
@@ -147,12 +148,30 @@ def execute_workbench_continuation(event_id, *, session_factory=None):
                     return {"status": "ignored"}
                 run, event, token = claimed
                 if event.event_kind != "next_step":
-                    _observe(db, run, event, token)
+                    phase = "observe"
+                    # Keep the claim and authority locks when an observation
+                    # fails. Rolling back the whole transaction also erased the
+                    # running claim, leaving an already-delivered event pending.
+                    try:
+                        with db.begin_nested():
+                            _observe(db, run, event, token)
+                    except Exception as error:
+                        from casepilot_api.workbench_continuation_diagnostics import (
+                            continuation_failure,
+                        )
+
+                        diagnostic = continuation_failure(error, phase)
+                        event.status, event.receipt = "failed", diagnostic
+                        run.status = "failed"
+                        run.checkpoint = {**run.checkpoint,
+                            "error_code": "workbench_continuation_failed",
+                            "failure_diagnostic": diagnostic}
                     db.commit()
                     return {"status": run.status}
                 from fastapi import HTTPException
 
                 from casepilot_api.workbench_scope import restore_authorized_scope
+                phase = "restore"
                 try:
                     restore_authorized_scope(run, db.get(Conversation, run.conversation_id))
                 except HTTPException:
@@ -166,6 +185,7 @@ def execute_workbench_continuation(event_id, *, session_factory=None):
                 limits = {"segments": 1, "model_turns": settings.workbench_agent_max_turns,
                           "tool_calls": settings.workbench_agent_max_tool_calls,
                           "reserved_sdk_requests": settings.workbench_agent_max_turns}
+                phase = "reserve"
                 if not reserve_budget(db, run.id, limits):
                     event.status, event.receipt = "completed", {"error_code": "budget_exhausted"}
                     db.commit()
@@ -199,9 +219,11 @@ def execute_workbench_continuation(event_id, *, session_factory=None):
                                 or current.epoch != run.epoch
                                 or current.cursor != original_cursor)
 
+                phase = "segment"
                 run_workbench_turn(transaction, account, conversation, payload, settings,
                     durable_run=run, continuation_observation=observation,
                     reserve=lambda amounts: True, cancel_check=stopped)
+                phase = "commit"
                 desired = run.status
                 current = load_run(db, run_id, for_update=True)
                 if (current.cancelled_at or current.status in TERMINAL | {"paused_question"}
@@ -221,7 +243,10 @@ def execute_workbench_continuation(event_id, *, session_factory=None):
                 db.commit()
                 transaction.publish_committed_effects()
                 return {"status": desired}
-        except Exception:
+        except Exception as error:
+            from casepilot_api.workbench_continuation_diagnostics import continuation_failure
+
+            diagnostic = continuation_failure(error, phase)
             # Process loss (BaseException) is recovered with budgets still spent.
             # Ordinary execution/contract failures pause once, never hot-loop.
             with factory() as failure_db:
@@ -230,10 +255,11 @@ def execute_workbench_continuation(event_id, *, session_factory=None):
                 if (failed_event is not None and failed_event.status == "running"
                         and failed_run.status not in TERMINAL | {"paused_question"}):
                     failed_event.status = "failed"
-                    failed_event.receipt = {"error_code": "workbench_continuation_failed"}
+                    failed_event.receipt = diagnostic
                     failed_run.status = "failed"
                     failed_run.checkpoint = {**failed_run.checkpoint,
-                        "error_code": "workbench_continuation_failed"}
+                        "error_code": "workbench_continuation_failed",
+                        "failure_diagnostic": diagnostic}
                     failure_db.commit()
             return {"status": "failed", "error_code": "workbench_continuation_failed"}
         finally:

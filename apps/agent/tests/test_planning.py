@@ -177,7 +177,10 @@ def test_planning_batches_features_without_losing_ids_or_coverage():
             for f in features
         ]})
 
-    plan = build_planning(RequirementAnalysis(summary='登录'), {'user_input': '登录方式规则', 'evidence': []}, complete)
+    plan = build_planning(
+        RequirementAnalysis(summary='登录'),
+        {'user_input': '登录方式规则', 'evidence': []}, complete,
+    )
     assert sorted(seen) == [f'方式{i}' for i in range(5)]
     assert len({p['id'] for p in plan['test_points']}) == 5
     feature_ids = {f['id'] for f in plan['feature_points']}

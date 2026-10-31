@@ -91,6 +91,11 @@ def test_user_examples_route_to_module_generation_and_complete_task_chain():
 
 
 def test_empty_module_creates_a_persisted_module_without_starting_generation(monkeypatch):
+    from casepilot_api import collection_references
+
+    # This unit double isolates legacy routing; real reference authorization has PG tests.
+    monkeypatch.setattr(collection_references, "merge_references", lambda db, c, p: p)
+
     from casepilot_api import conversations
     from casepilot_api.schemas import ConversationMessageCreate, MindMapNote
 

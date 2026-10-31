@@ -1,4 +1,3 @@
-from casepilot_api.planning_review import router as planning_review_router
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -13,12 +12,14 @@ from casepilot_api.auth import ensure_demo_account
 from casepilot_api.auth import router as auth_router
 from casepilot_api.case_management import router as case_management_router
 from casepilot_api.cases import router as candidate_router
+from casepilot_api.collection_references import router as collection_references_router
 from casepilot_api.config import get_settings
 from casepilot_api.conversations import router as conversation_router
 from casepilot_api.database import check_database
 from casepilot_api.generation import router as generation_router
 from casepilot_api.integrations import router as integrations_router
 from casepilot_api.knowledge import router as knowledge_router
+from casepilot_api.planning_review import router as planning_review_router
 from casepilot_api.workbench_events import router as workbench_events_router
 
 settings = get_settings()
@@ -48,6 +49,7 @@ app.include_router(auth_router)
 app.include_router(case_management_router)
 app.include_router(generation_router)
 app.include_router(knowledge_router)
+app.include_router(collection_references_router)
 app.include_router(candidate_router)
 app.include_router(conversation_router)
 app.include_router(workbench_events_router)

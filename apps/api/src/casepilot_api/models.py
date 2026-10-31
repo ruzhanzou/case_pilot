@@ -144,10 +144,25 @@ class CaseCollection(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
+    reference_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     mind_map_notes: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CollectionReference(Base):
+    __tablename__ = "collection_references"
+
+    collection_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("case_collections.id", ondelete="CASCADE"), primary_key=True
+    )
+    source_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("knowledge_sources.id"), primary_key=True
+    )
 
 
 class TestCase(TimestampMixin, Base):
@@ -877,6 +892,9 @@ class CaseChangeSet(TimestampMixin, Base):
         ForeignKey("generation_jobs.id", ondelete="SET NULL"),
         index=True,
     )
+    reference_binding: Mapped[dict] = mapped_column(
+        JSONB, default=dict, server_default="{}", nullable=False
+    )
     instruction: Mapped[str] = mapped_column(Text, nullable=False)
     scope: Mapped[str] = mapped_column(String(32), default="current", nullable=False)
     status: Mapped[str] = mapped_column(String(24), default="generating", nullable=False)
@@ -919,6 +937,9 @@ class KnowledgeSource(TimestampMixin, Base):
     account_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("accounts.id", ondelete="SET NULL"),
+    )
+    reference_revision: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
     )
     name: Mapped[str] = mapped_column(String(240), nullable=False)
     kind: Mapped[str] = mapped_column(String(32), default="upload", nullable=False)
@@ -1217,9 +1238,13 @@ class PlanningReview(TimestampMixin, Base):
     __table_args__ = (CheckConstraint("requests_used >= 0 AND requests_used <= 2",
                                     name="ck_planning_review_budget"),)
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
-    conversation_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), index=True)
+    conversation_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), index=True
+    )
     account_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("accounts.id"))
-    brief_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("workspace_test_briefs.id"))
+    brief_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("workspace_test_briefs.id")
+    )
     base_version: Mapped[int] = mapped_column(Integer)
     binding: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(32), default="audit_pending")

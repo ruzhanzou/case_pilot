@@ -551,7 +551,7 @@ def run_compact(request, provider, execute_stage, on_batch, count):
             continue
         snapshot = source["snapshot"]
         candidate = TestCaseDraft.model_validate({**snapshot, "id": f"TC-{point.id}-1",
-            "module": snapshot.get("module") or planned_module(point, features),
+            "module": snapshot.get("module") or "",
             "test_point_ids": [point.id],
             "source_refs": [reuse_ref(decision).model_dump()]})
         validate_case_content(candidate)

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { sourceRefText } from "@/lib/source-ref-text";
+import { ReferenceSnapshot } from "@/components/reference-snapshot";
 import type { CaseChangeItemDto, CaseChangeSetDto, TestCaseDto } from "@/lib/casepilot-api";
 import { useI18n } from "@/lib/i18n";
 
@@ -51,6 +52,7 @@ export function CaseCollectionChanges({ cases, changeSet, acceptedFields, busy, 
 
   return (
     <section data-status={changeSet.status} className="collection-changes collection-changes--inline" aria-label={pick("Review pending case changes", "审阅待确认用例变更")}>
+      <ReferenceSnapshot binding={changeSet.reference_binding} />
       <div className="collection-changes__heading"><strong>{readOnly ? pick("Change result", "变更结果") : pick("Pending changes", "待确认变更")}</strong><span className="collection-changes__badge">{changeSet.status === "generating" ? pick("Generating preview", "改写预览生成中") : changeSet.status === "superseded" ? pick("Superseded", "已有新版本") : changeSet.status === "no_changes" ? (needsCompletionCount ? pick("Needs attention", "待完善") : pick("No changes needed", "无需修改")) : changeSet.status === "applied" ? pick("Applied", "已应用") : changeSet.status === "rejected" ? pick("Discarded", "已丢弃") : changeSet.status === "conflict" ? pick("Version conflict", "版本冲突") : pick("Pending confirmation", "待确认")}</span></div>
       {!!needsCompletionCount && <div role="status"><p>{pick(`${needsCompletionCount} cases did not complete this edit. Their previous content is preserved and cannot be accepted as this result.`, `${needsCompletionCount} 条用例未完成本轮修改，已保留上一版内容，不能作为本轮结果采纳。`)}</p><div className="collection-changes__actions">{onRetryIncomplete && <button type="button" disabled={busy} onClick={() => onRetryIncomplete(incompleteItems.map(item => item.ref))}>{pick("Prepare retry instruction", "填写重试指令")}</button>}{changeSet.status === "no_changes" && <button type="button" disabled={busy} onClick={() => void onReject()}>{pick("Discard incomplete result", "丢弃未完成结果")}</button>}</div></div>}
       {changeSet.status === "generating" && <p role="status" data-testid="rewrite-batch-preview">{pick("Completed batches appear here. Review and accept after all batches finish.", "已完成的批次会逐批展示；全部改写完成后，即可审阅并采纳。")}</p>}

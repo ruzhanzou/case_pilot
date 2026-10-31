@@ -24,6 +24,7 @@ EVENT_TYPES = TERMINAL | {
 }
 # Names/codes come from server runtime, never arbitrary error messages or arguments.
 TOOLS = {
+    "load_workbench_skill",
     "get_workspace_context", "query_cases", "query_assets", "query_collections",
     "plan_work", "plan_test_points", "prepare_rewrite", "prepare_delete",
     "review_cases", "deduplicate_cases", "analyze_coverage", "answer_question",
@@ -35,6 +36,7 @@ TOOLS = {
     "query_uploaded_cases", "preview_uploaded_cases",
 }
 ERROR_CODES = {
+    "agent_execution_unverified",
     "agent_cancelled", "agent_tool_failed", "agent_stopped", "invalid_tool_arguments",
     "tool_not_allowed", "agent_tool_budget_exhausted", "agent_turn_budget_exhausted",
     "agent_invalid_tool_call", "agent_tool_call_id_conflict", "agent_final_effect_invalid",
@@ -72,6 +74,10 @@ def safe_event(event):
     if event["type"] in {"tool_rejected", "tool_failed"} and "diagnostic" in event:
         from casepilot_api.workbench_tool_diagnostics import safe_tool_diagnostic
         clean["diagnostic"] = safe_tool_diagnostic(event["diagnostic"])
+    if event["type"] in TERMINAL | {"final_correction"} and "receipt_validation" in event:
+        from casepilot_api.workbench_receipts import safe_receipt_diagnostic
+
+        clean["receipt_validation"] = safe_receipt_diagnostic(event["receipt_validation"])
     if event["type"] in TERMINAL:
         if "completion" in event:
             from casepilot_api.workbench_tool_diagnostics import safe_tool_diagnostic

@@ -561,7 +561,8 @@ class TestBriefContent(BaseModel):
             "reserved_reuse_point_budget_requires_clarification",
         }
         scope_clarification = (
-            self.planning.get("pending_planning_clarification") == {"reason": "coverage_scope_limit"}
+            self.planning.get("pending_planning_clarification")
+            == {"reason": "coverage_scope_limit"}
             and (self.planning.get("coverage_review") or {}).get("status") ==
                 "pending_independent_review"
             and "coverage_scope_limit" in
@@ -891,6 +892,7 @@ class CaseChangeSetView(BaseModel):
     instruction: str
     scope: str
     status: str
+    reference_binding: dict = Field(default_factory=dict)
     items: list[dict]
     created_at: datetime
     applied_at: datetime | None

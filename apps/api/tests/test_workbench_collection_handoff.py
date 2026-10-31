@@ -144,6 +144,7 @@ def test_handoff_never_cancels_unrelated_or_confirmed_proposals(
                                    context={"workbench_collection_proposal": deepcopy(proposal)})
     run_id, root_message_id = uuid4(), uuid4()
     run = SimpleNamespace(id=run_id, root_message_id=root_message_id, epoch=1, cursor=0,
+        checkpoint={},
         plan={"id": f"{run_id}:1", "root_message_id": str(root_message_id), "epoch": 1,
               "steps": [{"action": "CASE_REUSE", "description": "Reuse",
                          "depends_on": [], "status": "pending"}]})

@@ -1,5 +1,6 @@
 export function agentToolLabels(pick: (english: string, chinese: string) => string): Record<string, string> {
   return {
+    load_workbench_skill: pick("Load chosen skill", "加载所选 Skill"),
     get_workspace_context: pick("Read workspace", "读取工作区"), query_cases: pick("Search cases", "检索用例"),
     query_assets: pick("Search reusable assets", "检索可复用资产"), query_collections: pick("Query collections", "查询集合"),
     query_uploaded_cases: pick("Query historical table cases", "历史表用例查询"),

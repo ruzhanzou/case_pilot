@@ -263,7 +263,14 @@ async def test_uploaded_preview_revalidates_observation_versions_and_ownership(
             with pytest.raises(HTTPException) as error:
                 bridge.preview_uploaded_cases(UploadedPreviewArguments(sources=[exact]))
             assert error.value.status_code == 409
-            assert error.value.detail == "workbench_source_changed"
+            assert error.value.detail == "reference_context_changed"
+            # A newly observed reference context still cannot use the old row version.
+            refreshed = WorkbenchTools(db, owner, conv, ConversationMessageCreate(
+                content="Read updated history", document_ids=[UUID(doc)]))
+            with pytest.raises(HTTPException) as row_error:
+                refreshed.preview_uploaded_cases(UploadedPreviewArguments(sources=[exact]))
+            assert row_error.value.status_code == 409
+            assert row_error.value.detail == "workbench_source_changed"
             assert (
                 db.scalar(
                     select(func.count())

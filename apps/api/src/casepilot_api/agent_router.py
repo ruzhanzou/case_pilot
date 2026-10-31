@@ -11,6 +11,12 @@ from casepilot_api.field_constraints import (
     PRIORITY_ASSIGNMENT_DESCRIPTION,
     priority_assignment_error,
 )
+from casepilot_api.model_client import (
+    compatible_model,
+    managed_model_client,
+    optional_model_settings,
+    structured_model_settings,
+)
 
 IntentName = Literal[
     "CASE_GENERATE",
@@ -25,12 +31,7 @@ IntentName = Literal[
     "UNRESOLVED",
 ]
 
-from casepilot_api.model_client import (
-    compatible_model,
-    managed_model_client,
-    optional_model_settings,
-    structured_model_settings,
-)
+
 
 logger = logging.getLogger(__name__)
 

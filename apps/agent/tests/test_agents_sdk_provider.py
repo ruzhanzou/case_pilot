@@ -115,7 +115,11 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
         {} if api_type == "responses" else {"response_format": {"type": "json_object"}}
     )
     assert captured["agent"]["model_settings"].store is (False if api_type == "responses" else None)
-    expected_budget = 32048 if stage == "test_case.generated" else 16384 if stage in {"test_point.generated", "feature.generated"} else (8192 if api_type == "responses" else None)
+    expected_budget = (
+        32048 if stage == "test_case.generated" else 16384
+        if stage in {"test_point.generated", "feature.generated"}
+        else (8192 if api_type == "responses" else None)
+    )
     assert captured["agent"]["model_settings"].max_tokens == expected_budget
     assert output_schema.strict_json_schema is False
     assert captured["tracing_disabled"] is True
@@ -234,9 +238,6 @@ def test_agents_sdk_provider_streams_text_deltas(
     openai = ModuleType("openai")
 
     class FakeClient:
-        async def close(self):
-            pass
-
         def __init__(self, **kwargs) -> None:
             captured["client"] = kwargs
 
@@ -560,6 +561,7 @@ def test_bounded_review_guard_runs_before_http_and_never_retries(monkeypatch):
     import httpx
     from agents import Runner
     from agents.exceptions import ModelBehaviorError
+
     from casepilot_agent.planning_review import Review
     from casepilot_agent.providers import agents_sdk
 

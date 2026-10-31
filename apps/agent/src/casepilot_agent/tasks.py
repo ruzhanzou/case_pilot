@@ -89,13 +89,50 @@ settings = get_settings()
 
 
 def constrain_generated_modules(
-    candidates: list[dict[str, Any]], target_module: str, *, exact: bool = False
+    candidates: list[dict[str, Any]], target_module: str, *, exact: bool = False,
+    confirmed_plan: dict[str, Any] | None = None
 ) -> None:
     """Keep generated cases inside the requested module boundary."""
     target_module = target_module.strip("/")
     if not target_module:
         return
+    # Collection membership is independent of the source case's module. Only
+    # server-confirmed point/source bindings can exempt a raw reuse (or a
+    # modification that did not authorize module changes) from generation layout.
+    protected = {}
+    plan = confirmed_plan or {}
+    from casepilot_agent.output_obligations import approved_catalog
+
+    allowed_sources = {source["key"] for source in approved_catalog(plan)}
+    choices = plan.get("reuse", {}).get("user_choices", {})
+    reuse = plan.get("reuse", {})
+    decisions = [] if reuse.get("strategy") == "fresh" else reuse.get("decisions", [])
+    bindings = [*plan.get("reserved_reuse_outputs", []), *decisions]
+    for binding in bindings:
+        action = binding.get("action")
+        if action not in {"reuse", "modify"}:
+            continue
+        if action == "modify" and "module" in binding.get("changed_fields", []):
+            continue
+        source = binding.get("source")
+        if (not source or source.get("key") not in allowed_sources
+                or not isinstance(source.get("snapshot"), dict)):
+            continue
+        ids = binding.get("point_ids") or [binding.get("point_id")]
+        module = str(source["snapshot"].get("module") or "")
+        for point in ids:
+            if not isinstance(point, str) or choices.get(point) in {"new", "exclude"}:
+                continue
+            if point in protected and protected[point] != module:
+                raise ValueError("reuse_module_binding_conflict")
+            protected[point] = module
     for candidate in candidates:
+        modules = {protected[p] for p in candidate.get("test_point_ids", []) if p in protected}
+        if len(modules) > 1:
+            raise ValueError("reuse_module_binding_conflict")
+        if modules:
+            candidate["module"] = modules.pop()
+            continue
         proposed_module = str(candidate.get("module") or "").strip("/")
         if exact or (
             proposed_module != target_module
@@ -241,7 +278,8 @@ def recover_unclaimed_deliveries() -> dict[str, int]:
     review_waiting = exists(select(reviews.c.id).where(
         cast(reviews.c.id, String) == task_outbox.c.task_args[0].astext,
         or_(and_(task_outbox.c.task_args[1].astext == "audit", reviews.c.status == "audit_pending"),
-            and_(task_outbox.c.task_args[1].astext == "revision", reviews.c.status == "revision_pending")),
+            and_(task_outbox.c.task_args[1].astext == "revision",
+                 reviews.c.status == "revision_pending")),
     ))
     with store.connection() as connection:
         ids = list(
@@ -324,7 +362,9 @@ def dispatch_task_outbox() -> dict[str, int]:
                     args=list(row["task_args"]),
                     task_id=row["task_id"],
                     **({"queue": "workbench"}
-                       if row["task_name"] in {"casepilot.workbench.continue", "casepilot.workbench.planning_review"} else {}),
+                       if row["task_name"] in {
+                           "casepilot.workbench.continue", "casepilot.workbench.planning_review",
+                       } else {}),
                 )
                 connection.execute(
                     update(task_outbox)
@@ -2270,7 +2310,8 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
                 snapshots = [draft.model_dump(mode="json") for draft in drafts]
                 target_module = str(payload.get("target_module_path") or "").strip("/")
                 constrain_generated_modules(
-                    snapshots, target_module, exact=bool(payload.get("target_module_exact"))
+                    snapshots, target_module, exact=bool(payload.get("target_module_exact")),
+                    confirmed_plan=request.confirmed_plan
                 )
                 with store.connection() as connection:
                     lock_active_job(store, connection, parsed_job_id)
@@ -2328,6 +2369,7 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
             constrain_generated_modules(
                 output["test_cases"], target_module_path,
                 exact=bool(payload.get("target_module_exact")),
+                confirmed_plan=request.confirmed_plan,
             )
         quality_input = {
             "feature_points": output["feature_points"],
@@ -3623,7 +3665,7 @@ def cleanup_expired_knowledge() -> dict[str, int]:
                 ).where(
                     knowledge_documents.c.expires_at.is_not(None),
                     knowledge_documents.c.expires_at < now,
-                )
+                ).with_for_update(skip_locked=True)
             ).mappings()
         )
         document_ids = [row["id"] for row in rows]

@@ -64,6 +64,7 @@ DOMAIN_CODES = {
     "reserved_reuse_output_count_mismatch": "reserved_reuse_output_count_mismatch",
     "reserved_reuse_plan_changed": "reserved_reuse_plan_changed",
     "reserved_reuse_source_revoked": "reserved_reuse_source_revoked",
+    "reuse_module_binding_conflict": "reuse_module_binding_conflict",
     "reuse_plan_changed_reanalyze_required": "reuse_plan_changed_reanalyze_required",
     "stage_slot_mismatch": "stage_slot_mismatch",
     "supported_audit_has_replacement": "supported_audit_has_replacement",

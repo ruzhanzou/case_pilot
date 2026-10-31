@@ -75,6 +75,24 @@ def safe_coverage_metadata(value):
     return result
 
 
+_ROOT_CODES = COVERAGE_VALIDATION_CODES | frozenset({
+    "planning_point_batch_size_invalid", "planning_duplicate_test_point",
+    "planning_feature_reference_invalid", "planning_feature_uncovered",
+})
+
+
+def safe_root_code(context):
+    """Select a static validator code, never emit its dynamic message or input."""
+    error = context.get("error") if isinstance(context, dict) else None
+    args = error.args if type(error) is ValueError else ()
+    value = args[0] if len(args) == 1 and type(args[0]) is str else None
+    if value in _ROOT_CODES:
+        return value
+    if value is not None and value.startswith("planning_feature_uncovered:"):
+        return "planning_feature_uncovered"
+    return None
+
+
 def structured_failure(error, *, stage, result_type):
     def label(value):
         valid = isinstance(value, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]{0,79}", value)
@@ -91,6 +109,7 @@ def structured_failure(error, *, stage, result_type):
             errors = current.errors(include_url=False, include_context=True, include_input=False)
             for item in errors[:12]:
                 context = item.get("ctx")
+                root_code = safe_root_code(context) if item["type"] == "value_error" else None
                 counts = ({key: value for key, value in context.items()
                            if key in _COUNTS and type(value) is int and 0 <= value <= 10000}
                           if isinstance(context, dict) and item["type"] in _REUSE_ERRORS else {})
@@ -99,6 +118,7 @@ def structured_failure(error, *, stage, result_type):
                             and item["type"] in COVERAGE_VALIDATION_CODES else {})
                 diagnostic["validation_errors"].append({
                     **({"metadata": metadata} if metadata else {}),
+                    **({"domain_code": root_code} if root_code else {}),
                     "type": item["type"] if item["type"] in _TYPES else "other_validation_error",
                     **({"counts": counts} if counts else {}),
                     "loc": [part if type(part) is int and 0 <= part <= 10000

@@ -29,3 +29,14 @@ test("agent completion does not overwrite an actual queued or running draft job"
     assert.equal(verifiedAgentEffect(activity),"prepare");
   }
 });
+
+test("turn completion and server business outcome remain distinct", () => {
+ const data={run_id:"current",status:"completed",events:[],receipts:[],final:{kind:"answer",effect:"none",message:"Started rewriting",receipt_ids:[]},business_outcome:{activity:"not_executed",authority:"server_tool_records",run_id:"current",receipt_ids:[]}};
+ const parsed=parseAgentActivity(data)!;
+ assert.equal(parsed.status,"completed");
+ assert.equal(parsed.business_outcome?.activity,"not_executed");
+ assert.equal(verifiedAgentEffect(parsed),null);
+ for(const change of [{activity:"completed"},{run_id:"foreign"},{activity:"preparation_verified",receipt_ids:["old"]},{authority:"model_claim"}]) {
+  assert.equal(parseAgentActivity({...data,business_outcome:{...data.business_outcome,...change}})?.business_outcome,undefined);
+ }
+});

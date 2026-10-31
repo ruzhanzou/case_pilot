@@ -169,7 +169,8 @@ def normalize_sources(case_context, evidence):
             sources[key] = {
                 "key": key,
                 "canonical_ref": (f"upload:{source['document_id']}:"
-                    f"{sha256(str(source.get('sheet', '')).encode()).hexdigest()[:16]}:{case['row']}"),
+                    f"{sha256(str(source.get('sheet', '')).encode()).hexdigest()[:16]}:"
+                    f"{case['row']}"),
                 "snapshot": case,
                 "kind": "excel",
                 "case_id": key,

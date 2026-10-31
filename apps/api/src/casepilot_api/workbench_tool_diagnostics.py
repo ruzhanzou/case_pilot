@@ -1,9 +1,11 @@
 """Bounded server-only tool diagnostics; never serialize arguments or exception text."""
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 REJECTION_CODES = frozenset(
     {
+        "skill_version_changed",
         "selection_version_conflict",
         "plan_required",
         "plan_authority_changed",
@@ -18,6 +20,9 @@ REJECTION_CODES = frozenset(
 )
 HTTP_CODES = frozenset(
     {
+        "reference_context_changed",
+        "skill_version_changed",
+        "reference_source_unavailable",
         "workbench_selection_version_conflict",
         "workbench_selection_target_conflict",
         "workbench_source_changed",
@@ -72,6 +77,7 @@ EXCEPTIONS = frozenset(
 COMPLETION_CODES = frozenset(
     {
         "goal_unverified",
+        "read_result_only",
         "goal_pending",
         "goal_satisfied",
         "review_required",
@@ -131,6 +137,8 @@ def safe_tool_diagnostic(value):
     status = value.get("http_status")
     if type(status) is int and 400 <= status <= 599:
         clean["http_status"] = status
+    if isinstance(value.get("argument_errors"), list):
+        clean["argument_errors"] = safe_argument_errors(value["argument_errors"])
     return clean
 
 
@@ -148,3 +156,48 @@ def context_diagnostic(callback):
         return safe_tool_diagnostic(callback())
     except Exception:
         return {"diagnostic_unavailable": True}
+
+
+_ARGUMENT_FIELDS = frozenset({
+    "plan", "steps", "plan_actions", "strategy", "sources", "ref", "version",
+    "base_version", "collection_id", "active_collection_id", "selection_policy",
+    "search", "scope", "limit", "offset", "name", "skill", "skill_id", "skill_version",
+    "query", "document_ids", "source_ids", "source_id", "mode", "operation",
+})
+_ARGUMENT_TYPES = frozenset({
+    "missing", "extra_forbidden", "literal_error", "value_error", "json_invalid",
+    "string_type", "list_type", "dict_type", "int_type", "int_parsing", "bool_type",
+    "too_short", "too_long", "greater_than_equal", "less_than_equal", "uuid_parsing",
+    "string_too_short", "string_too_long", "model_type",
+})
+
+
+def safe_argument_errors(items):
+    clean = []
+    for item in items[:12] if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        loc = item.get("loc")
+        value = {"type": item.get("type") if type(item.get("type")) is str
+                 and item["type"] in _ARGUMENT_TYPES
+                 else "unknown", "loc": [
+                     part if type(part) is int and 0 <= part <= 10000 else
+                     part if type(part) is str and part in _ARGUMENT_FIELDS else "unknown_field"
+                     for part in loc[:12]] if isinstance(loc, (list, tuple)) else []}
+        if item.get("code") == "workbench_plan_step_count_mismatch":
+            value["code"] = "workbench_plan_step_count_mismatch"
+        clean.append(value)
+    return clean
+
+
+def argument_diagnostic(error):
+    if not isinstance(error, ValidationError):
+        return []
+    values = []
+    for item in error.errors(include_input=False, include_context=True, include_url=False)[:12]:
+        cause = (item.get("ctx") or {}).get("error")
+        args = cause.args if type(cause) is ValueError else ()
+        code = ("workbench_plan_step_count_mismatch" if args ==
+                ("workbench_plan_step_count_mismatch",) else None)
+        values.append({"type": item["type"], "loc": item["loc"], "code": code})
+    return safe_argument_errors(values)

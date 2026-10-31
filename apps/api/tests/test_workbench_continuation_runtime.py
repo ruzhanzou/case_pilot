@@ -336,3 +336,60 @@ def test_busy_celery_delivery_retries_same_event_instead_of_acknowledging(monkey
     assert retries == [{"countdown": 1}]
     assert executor.continue_workbench.run(identifier) == {"status": "completed"}
     assert calls == [identifier, identifier]
+
+
+@pytest.mark.asyncio
+async def test_failed_segment_persists_safe_diagnostic_and_never_resumes(monkeypatch):
+    import json
+
+    from casepilot_api import workbench_tools
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        cid, _, pending = await pending_segment(client)
+
+    def failed(*args, **kwargs):
+        raise ValueError("synthetic-private-sql-parameter")
+
+    monkeypatch.setattr(workbench_tools, "run_workbench_turn", failed)
+    assert (await execute(pending))["status"] == "failed"
+    state = run_state(cid)
+    diagnostic = state["checkpoint"]["failure_diagnostic"]
+    assert diagnostic["phase"] == "segment"
+    assert diagnostic["exception_class"] == "ValueError"
+    assert diagnostic["domain_code"] == "unknown"
+    assert "synthetic-private" not in json.dumps(diagnostic)
+    with get_session_factory()() as db:
+        event = db.get(WorkbenchContinuation, pending)
+        assert event.status == "failed"
+        assert event.receipt == diagnostic
+    assert (await execute(pending))["status"] == "ignored"
+    assert run_state(cid)["cursor"] == state["cursor"]
+
+
+@pytest.mark.asyncio
+async def test_observation_failure_rolls_back_partial_work_but_keeps_failed_claim(monkeypatch):
+    from casepilot_api import workbench_run_executor
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        cid, _, pending = await pending_segment(client)
+    with get_session_factory()() as db:
+        event = db.get(WorkbenchContinuation, pending)
+        event.event_kind = "job_completed"
+        db.commit()
+
+    def broken_observation(db, run, event, token):
+        run.cursor = 19
+        db.flush()
+        raise ValueError("unbound_workbench_job")
+
+    monkeypatch.setattr(workbench_run_executor, "_observe", broken_observation)
+    assert (await execute(pending))["status"] == "failed"
+    state = run_state(cid)
+    assert state["cursor"] == 0
+    diagnostic = state["checkpoint"]["failure_diagnostic"]
+    assert diagnostic["phase"] == "observe"
+    assert diagnostic["domain_code"] == "unbound_workbench_job"
+    with get_session_factory()() as db:
+        event = db.get(WorkbenchContinuation, pending)
+        assert event.status == "failed" and event.receipt == diagnostic
+    assert (await execute(pending))["status"] == "ignored"

@@ -12,6 +12,11 @@ from casepilot_api.workbench_tools import WorkbenchTools
 
 @pytest.fixture
 def workspace(monkeypatch):
+    from casepilot_api import collection_references
+
+    # Only identity projection is under test; no reference or revision DB exists here.
+    monkeypatch.setattr(collection_references, "reference_context", lambda *a: {})
+    monkeypatch.setattr(collection_references, "assert_reference_binding", lambda *a, **k: None)
     return selection_workspace.__wrapped__(monkeypatch)
 
 

@@ -1,6 +1,7 @@
 import json
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+import pytest
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from casepilot_agent.providers.safe_diagnostics import structured_failure
 
@@ -33,3 +34,28 @@ def test_diagnostics_bound_cyclic_exception_chain_and_untrusted_labels():
     data = structured_failure(error, stage="bad label / body", result_type=Result)
     assert data["stage"] == "unrecognized"
     assert data["exception_chain"] == ["ValueError"]
+
+
+@pytest.mark.parametrize("message, expected", [
+    ("planning_point_batch_size_invalid", "planning_point_batch_size_invalid"),
+    ("planning_duplicate_test_point", "planning_duplicate_test_point"),
+    ("planning_feature_reference_invalid", "planning_feature_reference_invalid"),
+    ("planning_feature_uncovered:SYNTHETIC_PRIVATE_SENTINEL", "planning_feature_uncovered"),
+    ("planning_boundary_axis_invalid", "planning_boundary_axis_invalid"),
+    ("SYNTHETIC_PRIVATE_SENTINEL", None),
+])
+def test_root_validator_codes_preserve_failure_without_leaking_message(message, expected):
+    class Batch(BaseModel):
+        count: int
+
+        @model_validator(mode="after")
+        def validate_batch(self):
+            raise ValueError(message)
+
+    with pytest.raises(ValidationError) as raised:
+        Batch.model_validate({"count": 1})
+    diagnostic = structured_failure(raised.value, stage="test_point.generated", result_type=Batch)
+    item = diagnostic["validation_errors"][0]
+    assert item["type"] == "value_error" and item["loc"] == []
+    assert item.get("domain_code") == expected
+    assert "SYNTHETIC_PRIVATE_SENTINEL" not in json.dumps(diagnostic)
