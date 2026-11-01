@@ -98,7 +98,9 @@ def test_parallel_out_of_order_batches_publish_stable_ids_and_exact_total_budget
     result = build_planning(
         RequirementAnalysis(summary="50条用例"),
         {"user_input": "合成登录需求：验证规则和所请求的测试点数量。"},
-        complete, target_count=50, on_progress=publish
+        complete,
+        target_count=50,
+        on_progress=publish,
     )
     assert sum(quotas) == 50
     assert len(result["test_points"]) == 50
@@ -138,7 +140,8 @@ def test_failure_does_not_publish_invalid_batch_or_drop_completed_snapshot():
         build_planning(
             RequirementAnalysis(summary="登录"),
             {"user_input": "合成登录需求：验证规则和所请求的测试点数量。"},
-            complete, on_progress=publish,
+            complete,
+            on_progress=publish,
         )
     assert len(snapshots[-1]["test_points"]) == 3
     assert all(
@@ -256,8 +259,11 @@ def test_large_document_features_are_bounded_parallel_and_keep_source_order():
             release.set()
 
     result = build_planning(
-        RequirementAnalysis(summary="全部需求"), {"evidence": evidence}, complete,
-        analyses, on_feature_progress=publish,
+        RequirementAnalysis(summary="全部需求"),
+        {"evidence": evidence},
+        complete,
+        analyses,
+        on_feature_progress=publish,
     )
     assert peak == 3
     assert progress == sorted(progress)
@@ -273,8 +279,7 @@ def test_large_document_features_are_bounded_parallel_and_keep_source_order():
 def test_repeated_features_share_point_budget_without_dropping_rules_or_evidence():
     point_inputs = []
     evidence = [{"label": str(i), "excerpt": str(i) * 18000} for i in range(3)]
-    analyses = [RequirementAnalysis(summary="登录", business_rules=[f"边界{i}"])
-                for i in range(3)]
+    analyses = [RequirementAnalysis(summary="登录", business_rules=[f"边界{i}"]) for i in range(3)]
 
     def complete(stage, instruction, payload, result_type):
         if stage == "feature.generated":
@@ -286,8 +291,7 @@ def test_repeated_features_share_point_budget_without_dropping_rules_or_evidence
         point_inputs.append(payload)
         return points(payload, fill_budget=True)
 
-    result = build_planning(analyses[0], {"evidence": evidence}, complete, analyses,
-                            target_count=3)
+    result = build_planning(analyses[0], {"evidence": evidence}, complete, analyses, target_count=3)
     assert len(point_inputs) == 1
     assert point_inputs[0]["batch_count"] == 3
     assert point_inputs[0]["context"]["evidence"] == evidence
@@ -302,14 +306,16 @@ def test_repeated_features_share_point_budget_without_dropping_rules_or_evidence
 def test_consolidation_preserves_bounded_groups_when_combined_evidence_is_too_large(monkeypatch):
     from casepilot_agent import planning
 
-    monkeypatch.setattr(planning, 'MAX_CONSOLIDATED_EVIDENCE_CHARS', 18000)
+    monkeypatch.setattr(planning, "MAX_CONSOLIDATED_EVIDENCE_CHARS", 18000)
     original, groups = [], []
     for index in range(2):
         feature = features(1).feature_points[0]
-        feature.id = f'FP-{index}'
+        feature.id = f"FP-{index}"
         original.append(feature)
-        common = {'requirement': RequirementAnalysis(summary='登录').model_dump(),
-                  'context': {'evidence': [{'label': str(index), 'excerpt': 'x' * 18000}]}}
+        common = {
+            "requirement": RequirementAnalysis(summary="登录").model_dump(),
+            "context": {"evidence": [{"label": str(index), "excerpt": "x" * 18000}]},
+        }
         groups.append((common, [feature]))
     merged, bounded = planning.consolidate_feature_groups(original, groups, {})
     assert merged is original
@@ -320,56 +326,77 @@ def test_only_verified_unambiguous_rule_labels_normalize_feature_names():
     from casepilot_agent.planning import source_rule_name
 
     feature = features(1).feature_points[0]
-    feature.requirement_refs = ['RULE-1']
-    batch = {'evidence': [{'excerpt': 'RULE-1: 连续5次错误锁定15分钟。\nRULE-10: 其他规则。'}]}
-    assert source_rule_name(feature, batch) == 'RULE-1 连续5次错误锁定15分钟'
-    assert source_rule_name(feature, {'evidence': [{'excerpt': 'RULE-10: 其他规则。'}]}) is None
-    assert source_rule_name(feature, {'evidence': [
-        {'excerpt': '样例记录，适用规则RULE-1：连续5次错误锁定15分钟。此为样例。'}
-    ]}) == 'RULE-1 连续5次错误锁定15分钟'
-    batch['evidence'].append({'excerpt': 'RULE-1: 连续3次错误锁定10分钟。'})
+    feature.requirement_refs = ["RULE-1"]
+    batch = {"evidence": [{"excerpt": "RULE-1: 连续5次错误锁定15分钟。\nRULE-10: 其他规则。"}]}
+    assert source_rule_name(feature, batch) == "RULE-1 连续5次错误锁定15分钟"
+    assert source_rule_name(feature, {"evidence": [{"excerpt": "RULE-10: 其他规则。"}]}) is None
+    assert (
+        source_rule_name(
+            feature,
+            {
+                "evidence": [
+                    {"excerpt": "样例记录，适用规则RULE-1：连续5次错误锁定15分钟。此为样例。"}
+                ]
+            },
+        )
+        == "RULE-1 连续5次错误锁定15分钟"
+    )
+    batch["evidence"].append({"excerpt": "RULE-1: 连续3次错误锁定10分钟。"})
     assert source_rule_name(feature, batch) is None  # Conflicting definitions must survive.
-    feature.requirement_refs = ['RULE-1', 'RULE-2']
+    feature.requirement_refs = ["RULE-1", "RULE-2"]
     assert source_rule_name(feature, batch) is None
 
 
 def test_explicit_point_quantity_rejects_short_batches():
     def complete(stage, instruction, payload, result_type):
-        if stage == 'feature.generated': return features(2)
+        if stage == "feature.generated":
+            return features(2)
         return points(payload)  # Only two, although user explicitly requested four.
-    with pytest.raises(ValueError, match='planning_point_batch_size_invalid'):
+
+    with pytest.raises(ValueError, match="planning_point_batch_size_invalid"):
         build_planning(
-            RequirementAnalysis(summary='四个测试点'),
+            RequirementAnalysis(summary="四个测试点"),
             {"user_input": "合成登录需求：验证规则和所请求的测试点数量。"},
-            complete, target_count=4,
+            complete,
+            target_count=4,
         )
 
 
 def test_one_point_can_cover_multiple_features_without_inflating_quantity():
     def complete(stage, instruction, payload, result_type):
-        if stage == 'feature.generated': return features(6)
-        assert payload['batch_count'] == 1
+        if stage == "feature.generated":
+            return features(6)
+        assert payload["batch_count"] == 1
         result = points(payload, fill_budget=True)
-        result.test_points[0].feature_point_ids = [f['id'] for f in payload['feature_points']['feature_points']]
+        result.test_points[0].feature_point_ids = [
+            f["id"] for f in payload["feature_points"]["feature_points"]
+        ]
         return result
+
     result = build_planning(
-        RequirementAnalysis(summary='只要一个测试点'),
+        RequirementAnalysis(summary="只要一个测试点"),
         {"user_input": "合成登录需求：验证规则和所请求的测试点数量。"},
-        complete, target_count=1,
+        complete,
+        target_count=1,
     )
-    assert len(result['test_points']) == 1
-    assert set(result['test_points'][0]['feature_point_ids']) == {f['id'] for f in result['feature_points']}
+    assert len(result["test_points"]) == 1
+    assert set(result["test_points"][0]["feature_point_ids"]) == {
+        f["id"] for f in result["feature_points"]
+    }
 
 
 def test_final_deduplication_cannot_silently_shrink_explicit_quantity():
     def complete(stage, instruction, payload, result_type):
-        if stage == 'feature.generated': return features(1)
+        if stage == "feature.generated":
+            return features(1)
         result = points(payload, fill_budget=True)
         result.test_points[1] = result.test_points[0].model_copy(deep=True)
         return result
-    with pytest.raises(ValueError, match='planning_duplicate_test_point'):
+
+    with pytest.raises(ValueError, match="planning_duplicate_test_point"):
         build_planning(
-            RequirementAnalysis(summary='两个不同测试点'),
+            RequirementAnalysis(summary="两个不同测试点"),
             {"user_input": "合成登录需求：验证规则和所请求的测试点数量。"},
-            complete, target_count=2,
+            complete,
+            target_count=2,
         )

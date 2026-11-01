@@ -1,3 +1,5 @@
+from unittest.mock import Mock
+
 import pytest
 
 from casepilot_agent.contracts import (
@@ -20,7 +22,6 @@ from casepilot_agent.pipeline import (
 )
 from casepilot_agent.providers.mock import MockProvider
 from casepilot_agent.quantity import OutputQuantity
-from unittest.mock import Mock
 from casepilot_agent.tasks import KNOWLEDGE_ANSWER_INSTRUCTION
 
 
@@ -427,7 +428,12 @@ def test_pipeline_repairs_missing_features_with_compact_delta_payload() -> None:
 def test_requested_case_count_delegates_budget_to_model(prompt, count):
     from casepilot_agent.pipeline import requested_case_count
 
-    assert requested_case_count(GenerationRequest(prompt=prompt), Mock(return_value=OutputQuantity(case_count=count))) == count
+    assert (
+        requested_case_count(
+            GenerationRequest(prompt=prompt), Mock(return_value=OutputQuantity(case_count=count))
+        )
+        == count
+    )
 
 
 def test_large_generation_batches_preserve_exact_quantity_and_unique_cases():
@@ -442,7 +448,9 @@ def test_large_generation_batches_preserve_exact_quantity_and_unique_cases():
             assert payload["requested_case_count"] is None
             assert payload["final_case_count"] == 100
             assert payload["max_test_points"] == 3
-            assert payload["allowed_feature_ids"] == [payload["feature_points"]["feature_points"][0]["id"]]
+            assert payload["allowed_feature_ids"] == [
+                payload["feature_points"]["feature_points"][0]["id"]
+            ]
         if stage == "test_case.generated":
             count = payload["batch_count"]
             start = payload["batch_start_index"]
@@ -495,7 +503,8 @@ def test_total_quantity_wins_over_per_module_brief_quantity():
             GenerationRequest(
                 prompt="生成电商测试用例",
                 markdown_content="每个模块生成10条测试用例，共100条",
-            ), Mock(return_value=OutputQuantity(case_count=100))
+            ),
+            Mock(return_value=OutputQuantity(case_count=100)),
         )
         == 100
     )
@@ -503,19 +512,31 @@ def test_total_quantity_wins_over_per_module_brief_quantity():
 
 def test_explicit_candidate_quantity_wins_over_expanded_brief() -> None:
     from casepilot_agent.pipeline import requested_case_count
-    assert requested_case_count(GenerationRequest(
-        prompt="为登录模块生成恰好2条新的候选用例，链接有效期10分钟",
-        markdown_content="覆盖正常、异常、边界，共6条用例",
-    ), Mock(return_value=OutputQuantity(case_count=2))) == 2
+
+    assert (
+        requested_case_count(
+            GenerationRequest(
+                prompt="为登录模块生成恰好2条新的候选用例，链接有效期10分钟",
+                markdown_content="覆盖正常、异常、边界，共6条用例",
+            ),
+            Mock(return_value=OutputQuantity(case_count=2)),
+        )
+        == 2
+    )
 
 
 def test_repeated_rewrite_diff_keeps_prior_draft_changes_until_apply():
     from casepilot_agent.pipeline import rebase_rewrite_candidate
+
     provider = MockProvider()
     base = provider.generate(GenerationRequest(prompt="登录测试用例")).test_cases[0]
     pipeline = GenerationPipeline(provider)
-    first = pipeline.rewrite(RewriteRequest(test_case=base, instruction="仅将标题改为「登录成功并进入首页」"))
-    second = pipeline.rewrite(RewriteRequest(test_case=first.proposed, instruction="仅将优先级改为P2"))
+    first = pipeline.rewrite(
+        RewriteRequest(test_case=base, instruction="仅将标题改为「登录成功并进入首页」")
+    )
+    second = pipeline.rewrite(
+        RewriteRequest(test_case=first.proposed, instruction="仅将优先级改为P2")
+    )
     rebased = rebase_rewrite_candidate(base, second)
     assert rebased.proposed.title == "登录成功并进入首页"
     assert rebased.proposed.priority == "P2"
@@ -527,6 +548,7 @@ def test_repeated_rewrite_diff_keeps_prior_draft_changes_until_apply():
 
 def test_reverting_a_prior_draft_field_removes_it_from_cumulative_diff():
     from casepilot_agent.pipeline import rebase_rewrite_candidate
+
     provider = MockProvider()
     base = provider.generate(GenerationRequest(prompt="登录测试用例")).test_cases[0]
     pipeline = GenerationPipeline(provider)
@@ -538,40 +560,60 @@ def test_reverting_a_prior_draft_field_removes_it_from_cumulative_diff():
 def test_repeating_an_explicit_value_does_not_invoke_model_or_invent_changes():
     provider = MockProvider()
     base = provider.generate(GenerationRequest(prompt="登录测试用例")).test_cases[0]
+
     def must_not_call(_request):
         raise AssertionError("An already satisfied assignment must not invoke the model")
+
     provider.rewrite = must_not_call
-    result = GenerationPipeline(provider).rewrite(RewriteRequest(
-        test_case=base, instruction=f"仅将标题改为「{base.title}」，其他字段保持不变。",
-    ))
+    result = GenerationPipeline(provider).rewrite(
+        RewriteRequest(
+            test_case=base,
+            instruction=f"仅将标题改为「{base.title}」，其他字段保持不变。",
+        )
+    )
     assert result.diff == []
     assert result.proposed == base
 
 
 def test_explicit_rewrite_does_not_assign_module_from_a_later_title_value():
     from casepilot_agent.pipeline import _explicit_rewrite_candidate
-    base = MockProvider().generate(GenerationRequest(prompt='登录测试用例')).test_cases[0]
-    candidate = _explicit_rewrite_candidate(RewriteRequest(test_case=base, instruction=(
-        '仅修改「账号登录」模块：标题改为「新版登录验证」，优先级改为P0，其他字段保持不变。'
-        '不要修改「订单库存」模块。'
-    )))
-    assert candidate is None  # Scope/guard prose is handled semantically, never guessed as an assignment.
+
+    base = MockProvider().generate(GenerationRequest(prompt="登录测试用例")).test_cases[0]
+    candidate = _explicit_rewrite_candidate(
+        RewriteRequest(
+            test_case=base,
+            instruction=(
+                "仅修改「账号登录」模块：标题改为「新版登录验证」，优先级改为P0，其他字段保持不变。"
+                "不要修改「订单库存」模块。"
+            ),
+        )
+    )
+    assert (
+        candidate is None
+    )  # Scope/guard prose is handled semantically, never guessed as an assignment.
 
 
 def test_explicit_module_assignment_still_changes_only_the_module():
     from casepilot_agent.pipeline import _explicit_rewrite_candidate
-    base = MockProvider().generate(GenerationRequest(prompt='登录测试用例')).test_cases[0]
-    candidate = _explicit_rewrite_candidate(RewriteRequest(test_case=base, instruction='所属模块改为「账号/登录」'))
+
+    base = MockProvider().generate(GenerationRequest(prompt="登录测试用例")).test_cases[0]
+    candidate = _explicit_rewrite_candidate(
+        RewriteRequest(test_case=base, instruction="所属模块改为「账号/登录」")
+    )
     assert candidate is not None
-    assert candidate.proposed.module == '账号/登录'
-    assert {diff.field for diff in candidate.diff} == {'module'}
+    assert candidate.proposed.module == "账号/登录"
+    assert {diff.field for diff in candidate.diff} == {"module"}
 
 
 def test_negated_assignments_cannot_enter_the_fast_assignment_path():
     from casepilot_agent.pipeline import _explicit_rewrite_candidate
-    base = MockProvider().generate(GenerationRequest(prompt='登录测试用例')).test_cases[0]
-    for instruction in ['不要将标题改为「错误标题」', '标题改为「新标题」，优先级不要改为P0']:
-        assert _explicit_rewrite_candidate(RewriteRequest(test_case=base, instruction=instruction)) is None
+
+    base = MockProvider().generate(GenerationRequest(prompt="登录测试用例")).test_cases[0]
+    for instruction in ["不要将标题改为「错误标题」", "标题改为「新标题」，优先级不要改为P0"]:
+        assert (
+            _explicit_rewrite_candidate(RewriteRequest(test_case=base, instruction=instruction))
+            is None
+        )
 
 
 @pytest.mark.parametrize(
@@ -587,7 +629,11 @@ def test_exact_assignment_does_not_swallow_semantic_changes(extra):
 
     provider = Mock()
     from casepilot_agent.contracts import QualityReport, UsageMetadata
-    provider.complete.return_value = (QualityReport(passed=True, score=100), UsageMetadata(model="fixture"))
+
+    provider.complete.return_value = (
+        QualityReport(passed=True, score=100),
+        UsageMetadata(model="fixture"),
+    )
     original = MockProvider().generate(GenerationRequest(prompt="登录")).test_cases[0]
     request = RewriteRequest(
         test_case=original, instruction=f"把当前用例标题改为「弱网登录校验」，{extra}"
@@ -624,19 +670,42 @@ def test_rewrite_preserves_legal_existing_case_shape(count):
 
 @pytest.mark.parametrize("authorized", [True, False])
 def test_empty_preconditions_are_valid_but_still_require_semantic_authorization(authorized):
-    from casepilot_agent.contracts import QualityIssue, QualityReport, RewriteCandidate, RewriteCaseDraft
+    from casepilot_agent.contracts import (
+        QualityIssue,
+        QualityReport,
+        RewriteCandidate,
+        RewriteCaseDraft,
+    )
     from casepilot_agent.pipeline import RewriteContentError, validate_rewrite_candidate
 
     original = MockProvider().generate(GenerationRequest(prompt="登录")).test_cases[0]
     assert original.preconditions
     proposed = RewriteCaseDraft.model_validate({**original.model_dump(), "preconditions": []})
-    candidate = RewriteCandidate(proposed=proposed, reason="清空前置条件", diff=[], quality=QualityReport(passed=True, score=100))
-    request = RewriteRequest(test_case=original, instruction="清空前置条件，其他字段不变" if authorized else "只改标题，其他字段不变")
+    candidate = RewriteCandidate(
+        proposed=proposed,
+        reason="清空前置条件",
+        diff=[],
+        quality=QualityReport(passed=True, score=100),
+    )
+    request = RewriteRequest(
+        test_case=original,
+        instruction="清空前置条件，其他字段不变" if authorized else "只改标题，其他字段不变",
+    )
     provider = Mock(name="semantic-provider")
-    provider.complete.return_value = (QualityReport(
-        passed=authorized, score=100 if authorized else 0,
-        issues=[] if authorized else [QualityIssue(code="unauthorized_clear", message="未授权清空前置条件", severity="error")],
-    ), None)
+    provider.complete.return_value = (
+        QualityReport(
+            passed=authorized,
+            score=100 if authorized else 0,
+            issues=[]
+            if authorized
+            else [
+                QualityIssue(
+                    code="unauthorized_clear", message="未授权清空前置条件", severity="error"
+                )
+            ],
+        ),
+        None,
+    )
     if authorized:
         assert validate_rewrite_candidate(request, candidate, provider).proposed.preconditions == []
     else:
@@ -657,7 +726,11 @@ def test_single_semantic_rewrite_recomputes_diff_from_actual_candidate():
     candidate.diff = []
     provider = Mock()
     from casepilot_agent.contracts import QualityReport, UsageMetadata
-    provider.complete.return_value = (QualityReport(passed=True, score=100), UsageMetadata(model="fixture"))
+
+    provider.complete.return_value = (
+        QualityReport(passed=True, score=100),
+        UsageMetadata(model="fixture"),
+    )
     provider.rewrite.return_value = candidate
     result = GenerationPipeline(provider).rewrite(request)
     assert result.diff
@@ -665,7 +738,9 @@ def test_single_semantic_rewrite_recomputes_diff_from_actual_candidate():
     assert result.proposed == candidate.proposed
 
 
-@pytest.mark.parametrize("field,value", [("id", "foreign-case"), ("automated", True), ("status", "foreign")])
+@pytest.mark.parametrize(
+    "field,value", [("id", "foreign-case"), ("automated", True), ("status", "foreign")]
+)
 def test_single_semantic_rewrite_rejects_changed_system_fields(field, value):
     from unittest.mock import Mock
 
@@ -675,7 +750,11 @@ def test_single_semantic_rewrite_rejects_changed_system_fields(field, value):
     candidate.proposed = candidate.proposed.model_copy(update={field: value})
     provider = Mock()
     from casepilot_agent.contracts import QualityReport, UsageMetadata
-    provider.complete.return_value = (QualityReport(passed=True, score=100), UsageMetadata(model="fixture"))
+
+    provider.complete.return_value = (
+        QualityReport(passed=True, score=100),
+        UsageMetadata(model="fixture"),
+    )
     provider.rewrite.return_value = candidate
     with pytest.raises(ValueError, match="改写不能改变系统字段"):
         GenerationPipeline(provider).rewrite(request)
@@ -683,5 +762,11 @@ def test_single_semantic_rewrite_rejects_changed_system_fields(field, value):
 
 def test_explicit_object_does_not_include_following_requirements():
     from casepilot_agent.pipeline import extract_explicit_test_object
+
     for separator in ["。", "\n", "；"]:
-        assert extract_explicit_test_object("测试对象：青禾图书借阅" + separator + "生成3个测试点，需求如下：借阅上限5本") == "青禾图书借阅"
+        assert (
+            extract_explicit_test_object(
+                "测试对象：青禾图书借阅" + separator + "生成3个测试点，需求如下：借阅上限5本"
+            )
+            == "青禾图书借阅"
+        )

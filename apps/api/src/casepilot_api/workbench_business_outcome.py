@@ -52,6 +52,7 @@ def unexecuted_answer_notice(result, outcome):
     if (result.status == "completed"
             and outcome.activity in {"not_executed", "context_observed", "planned"}
             and any(event.get("error_code") == "agent_execution_unverified"
+                    or event.get("type") == "tool_rejected"
                     for event in result.events)):
         return "执行记录：本轮未启动任务或生成差异。以下仅为对话答复，不是执行成功凭据。\n\n"
     return ""

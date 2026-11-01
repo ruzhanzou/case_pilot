@@ -26,10 +26,10 @@ from sqlalchemy.orm import Session
 from casepilot_api.auth import CurrentAccount, require_space_membership
 from casepilot_api.database import get_db_session, get_session_factory
 from casepilot_api.models import (
+    Account,
     Conversation,
     ConversationMessage,
-    KnowledgeDocument,
-    KnowledgeSource,
+    ConversationOperation,
     PlanningReview,
     WorkspaceTestBrief,
 )
@@ -65,31 +65,58 @@ def current(db, conversation):
 
 def binding(db, conversation, brief):
     data = snapshot(brief.content.get("planning", {}))
-    sources = []
-    for ref in data["sources"]:
-        if ref.get("source_id"):
-            source = db.scalar(
-                select(KnowledgeSource)
-                .where(KnowledgeSource.id == UUID(ref["source_id"]))
-                .with_for_update()
-            )
-            if source is None or source.space_id != conversation.space_id or source.deleted_at:
-                raise HTTPException(409, "planning_review_source_changed")
-            docs = list(
-                db.scalars(
-                    select(KnowledgeDocument)
-                    .where(KnowledgeDocument.source_id == source.id)
-                    .with_for_update()
-                )
-            )
-            sources.append(
-                [
-                    str(source.id),
-                    source.status,
-                    str(source.updated_at),
-                    sorted((str(d.id), d.version, d.checksum, d.status) for d in docs),
-                ]
-            )
+    from casepilot_api.collection_references import (
+        assert_reference_binding,
+        capture_reference_binding,
+    )
+    from casepilot_api.schemas import ConversationMessageCreate
+    from casepilot_api.workbench_skills import assert_bindings
+
+    operation = (
+        db.get(ConversationOperation, brief.source_operation_id)
+        if brief.source_operation_id
+        else None
+    )
+    if brief.source_operation_id:
+        if operation is None or operation.conversation_id != conversation.id:
+            raise HTTPException(409, "planning_review_authority_changed")
+        assert_bindings(dict(operation.payload).get("skill_bindings"))
+    # Collection precedes the COMPLETE ordered source set, including citations
+    # and inherited inputs. No new collection lock follows a subset source lock.
+    ids = {UUID(ref["source_id"]) for ref in data["sources"] if ref.get("source_id")}
+    origin_ids = set()
+    for prior in [
+        brief.reference_binding or {},
+        (dict(operation.payload).get("reference_binding") or {}) if operation is not None else {},
+    ]:
+        ids.update(UUID(row["source_id"]) for row in prior.get("sources", []))
+        origin_ids.update(UUID(row["collection_id"])
+                          for row in prior.get("source_collections", []))
+    reference_snapshot = capture_reference_binding(
+        db,
+        conversation,
+        ConversationMessageCreate(
+            content="Review authority", knowledge_source_ids=sorted(ids, key=str),
+            source_collection_ids=sorted(origin_ids, key=str)
+        ),
+        lock=True,
+    )
+    assert_reference_binding(
+        db,
+        db.get(Account, conversation.account_id),
+        conversation,
+        brief.reference_binding,
+        lock=False,
+    )
+    if operation is not None:
+        assert_reference_binding(
+            db,
+            db.get(Account, conversation.account_id),
+            conversation,
+            dict(operation.payload).get("reference_binding"),
+            lock=False,
+        )
+    sources = reference_snapshot["sources"]
     return digest(
         {
             "brief": str(brief.id),
@@ -97,10 +124,44 @@ def binding(db, conversation, brief):
             "status": brief.status,
             "content": brief.content,
             "sources": sources,
+            "reference_binding": reference_snapshot,
             "collection": str(conversation.collection_id),
             "selection": (conversation.context or {}).get("workbench_selection"),
         }
     )
+
+
+def assert_revision_authority(db, conversation, brief):
+    """Review-created drafts retain their server-owned ancestry, never client JSON authority."""
+    if brief.reference_binding:
+        from casepilot_api.collection_references import assert_reference_binding
+
+        assert_reference_binding(
+            db, db.get(Account, conversation.account_id), conversation, brief.reference_binding
+        )
+        return
+    seen = set()
+    while brief is not None:
+        if brief.id in seen:
+            raise HTTPException(409, "planning_review_authority_changed")
+        seen.add(brief.id)
+        review = db.scalar(
+            select(PlanningReview).where(
+                PlanningReview.applied_brief_id == brief.id,
+                PlanningReview.conversation_id == conversation.id,
+            )
+        )
+        if review is None:
+            return
+        original = db.get(WorkspaceTestBrief, review.brief_id)
+        if (
+            review.status != "applied"
+            or review.account_id != conversation.account_id
+            or original is None
+            or binding(db, conversation, original) != review.binding
+        ):
+            raise HTTPException(409, "planning_review_version_changed")
+        brief = original
 
 
 def ensure(db, account, conversation_id):
@@ -122,6 +183,7 @@ def fresh(db, conversation, row):
     brief = current(db, conversation)
     if brief is None or brief.id != row.brief_id or binding(db, conversation, brief) != row.binding:
         raise HTTPException(409, "planning_review_version_changed")
+    assert_revision_authority(db, conversation, brief)
     return brief
 
 
@@ -167,6 +229,10 @@ def list_reviews(conversation_id: UUID, account: CurrentAccount, db: Db):
             select(PlanningReview)
             .where(PlanningReview.conversation_id == conversation_id)
             .order_by(PlanningReview.created_at)
+            # Worker completion also locks review before brief. Refresh cached
+            # ORM state under that lock; stale GET snapshots cannot overwrite it.
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
     )
     for row in rows:
@@ -189,6 +255,7 @@ def start_review(conversation_id: UUID, payload: Start, account: CurrentAccount,
     brief = current(db, conversation)
     if brief is None or brief.version != payload.base_version or brief.status != "draft":
         raise HTTPException(409, "planning_review_version_changed")
+    assert_revision_authority(db, conversation, brief)
     existing = db.scalar(
         select(PlanningReview)
         .where(PlanningReview.brief_id == brief.id, PlanningReview.account_id == account.id)
@@ -297,10 +364,17 @@ def decide(
 
         content = {**deepcopy(brief.content), "planning": plan}
         TestBriefContent.model_validate(content)
+        from casepilot_api.collection_references import capture_brief_reference_binding
+
+        reference_snapshot = capture_brief_reference_binding(
+            db, conversation, content, inherited=brief.reference_binding
+        )
         revised = WorkspaceTestBrief(
             id=uuid4(),
             conversation_id=conversation.id,
             version=brief.version + 1,
+            source_operation_id=brief.source_operation_id,
+            reference_binding=reference_snapshot,
             content=content,
             status="draft",
             created_by=account.id,

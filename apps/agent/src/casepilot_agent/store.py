@@ -2,6 +2,7 @@ import json
 import re
 from contextlib import contextmanager
 from contextvars import ContextVar
+from copy import deepcopy
 from datetime import UTC, datetime
 from functools import lru_cache
 from hashlib import sha256
@@ -38,7 +39,9 @@ from casepilot_agent.planning_boundary import point_boundary_markdown
 
 metadata = MetaData()
 
-_execution_connection: ContextVar[Connection | None] = ContextVar("job_execution_connection", default=None)
+_execution_connection: ContextVar[Connection | None] = ContextVar(
+    "job_execution_connection", default=None
+)
 
 
 def generation_failure_message(error_code: str, output_payload: dict[str, Any]) -> str:
@@ -46,7 +49,8 @@ def generation_failure_message(error_code: str, output_payload: dict[str, Any]) 
         "WorkerInterrupted": "执行进程意外中断，已保留任务与已有结果，请重试当前任务。",
         "ProviderResponseError": "模型返回内容暂时无法解析，请稍后重试或更换模型。",
         "ModelBehaviorError": "模型输出格式仍不符合要求，本次处理已停止。可重试或更换模型。",
-        "StageContractError": "模型输出未通过用例或来源核对校验，本次处理已停止。请检查测试说明后重试。",
+        "StageContractError": "模型输出未通过用例或来源核对校验，本次处理已停止" \
+            "。请检查测试说明后重试。",
         "APITimeoutError": "模型响应超时，本次处理已停止。可稍后重试或更换模型。",
         "TimeoutError": "模型响应超时，请稍后重试。",
         "ConnectionError": "网络连接中断，请检查网络后重试。",
@@ -71,6 +75,7 @@ def generation_failure_message(error_code: str, output_payload: dict[str, Any]) 
         + "；".join(list(dict.fromkeys(reasons))[:3])
         + "。请根据以上问题调整测试说明后重试。"
     )
+
 
 callback_deliveries = Table(
     "callback_deliveries",
@@ -143,7 +148,6 @@ def lexical_search_terms(search_query: str) -> list[str]:
     return terms[:32]
 
 
-
 def render_test_brief_markdown(version: int, content: dict[str, Any]) -> str:
     lines = [
         f"# 结构化测试说明 V{version}",
@@ -173,13 +177,40 @@ def render_test_brief_markdown(version: int, content: dict[str, Any]) -> str:
     planning = content.get("planning") or {}
     reuse = planning.get("reuse") or {}
     if reuse:
-        labels = {"fresh": "全新生成", "regression": "回归补充", "change": "按变更生成", "new": "新增", "reuse": "复用", "modify": "修改"}
-        lines.extend(["", "## 生成与复用策略", "", labels.get(reuse.get("strategy"), "全新生成"), reuse.get("note", "")])
+        labels = {
+            "fresh": "全新生成",
+            "regression": "回归补充",
+            "change": "按变更生成",
+            "new": "新增",
+            "reuse": "复用",
+            "modify": "修改",
+        }
+        lines.extend(
+            [
+                "",
+                "## 生成与复用策略",
+                "",
+                labels.get(reuse.get("strategy"), "全新生成"),
+                reuse.get("note", ""),
+            ]
+        )
         for item in reuse.get("decisions", []):
             source = item.get("source") or {}
             choice = reuse.get("user_choices", {}).get(item["point_id"])
-            choice_label = "不纳入本次" if choice == "exclude" else "重新生成" if choice == "new" else "使用建议"
-            lines.append(f"- {item['point_id']}：建议{labels.get(item['action'], item['action'])}；本次{choice_label}；{item.get('reason', '')}；{source.get('label', '')} {source.get('locator', '')}")
+            choice_label = (
+                "不纳入本次"
+                if choice == "exclude"
+                else "重新生成"
+                if choice == "new"
+                else "使用建议"
+            )
+            lines.append(
+                f"- {item['point_id']}：建议"
+                f"{labels.get(item['action'], item['action'])}；本次"
+                f"{choice_label}；{item.get('reason', '')}；"
+                f"{source.get('label', '')} "
+                f"{source.get('locator', '')}"
+            )
     if planning.get("test_points"):
         lines.extend(["", "## 测试规划", ""])
         for feature in planning.get("feature_points", []):
@@ -262,7 +293,8 @@ collection_items = Table(
     Column("created_at", DateTime(timezone=True)),
 )
 case_collections = Table(
-    "case_collections", metadata,
+    "case_collections",
+    metadata,
     Column("id", PGUUID(as_uuid=True), primary_key=True),
     Column("space_id", PGUUID(as_uuid=True)),
     Column("name", String),
@@ -463,6 +495,7 @@ workspace_test_briefs = Table(
     Column("id", PGUUID(as_uuid=True), primary_key=True),
     Column("conversation_id", PGUUID(as_uuid=True)),
     Column("source_operation_id", PGUUID(as_uuid=True)),
+    Column("reference_binding", JSONB),
     Column("version", Integer),
     Column("content", JSONB),
     Column("markdown_content", Text),
@@ -525,8 +558,9 @@ class JobStore:
     def execution_guard(self, job_id: UUID):
         # Transaction-scoped ownership vanishes when a worker process dies.
         # No timeout: a slow model call must never be mistaken for a lost worker.
-        key = int.from_bytes(sha256(f"casepilot:job:{job_id}".encode()).digest()[:8],
-                             "big", signed=True)
+        key = int.from_bytes(
+            sha256(f"casepilot:job:{job_id}".encode()).digest()[:8], "big", signed=True
+        )
         with self.engine.begin() as owner:
             acquired = bool(owner.scalar(select(func.pg_try_advisory_xact_lock(key))))
             token = _execution_connection.set(owner) if acquired else None
@@ -596,9 +630,12 @@ class JobStore:
 
     def update_job(self, connection: Connection, job_id: UUID, **values: Any) -> None:
         updated = connection.execute(
-            update(generation_jobs).where(
-                generation_jobs.c.id == job_id, generation_jobs.c.status != "cancelled",
-            ).values(**values)
+            update(generation_jobs)
+            .where(
+                generation_jobs.c.id == job_id,
+                generation_jobs.c.status != "cancelled",
+            )
+            .values(**values)
         )
         if updated.rowcount == 0:
             return
@@ -606,6 +643,7 @@ class JobStore:
             return
         job = self.get_job(connection, job_id)
         from casepilot_agent.workbench_events import emit_job_completion
+
         emit_job_completion(connection, job)
         operation_id = dict(job.get("input_payload") or {}).get("conversation_operation_id")
         if not operation_id:
@@ -634,13 +672,15 @@ class JobStore:
             }
             if job_status == "completed":
                 output_payload = dict(values.get("output_payload", {}) or {})
-                operation_values["result"] = conversation_operations.c.result.op("||")({
-                    **output_payload,
-                    "candidate_ids": output_payload.get(
-                        "workspace_candidate_ids",
-                        output_payload.get("candidate_ids", []),
-                    ),
-                })
+                operation_values["result"] = conversation_operations.c.result.op("||")(
+                    {
+                        **output_payload,
+                        "candidate_ids": output_payload.get(
+                            "workspace_candidate_ids",
+                            output_payload.get("candidate_ids", []),
+                        ),
+                    }
+                )
                 operation_values["completed_at"] = (
                     datetime.now(UTC) if operation_status == "completed" else None
                 )
@@ -870,7 +910,10 @@ class JobStore:
                     knowledge_documents.c.space_id == space_id,
                     knowledge_documents.c.id.in_(document_ids),
                     knowledge_sources.c.deleted_at.is_(None),
-                    or_(knowledge_documents.c.expires_at.is_(None), knowledge_documents.c.expires_at > func.now()),
+                    or_(
+                        knowledge_documents.c.expires_at.is_(None),
+                        knowledge_documents.c.expires_at > func.now(),
+                    ),
                 )
             ).mappings()
         )
@@ -881,7 +924,8 @@ class JobStore:
         rows = list(
             connection.execute(
                 select(
-                    knowledge_chunks, knowledge_documents.c.original_name.label("document_name"),
+                    knowledge_chunks,
+                    knowledge_documents.c.original_name.label("document_name"),
                     knowledge_documents.c.version.label("document_version"),
                     knowledge_documents.c.checksum.label("document_checksum"),
                 )
@@ -920,7 +964,10 @@ class JobStore:
             knowledge_sources.c.status == "ready",
             knowledge_sources.c.deleted_at.is_(None),
             knowledge_documents.c.status == "ready",
-            or_(knowledge_documents.c.expires_at.is_(None), knowledge_documents.c.expires_at > func.now()),
+            or_(
+                knowledge_documents.c.expires_at.is_(None),
+                knowledge_documents.c.expires_at > func.now(),
+            ),
         ]
         if source_ids and document_ids:
             filters.append(
@@ -933,8 +980,11 @@ class JobStore:
             filters.append(knowledge_chunks.c.source_id.in_(source_ids))
         elif document_ids:
             selected_documents = knowledge_chunks.c.document_id.in_(document_ids)
-            filters.append(or_(selected_documents, knowledge_sources.c.persistence == "space")
-                           if use_space_knowledge else selected_documents)
+            filters.append(
+                or_(selected_documents, knowledge_sources.c.persistence == "space")
+                if use_space_knowledge
+                else selected_documents
+            )
         elif use_space_knowledge:
             # Conversation uploads are temporary; removing them must not cause
             # their return through a broad space-knowledge search.
@@ -1057,9 +1107,11 @@ class JobStore:
         rows = connection.execute(
             select(collection_items.c.test_case_id, case_collections.c.id, case_collections.c.name)
             .join(case_collections, case_collections.c.id == collection_items.c.collection_id)
-            .where(collection_items.c.test_case_id.in_(ids),
-                   case_collections.c.space_id == space_id,
-                   case_collections.c.deleted_at.is_(None))
+            .where(
+                collection_items.c.test_case_id.in_(ids),
+                case_collections.c.space_id == space_id,
+                case_collections.c.deleted_at.is_(None),
+            )
         ).mappings()
         collections = {}
         for row in rows:
@@ -1070,16 +1122,22 @@ class JobStore:
 
     def search_reuse_cases(self, connection, *, space_id, terms, limit=100, metrics=None):
         if connection.dialect.name != "postgresql":
-            return self._search_reuse_cases(connection, space_id=space_id, terms=terms, limit=limit, metrics=metrics)
+            return self._search_reuse_cases(
+                connection, space_id=space_id, terms=terms, limit=limit, metrics=metrics
+            )
         # Concurrent interactive searches must not each fan out into parallel
         # hash workers and exhaust shared memory. Scope this setting to this
         # read only; rollback to the savepoint also restores it on SQL errors.
         with connection.begin_nested():
-            previous = connection.exec_driver_sql("SHOW max_parallel_workers_per_gather").scalar_one()
+            previous = connection.exec_driver_sql(
+                "SHOW max_parallel_workers_per_gather"
+            ).scalar_one()
             previous_memory = connection.exec_driver_sql("SHOW work_mem").scalar_one()
             connection.exec_driver_sql("SET LOCAL max_parallel_workers_per_gather=0")
             connection.exec_driver_sql("SET LOCAL work_mem='16MB'")
-            result = self._search_reuse_cases(connection, space_id=space_id, terms=terms, limit=limit, metrics=metrics)
+            result = self._search_reuse_cases(
+                connection, space_id=space_id, terms=terms, limit=limit, metrics=metrics
+            )
             connection.execute(select(func.set_config("work_mem", previous_memory, True)))
             connection.exec_driver_sql(f"SET LOCAL max_parallel_workers_per_gather={int(previous)}")
             return result
@@ -1095,27 +1153,50 @@ class JobStore:
         # branches lets PostgreSQL use the revision trigram index even when a
         # case-key or collection-name match is also allowed.
         scope = (test_cases.c.space_id == space_id, test_cases.c.deleted_at.is_(None))
-        body_hits = (select(test_cases.c.id.label("asset_id"), score.label("score"))
+        body_hits = (
+            select(test_cases.c.id.label("asset_id"), score.label("score"))
             .join(test_case_revisions, test_case_revisions.c.id == test_cases.c.current_revision_id)
-            .where(*scope, or_(*predicates)))
+            .where(*scope, or_(*predicates))
+        )
         names = [case_collections.c.name.contains(term, autoescape=True) for term in terms]
-        matching_collections = [row["id"] for row in connection.execute(
-            select(case_collections.c.id).where(case_collections.c.space_id == space_id,
-                case_collections.c.deleted_at.is_(None), or_(*names),
-                select(collection_items.c.id).where(
-                    collection_items.c.collection_id == case_collections.c.id).exists())).mappings()]
-        matching_keys = [row["id"] for row in connection.execute(select(test_cases.c.id).where(
-            *scope, test_cases.c.case_key.in_(terms))).mappings()]
-        collection_hits = (select(test_cases.c.id.label("asset_id"),
-                func.max(sum(case((p, 1), else_=0) for p in names)).label("score"))
+        matching_collections = [
+            row["id"]
+            for row in connection.execute(
+                select(case_collections.c.id).where(
+                    case_collections.c.space_id == space_id,
+                    case_collections.c.deleted_at.is_(None),
+                    or_(*names),
+                    select(collection_items.c.id)
+                    .where(collection_items.c.collection_id == case_collections.c.id)
+                    .exists(),
+                )
+            ).mappings()
+        ]
+        matching_keys = [
+            row["id"]
+            for row in connection.execute(
+                select(test_cases.c.id).where(*scope, test_cases.c.case_key.in_(terms))
+            ).mappings()
+        ]
+        collection_hits = (
+            select(
+                test_cases.c.id.label("asset_id"),
+                func.max(sum(case((p, 1), else_=0) for p in names)).label("score"),
+            )
             .select_from(case_collections)
             .join(collection_items, collection_items.c.collection_id == case_collections.c.id)
             .join(test_cases, test_cases.c.id == collection_items.c.test_case_id)
-            .where(*scope, case_collections.c.space_id == space_id,
-                   case_collections.c.deleted_at.is_(None), case_collections.c.id.in_(matching_collections))
-            .group_by(test_cases.c.id))
+            .where(
+                *scope,
+                case_collections.c.space_id == space_id,
+                case_collections.c.deleted_at.is_(None),
+                case_collections.c.id.in_(matching_collections),
+            )
+            .group_by(test_cases.c.id)
+        )
         key_hits = select(test_cases.c.id.label("asset_id"), literal(100).label("score")).where(
-            *scope, test_cases.c.case_key.in_(terms))
+            *scope, test_cases.c.case_key.in_(terms)
+        )
         branches = [body_hits]
         if matching_collections:
             branches.append(collection_hits)
@@ -1127,41 +1208,82 @@ class JobStore:
             ranked = body_hits.subquery()
         else:
             hits = union_all(*branches).subquery()
-            ranked = (select(hits.c.asset_id, func.sum(hits.c.score).label("score"))
-                .group_by(hits.c.asset_id).subquery())
+            ranked = (
+                select(hits.c.asset_id, func.sum(hits.c.score).label("score"))
+                .group_by(hits.c.asset_id)
+                .subquery()
+            )
         bounded_limit = max(0, min(limit, 100))
         perfect = []
         if len(branches) == 1 and bounded_limit:
             # All-term hits have the maximum possible score. If this bucket
             # fills the page, an index walk preserves the exact existing order
             # without scoring/sorting every matching case in the space.
-            perfect = [row["asset_id"] for row in connection.execute(
-                select(test_cases.c.id.label("asset_id"))
-                .join(test_case_revisions, test_case_revisions.c.id == test_cases.c.current_revision_id)
-                .where(*scope, *predicates).order_by(test_cases.c.id).limit(bounded_limit)
-            ).mappings()]
-        top = (select(ranked.c.asset_id, ranked.c.score)
+            perfect = [
+                row["asset_id"]
+                for row in connection.execute(
+                    select(test_cases.c.id.label("asset_id"))
+                    .join(
+                        test_case_revisions,
+                        test_case_revisions.c.id == test_cases.c.current_revision_id,
+                    )
+                    .where(*scope, *predicates)
+                    .order_by(test_cases.c.id)
+                    .limit(bounded_limit)
+                ).mappings()
+            ]
+        top = (
+            select(ranked.c.asset_id, ranked.c.score)
             .order_by(ranked.c.score.desc(), ranked.c.asset_id)
-            .limit(bounded_limit).subquery())
-        all_hits_loaded = bool(bounded_limit and len(branches) == 1 and len(predicates) == 1 and len(perfect) < bounded_limit)
+            .limit(bounded_limit)
+            .subquery()
+        )
+        all_hits_loaded = bool(
+            bounded_limit
+            and len(branches) == 1
+            and len(predicates) == 1
+            and len(perfect) < bounded_limit
+        )
         if bounded_limit and (len(perfect) == bounded_limit or all_hits_loaded):
-            top = select(test_cases.c.id.label("asset_id"), literal(len(predicates)).label("score")).where(
-                test_cases.c.id.in_(perfect)).subquery()
-        rows = list(connection.execute(
-            select(test_cases.c.id.label("asset_id"), test_cases.c.case_key,
-                   test_case_revisions)
-            .select_from(top).join(test_cases, test_cases.c.id == top.c.asset_id)
-            .join(test_case_revisions, test_case_revisions.c.id == test_cases.c.current_revision_id)
-            .where(*scope)
-            .order_by(top.c.score.desc(), top.c.asset_id)
-        ).mappings())
+            top = (
+                select(test_cases.c.id.label("asset_id"), literal(len(predicates)).label("score"))
+                .where(test_cases.c.id.in_(perfect))
+                .subquery()
+            )
+        rows = list(
+            connection.execute(
+                select(
+                    test_cases.c.id.label("asset_id"), test_cases.c.case_key, test_case_revisions
+                )
+                .select_from(top)
+                .join(test_cases, test_cases.c.id == top.c.asset_id)
+                .join(
+                    test_case_revisions,
+                    test_case_revisions.c.id == test_cases.c.current_revision_id,
+                )
+                .where(*scope)
+                .order_by(top.c.score.desc(), top.c.asset_id)
+            ).mappings()
+        )
         if metrics is not None:
-            total = len(perfect) if all_hits_loaded else connection.execute(select(func.count()).select_from(ranked)).scalar_one()
-            metrics.update(matched_case_count=total, returned_case_count=len(rows),
-                           candidate_limit=max(0, min(limit, 100)), truncated=total > len(rows))
-            metrics["scope_collection_count"] = connection.execute(select(func.count())
-                .select_from(case_collections).where(case_collections.c.space_id == space_id,
-                    case_collections.c.deleted_at.is_(None))).scalar_one()
+            total = (
+                len(perfect)
+                if all_hits_loaded
+                else connection.execute(select(func.count()).select_from(ranked)).scalar_one()
+            )
+            metrics.update(
+                matched_case_count=total,
+                returned_case_count=len(rows),
+                candidate_limit=max(0, min(limit, 100)),
+                truncated=total > len(rows),
+            )
+            metrics["scope_collection_count"] = connection.execute(
+                select(func.count())
+                .select_from(case_collections)
+                .where(
+                    case_collections.c.space_id == space_id, case_collections.c.deleted_at.is_(None)
+                )
+            ).scalar_one()
         return [
             {
                 "ref": str(row["asset_id"]),
@@ -1338,6 +1460,7 @@ class JobStore:
                     if job["input_payload"].get("conversation_operation_id")
                     else None
                 ),
+                reference_binding=deepcopy(job["input_payload"].get("reference_binding") or {}),
                 version=version,
                 content=content,
                 markdown_content=render_test_brief_markdown(version, content),
@@ -1491,12 +1614,16 @@ class JobStore:
             ref = str(draft["id"])
             preview_ref = ref
             if planning.get("generation_budget", {}).get("preserve_existing"):
-                conflict = connection.scalar(select(workspace_candidates.c.id).where(
-                    workspace_candidates.c.conversation_id == conversation_id,
-                    workspace_candidates.c.ref == ref,
-                    workspace_candidates.c.status == "candidate",
-                    workspace_candidates.c.generation_job_id.is_distinct_from(job["id"]),
-                ).limit(1))
+                conflict = connection.scalar(
+                    select(workspace_candidates.c.id)
+                    .where(
+                        workspace_candidates.c.conversation_id == conversation_id,
+                        workspace_candidates.c.ref == ref,
+                        workspace_candidates.c.status == "candidate",
+                        workspace_candidates.c.generation_job_id.is_distinct_from(job["id"]),
+                    )
+                    .limit(1)
+                )
                 if conflict:
                     ref = f"{ref[:110]}-append-{str(job['id'])}"
                     draft = {**draft, "id": ref}
@@ -1551,10 +1678,14 @@ class JobStore:
                 )
             )
             candidate_ids.append(str(candidate_id))
-        connection.execute(update(workspace_candidates).where(
-            workspace_candidates.c.generation_job_id == job["id"],
-            workspace_candidates.c.status == "generating",
-        ).values(status="archived", updated_at=now))
+        connection.execute(
+            update(workspace_candidates)
+            .where(
+                workspace_candidates.c.generation_job_id == job["id"],
+                workspace_candidates.c.status == "generating",
+            )
+            .values(status="archived", updated_at=now)
+        )
         self.update_workspace_context(
             connection,
             conversation_id,
@@ -1671,11 +1802,14 @@ class JobStore:
         if citations is not None:
             values["citations"] = citations
         if metadata_values is not None:
-            existing_metadata = connection.scalar(
-                select(conversation_messages.c.metadata).where(
-                    conversation_messages.c.id == UUID(str(message_id))
+            existing_metadata = (
+                connection.scalar(
+                    select(conversation_messages.c.metadata).where(
+                        conversation_messages.c.id == UUID(str(message_id))
+                    )
                 )
-            ) or {}
+                or {}
+            )
             values["metadata"] = {**existing_metadata, **metadata_values}
         self.update_conversation_message(
             connection,
@@ -1710,10 +1844,14 @@ class JobStore:
         previous = dict(job["input_payload"].get("previous_proposals", {}))
         touched = {item["ref"] for item in items}
         combined = items + [item for ref, item in previous.items() if ref not in touched]
-        connection.execute(update(case_change_sets).where(
-            case_change_sets.c.id == UUID(str(job["input_payload"]["change_set_id"])),
-            case_change_sets.c.status == "generating",
-        ).values(items=combined))
+        connection.execute(
+            update(case_change_sets)
+            .where(
+                case_change_sets.c.id == UUID(str(job["input_payload"]["change_set_id"])),
+                case_change_sets.c.status == "generating",
+            )
+            .values(items=combined)
+        )
 
     def persist_change_set(
         self,
@@ -1732,7 +1870,11 @@ class JobStore:
             touched = {item["ref"] for item in items}
             version = max(int(item.get("proposal_version", 1)) for item in previous.values()) + 1
             items = [{**item, "proposal_version": version} for item in items] + [
-                {**item, "previous_snapshot": item["proposed_snapshot"], "proposal_version": version}
+                {
+                    **item,
+                    "previous_snapshot": item["proposed_snapshot"],
+                    "proposal_version": version,
+                }
                 for ref, item in previous.items()
                 if ref not in touched
             ]

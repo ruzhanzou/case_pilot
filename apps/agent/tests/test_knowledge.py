@@ -124,7 +124,8 @@ def test_excel_markdown_is_offline_and_preserves_cells_and_coordinates(tmp_path,
         key: value for key, value in blocks[0].metadata.items() if key != "spreadsheet_rows"
     } == {"sheet": "需求", "row_start": 1, "row_end": 41}
     assert blocks[0].metadata["spreadsheet_rows"][1] == {
-        "row": 2, "cells": {"A2": "00123", "B2": "NA"},
+        "row": 2,
+        "cells": {"A2": "00123", "B2": "NA"},
     }
     assert blocks[1].locator == "Sheet 需求，行 42-43"
     assert blocks[2].section_path == "其他"
@@ -175,29 +176,37 @@ def test_corrupt_excel_fails_instead_of_reading_as_text(tmp_path):
 
 def test_short_native_pdf_text_does_not_require_ocr(monkeypatch):
     import pymupdf
+
     from casepilot_agent import knowledge
+
     document = pymupdf.open()
-    document.new_page().insert_text((72, 72), 'Error E731')
-    monkeypatch.setattr(knowledge, '_ocr_image', lambda _: (_ for _ in ()).throw(AssertionError('unnecessary OCR')))
+    document.new_page().insert_text((72, 72), "Error E731")
+    monkeypatch.setattr(
+        knowledge, "_ocr_image", lambda _: (_ for _ in ()).throw(AssertionError("unnecessary OCR"))
+    )
     blocks = knowledge._parse_pdf(document.tobytes())
-    assert blocks[0].content == 'Error E731'
+    assert blocks[0].content == "Error E731"
     document.close()
 
 
 def test_ocr_failure_categories_are_safe_and_distinct(monkeypatch):
-    import pytest
     import pytesseract
+    import pytest
     from PIL import Image
+
     from casepilot_agent import knowledge
+
     for error, expected in [
         (pytesseract.TesseractNotFoundError(), knowledge.DocumentOcrUnavailable),
-        (pytesseract.TesseractError(1, 'private engine diagnostic'), knowledge.DocumentOcrFailed),
-        (RuntimeError('OCR process timeout'), knowledge.DocumentOcrFailed),
+        (pytesseract.TesseractError(1, "private engine diagnostic"), knowledge.DocumentOcrFailed),
+        (RuntimeError("OCR process timeout"), knowledge.DocumentOcrFailed),
     ]:
-        def fail(*args, **kwargs):
-            assert kwargs['timeout'] == 60
+
+        def fail(*args, error=error, **kwargs):
+            assert kwargs["timeout"] == 60
             raise error
-        monkeypatch.setattr(pytesseract, 'image_to_string', fail)
+
+        monkeypatch.setattr(pytesseract, "image_to_string", fail)
         with pytest.raises(expected) as captured:
-            knowledge._ocr_image(Image.new('RGB', (10, 10)))
-        assert str(captured.value) == ''
+            knowledge._ocr_image(Image.new("RGB", (10, 10)))
+        assert str(captured.value) == ""

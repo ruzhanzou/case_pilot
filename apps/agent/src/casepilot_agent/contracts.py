@@ -15,6 +15,9 @@ GENERATION_GROUNDING_INSTRUCTION = (
     "建立会话不等于跳转首页；拒绝登录不等于停留登录页。只有来源明确规定时才能断言这些行为。"
     "功能点和测试点是派生材料；与原始需求冲突或比原始需求更具体时，以原始需求为准。"
     "输出前逐条核对步骤预期，删除无来源的附加断言；必要但未知的事实仅放入假设或开放问题，不能写成通过条件。"
+    "前置条件同样需要依据；不得为了方便观察而要求系统没有历史记录、没有其它业务或先清空数据。"
+    "验证没有新增/删除/修改时，应观察操作前后变化；除非原文明确要求，不能把空系统状态作为适用前提。"
+    "区分必要操作准备和限制性业务前提；未知必要状态保留待确认，不自行补造。"
 )
 
 CASE_DESIGN_INSTRUCTION = (
@@ -215,13 +218,25 @@ class TestCaseDraft(RewriteCaseDraft):
     """Newly generated cases retain the compact generation contract."""
 
     preconditions: list[str] = Field(
-        min_length=1, max_length=50,
+        min_length=1,
+        max_length=50,
         description="test_setup：环境、状态、身份、权限和测试数据前提；新生成用例无前提时明确写无特殊前置条件。",
     )
     steps: list[TestStep] = Field(
-        min_length=1, max_length=4,
+        min_length=1,
+        max_length=4,
         description=RewriteCaseDraft.model_fields["steps"].description,
     )
+
+
+class PreservedCaseDraft(TestCaseDraft):
+    """Server-only unchanged asset projection; never a model response schema.
+
+    Existing assets retain their API-valid shape. New/model-written cases still
+    use TestCaseDraft, including its required setup and compact step limits.
+    """
+    preconditions: list[str] = Field(min_length=0, max_length=50)
+    steps: list[TestStep] = Field(min_length=1, max_length=100)
 
 
 class QualityIssue(BaseModel):
@@ -359,7 +374,9 @@ class StepUpdate(BaseModel):
 
 class StepInsertion(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    before_step_index: int = Field(ge=0, description="原步骤的0起始索引，插入在它之前；0表示开头，原步骤总数表示末尾。")
+    before_step_index: int = Field(
+        ge=0, description="原步骤的0起始索引，插入在它之前；0表示开头，原步骤总数表示末尾。"
+    )
     steps: list[TestStep] = Field(min_length=1)
 
 

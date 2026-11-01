@@ -1,8 +1,32 @@
 """Current-segment output choices and bounded, content-free reference diagnostics."""
 
+import json
 from copy import deepcopy
 
 from agents.agent_output import AgentOutputSchema
+from agents.exceptions import ModelBehaviorError
+
+OUTCOMES = {
+    "answer_none": ("answer", "none"),
+    "clarify_none": ("clarify", "none"),
+    "answer_read": ("answer", "read"),
+    "clarify_read": ("clarify", "read"),
+    "action_read": ("action", "read"),
+    "action_prepare": ("action", "prepare"),
+    "answer_prepare": ("answer", "prepare"),
+    "clarify_prepare": ("clarify", "prepare"),
+}
+
+
+def pending_review_receipt(receipt):
+    result = receipt.get("result", {})
+    return (
+        receipt.get("effect") == "prepare" and bool(receipt.get("fulfilled_actions"))
+        and result.get("status") == "awaiting_input"
+        and result.get("requires_human_review") is True and result.get("applied") is False
+        and isinstance(result.get("proposal"), dict)
+        and result["proposal"].get("status") == "pending"
+    )
 
 
 class CurrentReceiptSchema(AgentOutputSchema):
@@ -20,9 +44,25 @@ class CurrentReceiptSchema(AgentOutputSchema):
     def json_schema(self):
         schema = deepcopy(super().json_schema())
         effects = {r["effect"] for r in self.receipts.values()} & {"read", "prepare"}
-        schema["properties"]["effect"]["enum"] = ["none", *sorted(effects)]
-        if not effects:
-            schema["properties"]["kind"]["enum"] = ["answer", "clarify"]
+        choices = ["answer_none", "clarify_none"]
+        if "read" in effects:
+            choices += ["answer_read", "clarify_read", "action_read"]
+        if "prepare" in effects:
+            choices.append("action_prepare")
+        if any(pending_review_receipt(r) for r in self.receipts.values()):
+            choices += ["answer_prepare", "clarify_prepare"]
+        del schema["properties"]["kind"], schema["properties"]["effect"]
+        schema["properties"]["outcome"] = {
+            "type": "string", "enum": choices,
+            "description": (
+                "Choose one complete reporting mode, not independent kind/effect fields. "
+                "action_prepare reports actual preparation, including queued computation; "
+                "it NEVER means applied or business completed. Informational prepare modes "
+                "require a cited real pending human-review proposal, not a queued job."
+            ),
+        }
+        schema["required"] = [k for k in schema["required"] if k not in {"kind", "effect"}]
+        schema["required"].append("outcome")
         field = schema["properties"]["receipt_ids"]
         if self.receipts:
             field["items"]["enum"] = list(self.receipts)
@@ -34,6 +74,22 @@ class CurrentReceiptSchema(AgentOutputSchema):
             "no tool effect is claimed. Preparation never authorizes application."
         )
         return schema
+
+    def validate_json(self, json_str):
+        # Decode an explicit model choice; never infer or repair a receipt/effect.
+        # Legacy typed adapters still reach the unchanged runtime guards.
+        try:
+            value = json.loads(json_str)
+        except (ValueError, TypeError):
+            return super().validate_json(json_str)
+        if isinstance(value, dict) and "outcome" in value:
+            choice = value.pop("outcome")
+            if (not isinstance(choice, str) or choice not in OUTCOMES
+                    or "kind" in value or "effect" in value):
+                raise ModelBehaviorError("agent_final_outcome_invalid")
+            value["kind"], value["effect"] = OUTCOMES[choice]
+            json_str = json.dumps(value, ensure_ascii=False)
+        return super().validate_json(json_str)
 
 
 def receipt_diagnostic(receipts, references, *, kind=None, effect=None):

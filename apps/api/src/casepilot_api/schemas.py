@@ -1,15 +1,15 @@
 from datetime import datetime
 from enum import StrEnum
-from uuid import UUID
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import (
-    field_validator,
     AwareDatetime,
     BaseModel,
     ConfigDict,
     Field,
     RootModel,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -99,7 +99,6 @@ class MindMapNote(BaseModel):
     parent_id: str = Field(min_length=1, max_length=1000)
     text: str = Field(min_length=1, max_length=4000)
     module: str = Field(default="", max_length=4000)
-
 
     @model_serializer(mode="wrap")
     def serialize_kind(self, handler):
@@ -248,11 +247,12 @@ class TestCaseCreate(BaseModel):
     test_domains: list[str] = Field(default_factory=list, max_length=20)
     automation_type: str = Field(default="manual", pattern=r"^(manual|automated)$")
 
-
     @field_validator("steps")
     @classmethod
     def require_case_content(cls, rows):
-        if not any(row.action.strip() for row in rows) or not any(row.expected.strip() for row in rows):
+        if not any(row.action.strip() for row in rows) or not any(
+            row.expected.strip() for row in rows
+        ):
             raise ValueError("case_requires_procedure_and_checkpoints")
         return rows
 
@@ -277,11 +277,12 @@ class TestCaseUpdate(BaseModel):
     test_domains: list[str] | None = Field(default=None, max_length=20)
     automation_type: str | None = Field(default=None, pattern=r"^(manual|automated)$")
 
-
     @field_validator("steps")
     @classmethod
     def require_case_content(cls, rows):
-        if not any(row.action.strip() for row in rows) or not any(row.expected.strip() for row in rows):
+        if not any(row.action.strip() for row in rows) or not any(
+            row.expected.strip() for row in rows
+        ):
             raise ValueError("case_requires_procedure_and_checkpoints")
         return rows
 
@@ -431,7 +432,28 @@ class ConversationTarget(BaseModel):
     source_operation_id: UUID | None = None
 
 
+class ReuseDestination(BaseModel):
+    """A proposed output, never permission to create or switch a collection."""
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["current", "existing", "new"]
+    collection_id: UUID | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+
+    @model_validator(mode="after")
+    def exact_destination(self):
+        if self.kind == "new":
+            if self.collection_id is not None or not self.name or not self.name.strip():
+                raise ValueError("reuse_destination_name_required")
+            self.name = self.name.strip()
+        elif self.name is not None or (self.kind == "existing" and self.collection_id is None):
+            raise ValueError("reuse_destination_id_required")
+        elif self.kind == "current" and self.collection_id is not None:
+            raise ValueError("reuse_destination_current_has_no_id")
+        return self
+
+
 class ConversationMessageCreate(BaseModel):
+    reuse_destination: ReuseDestination | None = None
     selection_version: int | None = Field(default=None, ge=0)
     client_request_id: UUID | None = None
     generation_strategy: Literal["select", "generate", "select_and_generate"] | None = None
@@ -563,10 +585,10 @@ class TestBriefContent(BaseModel):
         scope_clarification = (
             self.planning.get("pending_planning_clarification")
             == {"reason": "coverage_scope_limit"}
-            and (self.planning.get("coverage_review") or {}).get("status") ==
-                "pending_independent_review"
-            and "coverage_scope_limit" in
-                (self.planning.get("coverage_review") or {}).get("warnings", [])
+            and (self.planning.get("coverage_review") or {}).get("status")
+            == "pending_independent_review"
+            and "coverage_scope_limit"
+            in (self.planning.get("coverage_review") or {}).get("warnings", [])
         )
         if self.planning:
             features = self.planning.get("feature_points", [])
@@ -584,9 +606,15 @@ class TestBriefContent(BaseModel):
             feature_ids = [item.get("id") for item in features]
             point_ids = [item.get("id") for item in points]
             if (
-                (not features or not points) and not (
-                    pending_clarification and not features and not points
-                    or scope_clarification and bool(features) and not points)
+                (not features or not points)
+                and not (
+                    pending_clarification
+                    and not features
+                    and not points
+                    or scope_clarification
+                    and bool(features)
+                    and not points
+                )
                 or len(set(feature_ids)) != len(feature_ids)
                 or len(set(point_ids)) != len(point_ids)
             ):
@@ -621,18 +649,24 @@ class TestBriefContent(BaseModel):
                     raise ValueError("planning_primary_feature_invalid")
                 if "boundary_samples" in point:
                     from casepilot_agent.planning_boundary import BoundarySample
+
                     samples = point["boundary_samples"]
                     if not isinstance(samples, list) or len(samples) > 2000:
                         raise ValueError("planning_boundary_samples_invalid")
                     for sample in samples:
                         parsed = BoundarySample.model_validate(sample)
-                        if ("assertion_source_slot" in sample or "assertion_binding" in sample
-                                or parsed.assertion_source_ref is None
-                                or not parsed.assertion_source_ref.label.strip()
-                                or not parsed.assertion_source_ref.excerpt.strip()
-                                or not all(value.strip() for value in (
-                                    parsed.unit, parsed.axis, parsed.time_origin))
-                                or parsed.assertion_feature_id not in point["feature_point_ids"]):
+                        if (
+                            "assertion_source_slot" in sample
+                            or "assertion_binding" in sample
+                            or parsed.assertion_source_ref is None
+                            or not parsed.assertion_source_ref.label.strip()
+                            or not parsed.assertion_source_ref.excerpt.strip()
+                            or not all(
+                                value.strip()
+                                for value in (parsed.unit, parsed.axis, parsed.time_origin)
+                            )
+                            or parsed.assertion_feature_id not in point["feature_point_ids"]
+                        ):
                             raise ValueError("planning_boundary_sample_canonical_required")
             coverage = self.planning.get("coverage_review") or {}
             quantity_axes = {}
@@ -641,25 +675,42 @@ class TestBriefContent(BaseModel):
                 for obligation in batch.get("obligations", []):
                     if "boundary_contract" in obligation:
                         from casepilot_agent.planning_boundary import BoundaryContract
+
                         value = obligation["boundary_contract"]
                         parsed = BoundaryContract.model_validate(value)
-                        if ("source_slot" in value or parsed.source_ref is None
-                                or not parsed.source_ref.label.strip()
-                                or not parsed.source_ref.excerpt.strip()):
+                        if (
+                            "source_slot" in value
+                            or parsed.source_ref is None
+                            or not parsed.source_ref.label.strip()
+                            or not parsed.source_ref.excerpt.strip()
+                        ):
                             raise ValueError("planning_boundary_contract_canonical_required")
                         if parsed.quantity_axis_id is not None:
                             from casepilot_agent.planning_boundary import boundary_evidence_bindings
-                            bindings = boundary_evidence_bindings({
-                                "evidence": [parsed.source_ref.model_dump(mode="json")]})
-                            if not any(all(getattr(parsed, field) == binding[field] for field in (
-                                "quantity_axis_id", "source_literal", "threshold", "unit"
-                            )) for binding in bindings):
+
+                            bindings = boundary_evidence_bindings(
+                                {"evidence": [parsed.source_ref.model_dump(mode="json")]}
+                            )
+                            if not any(
+                                all(
+                                    getattr(parsed, field) == binding[field]
+                                    for field in (
+                                        "quantity_axis_id",
+                                        "source_literal",
+                                        "threshold",
+                                        "unit",
+                                    )
+                                )
+                                for binding in bindings
+                            ):
                                 raise ValueError("planning_boundary_quantity_identity_invalid")
                         for point_id in obligation.get("point_ids", []):
                             quantity_axes.setdefault((point_id, obligation.get("id")), set()).add(
-                                parsed.quantity_axis_id)
+                                parsed.quantity_axis_id
+                            )
                             quantity_contracts.setdefault(
-                                (point_id, obligation.get("id")), []).append(parsed)
+                                (point_id, obligation.get("id")), []
+                            ).append(parsed)
             for point in points:
                 for sample in point.get("boundary_samples", []):
                     actual = sample.get("quantity_axis_id")
@@ -677,13 +728,17 @@ class TestBriefContent(BaseModel):
                         for contract in quantity_contracts.get(
                             (point["id"], sample["obligation_id"]), []
                         ):
-                            if (actual != contract.quantity_axis_id
-                                    or sample["unit"] != contract.unit):
+                            if (
+                                actual != contract.quantity_axis_id
+                                or sample["unit"] != contract.unit
+                            ):
                                 continue
                             coordinate = Decimal(str(contract.threshold))
                             if sample["position"] != "at":
-                                if (contract.sampling_step is None
-                                        or not contract.sampling_literal.strip()):
+                                if (
+                                    contract.sampling_step is None
+                                    or not contract.sampling_literal.strip()
+                                ):
                                     continue
                                 direction = -1 if sample["position"] == "before" else 1
                                 coordinate += Decimal(str(contract.sampling_step)) * direction
@@ -693,11 +748,15 @@ class TestBriefContent(BaseModel):
                         if not coordinate_matches:
                             raise ValueError("planning_boundary_coordinate_invalid")
         self.test_object = self.test_object.strip()
-        reserved_questions = [question for question in self.open_questions
-                              if ((pending_clarification and question.get("id") == pending_reason)
-                                  or (scope_clarification
-                                      and question.get("id") == "coverage_scope_limit"))
-                              and question.get("blocking") is True]
+        reserved_questions = [
+            question
+            for question in self.open_questions
+            if (
+                (pending_clarification and question.get("id") == pending_reason)
+                or (scope_clarification and question.get("id") == "coverage_scope_limit")
+            )
+            and question.get("blocking") is True
+        ]
         self.open_questions = (
             reserved_questions
             if self.test_object

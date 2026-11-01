@@ -9,6 +9,7 @@ from casepilot_agent.contracts import UsageMetadata
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 from test_workbench_bridge_integration import setup
+from test_workbench_collection_durable_harness import isolated_outbox_db  # noqa: F401
 
 from casepilot_api.database import get_session_factory
 from casepilot_api.main import app
@@ -305,6 +306,7 @@ async def test_source_snapshot_change_rejects_proposal_apply():
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("isolated_outbox_db")
 async def test_real_outbox_routes_and_recovers_only_unclaimed_matching_phase(monkeypatch):
     from datetime import UTC, datetime, timedelta
 
@@ -420,3 +422,68 @@ async def test_failure_record_database_error_still_reports_original_safe_diagnos
         assert [d["phase"] for d in evidence] == ["provider_call", "failure_persistence"]
         assert "PRIVATE" not in str(evidence)
         assert evidence[1]["code"] == "planning_review_failure_record_unavailable"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["auditing", "revising"])
+@pytest.mark.parametrize("expired", [False, True])
+async def test_running_review_poll_and_interrupted_worker_fail_closed(phase, expired):
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import text
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        url, row, _ = await start(client)
+        with get_session_factory()() as db:
+            review = db.get(PlanningReview, UUID(row["id"]))
+            review.status = phase
+            review.requests_used = 1 if phase == "auditing" else 2
+            db.flush()
+            db.execute(
+                text("UPDATE planning_reviews SET updated_at=:stamp WHERE id=:id"),
+                {
+                    "stamp": datetime.now(UTC) - timedelta(minutes=11 if expired else 1),
+                    "id": review.id,
+                },
+            )
+            db.commit()
+        response = await client.get(url)
+        assert response.status_code == 200
+        observed = response.json()[0]
+        assert observed["status"] == ("failed" if expired else phase)
+        assert observed["error_code"] == ("planning_review_interrupted" if expired else None)
+        assert observed["requests_used"] == (1 if phase == "auditing" else 2)
+        provider = Provider()
+        assert (
+            await asyncio.to_thread(
+                execute, row["id"], "audit" if phase == "auditing" else "revision", provider
+            )
+            == "ignored"
+        )
+        assert provider.calls == 0
+        with get_session_factory()() as db:
+            assert db.scalar(select(func.count()).select_from(WorkspaceTestBrief)) >= 1
+            assert db.get(PlanningReview, UUID(row["id"])).applied_brief_id is None
+
+
+@pytest.mark.asyncio
+async def test_claim_refreshes_old_review_timestamp_without_resetting_budget():
+    from datetime import UTC, datetime, timedelta
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        url, row, _ = await start(client)
+        with get_session_factory()() as db:
+            review = db.get(PlanningReview, UUID(row["id"]))
+            review.updated_at = datetime.now(UTC) - timedelta(days=1)
+            db.commit()
+
+        def observe_claim():
+            with get_session_factory()() as db:
+                review = db.get(PlanningReview, UUID(row["id"]))
+                assert review.updated_at > datetime.now(UTC) - timedelta(minutes=1)
+                assert review.status == "auditing" and review.requests_used == 1
+
+        provider = Provider(callback=observe_claim)
+        assert await asyncio.to_thread(execute, row["id"], "audit", provider) == "reviewed"
+        assert provider.calls == 1
+        assert (await client.get(url)).json()[0]["status"] == "reviewed"

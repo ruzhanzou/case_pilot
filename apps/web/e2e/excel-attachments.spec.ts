@@ -1,3 +1,4 @@
+import type { ConversationDto } from "../lib/casepilot-api";
 import { expect, test } from "@playwright/test";
 import * as XLSX from "xlsx";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -61,12 +62,14 @@ for (const format of ["xlsx", "xls"] as const) {
     await composer.locator("textarea").fill("请只根据刚上传的Excel回答：星桥验证码登录的验证码有效期是多少？过期错误码是什么？连续输错几次会锁定，锁定多久？请引用原始工作表和行号。这次只回答问题。" );
     await composer.getByRole("button", { name: "发送", exact: true }).click();
     expect((await sent).status()).toBe(202);
-    let saved: any;
+    let saved: ConversationDto | undefined;
     await expect.poll(async () => {
-      saved = await (await page.request.get(conversationUrl)).json();
-      return saved.messages.some((m: any) => m.role === "assistant" && m.status === "completed" && m.metadata?.retrieval_performed);
+      saved = await (await page.request.get(conversationUrl)).json() as ConversationDto;
+      return saved.messages.some((m) => m.role === "assistant" && m.status === "completed" && m.metadata?.retrieval_performed);
     }, { timeout: 120_000, intervals: [1000, 2000] }).toBe(true);
-    const answer = saved.messages.findLast((m: any) => m.role === "assistant" && m.metadata?.retrieval_performed);
+    if (!saved) throw new Error("conversation_not_loaded");
+    const answer = saved.messages.findLast((m) => m.role === "assistant" && m.metadata?.retrieval_performed);
+    if (!answer) throw new Error("grounded_answer_missing");
     expect(answer.content).toMatch(/7\s*分钟|七分钟/);
     expect(answer.content).toContain("E731");
     expect(answer.content).toMatch(/4\s*次|四次/);
@@ -114,17 +117,18 @@ test("Excel requirements generate traceable test-case candidates through the UI"
   await expect(composer.locator('.principle-attachment[data-status="ready"]')).toContainText("生成需求.xlsx", { timeout: 90_000 });
   await composer.locator("textarea").fill("请根据刚上传的Excel为星桥验证码登录系统生成测试用例，恰好两个测试点：验证码过期返回E731、连续输错后锁定返回E419。测试环境已有已注册手机号、可控制时钟和验证码的测试接口；每个测试点一条用例。直接制定测试规划，保留附件引用，不要增加其他范围。");
   await composer.getByRole("button", { name: "发送", exact: true }).click();
-  let saved: any;
+  let saved: ConversationDto | undefined;
   await expect.poll(async () => {
-    saved = await (await page.request.get(conversationUrl)).json();
+    saved = await (await page.request.get(conversationUrl)).json() as ConversationDto;
     return saved.test_briefs.at(-1)?.content.planning?.test_points?.length ?? 0;
   }, { timeout: 150_000, intervals: [1000, 3000] }).toBeGreaterThan(0);
   await page.screenshot({ path: path.join(output, "generation-plan.png"), fullPage: true });
   await page.getByRole("button", { name: "确认规划并生成用例", exact: true }).click();
   await expect.poll(async () => {
-    saved = await (await page.request.get(conversationUrl)).json();
+    saved = await (await page.request.get(conversationUrl)).json() as ConversationDto;
     return saved.candidates.length;
   }, { timeout: 150_000, intervals: [1000, 3000] }).toBeGreaterThan(0);
+  if (!saved) throw new Error("conversation_not_loaded");
   const cases = JSON.stringify(saved.candidates);
   expect(cases).toContain("E731");
   expect(cases).toContain("E419");

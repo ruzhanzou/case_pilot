@@ -29,6 +29,7 @@ import {
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type Dispatch,
   type SetStateAction,
@@ -110,7 +111,12 @@ function CaseSelectionRows({
   );
 }
 
-export function PlaylistPicker({
+export function PlaylistPicker(props: PlaylistPickerProps) {
+  const sessionKey = JSON.stringify([props.spaceId, props.requestId, props.creationSessionId, props.seedCollectionId]);
+  return <PlaylistPickerSession key={sessionKey} {...props} />;
+}
+
+function PlaylistPickerSession({
   spaceId,
   collections,
   seedCollectionId,
@@ -136,11 +142,19 @@ export function PlaylistPicker({
   const [query, setQuery] = useState("");
   const [searchCases, setSearchCases] = useState<TestCaseDto[]>([]);
   const [searchOffset, setSearchOffset] = useState(0);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [searchFailed, setSearchFailed] = useState(false);
-  const [searchError, setSearchError] = useState("");
+  const [searchResult, setSearchResult] = useState<{ key: string; error: string } | null>(null);
   const [searchRetry, setSearchRetry] = useState(0);
   const [hasMoreCases, setHasMoreCases] = useState(false);
+  const searchKey = JSON.stringify([query, searchOffset, searchRetry]);
+  const searchLoading = editing && !loading && searchResult?.key !== searchKey;
+  const searchError = searchResult?.key === searchKey ? searchResult.error : "";
+  const searchFailed = Boolean(searchError);
+  const mounted = useRef(false);
+  const editorEpoch = useRef(0);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const rememberCases = (items: TestCaseDto[]) => setAllCases((current) =>
     [...new Map([...current, ...items].map((item) => [item.id, item])).values()],
   );
@@ -202,6 +216,8 @@ export function PlaylistPicker({
   }, [allCases, selectedCaseIds]);
 
   const resetDraft = () => {
+    editorEpoch.current += 1;
+    setSaving(false);
     setEditing(false);
     setEditingId(null);
     setName("");
@@ -212,6 +228,8 @@ export function PlaylistPicker({
     setQuery("");
     setSearchOffset(0);
     setSearchCases([]);
+    setSearchResult(null);
+    setSearchRetry((value) => value + 1);
     setHasMoreCases(false);
     setDeduplicatedCount(0);
   };
@@ -219,10 +237,12 @@ export function PlaylistPicker({
   const beginNewFromCollection = async (collectionId: string) => {
     const collection = collections.find((item) => item.id === collectionId);
     if (!collection) return;
+    const epoch = ++editorEpoch.current;
     setSaving(true);
     onError("");
     try {
       const collectionCases = await listTestCases(collectionId);
+      if (!mounted.current || editorEpoch.current !== epoch) return;
       rememberCases(collectionCases);
       setEditing(true);
       setEditingId(null);
@@ -232,19 +252,15 @@ export function PlaylistPicker({
       setAwaitingSeedChoice(false);
       onSelect(null);
     } catch (caught) {
+      if (!mounted.current || editorEpoch.current !== epoch) return;
       onError(messageFromError(caught, pick("Failed to load collection", "用例集合加载失败")));
     } finally {
-      setSaving(false);
+      if (mounted.current && editorEpoch.current === epoch) setSaving(false);
     }
   };
 
   useEffect(() => {
     let ignored = false;
-    setLoading(true);
-    setAllCases([]);
-    setQuery("");
-    setSearchOffset(0);
-    setSearchCases([]);
     Promise.all([
       listPlaylists(spaceId),
       creationSessionId
@@ -319,9 +335,6 @@ export function PlaylistPicker({
   useEffect(() => {
     if (!editing || loading) return;
     let ignored = false;
-    setSearchLoading(true);
-    setSearchFailed(false);
-    setSearchError("");
     const timer = window.setTimeout(() => {
       searchSpaceTestCases(spaceId, query, searchOffset)
         .then((items) => {
@@ -330,21 +343,32 @@ export function PlaylistPicker({
             [...new Map([...current, ...items].map((item) => [item.id, item])).values()]);
           rememberCases(items);
           setHasMoreCases(items.length === 100);
+          setSearchResult({ key: searchKey, error: "" });
         })
         .catch((caught) => {
           if (ignored) return;
-          setSearchFailed(true);
-          setSearchError(messageFromError(caught, pick("Search failed", "用例搜索失败")));
-        })
-        .finally(() => { if (!ignored) setSearchLoading(false); });
+          setSearchResult({ key: searchKey, error: messageFromError(caught, pick("Search failed", "用例搜索失败")) });
+        });
     }, 250);
     return () => { ignored = true; window.clearTimeout(timer); };
     // Ignore responses from an older query, page, space or navigation request.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing, loading, spaceId, requestId, query, searchOffset, searchRetry]);
 
+  const selectPlaylist = (playlist: PlaylistDto) => {
+    editorEpoch.current += 1;
+    setSaving(false);
+    setEditing(false);
+    setAwaitingSeedChoice(false);
+    onSelect(playlist);
+  };
+
   const editPlaylist = (playlist: PlaylistDto) => {
+    editorEpoch.current += 1;
+    setSaving(false);
     rememberCases(playlist.cases.flatMap((item) => item.test_case ? [item.test_case] : []));
+    setSearchResult(null);
+    setSearchRetry((value) => value + 1);
     setEditing(true);
     setEditingId(playlist.id);
     setName(playlist.name);
@@ -356,25 +380,27 @@ export function PlaylistPicker({
   };
 
   const addCollection = async (collectionId: string) => {
+    const epoch = editorEpoch.current;
     setSaving(true);
     onError("");
     try {
       const collectionCases = await listTestCases(collectionId);
+      if (!mounted.current || editorEpoch.current !== epoch) return;
       rememberCases(collectionCases);
       const existing = new Set(selectedCaseIds);
       const duplicates = collectionCases.filter((item) => existing.has(item.id)).length;
       setDeduplicatedCount((count) => count + duplicates);
-      setSelectedCaseIds([
-        ...selectedCaseIds,
-        ...collectionCases.map((item) => item.id).filter((id) => !existing.has(id)),
-      ]);
+      setSelectedCaseIds((current) => [...new Set([
+        ...current, ...collectionCases.map((item) => item.id),
+      ])]);
       setSourceCollectionIds((current) =>
         current.includes(collectionId) ? current : [...current, collectionId],
       );
     } catch (caught) {
+      if (!mounted.current || editorEpoch.current !== epoch) return;
       onError(messageFromError(caught, pick("Failed to load collection", "用例集合加载失败")));
     } finally {
-      setSaving(false);
+      if (mounted.current && editorEpoch.current === epoch) setSaving(false);
     }
   };
 
@@ -402,6 +428,7 @@ export function PlaylistPicker({
   };
 
   const save = async () => {
+    const epoch = editorEpoch.current;
     if (!name.trim()) {
       onError(pick("Enter a Playlist name.", "请填写 Playlist 名称。"));
       return;
@@ -446,21 +473,24 @@ export function PlaylistPicker({
           ? await updatePlaylist(editingId, payload)
           : await createPlaylist(spaceId, payload);
       }
-      const next = editingId
-        ? playlists.map((item) => (item.id === saved.id ? saved : item))
-        : [saved, ...playlists];
-      setPlaylists(next);
+      if (!mounted.current) return;
+      setPlaylists((current) => current.some((item) => item.id === saved.id)
+        ? current.map((item) => item.id === saved.id ? saved : item)
+        : [saved, ...current]);
+      if (editorEpoch.current !== epoch) return;
       setEditing(false);
       setEditingId(null);
       onSelect(saved);
     } catch (caught) {
+      if (!mounted.current || editorEpoch.current !== epoch) return;
       onError(messageFromError(caught, pick("Failed to save Playlist", "Playlist 保存失败")));
     } finally {
-      setSaving(false);
+      if (mounted.current && editorEpoch.current === epoch) setSaving(false);
     }
   };
 
   const remove = async (playlist: PlaylistDto) => {
+    const epoch = editorEpoch.current;
     if (!window.confirm(pick(`Delete Playlist “${playlist.name}”? Previous runs will not be affected.`, `确定删除 Playlist“${playlist.name}”吗？历史任务不会受影响。`))) {
       return;
     }
@@ -468,14 +498,17 @@ export function PlaylistPicker({
     onError("");
     try {
       await deletePlaylist(playlist.id);
+      if (!mounted.current) return;
+      setPlaylists((current) => current.filter((item) => item.id !== playlist.id));
+      if (editorEpoch.current !== epoch) return;
       const next = playlists.filter((item) => item.id !== playlist.id);
-      setPlaylists(next);
       if (selectedPlaylistId === playlist.id) onSelect(next[0] ?? null);
       if (editingId === playlist.id) resetDraft();
     } catch (caught) {
+      if (!mounted.current || editorEpoch.current !== epoch) return;
       onError(messageFromError(caught, pick("Failed to delete Playlist", "Playlist 删除失败")));
     } finally {
-      setSaving(false);
+      if (mounted.current && editorEpoch.current === epoch) setSaving(false);
     }
   };
 
@@ -490,7 +523,7 @@ export function PlaylistPicker({
         <p>{pick("Choose an existing Playlist or create one from the current collection.", "选择已有 Playlist，或按集合当前内容重新创建。")}</p>
         <div>
           {matchingPlaylists.map((playlist) => (
-            <button key={playlist.id} type="button" onClick={() => { setAwaitingSeedChoice(false); onSelect(playlist); }}>
+            <button key={playlist.id} type="button" onClick={() => selectPlaylist(playlist)}>
               <Check size={15} /> {pick("Reuse", "复用")} {playlist.name} · {pick(`${playlist.case_count} cases`, `${playlist.case_count} 条`)}
             </button>
           ))}
@@ -517,7 +550,7 @@ export function PlaylistPicker({
           <div className="playlist-saved-list">
             {playlists.map((playlist) => (
               <div key={playlist.id} className={playlist.id === selectedPlaylistId ? "is-active" : ""}>
-                <button type="button" onClick={() => { setEditing(false); onSelect(playlist); }}>
+                <button type="button" onClick={() => selectPlaylist(playlist)}>
                   <strong>{playlist.name}</strong>
                   <span>{pick(`From ${playlist.source_collection_ids.length} collections · ${playlist.case_count} cases`, `来自 ${playlist.source_collection_ids.length} 个集合 · ${playlist.case_count} 条用例`)}</span>
                   {playlist.unavailable_case_ids.length > 0 && <em>{pick(`${playlist.unavailable_case_ids.length} unavailable`, `${playlist.unavailable_case_ids.length} 条不可用`)}</em>}

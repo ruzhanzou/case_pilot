@@ -47,13 +47,28 @@ class RewriteProvider:
 
     def complete(self, *, payload, result_type, **kwargs):
         if kwargs.get("stage") == "rewrite.constraints_validated":
-            from casepilot_agent.contracts import QualityIssue, QualityReport, RewriteCaseDraft, RewriteRequest
+            from casepilot_agent.contracts import (
+                QualityIssue,
+                QualityReport,
+                RewriteCaseDraft,
+                RewriteRequest,
+            )
             from casepilot_agent.rewrite_guards import preservation_error, reference_rewrite_error
-            request = RewriteRequest(test_case=payload["original"], instruction=payload["instruction"], context=payload.get("context", {}))
+
+            request = RewriteRequest(
+                test_case=payload["original"],
+                instruction=payload["instruction"],
+                context=payload.get("context", {}),
+            )
             proposed = RewriteCaseDraft.model_validate(payload["proposed"])
-            error = preservation_error(request, proposed) or reference_rewrite_error(request, proposed)
-            return QualityReport(passed=not error, score=0 if error else 100,
-                issues=[QualityIssue(code="fixture_constraint", message=error)] if error else []), UsageMetadata(model="acceptance")
+            error = preservation_error(request, proposed) or reference_rewrite_error(
+                request, proposed
+            )
+            return QualityReport(
+                passed=not error,
+                score=0 if error else 100,
+                issues=[QualityIssue(code="fixture_constraint", message=error)] if error else [],
+            ), UsageMetadata(model="acceptance")
         return result_type.model_validate(
             {
                 "items": [
@@ -65,9 +80,7 @@ class RewriteProvider:
 
 
 @pytest.mark.asyncio
-async def test_module_then_single_then_failed_round_and_rewrite_after_apply(
-    workspace, monkeypatch
-):
+async def test_module_then_single_then_failed_round_and_rewrite_after_apply(workspace, monkeypatch):
     client, collection, wid = workspace
     provider = RewriteProvider()
     monkeypatch.setattr(tasks, "create_provider", lambda *args: provider)
@@ -125,14 +138,10 @@ async def test_module_then_single_then_failed_round_and_rewrite_after_apply(
     assert failed_initial["status"] == "no_changes"
     assert failed_initial["items"][0]["quality"]["passed"] is False
     assert failed_initial["items"][0]["field_diff"] == []
-    blocked = await client.post(
-        f"/api/v1/case-change-sets/{failed_initial['id']}/apply", json={}
-    )
+    blocked = await client.post(f"/api/v1/case-change-sets/{failed_initial['id']}/apply", json={})
     assert blocked.status_code == 409, blocked.text
     assert blocked.json()["detail"] == "change_item_needs_completion"
-    rejected = await client.post(
-        f"/api/v1/case-change-sets/{failed_initial['id']}/reject"
-    )
+    rejected = await client.post(f"/api/v1/case-change-sets/{failed_initial['id']}/reject")
     assert rejected.status_code == 200, rejected.text
     assert rejected.json()["status"] == "rejected"
     unchanged = (await client.get(f"/api/v1/test-cases/{cases[2]['id']}")).json()
@@ -185,7 +194,10 @@ async def test_module_then_single_then_failed_round_and_rewrite_after_apply(
     fourth_items = {item["ref"]: item for item in fourth["items"]}
     assert len(fourth_items[cases[0]["id"]]["proposed_snapshot"]["steps"]) == 5
     assert fourth_items[cases[0]["id"]]["proposed_snapshot"]["steps"][1]["action"] == "输入验证码"
-    assert fourth_items[cases[1]["id"]]["proposed_snapshot"] == second_items[cases[1]["id"]]["proposed_snapshot"]
+    assert (
+        fourth_items[cases[1]["id"]]["proposed_snapshot"]
+        == second_items[cases[1]["id"]]["proposed_snapshot"]
+    )
     applied = await client.post(f"/api/v1/case-change-sets/{fourth['id']}/apply", json={})
     assert applied.status_code == 200, applied.text
     current = (await client.get(f"/api/v1/test-cases/{cases[0]['id']}")).json()
@@ -240,7 +252,10 @@ async def test_planning_add_edit_delete_rounds_persist_history_and_select_latest
         def complete(self, *, stage, payload, result_type, **kwargs):
             if stage == "output_quantity.interpreted":
                 from casepilot_agent.quantity import OutputQuantity
-                return OutputQuantity(test_point_count={"稳定性": 3, "安全": 2, "修订稳定性": 1}.get(self.label)), UsageMetadata(model="acceptance")
+
+                return OutputQuantity(
+                    test_point_count={"稳定性": 3, "安全": 2, "修订稳定性": 1}.get(self.label)
+                ), UsageMetadata(model="acceptance")
             if stage == "requirement.analyzed":
                 result = PlanningAnalysis(
                     summary="登录",
@@ -273,15 +288,20 @@ async def test_planning_add_edit_delete_rounds_persist_history_and_select_latest
                                 "priority": "P1",
                                 "priority_reason": "核心流程",
                                 "feature_point_ids": [features[0]["id"]],
-                                "primary_binding": next(pair["id"]
+                                "primary_binding": next(
+                                    pair["id"]
                                     for pair in payload["primary_bindings"]
-                                    if pair["feature_id"] == features[0]["id"]),
+                                    if pair["feature_id"] == features[0]["id"]
+                                ),
                                 "scenario": f"登录流程的{self.label}{i}场景",
-                                "source_refs": [{
-                                    "locator": payload["feature_source_slots"][
-                                        features[0]["id"]][0],
-                                    "label": "已提供的登录需求",
-                                }],
+                                "source_refs": [
+                                    {
+                                        "locator": payload["feature_source_slots"][
+                                            features[0]["id"]
+                                        ][0],
+                                        "label": "已提供的登录需求",
+                                    }
+                                ],
                             }
                             for i in range(payload["batch_count"])
                         ],
@@ -416,96 +436,193 @@ async def test_candidate_rewrite_rounds_keep_point_links_and_other_candidates(
 
 @pytest.mark.asyncio
 async def test_text_retry_of_partial_generation_only_reconfirms_missing_points(workspace):
-    from casepilot_api.models import (Conversation, ConversationOperation, GenerationJob,
-                                     WorkspaceCandidate, WorkspaceTestBrief)
-    from casepilot_api.schemas import TestBriefContent
     from sqlalchemy import select
 
+    from casepilot_api.models import (
+        Conversation,
+        ConversationOperation,
+        GenerationJob,
+        WorkspaceCandidate,
+        WorkspaceTestBrief,
+    )
+    from casepilot_api.schemas import TestBriefContent
+
     client, _, wid = workspace
-    response = await client.post(f'/api/v1/conversations/{wid}/messages', json={
-        'content': '生成2条登录用例', 'intent_override': 'CASE_GENERATE',
-    })
+    response = await client.post(
+        f"/api/v1/conversations/{wid}/messages",
+        json={
+            "content": "生成2条登录用例",
+            "intent_override": "CASE_GENERATE",
+        },
+    )
     assert response.status_code == 202, response.text
-    job_id = UUID(response.json()['action']['job_id'])
-    points = [{'id': f'P-{i}', 'title': f'登录场景{i}', 'objective': f'验证登录场景{i}',
-               'feature_point_ids': ['F-1']} for i in [1, 2]]
-    content = TestBriefContent.model_validate({'test_object': '登录系统', 'planning': {
-        'feature_points': [{'id': 'F-1', 'name': '登录', 'module': '账号', 'description': '登录'}],
-        'test_points': points,
-    }}).model_dump(mode='json')
-    snapshot = {'id': 'TC-P-1', 'title': '成功的候选', 'module': '账号', 'priority': 'P1',
-                'case_type': '功能', 'preconditions': ['账号存在'], 'steps': [{'action': '登录', 'expected': '进入首页'}],
-                'test_point_ids': ['P-1'], 'source_refs': [], 'tags': []}
+    job_id = UUID(response.json()["action"]["job_id"])
+    points = [
+        {
+            "id": f"P-{i}",
+            "title": f"登录场景{i}",
+            "objective": f"验证登录场景{i}",
+            "feature_point_ids": ["F-1"],
+        }
+        for i in [1, 2]
+    ]
+    content = TestBriefContent.model_validate(
+        {
+            "test_object": "登录系统",
+            "planning": {
+                "feature_points": [
+                    {"id": "F-1", "name": "登录", "module": "账号", "description": "登录"}
+                ],
+                "test_points": points,
+            },
+        }
+    ).model_dump(mode="json")
+    snapshot = {
+        "id": "TC-P-1",
+        "title": "成功的候选",
+        "module": "账号",
+        "priority": "P1",
+        "case_type": "功能",
+        "preconditions": ["账号存在"],
+        "steps": [{"action": "登录", "expected": "进入首页"}],
+        "test_point_ids": ["P-1"],
+        "source_refs": [],
+        "tags": [],
+    }
     with get_session_factory()() as db:
         job = db.get(GenerationJob, job_id)
-        op = db.scalar(select(ConversationOperation).where(ConversationOperation.related_job_id == job_id))
-        job.operation = 'generate'
-        job.status = 'completed'
-        job.stage = 'completed'
-        job.input_payload = {**job.input_payload, 'confirmed_plan': content['planning'],
-                             'confirmed_test_brief_version': 1, 'output_contract': 'case_batch_v2'}
-        job.output_payload = {'quality': {'passed': True, 'issues': [
-            {'code': 'uncovered_test_point', 'object_id': 'P-2', 'message': '待完善', 'severity': 'warning'}]}}
-        op.status = 'completed'
-        db.add(WorkspaceTestBrief(conversation_id=UUID(wid), source_operation_id=op.id,
-                                  version=1, content=content, status='confirmed'))
-        kept = WorkspaceCandidate(conversation_id=UUID(wid), generation_job_id=job.id,
-                                  ref='TC-P-1', snapshot=snapshot, version=1, status='candidate')
+        op = db.scalar(
+            select(ConversationOperation).where(ConversationOperation.related_job_id == job_id)
+        )
+        job.operation = "generate"
+        job.status = "completed"
+        job.stage = "completed"
+        job.input_payload = {
+            **job.input_payload,
+            "confirmed_plan": content["planning"],
+            "confirmed_test_brief_version": 1,
+            "output_contract": "case_batch_v2",
+        }
+        job.output_payload = {
+            "quality": {
+                "passed": True,
+                "issues": [
+                    {
+                        "code": "uncovered_test_point",
+                        "object_id": "P-2",
+                        "message": "待完善",
+                        "severity": "warning",
+                    }
+                ],
+            }
+        }
+        op.status = "completed"
+        db.add(
+            WorkspaceTestBrief(
+                conversation_id=UUID(wid),
+                source_operation_id=op.id,
+                version=1,
+                content=content,
+                status="confirmed",
+            )
+        )
+        kept = WorkspaceCandidate(
+            conversation_id=UUID(wid),
+            generation_job_id=job.id,
+            ref="TC-P-1",
+            snapshot=snapshot,
+            version=1,
+            status="candidate",
+        )
         db.add(kept)
         conv = db.get(Conversation, UUID(wid))
-        conv.context = {**conv.context, 'phase': 'candidate_review', 'active_job_id': None,
-                        'confirmed_brief_version': 1}
+        conv.context = {
+            **conv.context,
+            "phase": "candidate_review",
+            "active_job_id": None,
+            "confirmed_brief_version": 1,
+        }
         db.commit()
         kept_id = kept.id
-    retried = await client.post(f'/api/v1/conversations/{wid}/messages', json={'content': '重试未完成的生成'})
+    retried = await client.post(
+        f"/api/v1/conversations/{wid}/messages", json={"content": "重试未完成的生成"}
+    )
     assert retried.status_code == 202, retried.text
-    new_job_id = UUID(retried.json()['action']['job_id'])
+    new_job_id = UUID(retried.json()["action"]["job_id"])
     assert new_job_id != job_id
     with get_session_factory()() as db:
         new_job = db.get(GenerationJob, new_job_id)
-        assert [p['id'] for p in new_job.input_payload['confirmed_plan']['test_points']] == ['P-2']
+        assert [p["id"] for p in new_job.input_payload["confirmed_plan"]["test_points"]] == ["P-2"]
         kept = db.get(WorkspaceCandidate, kept_id)
-        assert kept.snapshot == snapshot and kept.version == 1 and kept.status == 'candidate'
-    duplicate = await client.post(f'/api/v1/conversations/{wid}/messages', json={'content': '重试'})
+        assert kept.snapshot == snapshot and kept.version == 1 and kept.status == "candidate"
+    duplicate = await client.post(f"/api/v1/conversations/{wid}/messages", json={"content": "重试"})
     assert duplicate.status_code == 409
 
 
-@pytest.mark.parametrize('changed', [False, True])
+@pytest.mark.parametrize("changed", [False, True])
 @pytest.mark.asyncio
 async def test_failed_rewrite_reuses_confirmation_only_for_unchanged_assets(workspace, changed):
-    from casepilot_api.models import GenerationJob, ConversationOperation, CaseChangeSet
+    from casepilot_api.models import CaseChangeSet, ConversationOperation, GenerationJob
+
     client, collection, wid = workspace
-    item = (await client.post(f'/api/v1/collections/{collection}/test-cases', json={
-        'title': '原始登录', 'module': '账号', 'steps': [{'action': '登录', 'expected': '进入首页'}],
-    })).json()
-    first = await client.post(f'/api/v1/conversations/{wid}/messages', json={
-        'content': '将标题改为新登录，其他字段保持不变', 'intent_override': 'CASE_MODIFY',
-        'targets': [{'kind': 'case', 'case_ids': [item['id']]}], 'target_scope': 'selected',
-    })
+    item = (
+        await client.post(
+            f"/api/v1/collections/{collection}/test-cases",
+            json={
+                "title": "原始登录",
+                "module": "账号",
+                "steps": [{"action": "登录", "expected": "进入首页"}],
+            },
+        )
+    ).json()
+    first = await client.post(
+        f"/api/v1/conversations/{wid}/messages",
+        json={
+            "content": "将标题改为新登录，其他字段保持不变",
+            "intent_override": "CASE_MODIFY",
+            "targets": [{"kind": "case", "case_ids": [item["id"]]}],
+            "target_scope": "selected",
+        },
+    )
     assert first.status_code == 202, first.text
-    operation_id = first.json()['operation_plan']['current_operation_id']
-    confirmed = await client.post(f'/api/v1/conversation-operations/{operation_id}/resume', json={
-        'confirm_modification': True,
-    })
+    operation_id = first.json()["operation_plan"]["current_operation_id"]
+    confirmed = await client.post(
+        f"/api/v1/conversation-operations/{operation_id}/resume",
+        json={
+            "confirm_modification": True,
+        },
+    )
     assert confirmed.status_code == 202, confirmed.text + first.text
-    job_id = confirmed.json()['action']['job_id']
+    job_id = confirmed.json()["action"]["job_id"]
     with get_session_factory()() as db:
-        job = db.get(GenerationJob, UUID(job_id)); job.status = 'failed'
-        op = db.get(ConversationOperation, UUID(operation_id)); op.status = 'failed'
-        assert op.payload['last_confirmed_modification']['cases']
+        job = db.get(GenerationJob, UUID(job_id))
+        job.status = "failed"
+        op = db.get(ConversationOperation, UUID(operation_id))
+        op.status = "failed"
+        assert op.payload["last_confirmed_modification"]["cases"]
         change = db.get(CaseChangeSet, op.related_change_set_id)
-        if change: change.status = 'failed'
+        if change:
+            change.status = "failed"
         db.commit()
     if changed:
-        updated = await client.patch(f"/api/v1/test-cases/{item['id']}", json={'title': '外部已更新', 'base_revision_id': item['current_revision_id'], 'steps': item['steps']})
+        updated = await client.patch(
+            f"/api/v1/test-cases/{item['id']}",
+            json={
+                "title": "外部已更新",
+                "base_revision_id": item["current_revision_id"],
+                "steps": item["steps"],
+            },
+        )
         assert updated.status_code == 200, updated.text
-    retry = await client.post(f'/api/v1/conversations/{wid}/messages', json={'content': '重试修改任务'})
+    retry = await client.post(
+        f"/api/v1/conversations/{wid}/messages", json={"content": "重试修改任务"}
+    )
     assert retry.status_code == 202, retry.text
     if changed:
-        assert not retry.json()['action'].get('job_id')
-        assert retry.json()['assistant_message']['metadata']['modification_confirmation']
+        assert not retry.json()["action"].get("job_id")
+        assert retry.json()["assistant_message"]["metadata"]["modification_confirmation"]
     else:
-        assert retry.json()['action']['job_id'] != job_id
-        assert retry.json()['operation_plan']['current_operation_id'] == operation_id
+        assert retry.json()["action"]["job_id"] != job_id
+        assert retry.json()["operation_plan"]["current_operation_id"] == operation_id
     actual = (await client.get(f"/api/v1/test-cases/{item['id']}")).json()
-    assert actual['title'] == ('外部已更新' if changed else '原始登录')
+    assert actual["title"] == ("外部已更新" if changed else "原始登录")

@@ -1,17 +1,25 @@
 """Shared semantic collection evidence and server-side boundary validation."""
+
 from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
 class CollectionReference(BaseModel):
-    target_collection_id: str | None = Field(default=None, description=(
-        "明确作为本次操作目标的用例集合ID。普通业务名称、测试对象、参考来源、"
-        "否定切换以及要求继续当前集合时均为null。不能仅按名称重合选集合。"
-    ))
+    target_collection_id: str | None = Field(
+        default=None,
+        description=(
+            "明确作为本次操作目标的用例集合ID。普通业务名称、测试对象、参考来源、"
+            "否定切换以及要求继续当前集合时均为null。不能仅按名称重合选集合。"
+        ),
+    )
     collection_reference: Literal["none", "current", "named"] = "none"
-    target_collection_evidence: str = Field(default="", description=(
-        "仅named时填写：用户本轮明确指定目标集合的连续原文片段。不得抄目录名称或改写原话。"
-    ))
+    target_collection_evidence: str = Field(
+        default="",
+        description=(
+            "仅named时填写：用户本轮明确指定目标集合的连续原文片段。不得抄目录名称或改写原话。"
+        ),
+    )
 
 
 collection_instructions = (
@@ -27,14 +35,19 @@ collection_instructions = (
 )
 
 
-def validate_collection_reference(reference, content: str, catalog: list[dict], current_id: str | None):
+def validate_collection_reference(
+    reference, content: str, catalog: list[dict], current_id: str | None
+):
     target = reference.target_collection_id
     if target is not None and target not in {item["id"] for item in catalog}:
         raise ValueError("collection_reference_outside_catalog")
     if current_id and target:
         if reference.collection_reference == "current" or target == current_id:
             return None
-        if (reference.collection_reference != "named" or not reference.target_collection_evidence.strip()
-                or reference.target_collection_evidence not in content):
+        if (
+            reference.collection_reference != "named"
+            or not reference.target_collection_evidence.strip()
+            or reference.target_collection_evidence not in content
+        ):
             raise ValueError("collection_reference_without_user_evidence")
     return target

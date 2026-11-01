@@ -36,6 +36,7 @@ class Provider:
     def complete(self, *, payload, result_type, **kwargs):
         if kwargs.get("stage") == "rewrite.constraints_validated":
             from semantic_validation_fixture import constraint_report
+
             return constraint_report(payload), UsageMetadata(model="fixture")
         self.calls.append(deepcopy(payload))
         changes = (
@@ -211,37 +212,58 @@ def test_model_cannot_drop_confirmed_asset_provenance_when_reselecting_citations
     import json
 
     from casepilot_agent.contracts import SourceRef
+
     case = original()
-    source = SourceRef(label='修改参考 · 旧版用例.xlsx', locator='Sheet1 行2',
-                       excerpt=json.dumps({'source_key': 'excel:doc:Sheet1:2', 'action': 'modify',
-                                           'case_key': 'OLD-001', 'revision': 1}))
+    source = SourceRef(
+        label="修改参考 · 旧版用例.xlsx",
+        locator="Sheet1 行2",
+        excerpt=json.dumps(
+            {
+                "source_key": "excel:doc:Sheet1:2",
+                "action": "modify",
+                "case_key": "OLD-001",
+                "revision": 1,
+            }
+        ),
+    )
     case.source_refs.append(source)
     result = GenerationPipeline(
-        Provider({'title': '登录成功校验', 'source_ref_indexes': []})
-    ).rewrite_many(
-        {'one': RewriteRequest(test_case=case, instruction='只将标题改为登录成功校验')}
-    )['one']
+        Provider({"title": "登录成功校验", "source_ref_indexes": []})
+    ).rewrite_many({"one": RewriteRequest(test_case=case, instruction="只将标题改为登录成功校验")})[
+        "one"
+    ]
     assert result.quality.passed
     assert source in result.proposed.source_refs
 
 
 def reference_request():
     return RewriteRequest(
-        test_case=original(), instruction="参考Excel只改写操作步骤，预期结果保持不变",
+        test_case=original(),
+        instruction="参考Excel只改写操作步骤，预期结果保持不变",
         context={
             "approved_reference_assets": [{"key": "excel:book:2", "kind": "excel"}],
             "evidence": [{"label": "历史.xlsx", "excerpt": "记录签发时刻"}],
-            "confirmed_reference_refs": [{
-                "label": "修改参考 · 历史.xlsx",
-                "excerpt": '{"source_key":"excel:book:2","action":"modify"}',
-            }],
+            "confirmed_reference_refs": [
+                {
+                    "label": "修改参考 · 历史.xlsx",
+                    "excerpt": '{"source_key":"excel:book:2","action":"modify"}',
+                }
+            ],
         },
     )
 
 
-@pytest.mark.parametrize("changes", [{}, {"source_ref_indexes": [0]}, {"title": "换个标题"}, {
-    "step_updates": [{"step_index": 0, "action": " 原操作0 "}],
-}])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {},
+        {"source_ref_indexes": [0]},
+        {"title": "换个标题"},
+        {
+            "step_updates": [{"step_index": 0, "action": " 原操作0 "}],
+        },
+    ],
+)
 def test_reference_step_rewrite_retries_then_retains_original_without_false_provenance(changes):
     request = reference_request()
     provider = Provider(changes)
@@ -256,14 +278,16 @@ def test_reference_step_rewrite_retries_then_retains_original_without_false_prov
 
 def test_reference_retry_changes_actions_preserves_expected_and_point_links():
     request = reference_request()
-    provider = Provider({}, {"step_updates": [
-        {"step_index": 0, "action": "记录签发时刻并推进服务端时钟至300秒"}]})
+    provider = Provider(
+        {}, {"step_updates": [{"step_index": 0, "action": "记录签发时刻并推进服务端时钟至300秒"}]}
+    )
     result = GenerationPipeline(provider).rewrite_many({"one": request})["one"]
     assert result.quality.passed
     assert result.quality.repair_rounds == 1
     assert result.proposed.steps[0].action != request.test_case.steps[0].action
     assert [s.expected for s in result.proposed.steps] == [
-        s.expected for s in request.test_case.steps]
+        s.expected for s in request.test_case.steps
+    ]
     assert result.proposed.steps[1:] == request.test_case.steps[1:]
     assert result.proposed.test_point_ids == request.test_case.test_point_ids
     assert result.proposed.source_refs[0].label == "修改参考 · 历史.xlsx"
@@ -272,17 +296,19 @@ def test_reference_retry_changes_actions_preserves_expected_and_point_links():
 
 
 def boundary_reference_request():
-    case = RewriteCaseDraft.model_validate({
-        **original().model_dump(mode="json"),
-        "preconditions": ["手机号已注册", "已成功为该手机号签发验证码"],
-        "steps": [
-            {
-                "action": "推进服务端时钟，使签发后经过时间恰好达到300秒",
-                "expected": "服务端时间成功推进至目标时刻",
-            },
-            {"action": "使用该验证码发起登录请求", "expected": "登录失败，返回E731"},
-        ],
-    })
+    case = RewriteCaseDraft.model_validate(
+        {
+            **original().model_dump(mode="json"),
+            "preconditions": ["手机号已注册", "已成功为该手机号签发验证码"],
+            "steps": [
+                {
+                    "action": "推进服务端时钟，使签发后经过时间恰好达到300秒",
+                    "expected": "服务端时间成功推进至目标时刻",
+                },
+                {"action": "使用该验证码发起登录请求", "expected": "登录失败，返回E731"},
+            ],
+        }
+    )
     return RewriteRequest(
         test_case=case,
         instruction="参考Excel只改写操作步骤，当前仍是300秒即过期，预期结果保持不变",
@@ -292,13 +318,17 @@ def boundary_reference_request():
 
 def test_reference_rewrite_rejects_repeating_completed_setup_and_missing_trigger_boundary():
     request = boundary_reference_request()
-    invalid = {"step_updates": [
-        {"step_index": 0, "action": "调用签发接口获取验证码；推进服务端时钟至300秒"},
-    ]}
-    repaired = {"step_updates": [
-        {"step_index": 0, "action": "记录已有验证码的签发时刻；推进服务端时钟至恰好300秒"},
-        {"step_index": 1, "action": "使用签发后恰好满300秒的验证码发起登录请求"},
-    ]}
+    invalid = {
+        "step_updates": [
+            {"step_index": 0, "action": "调用签发接口获取验证码；推进服务端时钟至300秒"},
+        ]
+    }
+    repaired = {
+        "step_updates": [
+            {"step_index": 0, "action": "记录已有验证码的签发时刻；推进服务端时钟至恰好300秒"},
+            {"step_index": 1, "action": "使用签发后恰好满300秒的验证码发起登录请求"},
+        ]
+    }
     provider = Provider(invalid, repaired)
     result = GenerationPipeline(provider).rewrite_many({"one": request})["one"]
     feedback = provider.calls[1]["validation_feedback"]["one"]
@@ -310,27 +340,43 @@ def test_reference_rewrite_rejects_repeating_completed_setup_and_missing_trigger
 
 
 def test_reference_rewrite_allows_explicitly_requested_setup_reexecution():
-    request = boundary_reference_request().model_copy(update={
-        "instruction": (
-            "参考Excel只改写操作步骤，先重新签发验证码，"
-            "再按300秒边界登录，预期结果保持不变"
-        ),
-    })
-    result = GenerationPipeline(Provider({"step_updates": [
-        {"step_index": 0, "action": "重新签发验证码并推进服务端时钟至300秒"},
-        {"step_index": 1, "action": "使用签发后满300秒的验证码发起登录请求"},
-    ]})).rewrite_many({"one": request})["one"]
+    request = boundary_reference_request().model_copy(
+        update={
+            "instruction": (
+                "参考Excel只改写操作步骤，先重新签发验证码，再按300秒边界登录，预期结果保持不变"
+            ),
+        }
+    )
+    result = GenerationPipeline(
+        Provider(
+            {
+                "step_updates": [
+                    {"step_index": 0, "action": "重新签发验证码并推进服务端时钟至300秒"},
+                    {"step_index": 1, "action": "使用签发后满300秒的验证码发起登录请求"},
+                ]
+            }
+        )
+    ).rewrite_many({"one": request})["one"]
     assert result.quality.passed
 
 
 def test_reference_rewrite_model_repairs_boundary_on_business_result_action():
     request = boundary_reference_request()
-    result = GenerationPipeline(Provider({"step_updates": [
-        {"step_index": 0, "action": "记录已有验证码签发时刻并推进服务端时钟至300秒"},
-    ]}, repaired={"step_updates": [
-        {"step_index": 0, "action": "记录已有验证码签发时刻并推进服务端时钟至300秒"},
-        {"step_index": 1, "action": "在300秒边界条件下，使用该验证码发起登录请求"},
-    ]})).rewrite_many({"one": request})["one"]
+    result = GenerationPipeline(
+        Provider(
+            {
+                "step_updates": [
+                    {"step_index": 0, "action": "记录已有验证码签发时刻并推进服务端时钟至300秒"},
+                ]
+            },
+            repaired={
+                "step_updates": [
+                    {"step_index": 0, "action": "记录已有验证码签发时刻并推进服务端时钟至300秒"},
+                    {"step_index": 1, "action": "在300秒边界条件下，使用该验证码发起登录请求"},
+                ]
+            },
+        )
+    ).rewrite_many({"one": request})["one"]
     assert result.quality.passed
     assert result.quality.repair_rounds == 1
     assert result.proposed.steps[1].action.startswith("在300秒边界条件下，")
@@ -338,22 +384,36 @@ def test_reference_rewrite_model_repairs_boundary_on_business_result_action():
 
 
 def test_reference_rewrite_model_repairs_selected_recording_action_without_old_boundary():
-    request = boundary_reference_request().model_copy(update={
-        "context": {
-            "approved_reference_assets": [{"key": "excel:book:2", "kind": "excel"}],
-            "evidence": [{
-                "label": "历史.xlsx",
-                "excerpt": "调用签发接口获取验证码并记录签发时刻；推进服务端时钟到签发后420秒",
-            }],
+    request = boundary_reference_request().model_copy(
+        update={
+            "context": {
+                "approved_reference_assets": [{"key": "excel:book:2", "kind": "excel"}],
+                "evidence": [
+                    {
+                        "label": "历史.xlsx",
+                        "excerpt": "调用签发接口获取验证码并记录签发时刻；推进服务端" \
+                            "时钟到签发后420秒",
+                    }
+                ],
+            },
+        }
+    )
+    provider = Provider(
+        {
+            "step_updates": [
+                {
+                    "step_index": 1,
+                    "action": "在300秒边界条件下使用该验证码发起登录请求",
+                }
+            ]
         },
-    })
-    provider = Provider({"step_updates": [{
-        "step_index": 1,
-        "action": "在300秒边界条件下使用该验证码发起登录请求",
-    }]}, repaired={"step_updates": [
-        {"step_index": 0, "action": "记录签发时刻并推进服务端时钟至300秒"},
-        {"step_index": 1, "action": "在300秒边界条件下使用该验证码发起登录请求"},
-    ]})
+        repaired={
+            "step_updates": [
+                {"step_index": 0, "action": "记录签发时刻并推进服务端时钟至300秒"},
+                {"step_index": 1, "action": "在300秒边界条件下使用该验证码发起登录请求"},
+            ]
+        },
+    )
     result = GenerationPipeline(provider).rewrite_many({"one": request})["one"]
     assert result.quality.passed
     assert result.quality.repair_rounds == 1
@@ -362,10 +422,12 @@ def test_reference_rewrite_model_repairs_selected_recording_action_without_old_b
 
 
 def test_reference_title_rewrite_does_not_require_step_changes():
-    request = reference_request().model_copy(update={
-        "instruction": "参考Excel优化标题，步骤保持不变"})
+    request = reference_request().model_copy(
+        update={"instruction": "参考Excel优化标题，步骤保持不变"}
+    )
     result = GenerationPipeline(Provider({"title": "验证码过期校验"})).rewrite_many(
-        {"one": request})["one"]
+        {"one": request}
+    )["one"]
     assert result.quality.passed
     assert result.proposed.steps == request.test_case.steps
 
@@ -388,32 +450,42 @@ def test_reference_rewrite_repairs_full_source_row_to_local_step_update():
     assert result.quality.repair_rounds == 1
     assert len(result.proposed.steps) == len(request.test_case.steps)
     assert [s.expected for s in result.proposed.steps] == [
-        s.expected for s in request.test_case.steps]
+        s.expected for s in request.test_case.steps
+    ]
     assert result.proposed.test_point_ids == request.test_case.test_point_ids
 
 
-@pytest.mark.parametrize('position', [0, 1, 2, 3])
+@pytest.mark.parametrize("position", [0, 1, 2, 3])
 def test_positioned_step_insertions_preserve_original_pairs(position):
-    inserted = {'action': '刷新登录页面', 'expected': '仍显示登录状态'}
-    provider = Provider({'insert_steps': [{'before_step_index': position, 'steps': [inserted]}]})
-    result = GenerationPipeline(provider).rewrite_many({
-        'one': RewriteRequest(test_case=original(), instruction='在指定位置新增步骤，原有步骤和其他字段保持不变')
-    })['one']
+    inserted = {"action": "刷新登录页面", "expected": "仍显示登录状态"}
+    provider = Provider({"insert_steps": [{"before_step_index": position, "steps": [inserted]}]})
+    result = GenerationPipeline(provider).rewrite_many(
+        {
+            "one": RewriteRequest(
+                test_case=original(), instruction="在指定位置新增步骤，原有步骤和其他字段保持不变"
+            )
+        }
+    )["one"]
     assert result.quality.passed
-    expected = [step.model_dump(mode='json') for step in original().steps]
+    expected = [step.model_dump(mode="json") for step in original().steps]
     expected[position:position] = [inserted]
-    assert [step.model_dump(mode='json') for step in result.proposed.steps] == expected
-    assert result.proposed.model_dump(exclude={'steps'}) == original().model_dump(exclude={'steps'})
+    assert [step.model_dump(mode="json") for step in result.proposed.steps] == expected
+    assert result.proposed.model_dump(exclude={"steps"}) == original().model_dump(exclude={"steps"})
     assert len(provider.calls) == 1
 
 
-@pytest.mark.parametrize('position', [-1, 4])
+@pytest.mark.parametrize("position", [-1, 4])
 def test_out_of_range_step_insertion_keeps_original(position):
-    provider = Provider({'insert_steps': [{'before_step_index': position,
-                                          'steps': [{'action': '新增', 'expected': '结果'}]}]})
-    result = GenerationPipeline(provider).rewrite_many({
-        'one': RewriteRequest(test_case=original(), instruction='新增一步，其他内容不变')
-    })['one']
+    provider = Provider(
+        {
+            "insert_steps": [
+                {"before_step_index": position, "steps": [{"action": "新增", "expected": "结果"}]}
+            ]
+        }
+    )
+    result = GenerationPipeline(provider).rewrite_many(
+        {"one": RewriteRequest(test_case=original(), instruction="新增一步，其他内容不变")}
+    )["one"]
     assert not result.quality.passed
     assert result.proposed == original()
     assert result.diff == []
@@ -421,41 +493,73 @@ def test_out_of_range_step_insertion_keeps_original(position):
 
 def test_multiple_insertions_are_relative_to_original_positions():
     def addition(action):
-        return {'action': action, 'expected': action + '预期'}
-    provider = Provider({'insert_steps': [
-        {'before_step_index': 2, 'steps': [addition('后部')]},
-        {'before_step_index': 0, 'steps': [addition('开始')]},
-        {'before_step_index': 2, 'steps': [addition('后部第二项')]},
-    ]})
-    result = GenerationPipeline(provider).rewrite_many({
-        'one': RewriteRequest(test_case=original(), instruction='按指定位置补充步骤，保留全部原有步骤')
-    })['one']
+        return {"action": action, "expected": action + "预期"}
+
+    provider = Provider(
+        {
+            "insert_steps": [
+                {"before_step_index": 2, "steps": [addition("后部")]},
+                {"before_step_index": 0, "steps": [addition("开始")]},
+                {"before_step_index": 2, "steps": [addition("后部第二项")]},
+            ]
+        }
+    )
+    result = GenerationPipeline(provider).rewrite_many(
+        {
+            "one": RewriteRequest(
+                test_case=original(), instruction="按指定位置补充步骤，保留全部原有步骤"
+            )
+        }
+    )["one"]
     assert result.quality.passed
     assert [step.action for step in result.proposed.steps] == [
-        '开始', '原操作0', '原操作1', '后部', '后部第二项', '原操作2']
+        "开始",
+        "原操作0",
+        "原操作1",
+        "后部",
+        "后部第二项",
+        "原操作2",
+    ]
 
 
 def test_insertion_and_update_use_original_step_indices():
-    provider = Provider({
-        'insert_steps': [{'before_step_index': 0, 'steps': [{'action': '开始', 'expected': '开始结果'}]}],
-        'step_updates': [{'step_index': 1, 'action': '修改原第二步'}],
-    })
-    result = GenerationPipeline(provider).rewrite_many({
-        'one': RewriteRequest(test_case=original(), instruction='在开头插入一步，并修改原第二步的动作')
-    })['one']
+    provider = Provider(
+        {
+            "insert_steps": [
+                {"before_step_index": 0, "steps": [{"action": "开始", "expected": "开始结果"}]}
+            ],
+            "step_updates": [{"step_index": 1, "action": "修改原第二步"}],
+        }
+    )
+    result = GenerationPipeline(provider).rewrite_many(
+        {
+            "one": RewriteRequest(
+                test_case=original(), instruction="在开头插入一步，并修改原第二步的动作"
+            )
+        }
+    )["one"]
     assert result.quality.passed
-    assert [step.action for step in result.proposed.steps] == ['开始', '原操作0', '修改原第二步', '原操作2']
+    assert [step.action for step in result.proposed.steps] == [
+        "开始",
+        "原操作0",
+        "修改原第二步",
+        "原操作2",
+    ]
     assert result.proposed.steps[2].expected == original().steps[1].expected
 
 
 def test_full_steps_cannot_be_combined_with_insertions():
-    provider = Provider({
-        'steps': [step.model_dump() for step in original().steps],
-        'insert_steps': [{'before_step_index': 1, 'steps': [{'action': '新增', 'expected': '结果'}]}],
-    })
-    result = GenerationPipeline(provider).rewrite_many({
-        'one': RewriteRequest(test_case=original(), instruction='在第一步后插入一步')
-    })['one']
+    provider = Provider(
+        {
+            "steps": [step.model_dump() for step in original().steps],
+            "insert_steps": [
+                {"before_step_index": 1, "steps": [{"action": "新增", "expected": "结果"}]}
+            ],
+        }
+    )
+    result = GenerationPipeline(provider).rewrite_many(
+        {"one": RewriteRequest(test_case=original(), instruction="在第一步后插入一步")}
+    )["one"]
     assert not result.quality.passed
     assert result.proposed == original()
     assert result.diff == []

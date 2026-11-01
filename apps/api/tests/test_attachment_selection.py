@@ -12,6 +12,7 @@ from casepilot_api.schemas import ConversationMessageCreate
 def test_failed_historical_document_does_not_poison_new_upload():
     old, new, old_source, new_source = [uuid4() for _ in range(4)]
     conversation = SimpleNamespace(
+        account_id=uuid4(),
         space_id=uuid4(),
         context={"document_ids": [str(old)], "knowledge_source_ids": [str(old_source)]},
     )
@@ -40,7 +41,7 @@ def test_explicit_missing_document_is_not_silently_skipped():
     with pytest.raises(HTTPException) as error:
         _resolve_turn_attachments(
             db,
-            SimpleNamespace(space_id=uuid4(), context={}),
+            SimpleNamespace(account_id=uuid4(), space_id=uuid4(), context={}),
             ConversationMessageCreate(content="使用附件", document_ids=[uuid4()]),
         )
     assert error.value.status_code == 422
@@ -50,6 +51,7 @@ def test_explicit_missing_document_is_not_silently_skipped():
 def test_task_can_explicitly_opt_out_of_all_historical_attachments():
     db = Mock()
     conversation = SimpleNamespace(
+        account_id=uuid4(),
         space_id=uuid4(),
         context={"document_ids": [str(uuid4())], "knowledge_source_ids": [str(uuid4())]},
     )
@@ -65,6 +67,7 @@ def test_task_can_explicitly_opt_out_of_all_historical_attachments():
 def test_resume_does_not_reattach_a_file_removed_after_task_was_paused():
     doc_id, source_id = uuid4(), uuid4()
     conversation = SimpleNamespace(
+        account_id=uuid4(),
         space_id=uuid4(),
         context={
             "excluded_document_ids": [str(doc_id)],
@@ -89,6 +92,7 @@ def test_detaching_file_excludes_whole_source_but_keeps_selected_siblings(
     doc_id, source_id, space_id = uuid4(), uuid4(), uuid4()
     sibling_ids = [str(uuid4())] if keep_sibling else []
     conversation = SimpleNamespace(
+        account_id=uuid4(),
         space_id=space_id,
         context={
             "document_ids": [str(doc_id), *sibling_ids],
@@ -108,27 +112,37 @@ def test_detaching_file_excludes_whole_source_but_keeps_selected_siblings(
     db.delete.assert_not_called()
 
 
-@pytest.mark.parametrize('supported', [False, True])
+@pytest.mark.parametrize("supported", [False, True])
 def test_image_send_requires_configured_image_model(monkeypatch, supported):
     from casepilot_api import conversations
+
     doc_id, source_id = uuid4(), uuid4()
     db = Mock()
-    db.scalars.return_value = [SimpleNamespace(
-        id=doc_id, source_id=source_id, mime_type='image/png', size_bytes=1024
-    )]
-    monkeypatch.setattr(conversations, 'settings', SimpleNamespace(
-        ai_mode='live', agent_provider='openai_compatible',
-        image_models='vision' if supported else '', image_max_total_bytes=2048,
-        resolve_agent_model=lambda _: 'vision'))
-    payload = ConversationMessageCreate(content='解释截图', document_ids=[doc_id], model_id='vision')
-    conversation = SimpleNamespace(space_id=uuid4(), context={})
+    db.scalars.return_value = [
+        SimpleNamespace(id=doc_id, source_id=source_id, mime_type="image/png", size_bytes=1024)
+    ]
+    monkeypatch.setattr(
+        conversations,
+        "settings",
+        SimpleNamespace(
+            ai_mode="live",
+            agent_provider="openai_compatible",
+            image_models="vision" if supported else "",
+            image_max_total_bytes=2048,
+            resolve_agent_model=lambda _: "vision",
+        ),
+    )
+    payload = ConversationMessageCreate(
+        content="解释截图", document_ids=[doc_id], model_id="vision"
+    )
+    conversation = SimpleNamespace(account_id=uuid4(), space_id=uuid4(), context={})
     if supported:
         assert _resolve_turn_attachments(db, conversation, payload).document_ids == [doc_id]
     else:
         with pytest.raises(HTTPException) as error:
             _resolve_turn_attachments(db, conversation, payload)
         assert error.value.status_code == 422
-        assert '不支持图片' in error.value.detail
+        assert "不支持图片" in error.value.detail
 
 
 def test_image_send_rejects_oversized_combined_payload(monkeypatch):
@@ -162,7 +176,7 @@ def test_image_send_rejects_oversized_combined_payload(monkeypatch):
     )
     with pytest.raises(HTTPException) as error:
         _resolve_turn_attachments(
-            db, SimpleNamespace(space_id=uuid4(), context={}), payload
+            db, SimpleNamespace(account_id=uuid4(), space_id=uuid4(), context={}), payload
         )
     assert error.value.status_code == 422
     assert "总大小" in error.value.detail

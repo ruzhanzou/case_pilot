@@ -39,41 +39,27 @@ def test_intent_classifier_routes_generation_modification_and_qa() -> None:
         "covering the happy path, rate limits, code expiry, and poor networks."
     ) == ("CASE_GENERATE", 0.98)
     assert classify_intent("How to generate test cases?")[0] == "KNOWLEDGE_QA"
-    assert classify_intent("Can you generate test cases for login?")[0] == (
-        "CASE_GENERATE"
-    )
+    assert classify_intent("Can you generate test cases for login?")[0] == ("CASE_GENERATE")
     assert classify_intent("为已登录用户修改密码生成测试用例") == (
         "CASE_GENERATE",
         0.98,
     )
-    assert classify_intent("给当前用例补充弱网恢复步骤", has_targets=True)[0] == (
-        "CASE_MODIFY"
-    )
-    assert classify_intent("为什么这条用例是 P0？", has_targets=True)[0] == (
-        "KNOWLEDGE_QA"
-    )
+    assert classify_intent("给当前用例补充弱网恢复步骤", has_targets=True)[0] == ("CASE_MODIFY")
+    assert classify_intent("为什么这条用例是 P0？", has_targets=True)[0] == ("KNOWLEDGE_QA")
     assert classify_intent("你好") == ("SMALL_TALK", 0.99)
     assert classify_intent("你是谁") == ("SMALL_TALK", 0.99)
     assert classify_intent("删除当前用例", has_targets=True)[0] == "CASE_DELETE"
     assert classify_intent("查询用例")[0] == "CASE_QUERY"
     assert classify_intent("CasePilot 可以帮我做什么？")[0] == "SMALL_TALK"
-    assert classify_intent("CasePilot 可以帮我完成哪些测试工作？")[0] == (
-        "SMALL_TALK"
-    )
+    assert classify_intent("CasePilot 可以帮我完成哪些测试工作？")[0] == ("SMALL_TALK")
     assert classify_intent("边界值分析和等价类有什么区别？")[0] == "KNOWLEDGE_QA"
     assert classify_intent("介绍一下接口幂等性的测试方法")[0] == "KNOWLEDGE_QA"
     assert classify_intent("帮我设计登录功能的测试用例")[0] == "CASE_GENERATE"
     assert classify_intent("查询登录集合中的 P0 用例")[0] == "CASE_QUERY"
     assert classify_intent("查询已有用例")[0] == "CASE_QUERY"
-    assert classify_intent("删除当前选中的两条用例", has_targets=True)[0] == (
-        "CASE_DELETE"
-    )
-    assert classify_intent("先别删除当前用例", has_targets=True)[0] == (
-        "KNOWLEDGE_QA"
-    )
-    assert classify_intent(
-        "把失败场景的预期结果改得更明确", has_targets=True
-    )[0] == "CASE_MODIFY"
+    assert classify_intent("删除当前选中的两条用例", has_targets=True)[0] == ("CASE_DELETE")
+    assert classify_intent("先别删除当前用例", has_targets=True)[0] == ("KNOWLEDGE_QA")
+    assert classify_intent("把失败场景的预期结果改得更明确", has_targets=True)[0] == "CASE_MODIFY"
     assert classify_intent("请把预期结果写得更明确。")[0] == "CASE_MODIFY"
 
 
@@ -89,9 +75,7 @@ def test_intent_classifier_routes_generation_modification_and_qa() -> None:
         ("Please generate test cases for login and tell me why.", "CASE_GENERATE"),
     ],
 )
-def test_english_actions_and_negated_generation(
-    content: str, expected: str
-) -> None:
+def test_english_actions_and_negated_generation(content: str, expected: str) -> None:
     assert classify_intent(content, has_targets=True)[0] == expected
 
 
@@ -215,12 +199,15 @@ def test_terminal_generation_releases_workspace_phase_and_job() -> None:
         "chat_width": 400,
     }
     assert context["phase"] == "generating"
-    assert terminal_workspace_context(
-        context,
-        operation="generate",
-        has_candidates=True,
-        has_brief=True,
-    )["phase"] == "candidate_review"
+    assert (
+        terminal_workspace_context(
+            context,
+            operation="generate",
+            has_candidates=True,
+            has_brief=True,
+        )["phase"]
+        == "candidate_review"
+    )
 
 
 def test_failed_generation_is_recovered_when_workspace_is_read() -> None:
@@ -263,19 +250,14 @@ def test_ambiguous_modification_requires_confirmation() -> None:
 def test_small_talk_uses_an_instant_context_free_response() -> None:
     assert small_talk_response("你好").startswith("你好！我是 CasePilot")
     assert small_talk_response("谢谢") == "不客气，有需要时继续告诉我即可。"
-    assert "生成、修改、删除和查询测试用例" in small_talk_response(
-        "CasePilot 可以帮我做什么？"
-    )
+    assert "生成、修改、删除和查询测试用例" in small_talk_response("CasePilot 可以帮我做什么？")
 
 
 def test_brief_review_does_not_treat_plain_statements_as_asset_writes() -> None:
     statement = "锁屏和切后台后允许继续保持实时语音通话"
     assert classify_intent(statement, phase="brief_review")[0] == "KNOWLEDGE_QA"
     assert classify_intent("你好", phase="brief_review")[0] == "SMALL_TALK"
-    assert (
-        classify_intent("实时通话超时策略是什么？", phase="brief_review")[0]
-        == "KNOWLEDGE_QA"
-    )
+    assert classify_intent("实时通话超时策略是什么？", phase="brief_review")[0] == "KNOWLEDGE_QA"
     assert classify_intent("什么是ASR", phase="brief_review")[0] == "KNOWLEDGE_QA"
     assert classify_intent("如何修改测试说明？", phase="brief_review")[0] == "KNOWLEDGE_QA"
     assert classify_intent("为什么要补充弱网场景？", phase="brief_review")[0] == "KNOWLEDGE_QA"
@@ -326,14 +308,10 @@ def test_conversation_message_supports_batch_candidate_targets() -> None:
 
 def test_conversation_title_uses_a_compact_first_turn_summary() -> None:
     assert (
-        summarize_conversation_title(
-            "请帮我为手机号验证码登录生成测试用例，覆盖频控、过期和弱网。"
-        )
+        summarize_conversation_title("请帮我为手机号验证码登录生成测试用例，覆盖频控、过期和弱网。")
         == "手机号验证码登录用例设计"
     )
-    assert summarize_conversation_title("CasePilot 可以帮我做什么？") == (
-        "了解 CasePilot 能力"
-    )
+    assert summarize_conversation_title("CasePilot 可以帮我做什么？") == ("了解 CasePilot 能力")
     assert summarize_conversation_title("测试说明与测试用例有什么区别？") == (
         "测试说明与测试用例的区别"
     )
@@ -412,6 +390,7 @@ def test_test_brief_schema_discards_non_object_clarifications() -> None:
 
 def test_mock_latest_explicit_test_object_survives_a_follow_up_question(monkeypatch) -> None:
     from casepilot_api import conversations
+
     monkeypatch.setattr(conversations.settings, "agent_provider", "mock")
     messages = [
         SimpleNamespace(
@@ -456,12 +435,17 @@ def test_preservation_constraints_do_not_override_requested_action(content, expe
 
 def test_semantic_target_scope_does_not_filter_by_desired_priority(monkeypatch) -> None:
     from casepilot_api import conversations
+
     case_id = uuid4()
     monkeypatch.setattr(conversations.settings, "agent_provider", "mock")
-    monkeypatch.setattr(conversations, "_load_scope_snapshots", lambda *args: [
-        {"id": str(case_id), "case_key": "TC-1", "module": "账号登录", "priority": "P1"},
-        {"id": str(uuid4()), "case_key": "TC-2", "module": "订单库存", "priority": "P0"},
-    ])
+    monkeypatch.setattr(
+        conversations,
+        "_load_scope_snapshots",
+        lambda *args: [
+            {"id": str(case_id), "case_key": "TC-1", "module": "账号登录", "priority": "P1"},
+            {"id": str(uuid4()), "case_key": "TC-2", "module": "订单库存", "priority": "P0"},
+        ],
+    )
     conversation = SimpleNamespace(collection_id=uuid4(), context={})
     payload = ConversationMessageCreate(content="把账号登录模块的优先级设为P0，保留其他内容")
     resolved, error = conversations._resolve_action_scope(
@@ -473,11 +457,16 @@ def test_semantic_target_scope_does_not_filter_by_desired_priority(monkeypatch) 
 
 def test_semantic_target_cannot_drop_protected_module(monkeypatch) -> None:
     from casepilot_api import conversations
+
     monkeypatch.setattr(conversations.settings, "agent_provider", "mock")
-    monkeypatch.setattr(conversations, "_load_scope_snapshots", lambda *args: [
-        {"id": str(uuid4()), "case_key": "TC-1", "module": "账号登录", "priority": "P1"},
-        {"id": str(uuid4()), "case_key": "TC-2", "module": "订单库存", "priority": "P1"},
-    ])
+    monkeypatch.setattr(
+        conversations,
+        "_load_scope_snapshots",
+        lambda *args: [
+            {"id": str(uuid4()), "case_key": "TC-1", "module": "账号登录", "priority": "P1"},
+            {"id": str(uuid4()), "case_key": "TC-2", "module": "订单库存", "priority": "P1"},
+        ],
+    )
     conversation = SimpleNamespace(collection_id=uuid4(), context={})
     payload = ConversationMessageCreate(content="修改全部用例为P0，不要修改订单库存模块")
     _, error = conversations._resolve_action_scope(
@@ -486,62 +475,93 @@ def test_semantic_target_cannot_drop_protected_module(monkeypatch) -> None:
     assert error is not None
 
 
-@pytest.mark.parametrize('content,intent', [
-    ('先删除“预约查询”模块吧。','CASE_DELETE'),
-    ('如何删除“预约查询”模块？','KNOWLEDGE_QA'),
-    ('不要删除“预约查询”模块。','KNOWLEDGE_QA'),
-])
-def test_module_deletion_is_not_lost_in_safe_fallback(content,intent):
-    assert classify_intent(content,phase='candidate_review')[0] == intent
+@pytest.mark.parametrize(
+    "content,intent",
+    [
+        ("先删除“预约查询”模块吧。", "CASE_DELETE"),
+        ("如何删除“预约查询”模块？", "KNOWLEDGE_QA"),
+        ("不要删除“预约查询”模块。", "KNOWLEDGE_QA"),
+    ],
+)
+def test_module_deletion_is_not_lost_in_safe_fallback(content, intent):
+    assert classify_intent(content, phase="candidate_review")[0] == intent
 
 
-@pytest.mark.parametrize(("content", "expected"), [
-    ("为账号安全系统生成恰好12条候选用例，每个场景1条", "账号安全系统"),
-    ("针对订单系统编写至少12条测试用例", "订单系统"),
-    ("为登录功能生成10+用例", "登录功能"),
-    ("生成12条账号登录测试用例", "账号登录"),
-    ("生成恰好12条候选用例", ""),
-    ("为12306系统生成12条候选用例", "12306系统"),
-    ("生成12306系统测试用例", "12306系统"),
-])
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("为账号安全系统生成恰好12条候选用例，每个场景1条", "账号安全系统"),
+        ("针对订单系统编写至少12条测试用例", "订单系统"),
+        ("为登录功能生成10+用例", "登录功能"),
+        ("生成12条账号登录测试用例", "账号登录"),
+        ("生成恰好12条候选用例", ""),
+        ("为12306系统生成12条候选用例", "12306系统"),
+        ("生成12306系统测试用例", "12306系统"),
+    ],
+)
 def test_case_count_never_becomes_test_object(content, expected):
     assert _extract_explicit_test_object(content) == expected
 
 
-@pytest.mark.parametrize("content", [
-    "Polish only the selected test case and prepare a modification proposal for review.",
-    "Preserve test data and expected results. Additional requirements: Procedure换一下说法",
-    "Rewrite testing steps for the current case",
-    "整理当前用例的测试步骤",
-])
+@pytest.mark.parametrize(
+    "content",
+    [
+        "Polish only the selected test case and prepare a modification proposal for review.",
+        "Preserve test data and expected results. Additional requirements: Procedure换一下说法",
+        "Rewrite testing steps for the current case",
+        "整理当前用例的测试步骤",
+    ],
+)
 def test_bound_collection_does_not_match_ordinary_case_words(content):
     other = SimpleNamespace(id=uuid4(), name="test")
+
     class FakeDb:
         def execute(self, statement):
             return [(other.id, other.name)]
+
     _, suggested = _collection_candidates(
-        FakeDb(), SimpleNamespace(space_id=uuid4(), collection_id=None), content, explicit_only=True,
+        FakeDb(),
+        SimpleNamespace(space_id=uuid4(), collection_id=None),
+        content,
+        explicit_only=True,
     )
     assert suggested is None
 
 
-@pytest.mark.parametrize("content", [
-    '修改集合 test 的用例', '修改 test 集合的用例',
-    'Rewrite cases in collection test', 'Rewrite the test collection',
-    '切换到“test”', '修改用例集test中的登录用例',
-])
+@pytest.mark.parametrize(
+    "content",
+    [
+        "修改集合 test 的用例",
+        "修改 test 集合的用例",
+        "Rewrite cases in collection test",
+        "Rewrite the test collection",
+        "切换到“test”",
+        "修改用例集test中的登录用例",
+    ],
+)
 def test_bound_collection_still_detects_explicit_other_collection(content):
     other = SimpleNamespace(id=uuid4(), name="test")
+
     class FakeDb:
         def execute(self, statement):
             return [(other.id, other.name)]
+
     _, suggested = _collection_candidates(
-        FakeDb(), SimpleNamespace(space_id=uuid4(), collection_id=None), content, explicit_only=True,
+        FakeDb(),
+        SimpleNamespace(space_id=uuid4(), collection_id=None),
+        content,
+        explicit_only=True,
     )
     assert suggested == other.id
 
 
 def test_explicit_object_does_not_include_following_requirements():
     from casepilot_api.conversations import _extract_explicit_test_object
+
     for separator in ["。", "\n", "；"]:
-        assert _extract_explicit_test_object("测试对象：青禾图书借阅" + separator + "生成3个测试点，需求如下：借阅上限5本") == "青禾图书借阅"
+        assert (
+            _extract_explicit_test_object(
+                "测试对象：青禾图书借阅" + separator + "生成3个测试点，需求如下：借阅上限5本"
+            )
+            == "青禾图书借阅"
+        )

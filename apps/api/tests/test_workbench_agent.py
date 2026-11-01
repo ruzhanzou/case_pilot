@@ -629,7 +629,7 @@ def test_rename_proposal_final_correction_explains_action_review_shape(invalid_k
                    if item.get("type") == "function_call_output"]
         receipt = outputs[-1]["_receipt"]
         assert receipt["id"] in correction
-        assert '"kind": "action", "effect": "prepare"' in correction
+        assert '"outcome": "action_prepare"' in correction
         assert "do not repeat successful preparation" in correction
         return action(messages)
 

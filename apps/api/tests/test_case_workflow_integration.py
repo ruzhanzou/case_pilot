@@ -45,9 +45,9 @@ async def test_analysis_to_candidates_keeps_history_and_blocks_overlapping_messa
                     },
                 )
             ).json()
-            workspace_responses = await asyncio.gather(*[
-                client.put(f"/api/v1/collections/{collection_id}/workspace") for _ in range(4)
-            ])
+            workspace_responses = await asyncio.gather(
+                *[client.put(f"/api/v1/collections/{collection_id}/workspace") for _ in range(4)]
+            )
             assert len({response.json()["id"] for response in workspace_responses}) == 1
             workspace_response = workspace_responses[0]
             assert workspace_response.status_code == 200
@@ -119,8 +119,12 @@ async def test_analysis_to_candidates_keeps_history_and_blocks_overlapping_messa
             generated = turn.json()
             generation_operation_id = generated["operation_plan"]["operations"][0]["id"]
             preview_draft = {
-                "id": "C-LOCKED", "title": "锁定账户无法登录", "module": "登录", "priority": "P1",
-                "case_type": "功能", "preconditions": ["账户已锁定"],
+                "id": "C-LOCKED",
+                "title": "锁定账户无法登录",
+                "module": "登录",
+                "priority": "P1",
+                "case_type": "功能",
+                "preconditions": ["账户已锁定"],
                 "steps": [{"action": "提交凭据", "expected": "拒绝登录并显示锁定提示"}],
             }
             with store.connection() as connection:
@@ -133,7 +137,9 @@ async def test_analysis_to_candidates_keeps_history_and_blocks_overlapping_messa
             assert len(preview["candidate_history"]) == 1
             preview_id = preview["candidate_history"][0]["id"]
             assert preview["candidate_history"][0]["status"] == "generating"
-            blocked = await client.post(f"/api/v1/workspaces/{workspace_id}/candidates/commit", json={})
+            blocked = await client.post(
+                f"/api/v1/workspaces/{workspace_id}/candidates/commit", json={}
+            )
             assert blocked.status_code == 409
             with store.connection() as connection:
                 candidate_ids = store.persist_workspace_candidates(
@@ -204,7 +210,9 @@ async def test_analysis_to_candidates_keeps_history_and_blocks_overlapping_messa
                 json={"content": clarification, "target_case_ids": [case["id"]]},
             )
             assert resumed.status_code == 202, resumed.text
-            assert resumed.json()["assistant_message"]["metadata"].get("modification_confirmation"), resumed.text
+            assert resumed.json()["assistant_message"]["metadata"].get(
+                "modification_confirmation"
+            ), resumed.text
             resumed = await client.post(
                 f"/api/v1/conversation-operations/{clarification_id}/resume",
                 json={"confirm_modification": True},
@@ -267,14 +275,19 @@ async def test_end_running_task_cancels_group_and_unlocks_conversation(monkeypat
             response = await client.post(
                 f"{url}/messages",
                 json={
-                    "content": "将登录模块的用例标题改为「新登录标题」" if modification else "检查登录模块遗漏；检查登录模块冗余",
+                    "content": "将登录模块的用例标题改为「新登录标题」"
+                    if modification
+                    else "检查登录模块遗漏；检查登录模块冗余",
                 },
             )
             assert response.status_code == 202, response.text
             turn = response.json()
             if modification:
                 preview_id = turn["operation_plan"]["operations"][0]["id"]
-                confirmed = await client.post(f"/api/v1/conversation-operations/{preview_id}/resume", json={"confirm_modification": True})
+                confirmed = await client.post(
+                    f"/api/v1/conversation-operations/{preview_id}/resume",
+                    json={"confirm_modification": True},
+                )
                 assert confirmed.status_code == 202, confirmed.text
                 turn = confirmed.json()
             job_id = turn["action"]["job_id"]
@@ -385,33 +398,65 @@ async def test_stale_ui_autosave_and_worker_context_merge_preserve_latest_task(m
 @pytest.mark.asyncio
 async def test_asset_selection_strategy_cannot_override_semantic_query(monkeypatch):
     from types import SimpleNamespace
+
     from casepilot_api.agent_router import CaseScopeDecision, IntentOperationDraft, IntentPlanDraft
     from casepilot_api.generation_strategy import interpret_generation_choice
+
     choice = interpret_generation_choice("", SimpleNamespace(agent_provider="mock"))
     choice.strategy = "select"
     monkeypatch.setattr(conversations.settings, "agent_provider", "openai_compatible")
     monkeypatch.setattr(conversations, "interpret_generation_choice", lambda *a, **k: choice)
-    monkeypatch.setattr(conversations, "plan_intents", lambda content, *a, **k: IntentPlanDraft(
-        operations=[IntentOperationDraft(intent="CASE_QUERY", instruction=content, confidence=1,
-            action_evidence="查询", routing_source="semantic", target_kind="condition")]))
-    monkeypatch.setattr(conversations, "select_case_scope", lambda content, cases, *a, **k:
-        CaseScopeDecision(ids=[str(case["id"]) for case in cases], ambiguous=False, clarification="",
-                          reference="none", referenced_case_keys=[], requested_count=None))
+    monkeypatch.setattr(
+        conversations,
+        "plan_intents",
+        lambda content, *a, **k: IntentPlanDraft(
+            operations=[
+                IntentOperationDraft(
+                    intent="CASE_QUERY",
+                    instruction=content,
+                    confidence=1,
+                    action_evidence="查询",
+                    routing_source="semantic",
+                    target_kind="condition",
+                )
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        conversations,
+        "select_case_scope",
+        lambda content, cases, *a, **k: CaseScopeDecision(
+            ids=[str(case["id"]) for case in cases],
+            ambiguous=False,
+            clarification="",
+            reference="none",
+            referenced_case_keys=[],
+            requested_count=None,
+        ),
+    )
     account = None
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         try:
-            response = await client.post("/api/v1/auth/register", json={
-                "email": f"semantic-strategy-{uuid4().hex}@casepilot.test",
-                "display_name": "Strategy routing", "password": "CasePilot123!"})
+            response = await client.post(
+                "/api/v1/auth/register",
+                json={
+                    "email": f"semantic-strategy-{uuid4().hex}@casepilot.test",
+                    "display_name": "Strategy routing",
+                    "password": "CasePilot123!",
+                },
+            )
             account = response.json()
             space = account["spaces"][0]["id"]
             collection = (await client.get(f"/api/v1/spaces/{space}/collections")).json()[0]["id"]
-            case = await client.post(f"/api/v1/collections/{collection}/test-cases", json={
-                "title": "登录", "steps": [{"action": "提交密码", "expected": "登录成功"}]})
+            case = await client.post(
+                f"/api/v1/collections/{collection}/test-cases",
+                json={"title": "登录", "steps": [{"action": "提交密码", "expected": "登录成功"}]},
+            )
             assert case.status_code == 201
             cid = (await client.put(f"/api/v1/collections/{collection}/workspace")).json()["id"]
-            response = await client.post(f"/api/v1/conversations/{cid}/messages", json={
-                "content": "查询当前集合全部用例"})
+            response = await client.post(
+                f"/api/v1/conversations/{cid}/messages", json={"content": "查询当前集合全部用例"}
+            )
             assert response.status_code == 202, response.text
             turn = response.json()
             assert turn["intent"] == "CASE_QUERY"

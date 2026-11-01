@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 
+from casepilot_api.schemas import ReuseDestination
 from casepilot_api.workbench_agent import (
     QUERY_ACTION_TOOLS,
     AgentProviderError,
@@ -78,6 +79,17 @@ class UploadedPreviewArguments(NoArguments):
 
 
 class PlanArguments(NoArguments):
+    # Expose the same cardinality contract to the model that runtime validation
+    # enforces. An outline may omit actions; executable steps are paired 1:1.
+    model_config = ConfigDict(extra="forbid", json_schema_extra={
+        "anyOf": [
+            {"properties": {"plan_actions": {"maxItems": 0}}},
+            *[{"required": ["plan_actions"], "properties": {
+                "steps": {"minItems": count, "maxItems": count},
+                "plan_actions": {"minItems": count, "maxItems": count},
+            }} for count in range(1, 7)],
+        ],
+    })
     steps: list[str] = Field(min_length=1, max_length=6, description=(
         "One description per plan_actions entry, in exactly the same order. "
         "Describe independent requested goals, not the internal phases of a tool."))
@@ -88,7 +100,7 @@ class PlanArguments(NoArguments):
             "COLLECTION_QUERY",
             "COLLECTION_CREATE", "COLLECTION_RENAME", "COLLECTION_DELETE",
         ]
-    ] = Field(default_factory=list, max_length=8)
+    ] = Field(default_factory=list, max_length=6)
 
     @model_validator(mode="after")
     def aligned_actions(self):
@@ -118,6 +130,7 @@ class CollectionDeleteArguments(DomainPrepareArguments):
 
 
 class ReuseArguments(DomainPrepareArguments):
+    destination: ReuseDestination | None = None
     strategy: Literal["select", "select_and_generate"] = "select_and_generate"
 
 
@@ -288,6 +301,10 @@ def refresh_agent_domain_state(db, conversation, state):
 class WorkbenchTools:
     def __init__(self, db, account, conversation, payload, *, durable_run=None, initial=False):
         self.db, self.account, self.conversation, self.payload = db, account, conversation, payload
+        # Keep user/conversation attachments separate from ephemeral collection
+        # enrichment, including when a resolved selection payload is stored later.
+        self.conversation_document_ids = list(payload.document_ids) if payload else []
+        self.conversation_source_ids = list(payload.knowledge_source_ids) if payload else []
         self.durable_run = durable_run
         self.initial = initial
         self.mutating_intent = False
@@ -411,6 +428,28 @@ class WorkbenchTools:
                                     self.conversation.id, self.durable_run.request_id)
         self.mutating_intent = True
 
+    def plan_step_rejection(self):
+        steps = self.durable_run.plan.get("steps", []) if self.durable_run else []
+        cursor = self.durable_run.cursor if self.durable_run else 0
+        current = steps[cursor] if cursor < len(steps) else None
+        return {
+            "error_code": "workbench_plan_step_mismatch", "status": "rejected",
+            "applied": False, "current_action": current["action"] if current else None,
+            "plan_cursor": cursor, "requires_user_input": False,
+            "recoverable_plan_step": current is not None,
+            "message": "No job or proposal was created by this rejected call. Observe the "
+            "server's current plan step and execute its appropriate tool within the original "
+            "authority. A later preparation cannot skip that step. Do not ask the user to "
+            "confirm internal parameters, and do not repeat a successful preparation.",
+        }
+
+    def scope_payload(self, resolved):
+        """Persist resolved target authority without promoting automatic references."""
+        return resolved.model_copy(update={
+            "document_ids": list(self.conversation_document_ids),
+            "knowledge_source_ids": list(self.conversation_source_ids),
+        })
+
     def current_payload(self):
         """Selection envelope refresh is centralized here for every tool boundary."""
         from casepilot_api.workbench_selection import resolve_selection_payload
@@ -425,7 +464,8 @@ class WorkbenchTools:
             merge_references,
         )
 
-        resolved = resolve_selection_payload(self.db, self.account, self.conversation, self.payload)
+        resolved = resolve_selection_payload(
+            self.db, self.account, self.conversation, self.scope_payload(self.payload))
         if self.reference_binding is not None:
             assert_reference_binding(
                 self.db, self.account, self.conversation, self.reference_binding, lock=False)
@@ -608,7 +648,7 @@ class WorkbenchTools:
             steps = self.durable_run.plan.get("steps", [])
             if steps and (self.durable_run.cursor >= len(steps)
                           or steps[self.durable_run.cursor]["action"] != intent):
-                return {"error_code": "workbench_plan_step_mismatch"}
+                return self.plan_step_rejection()
         if self.prepared_turn is not None:
             return {"error_code": "one_proposal_per_turn"}
         existing = dict(self.conversation.context).get("workbench_collection_proposal")
@@ -756,8 +796,9 @@ class WorkbenchTools:
                     from casepilot_api.workbench_scope import capture_authorized_scope
                     self.durable_run.binding = selection_binding(self.conversation)
                     resolved = self.current_payload()
-                    capture_authorized_scope(self.durable_run, self.conversation, resolved)
-                    self.payload = resolved
+                    capture_authorized_scope(
+                        self.durable_run, self.conversation, self.scope_payload(resolved))
+                    self.payload = self.scope_payload(resolved)
                 if self.initial and self.durable_run is not None and not self.mutating_intent:
                     from casepilot_api.workbench_turn_pause import resolve_question
                     resolve_question(self.db, self.account.id, self.conversation.id,
@@ -831,10 +872,25 @@ class WorkbenchTools:
             "execution_requested": bool(args.plan_actions),
         }
 
-    def prepare(self, intent, *, strategy=None, plan=None):
+    def prepare(self, intent, *, strategy=None, plan=None, destination=None):
         from casepilot_api import conversations as service
 
         payload = self.current_payload()
+        destination_updates = {}
+        if destination is not None:
+            from casepilot_api.reuse_destination import prepare_destination
+
+            try:
+                destination_updates = prepare_destination(
+                    self.db, self.account, self.conversation, payload, destination)
+            except HTTPException as error:
+                if error.status_code == 409 and error.detail in {
+                    "reuse_destination_required", "reuse_destination_name_ambiguous",
+                }:
+                    return {"error_code": error.detail,
+                            "message": "Observe available collections or clarify the exact output "
+                                       "destination. No collection or operation was created."}
+                raise
         if (missing := self.require_goal_plan(plan)) is not None:
             return missing
         self.mark_mutating_intent()
@@ -862,7 +918,7 @@ class WorkbenchTools:
         if (intent == "CASE_GENERATE" and strategy in {"select", "select_and_generate"}
                 and not handoff and proposal.get("status") == "pending"):
             return {"error_code": "collection_proposal_requires_review"}
-        identity = (intent, strategy)
+        identity = (intent, strategy, destination.model_dump_json() if destination else None)
         if self.prepared_turn is not None:
             return (
                 self.prepared_result()
@@ -877,10 +933,11 @@ class WorkbenchTools:
             if handoff:
                 allowed.add("COLLECTION_CREATE")
             if current is None or current["action"] not in allowed:
-                return {"error_code": "workbench_plan_step_mismatch"}
+                return self.plan_step_rejection()
         updates = {"intent_override": intent}
         if strategy:
             updates["generation_strategy"] = strategy
+        updates.update(destination_updates)
         # Domain dispatch, handoff, and durable wait binding share one savepoint.
         # Neither the standalone draft nor this handoff grants approval authority.
         from copy import deepcopy
@@ -939,9 +996,15 @@ class WorkbenchTools:
                 if operations:
                     self.db.flush()
                     turn.operation_plan = service._operation_plan_view(operations)
-        except Exception:
+        except Exception as error:
             if self.durable_run is not None:
                 self.durable_run.plan, self.durable_run.checkpoint = old_plan, old_checkpoint
+            if (isinstance(error, HTTPException) and error.status_code == 422
+                    and error.detail == "generation_new_collection_required"):
+                return {"error_code": "reuse_destination_required",
+                        "message": "Specify the user's output destination with prepare_reuse: "
+                                   "current, an observed existing ID, or an explicit new name. "
+                                   "If the request is ambiguous, ask; do not invent a destination."}
             raise
         if handoff:
             self.collection_proposal = None
@@ -1159,7 +1222,10 @@ class WorkbenchTools:
             ToolSpec(
                 "prepare_reuse",
                 "Prepare asset reuse or reuse plus generation review. Includes its own human "
-                "new-destination collection gate; do not call create_collection first. "
+                "destination collection gate; do not call create_collection first. "
+                "Supply destination "
+                "from the user goal: current, an observed existing collection ID, or an explicit "
+                "new collection name. Ambiguous names require observation/clarification. "
                 "select_and_generate is ONE CASE_REUSE goal covering source review, gap "
                 "test-point planning, requested additional candidates and destination review. "
                 "Do not duplicate those internal phases as separate CASE_GENERATE or "
@@ -1169,7 +1235,8 @@ class WorkbenchTools:
                 "A same-turn standalone create draft can be handed off without creating or "
                 "approving any collection; earlier or confirmed proposals cannot.",
                 ReuseArguments,
-                lambda args: self.prepare("CASE_GENERATE", strategy=args.strategy, plan=args.plan),
+                lambda args: self.prepare("CASE_GENERATE", strategy=args.strategy, plan=args.plan,
+                                          destination=args.destination),
                 effect="prepare",
                 fulfilled_actions=("CASE_REUSE", "CASE_GENERATE"),
             )
@@ -1227,13 +1294,16 @@ def run_workbench_turn(db, account, conversation, payload, settings, *,
     else:
         db.refresh(conversation, with_for_update=True)
         root_message = db.get(ConversationMessage, durable_run.root_message_id)
+    from casepilot_api.failure_diagnostics import correlate_failure
+
+    correlate_failure(turn_id=root_message.id, run_id=durable_run.id)
     bridge = WorkbenchTools(db, account, conversation, payload,
                             durable_run=durable_run, initial=initial)
     resolved_payload = bridge.current_payload()
     if initial:
         from casepilot_api.workbench_scope import capture_authorized_scope
-        capture_authorized_scope(durable_run, conversation, resolved_payload)
-        bridge.payload = resolved_payload
+        capture_authorized_scope(durable_run, conversation, bridge.scope_payload(resolved_payload))
+        bridge.payload = bridge.scope_payload(resolved_payload)
     segment_base = reserved_segment_base(durable_run.used,
         settings.workbench_agent_max_turns, settings.workbench_agent_max_tool_calls)
     durable_run.checkpoint = {**durable_run.checkpoint, "event_sequence_base": segment_base}
@@ -1277,10 +1347,11 @@ def run_workbench_turn(db, account, conversation, payload, settings, *,
         # No run has started or receipt committed. HTTP 503 is authoritative;
         # publishing a terminal here would poison same-request retries.
         raise HTTPException(503, detail=error.code) from error
+    tool_specs = bridge.specs()
     try:
         result = WorkbenchAgent(
             provider,
-            bridge.specs(),
+            tool_specs,
             max_turns=settings.workbench_agent_max_turns,
             max_tool_calls=settings.workbench_agent_max_tool_calls,
         ).run(
@@ -1391,7 +1462,12 @@ def run_workbench_turn(db, account, conversation, payload, settings, *,
     checkpoint_segment(db, durable_run, bridge, result)
     if initial and not bridge.mutating_intent:
         resolve_question(db, account.id, conversation.id, durable_run.request_id)
-        if (paused_prior_ids and result.status not in {"failed", "cancelled"}
+        attempted_preparation = any(
+            item["tool"] in {spec.name for spec in tool_specs if spec.effect == "prepare"}
+            for item in result.tool_results
+        )
+        if (paused_prior_ids and not attempted_preparation
+                and result.status not in {"failed", "cancelled"}
                 and result.completion_diagnostic.get("completion_code") not in {
                     "goal_unverified", "goal_pending"}):
             # A side clarification is not a new durable goal hiding the restored plan.

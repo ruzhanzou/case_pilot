@@ -19,6 +19,7 @@ from casepilot_agent.store import JobStore
 
 def quantity_only(stage, *args):
     from casepilot_agent.quantity import OutputQuantity
+
     assert stage == "output_quantity.interpreted", "Generation must not run for reused assets"
     return OutputQuantity()
 
@@ -61,6 +62,7 @@ def test_adaptation_prompt_preserves_body_without_copying_system_metadata():
     original = req.confirmed_plan["reuse"]["decisions"][0]["source"]["snapshot"]
     original["steps"][0]["id"] = "source-step-id"
     original["source_refs"] = [{"label": "source identity"}]
+
     def tracked(stage, instruction, payload, result_type, model_id):
         if stage == "output_quantity.interpreted":
             return execute(stage, instruction, payload, result_type, model_id)
@@ -69,6 +71,7 @@ def test_adaptation_prompt_preserves_body_without_copying_system_metadata():
         assert body["preconditions"] == original["preconditions"]
         assert body["steps"] == [{"action": "输入正确凭据登录", "expected": "建立用户会话"}]
         return execute(stage, instruction, payload, result_type, model_id)
+
     assert len(run(req, tracked).test_cases) == 1
 
 
@@ -105,7 +108,9 @@ def test_modified_case_receives_original_and_retains_source():
         return execute(*args)
 
     result = run(with_decision("modify", count=1), tracked)
-    assert calls[0][0]["original"] == {key: source()["snapshot"][key] for key in ("title", "preconditions", "steps")}
+    assert calls[0][0]["original"] == {
+        key: source()["snapshot"][key] for key in ("title", "preconditions", "steps")
+    }
     assert any("修改参考" in ref.label for ref in result.test_cases[0].source_refs)
 
 
@@ -165,7 +170,13 @@ def test_one_reused_case_can_cover_two_points_without_duplicate_candidates():
 )
 def test_reuse_decisions_reject_invented_sources_and_incomplete_coverage(bad):
     req = request(1)
-    row = {"point_id": "P-0", "action": "reuse", "test_object_match": "same", "source_key": "asset:one", "reason": "未变"}
+    row = {
+        "point_id": "P-0",
+        "action": "reuse",
+        "test_object_match": "same",
+        "source_key": "asset:one",
+        "reason": "未变",
+    }
     rows = [row]
     if bad == "unknown_source":
         row["source_key"] = "asset:other-space"
@@ -191,14 +202,18 @@ def test_planning_priority_cannot_turn_unchanged_asset_into_modify():
         req.confirmed_plan,
         "change",
         [source()],
-        lambda *args: ReuseDecisions(decisions=[{
-            "point_id": "P-0",
-            "action": "modify",
-            "test_object_match": "same",
-            "source_key": "asset:one",
-            "changed_fields": ["priority"],
-            "reason": "规划将该测试点推断为P0，原资产为P1，需要修改优先级",
-        }]),
+        lambda *args: ReuseDecisions(
+            decisions=[
+                {
+                    "point_id": "P-0",
+                    "action": "modify",
+                    "test_object_match": "same",
+                    "source_key": "asset:one",
+                    "changed_fields": ["priority"],
+                    "reason": "规划将该测试点推断为P0，原资产为P1，需要修改优先级",
+                }
+            ]
+        ),
         "登录规则保持不变，复用现有用例",
     )
     decision = result["decisions"][0]
@@ -212,14 +227,19 @@ def test_explicit_priority_request_authorizes_priority_modification():
         req.confirmed_plan,
         "change",
         [source()],
-        lambda *args: ReuseDecisions(authorized_identity_fields=["priority"], decisions=[{
-            "point_id": "P-0",
-            "action": "modify",
-            "test_object_match": "same",
-            "source_key": "asset:one",
-            "changed_fields": ["priority"],
-            "reason": "用户要求将优先级改为P0",
-        }]),
+        lambda *args: ReuseDecisions(
+            authorized_identity_fields=["priority"],
+            decisions=[
+                {
+                    "point_id": "P-0",
+                    "action": "modify",
+                    "test_object_match": "same",
+                    "source_key": "asset:one",
+                    "changed_fields": ["priority"],
+                    "reason": "用户要求将优先级改为P0",
+                }
+            ],
+        ),
         "把登录用例优先级改为P0",
     )
     decision = result["decisions"][0]
@@ -278,8 +298,10 @@ def test_asset_search_is_bounded_scoped_and_escapes_wildcards():
     connection = Mock()
     connection.execute.return_value.mappings.return_value = []
     JobStore.__new__(JobStore).search_reuse_cases(connection, space_id=uuid4(), terms=["登录%_"])
-    sql = "\n".join(str(call.args[0].compile(dialect=postgresql.dialect()))
-                    for call in connection.execute.call_args_list)
+    sql = "\n".join(
+        str(call.args[0].compile(dialect=postgresql.dialect()))
+        for call in connection.execute.call_args_list
+    )
     assert "space_id =" in sql and "deleted_at IS NULL" in sql
     assert "current_revision_id" in sql and "LIMIT" in sql and "ESCAPE" in sql
 
@@ -295,7 +317,11 @@ def test_draft_workflow_queries_assets_only_for_reuse_and_persists_decisions(mon
 
     store = Store()
     store.job["space_id"] = uuid4()
-    store.job["input_payload"].update(generation_strategy="generate" if strategy == "fresh" else "select_and_generate", asset_selection_confirmed=strategy != "fresh", confirmed_asset_sources=[source()])
+    store.job["input_payload"].update(
+        generation_strategy="generate" if strategy == "fresh" else "select_and_generate",
+        asset_selection_confirmed=strategy != "fresh",
+        confirmed_asset_sources=[source()],
+    )
     search = Mock(return_value=[{"ref": "one", "snapshot": source()["snapshot"]}])
     store.search_reuse_cases = search
     store.attach_reuse_collections = lambda connection, items, **kwargs: items
@@ -304,6 +330,7 @@ def test_draft_workflow_queries_assets_only_for_reuse_and_persists_decisions(mon
         def complete(self, *, stage, payload, result_type, **kwargs):
             if stage == "output_quantity.interpreted":
                 from casepilot_agent.quantity import OutputQuantity
+
                 return OutputQuantity(test_point_count=12), UsageMetadata(model="fixture")
             if stage in {"requirement.analyzed", "requirement.extracted"}:
                 result = ReuseAnalysis(
@@ -320,7 +347,8 @@ def test_draft_workflow_queries_assets_only_for_reuse_and_persists_decisions(mon
                     decisions=[
                         {
                             "point_id": p["id"],
-                            "action": "reuse", "test_object_match": "same",
+                            "action": "reuse",
+                            "test_object_match": "same",
                             "source_key": payload["sources"][0]["key"],
                             "reason": "登录规则未变",
                         }
@@ -358,7 +386,8 @@ def test_reference_budget_never_causes_unverified_direct_reuse():
             decisions=[
                 {
                     "point_id": "P-0",
-                    "action": "reuse", "test_object_match": "same",
+                    "action": "reuse",
+                    "test_object_match": "same",
                     "source_key": "asset:one",
                     "reason": "未变化",
                 }
@@ -386,9 +415,12 @@ def test_reuse_comparison_bounds_concurrency_and_batch_payloads():
         assert len(payload["test_points"]) <= 12
         assert len(payload["sources"]) <= 30
         barrier.wait(timeout=5)
-        result = result_type(decisions=[{
-            "point_id": p["id"], "action": "new", "source_key": None, "reason": "缺口"
-        } for p in payload["test_points"]])
+        result = result_type(
+            decisions=[
+                {"point_id": p["id"], "action": "new", "source_key": None, "reason": "缺口"}
+                for p in payload["test_points"]
+            ]
+        )
         with lock:
             active -= 1
         return result
@@ -405,35 +437,56 @@ def test_cancelled_reuse_does_not_start_model_work():
         raise RuntimeError("cancelled")
 
     with pytest.raises(RuntimeError, match="cancelled"):
-        plan_reuse(request(12).confirmed_plan, "change", [source()], complete, "改版",
-                   check_cancelled=cancelled)
+        plan_reuse(
+            request(12).confirmed_plan,
+            "change",
+            [source()],
+            complete,
+            "改版",
+            check_cancelled=cancelled,
+        )
     complete.assert_not_called()
 
 
 def test_excel_preserves_priority_type_and_independent_multiline_checks(tmp_path):
-    path = tmp_path / '格式验证.xlsx'
+    path = tmp_path / "格式验证.xlsx"
     book = Workbook()
-    book.active.append(['用例名称', '测试步骤', '预期结果', '优先级', '用例类型'])
-    book.active.append(['校验登录', '输入账号\n提交登录', '出现首页', 'P0', '安全'])
-    book.active.append(['缺省字段', '登录', '成功', None, None])
-    book.active.append(['无效优先级', '登录', '成功', 'P9', None])
-    book.active.append(['缺少预期', '登录', None, 'P1', None])
+    book.active.append(["用例名称", "测试步骤", "预期结果", "优先级", "用例类型"])
+    book.active.append(["校验登录", "输入账号\n提交登录", "出现首页", "P0", "安全"])
+    book.active.append(["缺省字段", "登录", "成功", None, None])
+    book.active.append(["无效优先级", "登录", "成功", "P9", None])
+    book.active.append(["缺少预期", "登录", None, "P1", None])
     book.save(path)
-    blocks = parse_document(path, '')
-    rows = [row for block in blocks for row in block.metadata.get('reference_cases', [])]
-    report = [row for block in blocks for row in block.metadata.get('case_import_rows', [])]
+    blocks = parse_document(path, "")
+    rows = [row for block in blocks for row in block.metadata.get("reference_cases", [])]
+    report = [row for block in blocks for row in block.metadata.get("case_import_rows", [])]
     assert len(rows) == 2
-    assert rows[0]['priority'] == 'P0' and rows[0]['case_type'] == '安全'
-    assert rows[0]['steps'] == [{'action': '输入账号', 'expected': '出现首页'}, {'action': '提交登录', 'expected': ''}]
-    assert rows[1]['default_fields'] == ['priority', 'case_type']
-    assert [row['row'] for row in report if not row['valid']] == [4, 5]
+    assert rows[0]["priority"] == "P0" and rows[0]["case_type"] == "安全"
+    assert rows[0]["steps"] == [
+        {"action": "输入账号", "expected": "出现首页"},
+        {"action": "提交登录", "expected": ""},
+    ]
+    assert rows[1]["default_fields"] == ["priority", "case_type"]
+    assert [row["row"] for row in report if not row["valid"]] == [4, 5]
 
 
 def test_import_report_deduplicates_rows_from_split_evidence():
-    plan = {'test_points': [], 'evidence': [{'document_id': 'd', 'sheet': 's', 'label': 'old.xlsx',
-        'case_import_rows': [{'row': 2, 'valid': False, 'default_fields': [], 'reason': '缺少预期'}]}] * 2}
-    result = plan_reuse(plan, 'fresh', [], Mock(), '')
-    assert len(result['import_report']) == 1
+    plan = {
+        "test_points": [],
+        "evidence": [
+            {
+                "document_id": "d",
+                "sheet": "s",
+                "label": "old.xlsx",
+                "case_import_rows": [
+                    {"row": 2, "valid": False, "default_fields": [], "reason": "缺少预期"}
+                ],
+            }
+        ]
+        * 2,
+    }
+    result = plan_reuse(plan, "fresh", [], Mock(), "")
+    assert len(result["import_report"]) == 1
 
 
 @pytest.mark.parametrize("match", ["different", "unknown", None])
@@ -442,9 +495,14 @@ def test_different_or_unverified_test_object_never_reuses(match, action):
     row = {"point_id": "P-0", "action": action, "source_key": "asset:one", "reason": "similar"}
     if match is not None:
         row["test_object_match"] = match
-    result = plan_reuse(request(1).confirmed_plan, "change", [source()],
-                        lambda *args: ReuseDecisions(decisions=[row]), "login",
-                        test_object="other product")
+    result = plan_reuse(
+        request(1).confirmed_plan,
+        "change",
+        [source()],
+        lambda *args: ReuseDecisions(decisions=[row]),
+        "login",
+        test_object="other product",
+    )
     decision = result["decisions"][0]
     assert decision["action"] == "new"
     assert decision["source_key"] is None
@@ -454,11 +512,26 @@ def test_different_or_unverified_test_object_never_reuses(match, action):
 def test_same_test_object_can_be_proposed_for_reuse():
     def complete(stage, instruction, payload, result_type):
         assert payload["test_object"] == "account system"
-        return result_type(decisions=[{"point_id": "P-0", "action": "reuse",
-            "source_key": "asset:one", "reason": "same product and object",
-            "test_object_match": "same"}])
-    result = plan_reuse(request(1).confirmed_plan, "change", [source()], complete,
-                        "login", test_object="account system")
+        return result_type(
+            decisions=[
+                {
+                    "point_id": "P-0",
+                    "action": "reuse",
+                    "source_key": "asset:one",
+                    "reason": "same product and object",
+                    "test_object_match": "same",
+                }
+            ]
+        )
+
+    result = plan_reuse(
+        request(1).confirmed_plan,
+        "change",
+        [source()],
+        complete,
+        "login",
+        test_object="account system",
+    )
     assert result["decisions"][0]["action"] == "reuse"
 
 
@@ -481,11 +554,16 @@ def test_reuse_collection_provenance_is_scoped_and_preserves_case_snapshot():
 
 def test_excel_reference_preserves_original_identity_and_version():
     import json
+
     from casepilot_agent.reuse import reuse_ref
 
     asset = {
-        "key": "excel:document:历史:2", "kind": "excel", "label": "历史用例.xlsx",
-        "locator": "历史!2", "document_version": 3, "document_checksum": "snapshot-hash",
+        "key": "excel:document:历史:2",
+        "kind": "excel",
+        "label": "历史用例.xlsx",
+        "locator": "历史!2",
+        "document_version": 3,
+        "document_checksum": "snapshot-hash",
         "snapshot": {"original_id": "OLD-001"},
     }
     ref = reuse_ref({"source": asset, "action": "modify", "reason": "按当前时长改写"})
@@ -499,6 +577,7 @@ def test_excel_reference_preserves_original_identity_and_version():
 
 def test_legacy_modification_permissions_are_interpreted_by_model():
     from casepilot_agent.compact_generation import ModificationFields
+
     req = with_decision("modify", count=1)
     req.confirmed_plan["reuse"]["decisions"][0].pop("changed_fields")
     calls = []
@@ -513,3 +592,65 @@ def test_legacy_modification_permissions_are_interpreted_by_model():
     assert len(calls) == 1
     assert calls[0]["prompt"] == req.prompt
     assert result.test_cases[0].steps[0].action == source()["snapshot"]["steps"][0]["action"]
+
+
+@pytest.mark.parametrize("step_count", [1, 5, 100])
+@pytest.mark.parametrize("reserved", [False, True])
+def test_unchanged_assets_keep_empty_setup_and_full_steps_without_new_generation(
+    step_count, reserved
+):
+    from pydantic import ValidationError
+
+    from casepilot_agent.contracts import TestCaseDraft as NewCase
+
+    req = with_decision(count=1)
+    decision = req.confirmed_plan["reuse"]["decisions"][0]
+    snapshot = decision["source"]["snapshot"]
+    snapshot["preconditions"] = []
+    snapshot["steps"] = [
+        {"action": f"Observe {i}", "expected": f"Result {i}"} for i in range(step_count)
+    ]
+    original = deepcopy(snapshot)
+    normalized = normalize_sources(
+        [{"ref": "one", "target_type": "formal", "snapshot": snapshot}], []
+    )
+    assert len(normalized) == 1 and normalized[0]["snapshot"] == original
+    if reserved:
+        point = req.confirmed_plan["test_points"][0]
+        req.confirmed_plan["reserved_reuse_outputs"] = [
+            {
+                "action": "reuse",
+                "reason": decision["reason"],
+                "source": decision["source"],
+                "point_ids": [point["id"]],
+                "point_snapshots": {point["id"]: point},
+            }
+        ]
+    def exact_quantity(stage, *args):
+        from casepilot_agent.quantity import OutputQuantity
+
+        assert stage == "output_quantity.interpreted", "Unchanged reuse must not generate content"
+        return OutputQuantity(case_count=1, output_case_count=1, new_case_count=0)
+
+    result = run(req, exact_quantity)
+    case = result.test_cases[0]
+    assert case.preconditions == []
+    assert [step.model_dump() for step in case.steps] == original["steps"]
+    assert case.title == original["title"] and case.module == original["module"]
+    assert any(
+        issue.code == "empty_test_setup" and issue.severity == "warning"
+        for issue in result.quality.issues
+    )
+    assert result.quality.grounding_status == "unverified"
+    # The model-facing new-generation schema remains strict; a JSON claim of
+    # preserved origin does not select the server-only projection type.
+    with pytest.raises(ValidationError):
+        NewCase.model_validate({**case.model_dump(), "preserved": True})
+
+
+def test_invalid_existing_shape_is_not_made_reusable():
+    snapshot = source()["snapshot"]
+    snapshot["steps"] = []
+    assert (
+        normalize_sources([{"ref": "bad", "target_type": "formal", "snapshot": snapshot}], []) == []
+    )

@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from test_rewrite_preservation import original
 
 from casepilot_agent.contracts import (
     QualityReport,
@@ -14,7 +15,6 @@ from casepilot_agent.pipeline import (
     RewriteContentError,
     validate_rewrite_candidate,
 )
-from test_rewrite_preservation import original
 
 
 def candidate():

@@ -33,7 +33,7 @@ def test_candidate_excerpt_preview_preserves_reference_and_original(length):
 
 @pytest.mark.parametrize("invalid_last", [False, True])
 def test_commit_160_candidates_validates_whole_batch_before_writing(monkeypatch, invalid_last):
-    conversation = SimpleNamespace(id=uuid4(), collection_id=uuid4(), context={})
+    conversation = SimpleNamespace(id=uuid4(), space_id=uuid4(), collection_id=uuid4(), context={})
     candidates = [
         SimpleNamespace(
             id=uuid4(), generation_job_id=uuid4(), ref=f"TC-{i}", status="candidate",
@@ -51,7 +51,11 @@ def test_commit_160_candidates_validates_whole_batch_before_writing(monkeypatch,
     db = Mock()
     db.scalars.side_effect = [candidates, [], []]
     # No bound operation or remaining candidate for each synthetic source job.
-    db.scalar.return_value = None
+    db.scalar.side_effect = lambda statement: (
+        SimpleNamespace(space_id=conversation.space_id, input_payload={})
+        if statement.column_descriptions[0].get("entity") is conversations.GenerationJob
+        else None
+    )
     from casepilot_api import workbench_continuation
     monkeypatch.setattr(workbench_continuation, "record_approval", lambda *a, **k: None)
     monkeypatch.setattr(workbench_continuation, "capture_approval_binding", lambda *a, **k: None)

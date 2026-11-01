@@ -36,6 +36,7 @@ def test_rewrite_rejects_empty_steps_despite_model_perfect_score():
     proposed.steps = proposed.steps[:1]
     provider = Mock()
     from semantic_validation_fixture import constraint_report
+
     provider.complete.side_effect = lambda **kw: (constraint_report(kw["payload"]), None)
     provider.rewrite.return_value = RewriteCandidate(
         proposed=proposed, diff=[], reason="改写", quality={"passed": True, "score": 100}
@@ -52,6 +53,7 @@ def test_rewrite_rejects_deleted_protected_action():
     proposed.steps[0].action = "未经授权替换操作"
     provider = Mock()
     from semantic_validation_fixture import constraint_report
+
     provider.complete.side_effect = lambda **kw: (constraint_report(kw["payload"]), None)
     provider.rewrite.return_value = RewriteCandidate(
         proposed=proposed, diff=[], reason="改写", quality={"passed": True, "score": 100}
@@ -160,6 +162,7 @@ def test_invalid_generation_cache_is_replaced_and_never_resaved(monkeypatch):
     def complete(**kwargs):
         if kwargs.get("stage") == "rewrite.constraints_validated":
             from semantic_validation_fixture import constraint_report
+
             return constraint_report(kwargs["payload"]), None
         calls.append(kwargs["stage"])
         return MockProvider().complete(**kwargs)
@@ -267,13 +270,14 @@ def test_oversized_single_rewrite_fails_without_silent_truncation():
 
 def test_single_case_malformed_json_retries_only_once():
     from agents.exceptions import ModelBehaviorError
-    from test_compact_generation import request, run, execute
+    from test_compact_generation import execute, request, run
 
     calls = []
 
     def unstable(stage, instruction, payload, result_type, model_id):
         if stage == "output_quantity.interpreted":
             from casepilot_agent.quantity import OutputQuantity
+
             return OutputQuantity()
         calls.append(stage)
         if len(calls) == 1:
@@ -298,20 +302,37 @@ def test_empty_setup_in_audit_replacement_is_not_cacheable():
         validate_stage_result(audit, {"test_cases": [replacement]})
 
 
-@pytest.mark.parametrize('quote,source,valid', [
-    ('退出后旧会话失效.', '退出后旧会话失效。', True),
-    ('退款金额不得超过实付金额。', '退款金额不得超过实付金额.', True),
-    ('错误3次锁定15分钟.', '错误5次锁定15分钟。', False),
-    ('退款金额超过实付金额.', '退款金额不得超过实付金额。', False),
-    ('金额1。', '金额1.5元', False),
-])
+@pytest.mark.parametrize(
+    "quote,source,valid",
+    [
+        ("退出后旧会话失效.", "退出后旧会话失效。", True),
+        ("退款金额不得超过实付金额。", "退款金额不得超过实付金额.", True),
+        ("错误3次锁定15分钟.", "错误5次锁定15分钟。", False),
+        ("退款金额超过实付金额.", "退款金额不得超过实付金额。", False),
+        ("金额1。", "金额1.5元", False),
+    ],
+)
 def test_audit_only_normalizes_sentence_stop(quote, source, valid):
-    content = {'slot': 1, 'title': '核对规则', 'preconditions': ['有数据'],
-               'steps': [{'action': '执行', 'expected': '核对结果'}]}
-    audit = BatchAudit(reviews=[{'slot': 1, 'verdict': 'supported', 'replacement': None,
-        'reason': '', 'assertions': [{'step': 1, 'source_index': 0, 'quote': quote,
-                                    'explanation': '原文'}]}])
-    payload = {'test_cases': [content], 'grounding_sources': [source]}
+    content = {
+        "slot": 1,
+        "title": "核对规则",
+        "preconditions": ["有数据"],
+        "steps": [{"action": "执行", "expected": "核对结果"}],
+    }
+    audit = BatchAudit(
+        reviews=[
+            {
+                "slot": 1,
+                "verdict": "supported",
+                "replacement": None,
+                "reason": "",
+                "assertions": [
+                    {"step": 1, "source_index": 0, "quote": quote, "explanation": "原文"}
+                ],
+            }
+        ]
+    )
+    payload = {"test_cases": [content], "grounding_sources": [source]}
     if valid:
         validate_stage_result(audit, payload)
         assert audit.reviews[0].assertions[0].quote in source
@@ -322,176 +343,273 @@ def test_audit_only_normalizes_sentence_stop(quote, source, valid):
 
 def test_human_review_generation_never_calls_model_audit():
     from agents.exceptions import ModelBehaviorError
-    from test_compact_generation import request, run, execute
+    from test_compact_generation import execute, request, run
+
     calls = []
+
     def flaky(stage, instruction, payload, result_type, model_id):
         if stage == "output_quantity.interpreted":
             from casepilot_agent.quantity import OutputQuantity
+
             return OutputQuantity()
-        calls.append((stage, payload['batch_count'], payload.get('validation_feedback')))
-        if stage == 'test_case.grounded' and payload['batch_count'] > 1:
-            raise ModelBehaviorError('malformed JSON')
+        calls.append((stage, payload["batch_count"], payload.get("validation_feedback")))
+        if stage == "test_case.grounded" and payload["batch_count"] > 1:
+            raise ModelBehaviorError("malformed JSON")
         return execute(stage, instruction, payload, result_type, model_id)
+
     result = run(request(2), flaky)
     assert len(result.test_cases) == 2
-    assert [c[1] for c in calls if c[0] == 'test_case.generated'] == [2]
-    assert [c[1] for c in calls if c[0] == 'test_case.grounded'] == []
+    assert [c[1] for c in calls if c[0] == "test_case.generated"] == [2]
+    assert [c[1] for c in calls if c[0] == "test_case.grounded"] == []
 
 
-@pytest.mark.parametrize('source_index', [0, 99])
+@pytest.mark.parametrize("source_index", [0, 99])
 def test_audit_resolves_misnumbered_quote_only_within_original_evidence(source_index):
-    content = {'slot': 7, 'title': '订单', 'preconditions': ['有库存'],
-               'steps': [{'action': '下单', 'expected': '创建订单成功'}]}
-    data = {'reviews': [{'slot': 7, 'verdict': 'supported', 'replacement': None,
-        'reason': '', 'assertions': [{'step': 1, 'source_index': source_index,
-            'quote': 'ORDER-1: 库存充足创建订单成功.', 'explanation': '原始规则'}]}]}
+    content = {
+        "slot": 7,
+        "title": "订单",
+        "preconditions": ["有库存"],
+        "steps": [{"action": "下单", "expected": "创建订单成功"}],
+    }
+    data = {
+        "reviews": [
+            {
+                "slot": 7,
+                "verdict": "supported",
+                "replacement": None,
+                "reason": "",
+                "assertions": [
+                    {
+                        "step": 1,
+                        "source_index": source_index,
+                        "quote": "ORDER-1: 库存充足创建订单成功.",
+                        "explanation": "原始规则",
+                    }
+                ],
+            }
+        ]
+    }
     audit = BatchAudit.model_validate(data)
-    payload = {'test_cases': [content], 'grounding_sources': [
-        'LOGIN-6: 退出后旧会话失效。', 'ORDER-1: 库存充足创建订单成功。']}
+    payload = {
+        "test_cases": [content],
+        "grounding_sources": ["LOGIN-6: 退出后旧会话失效。", "ORDER-1: 库存充足创建订单成功。"],
+    }
     validate_stage_result(audit, payload)
     support = audit.reviews[0].assertions[0]
     assert support.source_index == 1
-    assert support.quote == payload['grounding_sources'][1]
-    with pytest.raises(StageContractError, match='not_in_original_source'):
-        validate_stage_result(BatchAudit.model_validate(data),
-                              {**payload, 'grounding_sources': payload['grounding_sources'][:1]})
+    assert support.quote == payload["grounding_sources"][1]
+    with pytest.raises(StageContractError, match="not_in_original_source"):
+        validate_stage_result(
+            BatchAudit.model_validate(data),
+            {**payload, "grounding_sources": payload["grounding_sources"][:1]},
+        )
 
 
 def test_rewrite_extraction_does_not_repeat_case_source_excerpts(monkeypatch):
     from casepilot_agent import tasks
     from casepilot_agent.contracts import SourceRef
+
     original = case()
-    original.source_refs = [SourceRef(label='大型附件', excerpt='原文' * 20000)]
-    requests = {str(i): RewriteRequest(test_case=original, instruction='按附件核对预期') for i in range(18)}
-    context = {'evidence': [{'excerpt': '原始业务规则'}]}
-    monkeypatch.setattr(tasks, '_context_payload', Mock(return_value=context))
+    original.source_refs = [SourceRef(label="大型附件", excerpt="原文" * 20000)]
+    requests = {
+        str(i): RewriteRequest(test_case=original, instruction="按附件核对预期") for i in range(18)
+    }
+    context = {"evidence": [{"excerpt": "原始业务规则"}]}
+    monkeypatch.setattr(tasks, "_context_payload", Mock(return_value=context))
     extract = Mock(return_value=context)
-    monkeypatch.setattr(tasks, '_rewrite_reference_context', extract)
-    prepared = tasks._prepare_rewrite_requests(Mock(), {'input_payload': {'document_ids': ['doc']}}, Mock(), requests)
+    monkeypatch.setattr(tasks, "_rewrite_reference_context", extract)
+    prepared = tasks._prepare_rewrite_requests(
+        Mock(), {"input_payload": {"document_ids": ["doc"]}}, Mock(), requests
+    )
     extract.assert_called_once()
-    snapshots = extract.call_args.args[-1]['selected_cases']
+    snapshots = extract.call_args.args[-1]["selected_cases"]
     assert len(snapshots) == 18
-    assert all('source_refs' not in item['test_case'] for item in snapshots)
-    assert all(item['test_case']['steps'] == original.model_dump()['steps'] for item in snapshots)
+    assert all("source_refs" not in item["test_case"] for item in snapshots)
+    assert all(item["test_case"]["steps"] == original.model_dump()["steps"] for item in snapshots)
     assert all(r.test_case.source_refs == original.source_refs for r in prepared.values())
 
 
 def test_rewrite_payload_interns_original_sources_losslessly():
     from casepilot_agent.contracts import SourceRef
+
     original = case()
-    original.source_refs = [SourceRef(label='附件', excerpt='完整原文' * 10000)]
-    group = [(str(i), RewriteRequest(test_case=original, instruction='只改标题')) for i in range(18)]
+    original.source_refs = [SourceRef(label="附件", excerpt="完整原文" * 10000)]
+    group = [
+        (str(i), RewriteRequest(test_case=original, instruction="只改标题")) for i in range(18)
+    ]
     payload = rewrite_batch_payload(group)
-    assert len(payload['source_references']) == 1
-    for item in payload['items']:
-        restored = [payload['source_references'][i] for i in item['source_ref_indexes']]
-        assert restored == original.model_dump(mode='json')['source_refs']
+    assert len(payload["source_references"]) == 1
+    for item in payload["items"]:
+        restored = [payload["source_references"][i] for i in item["source_ref_indexes"]]
+        assert restored == original.model_dump(mode="json")["source_refs"]
     assert len(list(rewrite_groups(group))) == 1
 
 
 def test_rewrite_rule_id_hint_restores_original_conditions_and_overlapping_windows():
-    from casepilot_agent.planning import rewrite_evidence
     from casepilot_agent.contracts import RequirementAnalysis
-    text = 'ORDER-1: 库存充足创建订单成功。特殊账户除外。ORDER-2: 库存不足拒绝创建订单。'
-    context = {'evidence': [{'chunk_id': str(i), 'excerpt': text + ' ' * 18000} for i in range(2)]}
+    from casepilot_agent.planning import rewrite_evidence
+
+    text = "ORDER-1: 库存充足创建订单成功。特殊账户除外。ORDER-2: 库存不足拒绝创建订单。"
+    context = {"evidence": [{"chunk_id": str(i), "excerpt": text + " " * 18000} for i in range(2)]}
+
     def extract(stage, instruction, payload, result_type):
-        return RequirementAnalysis(summary='规则', business_rules=['ORDER-1：库存充足时创建订单成功', 'ORDER-2：库存不足时拒绝创建订单'])
+        return RequirementAnalysis(
+            summary="规则",
+            business_rules=["ORDER-1：库存充足时创建订单成功", "ORDER-2：库存不足时拒绝创建订单"],
+        )
+
     result = rewrite_evidence(context, {}, extract)
-    assert len(result['evidence']) <= 4
-    assert all('时' not in s for s in result['business_rules'])
-    assert any('特殊账户除外' in x['excerpt'] for x in result['evidence'])
-    assert all(any(x['excerpt'] in s['excerpt'] for s in context['evidence']) for x in result['evidence'])
+    assert len(result["evidence"]) <= 4
+    assert all("时" not in s for s in result["business_rules"])
+    assert any("特殊账户除外" in x["excerpt"] for x in result["evidence"])
+    assert all(
+        any(x["excerpt"] in s["excerpt"] for s in context["evidence"]) for x in result["evidence"]
+    )
 
 
 def test_rewrite_filters_obsolete_rules_even_when_evidence_fits_one_batch():
     from casepilot_agent.contracts import RequirementAnalysis
     from casepilot_agent.planning import rewrite_evidence
 
-    context = {'evidence': [
-        {'chunk_id': 'old', 'label': 'requirements.pdf', 'locator': '第 1 页',
-         'excerpt': '历史版本，已作废。验证码在签发后420秒过期，返回OLD。'},
-        {'chunk_id': 'current', 'label': 'requirements.pdf', 'locator': '第 2 页',
-         'excerpt': '当前生效规则：验证码在签发后300秒过期，返回E731。'},
-    ]}
+    context = {
+        "evidence": [
+            {
+                "chunk_id": "old",
+                "label": "requirements.pdf",
+                "locator": "第 1 页",
+                "excerpt": "历史版本，已作废。验证码在签发后420秒过期，返回OLD。",
+            },
+            {
+                "chunk_id": "current",
+                "label": "requirements.pdf",
+                "locator": "第 2 页",
+                "excerpt": "当前生效规则：验证码在签发后300秒过期，返回E731。",
+            },
+        ]
+    }
 
     def extract(stage, instruction, payload, result_type):
-        assert stage == 'rewrite.evidence'
-        assert len(payload['context']['evidence']) == 2
+        assert stage == "rewrite.evidence"
+        assert len(payload["context"]["evidence"]) == 2
         return RequirementAnalysis(
-            summary='当前规则',
-            business_rules=['验证码在签发后300秒过期，返回E731'],
+            summary="当前规则",
+            business_rules=["验证码在签发后300秒过期，返回E731"],
         )
 
     result = rewrite_evidence(
         context,
-        {'id': 'selected', 'steps': [{'action': '提交验证码', 'expected': 'OLD'}]},
+        {"id": "selected", "steps": [{"action": "提交验证码", "expected": "OLD"}]},
         extract,
     )
 
-    assert result['business_rules'] == ['验证码在签发后300秒过期，返回E731']
-    assert [item['chunk_id'] for item in result['evidence']] == ['current']
-    assert result['processed_batches'] == 1
+    assert result["business_rules"] == ["验证码在签发后300秒过期，返回E731"]
+    assert [item["chunk_id"] for item in result["evidence"]] == ["current"]
+    assert result["processed_batches"] == 1
 
 
 def test_rewrite_timeout_retries_once_and_preserves_targets():
     import httpx
     from openai import APITimeoutError
+
     calls = []
+
     def complete(**kwargs):
         if kwargs.get("stage") == "rewrite.constraints_validated":
             from semantic_validation_fixture import constraint_report
+
             return constraint_report(kwargs["payload"]), None
-        items = kwargs['payload']['items'];calls.append(len(items))
-        if not kwargs['payload'].get('validation_feedback'):
-            raise APITimeoutError(request=httpx.Request('POST', 'https://example.test'))
-        return kwargs['result_type'].model_validate({'items': [
-            {'ref':item['ref'], 'changes':{'title':'复核 '+item['test_case']['title']},
-             'reason':'改标题','quality':{'passed':True,'score':90}} for item in items]}), None
-    requests = {str(i): RewriteRequest(test_case=case(), instruction='润色标题') for i in range(2)}
-    result = GenerationPipeline(SimpleNamespace(name='real',complete=complete)).rewrite_many(requests)
+        items = kwargs["payload"]["items"]
+        calls.append(len(items))
+        if not kwargs["payload"].get("validation_feedback"):
+            raise APITimeoutError(request=httpx.Request("POST", "https://example.test"))
+        return kwargs["result_type"].model_validate(
+            {
+                "items": [
+                    {
+                        "ref": item["ref"],
+                        "changes": {"title": "复核 " + item["test_case"]["title"]},
+                        "reason": "改标题",
+                        "quality": {"passed": True, "score": 90},
+                    }
+                    for item in items
+                ]
+            }
+        ), None
+
+    requests = {str(i): RewriteRequest(test_case=case(), instruction="润色标题") for i in range(2)}
+    result = GenerationPipeline(SimpleNamespace(name="real", complete=complete)).rewrite_many(
+        requests
+    )
     assert set(result) == set(requests)
-    assert calls == [2,2]
+    assert calls == [2, 2]
 
 
 def test_rewrite_schema_forbids_unrequested_system_fields():
     from pydantic import ValidationError
+
     from casepilot_agent.contracts import RewritePatchItem
+
     with pytest.raises(ValidationError):
-        RewritePatchItem(ref='one', changes={'id':'invented'}, reason='修改', quality={'passed':True,'score':100})
+        RewritePatchItem(
+            ref="one",
+            changes={"id": "invented"},
+            reason="修改",
+            quality={"passed": True, "score": 100},
+        )
 
 
-@pytest.mark.parametrize('index,valid', [(0, True), (999, False)])
+@pytest.mark.parametrize("index,valid", [(0, True), (999, False)])
 def test_rewrite_sources_are_restored_from_server_catalog(index, valid):
     from casepilot_agent.contracts import SourceRef
-    original = case();original.source_refs=[SourceRef(label='原资料',excerpt='原文不可改写')]
+
+    original = case()
+    original.source_refs = [SourceRef(label="原资料", excerpt="原文不可改写")]
+
     def complete(**kwargs):
         if kwargs.get("stage") == "rewrite.constraints_validated":
             from semantic_validation_fixture import constraint_report
+
             return constraint_report(kwargs["payload"]), None
-        entry=kwargs['payload']['items'][0]
-        return kwargs['result_type'].model_validate({'items':[{'ref':entry['ref'],
-            'changes':{'source_ref_indexes':[index]},'reason':'更新引用',
-            'quality':{'passed':True,'score':90}}]}),None
-    pipeline=GenerationPipeline(SimpleNamespace(name='real',complete=complete))
-    requests={'one':RewriteRequest(test_case=original,instruction='核对来源引用')}
+        entry = kwargs["payload"]["items"][0]
+        return kwargs["result_type"].model_validate(
+            {
+                "items": [
+                    {
+                        "ref": entry["ref"],
+                        "changes": {"source_ref_indexes": [index]},
+                        "reason": "更新引用",
+                        "quality": {"passed": True, "score": 90},
+                    }
+                ]
+            }
+        ), None
+
+    pipeline = GenerationPipeline(SimpleNamespace(name="real", complete=complete))
+    requests = {"one": RewriteRequest(test_case=original, instruction="核对来源引用")}
     if valid:
-        result=pipeline.rewrite_many(requests)
-        assert result['one'].proposed.source_refs==original.source_refs
+        result = pipeline.rewrite_many(requests)
+        assert result["one"].proposed.source_refs == original.source_refs
     else:
-        candidate = pipeline.rewrite_many(requests)['one']
+        candidate = pipeline.rewrite_many(requests)["one"]
         assert not candidate.quality.passed
         assert candidate.proposed == original
         assert candidate.diff == []
 
 
 @pytest.mark.parametrize("original_setup,allowed", [([], True), (["账号已注册"], False)])
-def test_rewrite_allows_existing_empty_setup_but_rejects_losing_required_setup(original_setup, allowed):
+def test_rewrite_allows_existing_empty_setup_but_rejects_losing_required_setup(
+    original_setup, allowed
+):
     from casepilot_agent.contracts import RewriteCaseDraft
     from casepilot_agent.pipeline import RewriteContentError, validate_rewrite_candidate
 
-    original = RewriteCaseDraft.model_validate({**case().model_dump(), "preconditions": original_setup})
+    original = RewriteCaseDraft.model_validate(
+        {**case().model_dump(), "preconditions": original_setup}
+    )
     proposed = original.model_copy(update={"title": "修改后的标题", "preconditions": []})
-    candidate = RewriteCandidate(proposed=proposed, diff=[], reason="仅改标题", quality={"passed": True, "score": 100})
+    candidate = RewriteCandidate(
+        proposed=proposed, diff=[], reason="仅改标题", quality={"passed": True, "score": 100}
+    )
     request = RewriteRequest(test_case=original, instruction="仅修改标题")
     if allowed:
         assert validate_rewrite_candidate(request, candidate).proposed.preconditions == []
@@ -502,38 +620,75 @@ def test_rewrite_allows_existing_empty_setup_but_rejects_losing_required_setup(o
 
 def test_confirmed_assets_reach_rewrite_when_space_knowledge_disabled(monkeypatch):
     from casepilot_agent import tasks
-    source = {'key': 'asset:one', 'kind': 'formal', 'label': '源用例',
-              'locator': 'v1', 'revision': 'revision-1',
-              'snapshot': {'case_key': 'CASE-1'}, 'collections': []}
-    context = {'evidence': []}
-    monkeypatch.setattr(tasks, '_context_payload', Mock(return_value=context))
+
+    source = {
+        "key": "asset:one",
+        "kind": "formal",
+        "label": "源用例",
+        "locator": "v1",
+        "revision": "revision-1",
+        "snapshot": {"case_key": "CASE-1"},
+        "collections": [],
+    }
+    context = {"evidence": []}
+    monkeypatch.setattr(tasks, "_context_payload", Mock(return_value=context))
+
     def extract(store, job, pipeline, supplied, selected):
-        assert supplied['approved_reference_assets'] == [source]
-        assert len(selected['selected_cases']) == 1
+        assert supplied["approved_reference_assets"] == [source]
+        assert len(selected["selected_cases"]) == 1
         return supplied
-    monkeypatch.setattr(tasks, '_rewrite_reference_context', extract)
+
+    monkeypatch.setattr(tasks, "_rewrite_reference_context", extract)
     original = case()
-    prepared = tasks._prepare_rewrite_requests(Mock(), {'input_payload': {
-        'use_space_knowledge': False, 'asset_reference_sources': [source]}}, Mock(),
-        {'one': RewriteRequest(test_case=original, instruction='参考原用例改写登录步骤')})
-    assert prepared['one'].context['approved_reference_assets'] == [source]
-    assert prepared['one'].test_case == original
-    assert any('asset:one' in ref['excerpt']
-               for ref in prepared['one'].context['confirmed_reference_refs'])
-    assert all('asset:one' not in ref.excerpt for ref in original.source_refs)
+    prepared = tasks._prepare_rewrite_requests(
+        Mock(),
+        {"input_payload": {"use_space_knowledge": False, "asset_reference_sources": [source]}},
+        Mock(),
+        {"one": RewriteRequest(test_case=original, instruction="参考原用例改写登录步骤")},
+    )
+    assert prepared["one"].context["approved_reference_assets"] == [source]
+    assert prepared["one"].test_case == original
+    assert any(
+        "asset:one" in ref["excerpt"] for ref in prepared["one"].context["confirmed_reference_refs"]
+    )
+    assert all("asset:one" not in ref.excerpt for ref in original.source_refs)
 
 
 def test_confirmed_excel_rows_replace_full_workbook_before_model_request():
     from casepilot_agent.tasks import _scope_confirmed_asset_evidence
-    source = {'kind': 'excel', 'document_id': 'book', 'chunk_id': 'sheet',
-              'label': '历史.xlsx', 'locator': '行2', 'snapshot': {'original_id': 'OLD-001', 'steps': [{'action': '等待420秒', 'expected': 'E731'}]}}
-    requirement = {'document_id': 'req', 'excerpt': '当前有效期300秒'}
-    context = {'evidence': [requirement, {'document_id': 'book', 'excerpt': 'OLD-001 OLD-002 OTHER-PAY', 'reference_cases': ['unselected']},
-                            {'document_id': 'other', 'material_role': 'historical_cases', 'excerpt': 'OTHER-SECRET'}]}
+
+    source = {
+        "kind": "excel",
+        "document_id": "book",
+        "chunk_id": "sheet",
+        "label": "历史.xlsx",
+        "locator": "行2",
+        "snapshot": {
+            "original_id": "OLD-001",
+            "steps": [{"action": "等待420秒", "expected": "E731"}],
+        },
+    }
+    requirement = {"document_id": "req", "excerpt": "当前有效期300秒"}
+    context = {
+        "evidence": [
+            requirement,
+            {
+                "document_id": "book",
+                "excerpt": "OLD-001 OLD-002 OTHER-PAY",
+                "reference_cases": ["unselected"],
+            },
+            {
+                "document_id": "other",
+                "material_role": "historical_cases",
+                "excerpt": "OTHER-SECRET",
+            },
+        ]
+    }
     result = _scope_confirmed_asset_evidence(context, [source])
     import json
+
     payload = json.dumps(result, ensure_ascii=False)
-    assert 'OLD-001' in payload and '420' in payload and '300' in payload
-    assert 'OLD-002' not in payload and 'OTHER-PAY' not in payload and 'OTHER-SECRET' not in payload
-    assert result['evidence'][0] == requirement
-    assert len(context['evidence']) == 3
+    assert "OLD-001" in payload and "420" in payload and "300" in payload
+    assert "OLD-002" not in payload and "OTHER-PAY" not in payload and "OTHER-SECRET" not in payload
+    assert result["evidence"][0] == requirement
+    assert len(context["evidence"]) == 3

@@ -354,9 +354,7 @@ def collection_to_view(db: Session, collection: CaseCollection) -> CaseCollectio
             TestCase.deleted_at.is_(None),
         )
     )
-    project = db.scalar(
-        select(CaseProject).where(CaseProject.collection_id == collection.id)
-    )
+    project = db.scalar(select(CaseProject).where(CaseProject.collection_id == collection.id))
     creator_id = db.scalar(
         select(AuditEvent.actor_id)
         .where(
@@ -461,9 +459,7 @@ def matches_collection_search(item: CaseCollectionView, query: str) -> bool:
         if item.creator
         else []
     )
-    document = " ".join(
-        [item.name, item.description, *creator_values, *target_values]
-    ).casefold()
+    document = " ".join([item.name, item.description, *creator_values, *target_values]).casefold()
     return all(term in document for term in query.strip().casefold().split())
 
 
@@ -473,45 +469,60 @@ def case_to_view(
     revision_id: UUID | None = None,
     *,
     prepared: (
-        tuple[TestCaseRevision | None, list[UUID], list[CaseProject], Account | None]
-        | None
+        tuple[TestCaseRevision | None, list[UUID], list[CaseProject], Account | None] | None
     ) = None,
 ) -> TestCaseView:
     resolved_revision_id = revision_id or test_case.current_revision_id
     if resolved_revision_id is None:
         raise HTTPException(status_code=409, detail="test_case_has_no_revision")
-    revision = prepared[0] if prepared else db.scalar(
-        select(TestCaseRevision).where(
-            TestCaseRevision.id == resolved_revision_id,
-            TestCaseRevision.test_case_id == test_case.id,
+    revision = (
+        prepared[0]
+        if prepared
+        else db.scalar(
+            select(TestCaseRevision).where(
+                TestCaseRevision.id == resolved_revision_id,
+                TestCaseRevision.test_case_id == test_case.id,
+            )
         )
     )
     if revision is None:
         raise HTTPException(status_code=409, detail="test_case_revision_not_found")
-    collection_ids = prepared[1] if prepared else list(
-        db.scalars(
-            select(CollectionCaseMembership.collection_id).where(
-                CollectionCaseMembership.test_case_id == test_case.id
+    collection_ids = (
+        prepared[1]
+        if prepared
+        else list(
+            db.scalars(
+                select(CollectionCaseMembership.collection_id).where(
+                    CollectionCaseMembership.test_case_id == test_case.id
+                )
             )
         )
     )
-    projects = prepared[2] if prepared else list(
-        db.scalars(
-            select(CaseProject)
-            .where(CaseProject.collection_id.in_(collection_ids))
-            .order_by(CaseProject.created_at, CaseProject.id)
+    projects = (
+        prepared[2]
+        if prepared
+        else list(
+            db.scalars(
+                select(CaseProject)
+                .where(CaseProject.collection_id.in_(collection_ids))
+                .order_by(CaseProject.created_at, CaseProject.id)
+            )
         )
     )
-    creator_id = None if prepared else db.scalar(
-        select(AuditEvent.actor_id)
-        .where(
-            AuditEvent.resource_type == "test_case",
-            AuditEvent.resource_id == test_case.id,
-            AuditEvent.action == "test_case.created",
-            AuditEvent.actor_id.is_not(None),
+    creator_id = (
+        None
+        if prepared
+        else db.scalar(
+            select(AuditEvent.actor_id)
+            .where(
+                AuditEvent.resource_type == "test_case",
+                AuditEvent.resource_id == test_case.id,
+                AuditEvent.action == "test_case.created",
+                AuditEvent.actor_id.is_not(None),
+            )
+            .order_by(AuditEvent.created_at, AuditEvent.id)
+            .limit(1)
         )
-        .order_by(AuditEvent.created_at, AuditEvent.id)
-        .limit(1)
     )
     if prepared is None and creator_id is None and projects:
         creator_id = projects[0].account_id
@@ -627,39 +638,54 @@ def list_collections(
     ids = [collection.id for collection in collections]
     if not ids:
         return []
-    counts = dict(db.execute(
-        select(CollectionCaseMembership.collection_id, func.count(CollectionCaseMembership.id))
-        .join(TestCase, TestCase.id == CollectionCaseMembership.test_case_id)
-        .where(CollectionCaseMembership.collection_id.in_(ids), TestCase.deleted_at.is_(None))
-        .group_by(CollectionCaseMembership.collection_id)
-    ).all())
-    projects = {item.collection_id: item for item in db.scalars(
-        select(CaseProject).where(CaseProject.collection_id.in_(ids))
-    )}
-    creator_ids = dict(db.execute(
-        select(AuditEvent.resource_id, AuditEvent.actor_id)
-        .where(AuditEvent.resource_type == "case_collection", AuditEvent.resource_id.in_(ids),
-               AuditEvent.action == "collection.created", AuditEvent.actor_id.is_not(None))
-        .distinct(AuditEvent.resource_id)
-        .order_by(AuditEvent.resource_id, AuditEvent.created_at, AuditEvent.id)
-    ).all())
+    counts = dict(
+        db.execute(
+            select(CollectionCaseMembership.collection_id, func.count(CollectionCaseMembership.id))
+            .join(TestCase, TestCase.id == CollectionCaseMembership.test_case_id)
+            .where(CollectionCaseMembership.collection_id.in_(ids), TestCase.deleted_at.is_(None))
+            .group_by(CollectionCaseMembership.collection_id)
+        ).all()
+    )
+    projects = {
+        item.collection_id: item
+        for item in db.scalars(select(CaseProject).where(CaseProject.collection_id.in_(ids)))
+    }
+    creator_ids = dict(
+        db.execute(
+            select(AuditEvent.resource_id, AuditEvent.actor_id)
+            .where(
+                AuditEvent.resource_type == "case_collection",
+                AuditEvent.resource_id.in_(ids),
+                AuditEvent.action == "collection.created",
+                AuditEvent.actor_id.is_not(None),
+            )
+            .distinct(AuditEvent.resource_id)
+            .order_by(AuditEvent.resource_id, AuditEvent.created_at, AuditEvent.id)
+        ).all()
+    )
     for collection_id, project in projects.items():
         creator_ids.setdefault(collection_id, project.account_id)
-    creators = {item.id: item for item in db.scalars(
-        select(Account).where(Account.id.in_(set(creator_ids.values())))
-    )}
-    contexts = dict(db.execute(
-        select(Conversation.collection_id, Conversation.context)
-        .where(Conversation.collection_id.in_(ids), Conversation.status == "active")
-        .distinct(Conversation.collection_id)
-        .order_by(
-            Conversation.collection_id, Conversation.updated_at.desc(), Conversation.id.desc()
-        )
-    ).all())
+    creators = {
+        item.id: item
+        for item in db.scalars(select(Account).where(Account.id.in_(set(creator_ids.values()))))
+    }
+    contexts = dict(
+        db.execute(
+            select(Conversation.collection_id, Conversation.context)
+            .where(Conversation.collection_id.in_(ids), Conversation.status == "active")
+            .distinct(Conversation.collection_id)
+            .order_by(
+                Conversation.collection_id, Conversation.updated_at.desc(), Conversation.id.desc()
+            )
+        ).all()
+    )
     views = [
         _collection_view(
-            collection, counts.get(collection.id, 0), projects.get(collection.id),
-            creators.get(creator_ids.get(collection.id)), contexts.get(collection.id),
+            collection,
+            counts.get(collection.id, 0),
+            projects.get(collection.id),
+            creators.get(creator_ids.get(collection.id)),
+            contexts.get(collection.id),
         )
         for collection in collections
     ]
@@ -797,9 +823,7 @@ def cases_to_views(db: Session, cases: list[TestCase]) -> list[TestCaseView]:
         return []
     case_ids = [test_case.id for test_case in cases]
     revision_ids = [
-        test_case.current_revision_id
-        for test_case in cases
-        if test_case.current_revision_id
+        test_case.current_revision_id for test_case in cases if test_case.current_revision_id
     ]
     revisions = {
         revision.id: revision
@@ -809,8 +833,9 @@ def cases_to_views(db: Session, cases: list[TestCase]) -> list[TestCaseView]:
     }
     memberships: dict[UUID, list[UUID]] = {case_id: [] for case_id in case_ids}
     for case_id, member_collection_id in db.execute(
-        select(CollectionCaseMembership.test_case_id, CollectionCaseMembership.collection_id)
-        .where(CollectionCaseMembership.test_case_id.in_(case_ids))
+        select(CollectionCaseMembership.test_case_id, CollectionCaseMembership.collection_id).where(
+            CollectionCaseMembership.test_case_id.in_(case_ids)
+        )
     ):
         memberships[case_id].append(member_collection_id)
     all_collection_ids = {value for values in memberships.values() for value in values}
@@ -836,8 +861,11 @@ def cases_to_views(db: Session, cases: list[TestCase]) -> list[TestCaseView]:
         creator_ids.setdefault(resource_id, actor_id)
     projects_by_case = {
         case_id: sorted(
-            (project for member_id in memberships[case_id]
-             for project in projects_by_collection.get(member_id, [])),
+            (
+                project
+                for member_id in memberships[case_id]
+                for project in projects_by_collection.get(member_id, [])
+            ),
             key=lambda project: (project.created_at, project.id),
         )
         for case_id in case_ids
@@ -845,10 +873,16 @@ def cases_to_views(db: Session, cases: list[TestCase]) -> list[TestCaseView]:
     for case_id, projects in projects_by_case.items():
         if case_id not in creator_ids and projects:
             creator_ids[case_id] = projects[0].account_id
-    accounts = {
-        account.id: account
-        for account in db.scalars(select(Account).where(Account.id.in_(set(creator_ids.values()))))
-    } if creator_ids else {}
+    accounts = (
+        {
+            account.id: account
+            for account in db.scalars(
+                select(Account).where(Account.id.in_(set(creator_ids.values())))
+            )
+        }
+        if creator_ids
+        else {}
+    )
     views = [
         case_to_view(
             db,
@@ -878,64 +912,136 @@ def search_space_test_cases(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[TestCaseView]:
     require_space_membership(db, account.id, space_id)
-    statement = select(TestCase).join(
-        TestCaseRevision, TestCaseRevision.id == TestCase.current_revision_id,
-    ).where(
-        TestCase.space_id == space_id, TestCase.deleted_at.is_(None),
+    statement = (
+        select(TestCase)
+        .join(
+            TestCaseRevision,
+            TestCaseRevision.id == TestCase.current_revision_id,
+        )
+        .where(
+            TestCase.space_id == space_id,
+            TestCase.deleted_at.is_(None),
+        )
     )
     if q.strip():
         # Keep metadata matching in SQL; hydrate only the requested page.
         # Earliest audit creator, or earliest project owner, matches case_to_view.
-        audit_creator = select(AuditEvent.actor_id).where(
-            AuditEvent.resource_type == "test_case",
-            AuditEvent.resource_id == TestCase.id,
-            AuditEvent.action == "test_case.created",
-            AuditEvent.actor_id.is_not(None),
-        ).order_by(AuditEvent.created_at, AuditEvent.id).limit(1).correlate(TestCase).scalar_subquery()
-        project_creator = select(CaseProject.account_id).join(
-            CollectionCaseMembership,
-            CollectionCaseMembership.collection_id == CaseProject.collection_id,
-        ).where(CollectionCaseMembership.test_case_id == TestCase.id).order_by(
-            CaseProject.created_at, CaseProject.id,
-        ).limit(1).correlate(TestCase).scalar_subquery()
+        audit_creator = (
+            select(AuditEvent.actor_id)
+            .where(
+                AuditEvent.resource_type == "test_case",
+                AuditEvent.resource_id == TestCase.id,
+                AuditEvent.action == "test_case.created",
+                AuditEvent.actor_id.is_not(None),
+            )
+            .order_by(AuditEvent.created_at, AuditEvent.id)
+            .limit(1)
+            .correlate(TestCase)
+            .scalar_subquery()
+        )
+        project_creator = (
+            select(CaseProject.account_id)
+            .join(
+                CollectionCaseMembership,
+                CollectionCaseMembership.collection_id == CaseProject.collection_id,
+            )
+            .where(CollectionCaseMembership.test_case_id == TestCase.id)
+            .order_by(
+                CaseProject.created_at,
+                CaseProject.id,
+            )
+            .limit(1)
+            .correlate(TestCase)
+            .scalar_subquery()
+        )
         for term in q.strip().lower().split():
             # Literal substring search: %, _ and backslash are not wildcards.
             pattern = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-            def contains(column):
+
+            def contains(column, pattern=pattern):
                 return column.ilike(pattern, escape="\\")
+
             def array_match(column):
                 values = func.jsonb_array_elements_text(column).table_valued("value")
                 return select(1).select_from(values).where(contains(values.c.value)).exists()
-            target_cases = select(CollectionCaseMembership.test_case_id).join(
-                CaseProject, CaseProject.collection_id == CollectionCaseMembership.collection_id,
-            ).join(CaseCollection, CaseCollection.id == CaseProject.collection_id).where(
-                CaseCollection.space_id == space_id,
-                or_(contains(func.concat_ws(" ", CaseProject.source_system,
-                    CaseProject.target_type, cast(CaseProject.target_id, Text),
-                    CaseProject.target_key, CaseProject.title)),
-                    array_match(CaseProject.linked_fr_ids), array_match(CaseProject.linked_qpm_ids)))
-            named_collection_cases = select(CollectionCaseMembership.test_case_id).join(
-                CaseCollection, CaseCollection.id == CollectionCaseMembership.collection_id,
-            ).where(CaseCollection.space_id == space_id, contains(CaseCollection.name))
-            creator_ids = list(db.scalars(select(Account.id).where(contains(func.concat_ws(" ",
-                cast(Account.id, Text), Account.display_name, Account.email)))))
+
+            target_cases = (
+                select(CollectionCaseMembership.test_case_id)
+                .join(
+                    CaseProject,
+                    CaseProject.collection_id == CollectionCaseMembership.collection_id,
+                )
+                .join(CaseCollection, CaseCollection.id == CaseProject.collection_id)
+                .where(
+                    CaseCollection.space_id == space_id,
+                    or_(
+                        contains(
+                            func.concat_ws(
+                                " ",
+                                CaseProject.source_system,
+                                CaseProject.target_type,
+                                cast(CaseProject.target_id, Text),
+                                CaseProject.target_key,
+                                CaseProject.title,
+                            )
+                        ),
+                        array_match(CaseProject.linked_fr_ids),
+                        array_match(CaseProject.linked_qpm_ids),
+                    ),
+                )
+            )
+            named_collection_cases = (
+                select(CollectionCaseMembership.test_case_id)
+                .join(
+                    CaseCollection,
+                    CaseCollection.id == CollectionCaseMembership.collection_id,
+                )
+                .where(CaseCollection.space_id == space_id, contains(CaseCollection.name))
+            )
+            creator_ids = list(
+                db.scalars(
+                    select(Account.id).where(
+                        contains(
+                            func.concat_ws(
+                                " ", cast(Account.id, Text), Account.display_name, Account.email
+                            )
+                        )
+                    )
+                )
+            )
             revision_match = contains(TestCaseRevision.management_search_text)
             if any(character in term for character in '[]"\\'):
                 # JSON punctuation is serialization, not a searchable tag.
-                revision_match = or_(contains(TestCaseRevision.title), contains(TestCaseRevision.module),
-                    contains(TestCaseRevision.case_type), contains(TestCaseRevision.priority),
+                revision_match = or_(
+                    contains(TestCaseRevision.title),
+                    contains(TestCaseRevision.module),
+                    contains(TestCaseRevision.case_type),
+                    contains(TestCaseRevision.priority),
                     contains(TestCaseRevision.source_refs[0]["label"].astext),
-                    array_match(TestCaseRevision.tags), array_match(TestCaseRevision.test_domains))
+                    array_match(TestCaseRevision.tags),
+                    array_match(TestCaseRevision.test_domains),
+                )
             # One round trip for independent existence checks. Broad searches
             # must not pay a network round trip for each optional field.
-            revision_hit, key_hit, target_hit, collection_hit = db.execute(select(
-                select(TestCaseRevision.id).join(TestCase,
-                    TestCase.current_revision_id == TestCaseRevision.id).where(
-                    TestCase.space_id == space_id, TestCase.deleted_at.is_(None), revision_match).exists(),
-                select(TestCase.id).where(TestCase.space_id == space_id,
-                    TestCase.deleted_at.is_(None), contains(TestCase.case_key)).exists(),
-                target_cases.exists(), named_collection_cases.exists(),
-            )).one()
+            revision_hit, key_hit, target_hit, collection_hit = db.execute(
+                select(
+                    select(TestCaseRevision.id)
+                    .join(TestCase, TestCase.current_revision_id == TestCaseRevision.id)
+                    .where(
+                        TestCase.space_id == space_id, TestCase.deleted_at.is_(None), revision_match
+                    )
+                    .exists(),
+                    select(TestCase.id)
+                    .where(
+                        TestCase.space_id == space_id,
+                        TestCase.deleted_at.is_(None),
+                        contains(TestCase.case_key),
+                    )
+                    .exists(),
+                    target_cases.exists(),
+                    named_collection_cases.exists(),
+                )
+            ).one()
             predicates = []
             if revision_hit:
                 predicates.append(revision_match)
@@ -946,20 +1052,37 @@ def search_space_test_cases(
             if collection_hit:
                 predicates.append(TestCase.id.in_(named_collection_cases))
             if creator_ids:
-                creator_candidates = select(AuditEvent.resource_id).where(
-                    AuditEvent.space_id == space_id, AuditEvent.resource_type == "test_case",
-                    AuditEvent.action == "test_case.created", AuditEvent.actor_id.in_(creator_ids),
-                ).union_all(select(CollectionCaseMembership.test_case_id).join(
-                    CaseProject, CaseProject.collection_id == CollectionCaseMembership.collection_id,
-                ).join(CaseCollection, CaseCollection.id == CaseProject.collection_id).where(
-                    CaseCollection.space_id == space_id, CaseProject.account_id.in_(creator_ids)))
+                creator_candidates = (
+                    select(AuditEvent.resource_id)
+                    .where(
+                        AuditEvent.space_id == space_id,
+                        AuditEvent.resource_type == "test_case",
+                        AuditEvent.action == "test_case.created",
+                        AuditEvent.actor_id.in_(creator_ids),
+                    )
+                    .union_all(
+                        select(CollectionCaseMembership.test_case_id)
+                        .join(
+                            CaseProject,
+                            CaseProject.collection_id == CollectionCaseMembership.collection_id,
+                        )
+                        .join(CaseCollection, CaseCollection.id == CaseProject.collection_id)
+                        .where(
+                            CaseCollection.space_id == space_id,
+                            CaseProject.account_id.in_(creator_ids),
+                        )
+                    )
+                )
                 if db.execute(creator_candidates.limit(1)).first():
-                    predicates.append(func.coalesce(audit_creator, project_creator).in_(creator_ids))
+                    predicates.append(
+                        func.coalesce(audit_creator, project_creator).in_(creator_ids)
+                    )
             if not predicates:
                 return []
             statement = statement.where(or_(*predicates))
-    cases = list(db.scalars(statement.order_by(TestCase.created_at, TestCase.id)
-                           .offset(offset).limit(limit)))
+    cases = list(
+        db.scalars(statement.order_by(TestCase.created_at, TestCase.id).offset(offset).limit(limit))
+    )
     return cases_to_views(db, cases)
 
 
@@ -971,28 +1094,37 @@ def playlists_to_views(db: Session, playlists: list[Playlist]) -> list[PlaylistV
     if not playlists:
         return []
     playlist_ids = [item.id for item in playlists]
-    source_links = list(db.scalars(
-        select(PlaylistSourceCollection)
-        .where(PlaylistSourceCollection.playlist_id.in_(playlist_ids))
-        .order_by(PlaylistSourceCollection.position, PlaylistSourceCollection.id)
-    ))
+    source_links = list(
+        db.scalars(
+            select(PlaylistSourceCollection)
+            .where(PlaylistSourceCollection.playlist_id.in_(playlist_ids))
+            .order_by(PlaylistSourceCollection.position, PlaylistSourceCollection.id)
+        )
+    )
     collection_ids = {link.collection_id for link in source_links}
-    collections = {
-        item.id: item for item in db.scalars(
-            select(CaseCollection).where(CaseCollection.id.in_(collection_ids))
+    collections = (
+        {
+            item.id: item
+            for item in db.scalars(
+                select(CaseCollection).where(CaseCollection.id.in_(collection_ids))
+            )
+        }
+        if collection_ids
+        else {}
+    )
+    case_links = list(
+        db.scalars(
+            select(PlaylistCaseMembership)
+            .where(PlaylistCaseMembership.playlist_id.in_(playlist_ids))
+            .order_by(PlaylistCaseMembership.position, PlaylistCaseMembership.id)
         )
-    } if collection_ids else {}
-    case_links = list(db.scalars(
-        select(PlaylistCaseMembership)
-        .where(PlaylistCaseMembership.playlist_id.in_(playlist_ids))
-        .order_by(PlaylistCaseMembership.position, PlaylistCaseMembership.id)
-    ))
+    )
     case_ids = {link.test_case_id for link in case_links}
-    test_cases = {
-        item.id: item for item in db.scalars(
-            select(TestCase).where(TestCase.id.in_(case_ids))
-        )
-    } if case_ids else {}
+    test_cases = (
+        {item.id: item for item in db.scalars(select(TestCase).where(TestCase.id.in_(case_ids)))}
+        if case_ids
+        else {}
+    )
     sources_by_playlist: dict[UUID, list[PlaylistSourceCollection]] = {}
     cases_by_playlist: dict[UUID, list[PlaylistCaseMembership]] = {}
     for source_link in source_links:
@@ -1016,28 +1148,33 @@ def playlists_to_views(db: Session, playlists: list[Playlist]) -> list[PlaylistV
         for link in cases_by_playlist.get(playlist.id, []):
             test_case = available_cases.get(link.test_case_id)
             available = test_case is not None and test_case.space_id == playlist.space_id
-            cases.append(PlaylistCaseView(
-                case_id=link.test_case_id,
-                position=link.position,
-                available=available,
-                test_case=case_views.get(link.test_case_id) if available else None,
-            ))
-        views.append(PlaylistView(
-            id=playlist.id,
-            space_id=playlist.space_id,
-            name=playlist.name,
-            source_collection_ids=[link.collection_id for link in sources],
-            source_collection_names=[
-                collections[link.collection_id].name
-                if link.collection_id in collections else "已删除集合"
-                for link in sources
-            ],
-            cases=cases,
-            case_count=len(cases),
-            unavailable_case_ids=[item.case_id for item in cases if not item.available],
-            created_at=playlist.created_at,
-            updated_at=playlist.updated_at,
-        ))
+            cases.append(
+                PlaylistCaseView(
+                    case_id=link.test_case_id,
+                    position=link.position,
+                    available=available,
+                    test_case=case_views.get(link.test_case_id) if available else None,
+                )
+            )
+        views.append(
+            PlaylistView(
+                id=playlist.id,
+                space_id=playlist.space_id,
+                name=playlist.name,
+                source_collection_ids=[link.collection_id for link in sources],
+                source_collection_names=[
+                    collections[link.collection_id].name
+                    if link.collection_id in collections
+                    else "已删除集合"
+                    for link in sources
+                ],
+                cases=cases,
+                case_count=len(cases),
+                unavailable_case_ids=[item.case_id for item in cases if not item.available],
+                created_at=playlist.created_at,
+                updated_at=playlist.updated_at,
+            )
+        )
     return views
 
 
@@ -1482,7 +1619,8 @@ def update_test_case(
             else list(current_revision.test_domains)
         ),
         automation_type=(
-            "automated" if current_revision.automation_cases
+            "automated"
+            if current_revision.automation_cases
             else payload.automation_type or current_revision.automation_type
         ),
         automation_cases=list(current_revision.automation_cases),

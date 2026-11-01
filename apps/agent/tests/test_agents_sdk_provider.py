@@ -3,24 +3,34 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+from casepilot_agent.contracts import KnowledgeAnswer
+from casepilot_agent.providers.agents_sdk import AgentsSdkProvider
+
+
 class FakeAPITimeoutError(TimeoutError):
     def __init__(self, *args, request=None):
         super().__init__(*args)
 
 
-from casepilot_agent.contracts import KnowledgeAnswer
-from casepilot_agent.providers.agents_sdk import AgentsSdkProvider
-
-
 @pytest.mark.parametrize("api_type", ["chat_completions", "responses"])
 @pytest.mark.parametrize("compact", [False, True])
-@pytest.mark.parametrize("stage,timeouts", [
-    ("knowledge.answered", 0), ("test_case.generated", 1), ("test_case.generated", 2),
-    ("knowledge.answered", 1),
-    ("test_point.generated", 0), ("feature.generated", 0),
-])
+@pytest.mark.parametrize(
+    "stage,timeouts",
+    [
+        ("knowledge.answered", 0),
+        ("test_case.generated", 1),
+        ("test_case.generated", 2),
+        ("knowledge.answered", 1),
+        ("test_point.generated", 0),
+        ("feature.generated", 0),
+    ],
+)
 def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
-    monkeypatch: pytest.MonkeyPatch, stage: str, timeouts: int, compact: bool, api_type: str,
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+    timeouts: int,
+    compact: bool,
+    api_type: str,
 ) -> None:
     captured: dict = {}
     agents = ModuleType("agents")
@@ -76,9 +86,7 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
     agents.OpenAIResponsesModel = FakeModel
     agents.OpenAIChatCompletionsModel = FakeModel
     agents.Runner = FakeRunner
-    agents.set_tracing_disabled = lambda disabled: captured.update(
-        tracing_disabled=disabled
-    )
+    agents.set_tracing_disabled = lambda disabled: captured.update(tracing_disabled=disabled)
     openai.AsyncOpenAI = FakeClient
     openai.APITimeoutError = FakeAPITimeoutError
     monkeypatch.setitem(sys.modules, "agents", agents)
@@ -93,8 +101,16 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
         timeout=5,
         api_type=api_type,
     )
-    kwargs = dict(stage=stage, instruction="回答问题", payload={"question": "什么是边界值？", **({"batch_count": 20} if stage == "test_case.generated" else {})},
-                  result_type=KnowledgeAnswer, model_id="auto")
+    kwargs = dict(
+        stage=stage,
+        instruction="回答问题",
+        payload={
+            "question": "什么是边界值？",
+            **({"batch_count": 20} if stage == "test_case.generated" else {}),
+        },
+        result_type=KnowledgeAnswer,
+        model_id="auto",
+    )
     if compact:
         kwargs["payload"]["output_contract"] = "case_batch_v2"
     if (compact and timeouts) or timeouts == 2 or (stage == "knowledge.answered" and timeouts):
@@ -116,7 +132,9 @@ def test_agents_sdk_provider_uses_explicit_openai_compatible_client(
     )
     assert captured["agent"]["model_settings"].store is (False if api_type == "responses" else None)
     expected_budget = (
-        32048 if stage == "test_case.generated" else 16384
+        32048
+        if stage == "test_case.generated"
+        else 16384
         if stage in {"test_point.generated", "feature.generated"}
         else (8192 if api_type == "responses" else None)
     )
@@ -231,7 +249,8 @@ def test_agents_sdk_provider_uses_fast_fallback_for_structured_generation(
 
 @pytest.mark.parametrize("fails", [False, True])
 def test_agents_sdk_provider_streams_text_deltas(
-    monkeypatch: pytest.MonkeyPatch, fails: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    fails: bool,
 ) -> None:
     captured: dict = {}
     agents = ModuleType("agents")
@@ -243,6 +262,7 @@ def test_agents_sdk_provider_streams_text_deltas(
 
         async def close(self):
             import asyncio
+
             captured["closed_on_active_loop"] = asyncio.get_running_loop().is_running()
 
     class FakeModel:
@@ -291,9 +311,7 @@ def test_agents_sdk_provider_streams_text_deltas(
     agents.ModelSettings = FakeModelSettings
     agents.OpenAIChatCompletionsModel = FakeModel
     agents.Runner = FakeRunner
-    agents.set_tracing_disabled = lambda disabled: captured.update(
-        tracing_disabled=disabled
-    )
+    agents.set_tracing_disabled = lambda disabled: captured.update(tracing_disabled=disabled)
     openai.AsyncOpenAI = FakeClient
     monkeypatch.setitem(sys.modules, "agents", agents)
     monkeypatch.setitem(sys.modules, "openai", openai)
@@ -307,8 +325,13 @@ def test_agents_sdk_provider_streams_text_deltas(
         timeout=5,
     )
     deltas: list[str] = []
-    kwargs = dict(stage="knowledge.answered", instruction="回答问题",
-                  payload={"question": "什么是边界值？"}, model_id="auto", on_delta=deltas.append)
+    kwargs = dict(
+        stage="knowledge.answered",
+        instruction="回答问题",
+        payload={"question": "什么是边界值？"},
+        model_id="auto",
+        on_delta=deltas.append,
+    )
     if fails:
         with pytest.raises(RuntimeError, match="stream interrupted"):
             provider.complete_text_stream(**kwargs)
@@ -456,6 +479,7 @@ def test_batch_instruction_is_scoped_to_one_existing_case(monkeypatch):
 
 def test_ark_rewrite_uses_same_inference_options_as_generation():
     from casepilot_agent.providers.agents_sdk import _response_options
+
     ark = "https://ark.cn-beijing.volces.com/api/coding/v3"
     for stage in ("rewrite.batch", "rewrite.evidence", "test_case.rewritten"):
         assert _response_options(ark, stage) == _response_options(ark, "test_case.generated")
@@ -466,95 +490,167 @@ def test_ark_rewrite_uses_same_inference_options_as_generation():
     assert "thinking" not in _response_options("https://api.openai.com/v1", "requirement.extracted")
     assert "thinking" not in _response_options(ark, "requirement.analyzed")
     assert "thinking" not in _response_options("https://api.openai.com/v1", "rewrite.batch")
-    assert "thinking" not in _response_options("https://ark.volces.com.example.org/v1", "rewrite.batch")
+    assert "thinking" not in _response_options(
+        "https://ark.volces.com.example.org/v1", "rewrite.batch"
+    )
 
 
 def test_structured_call_has_wall_clock_deadline(monkeypatch):
     import asyncio
     import time
+
     from agents import Runner
     from openai import APITimeoutError
+
     cancelled = []
+
     async def slow(*args, **kwargs):
         try:
             await asyncio.sleep(10)
         finally:
             cancelled.append(True)
-    monkeypatch.setattr(Runner, 'run', slow)
-    provider = AgentsSdkProvider(base_url='https://example.test/v1',api_key='test-only',
-        model='same',pro_model='same',local_model='same',timeout=0.01,generation_timeout=0.01)
+
+    monkeypatch.setattr(Runner, "run", slow)
+    provider = AgentsSdkProvider(
+        base_url="https://example.test/v1",
+        api_key="test-only",
+        model="same",
+        pro_model="same",
+        local_model="same",
+        timeout=0.01,
+        generation_timeout=0.01,
+    )
     started = time.monotonic()
     with pytest.raises(APITimeoutError):
-        provider.complete(stage='rewrite.batch', instruction='修改',payload={'items':[]},
-                          result_type=KnowledgeAnswer,model_id='auto')
+        provider.complete(
+            stage="rewrite.batch",
+            instruction="修改",
+            payload={"items": []},
+            result_type=KnowledgeAnswer,
+            model_id="auto",
+        )
     assert cancelled == [True]
-    assert time.monotonic()-started < 1
+    assert time.monotonic() - started < 1
 
 
 def test_auto_rewrite_falls_back_once_and_reuses_backup_model(monkeypatch):
     from agents import Runner
     from agents.exceptions import ModelBehaviorError
-    models=[]
-    async def run(agent,*args,**kwargs):
-        models.append(agent.model.model)
-        if agent.model.model=='fast':raise ModelBehaviorError('invalid output')
-        return SimpleNamespace(final_output=KnowledgeAnswer(answer='有效结果'),
-                               context_wrapper=SimpleNamespace(usage=SimpleNamespace()))
-    monkeypatch.setattr(Runner,'run',run)
-    provider=AgentsSdkProvider(base_url='https://example.test/v1',api_key='test-only',
-        model='fast',pro_model='backup',local_model='fast',timeout=5)
-    for _ in range(2):
-        result,usage=provider.complete(stage='rewrite.batch',instruction='修改',payload={'items':[]},
-                                      result_type=KnowledgeAnswer,model_id='auto')
-        assert usage.model=='backup'
-    assert models==['fast','backup','backup']
 
-
-@pytest.mark.parametrize('stage,model_id,expected', [
-    ('test_case.grounded', 'auto', 'quality'),
-    ('rewrite.batch', 'auto', 'quality'),
-    ('rewrite.batch', 'test-design-fast', 'fast'),
-])
-def test_evidence_review_uses_quality_model_only_in_auto_mode(monkeypatch, stage, model_id, expected):
-    from agents import Runner
     models = []
+
     async def run(agent, *args, **kwargs):
         models.append(agent.model.model)
-        return SimpleNamespace(final_output=KnowledgeAnswer(answer='结果'),
-                               context_wrapper=SimpleNamespace(usage=SimpleNamespace()))
-    monkeypatch.setattr(Runner, 'run', run)
-    provider = AgentsSdkProvider(base_url='https://example.test/v1', api_key='test-only',
-        model='fast', pro_model='quality', local_model='fast', timeout=5)
-    provider.complete(stage=stage, instruction='核对预期',
-        payload={'shared': [{'instruction': '核对预期', 'context': {'evidence_ref_indexes': [0]}}]},
-        result_type=KnowledgeAnswer, model_id=model_id)
+        if agent.model.model == "fast":
+            raise ModelBehaviorError("invalid output")
+        return SimpleNamespace(
+            final_output=KnowledgeAnswer(answer="有效结果"),
+            context_wrapper=SimpleNamespace(usage=SimpleNamespace()),
+        )
+
+    monkeypatch.setattr(Runner, "run", run)
+    provider = AgentsSdkProvider(
+        base_url="https://example.test/v1",
+        api_key="test-only",
+        model="fast",
+        pro_model="backup",
+        local_model="fast",
+        timeout=5,
+    )
+    for _ in range(2):
+        result, usage = provider.complete(
+            stage="rewrite.batch",
+            instruction="修改",
+            payload={"items": []},
+            result_type=KnowledgeAnswer,
+            model_id="auto",
+        )
+        assert usage.model == "backup"
+    assert models == ["fast", "backup", "backup"]
+
+
+@pytest.mark.parametrize(
+    "stage,model_id,expected",
+    [
+        ("test_case.grounded", "auto", "quality"),
+        ("rewrite.batch", "auto", "quality"),
+        ("rewrite.batch", "test-design-fast", "fast"),
+    ],
+)
+def test_evidence_review_uses_quality_model_only_in_auto_mode(
+    monkeypatch, stage, model_id, expected
+):
+    from agents import Runner
+
+    models = []
+
+    async def run(agent, *args, **kwargs):
+        models.append(agent.model.model)
+        return SimpleNamespace(
+            final_output=KnowledgeAnswer(answer="结果"),
+            context_wrapper=SimpleNamespace(usage=SimpleNamespace()),
+        )
+
+    monkeypatch.setattr(Runner, "run", run)
+    provider = AgentsSdkProvider(
+        base_url="https://example.test/v1",
+        api_key="test-only",
+        model="fast",
+        pro_model="quality",
+        local_model="fast",
+        timeout=5,
+    )
+    provider.complete(
+        stage=stage,
+        instruction="核对预期",
+        payload={"shared": [{"instruction": "核对预期", "context": {"evidence_ref_indexes": [0]}}]},
+        result_type=KnowledgeAnswer,
+        model_id=model_id,
+    )
     assert models == [expected]
 
 
-@pytest.mark.parametrize('fail', [False, True])
+@pytest.mark.parametrize("fail", [False, True])
 def test_basic_rewrite_does_not_upgrade_model_for_evidence_or_retry(monkeypatch, fail):
     from agents import Runner
     from agents.exceptions import ModelBehaviorError
+
     models = []
+
     async def run(agent, *args, **kwargs):
         models.append(agent.model.model)
         if fail:
-            raise ModelBehaviorError('invalid output')
-        return SimpleNamespace(final_output=KnowledgeAnswer(answer='结果'),
-                               context_wrapper=SimpleNamespace(usage=SimpleNamespace()))
-    monkeypatch.setattr(Runner, 'run', run)
-    provider = AgentsSdkProvider(base_url='https://example.test/v1', api_key='test-only',
-        model='fast', pro_model='quality', local_model='fast', timeout=5)
-    kwargs = dict(stage='rewrite.batch', instruction='核对预期',
-        payload={'validation_mode':'human_review_basic', 'shared': [
-            {'instruction':'核对预期','context':{'evidence_ref_indexes':[0]}}]},
-        result_type=KnowledgeAnswer, model_id='auto')
+            raise ModelBehaviorError("invalid output")
+        return SimpleNamespace(
+            final_output=KnowledgeAnswer(answer="结果"),
+            context_wrapper=SimpleNamespace(usage=SimpleNamespace()),
+        )
+
+    monkeypatch.setattr(Runner, "run", run)
+    provider = AgentsSdkProvider(
+        base_url="https://example.test/v1",
+        api_key="test-only",
+        model="fast",
+        pro_model="quality",
+        local_model="fast",
+        timeout=5,
+    )
+    kwargs = dict(
+        stage="rewrite.batch",
+        instruction="核对预期",
+        payload={
+            "validation_mode": "human_review_basic",
+            "shared": [{"instruction": "核对预期", "context": {"evidence_ref_indexes": [0]}}],
+        },
+        result_type=KnowledgeAnswer,
+        model_id="auto",
+    )
     if fail:
         with pytest.raises(ModelBehaviorError):
             provider.complete(**kwargs)
     else:
         provider.complete(**kwargs)
-    assert models == ['fast']
+    assert models == ["fast"]
 
 
 def test_bounded_review_guard_runs_before_http_and_never_retries(monkeypatch):
@@ -567,22 +663,38 @@ def test_bounded_review_guard_runs_before_http_and_never_retries(monkeypatch):
 
     real_client = httpx.AsyncClient
     sent, reserved, turns = [], [], []
+
     async def transport(request):
         sent.append(request.url.path)
         return httpx.Response(200, json={})
+
     class client(real_client):
         def __init__(self, **kwargs):
             super().__init__(transport=httpx.MockTransport(transport), **kwargs)
-    monkeypatch.setattr(agents_sdk.httpx, 'AsyncClient', client)
+
+    monkeypatch.setattr(agents_sdk.httpx, "AsyncClient", client)
+
     async def run(agent, *args, **kwargs):
-        turns.append(kwargs['max_turns'])
-        await agent.model._client._client.post('https://example.test/v1/responses', json={})
-        raise ModelBehaviorError('synthetic schema failure')
-    monkeypatch.setattr(Runner, 'run', run)
-    provider = AgentsSdkProvider(base_url='https://example.test/v1', api_key='test-only',
-        model='fast', pro_model='quality', local_model='fast', timeout=5)
+        turns.append(kwargs["max_turns"])
+        await agent.model._client._client.post("https://example.test/v1/responses", json={})
+        raise ModelBehaviorError("synthetic schema failure")
+
+    monkeypatch.setattr(Runner, "run", run)
+    provider = AgentsSdkProvider(
+        base_url="https://example.test/v1",
+        api_key="test-only",
+        model="fast",
+        pro_model="quality",
+        local_model="fast",
+        timeout=5,
+    )
     provider.request_guard = lambda: reserved.append(1)
     with pytest.raises(ModelBehaviorError):
-        provider.complete(stage='planning_review.audit', instruction='review',payload={},
-            result_type=Review, model_id='auto')
+        provider.complete(
+            stage="planning_review.audit",
+            instruction="review",
+            payload={},
+            result_type=Review,
+            model_id="auto",
+        )
     assert turns == [1] and reserved == [1] and len(sent) == 1

@@ -116,9 +116,7 @@ def test_quality_keeps_exact_dedup_and_warns_when_semantic_dedup_degrades(
     monkeypatch.setattr(tasks.settings, "embedding_fallback_enabled", True)
     result = MockProvider().generate(GenerationRequest(prompt="支付需求"))
     existing_title = result.test_cases[0].title
-    store = FakeStore(
-        existing=[{"case_key": "CASE-001", "title": existing_title}]
-    )
+    store = FakeStore(existing=[{"case_key": "CASE-001", "title": existing_title}])
 
     _apply_persisted_asset_quality(
         store,
@@ -176,20 +174,25 @@ def test_generation_completes_end_to_end_with_embedding_degraded(
     assert result.test_points
     assert result.test_cases
     assert result.quality.passed
-    assert {
-        issue.code for issue in result.quality.issues
-    } >= {"embedding_retrieval_degraded"}
+    assert {issue.code for issue in result.quality.issues} >= {"embedding_retrieval_degraded"}
 
 
 def test_human_review_only_uses_local_duplicates_and_keeps_source_gate():
     from unittest.mock import Mock
+
     from casepilot_agent.contracts import QualityIssue, SourceRef
+
     result = MockProvider().generate(GenerationRequest(prompt="支付需求"))
     result.quality.issues.append(QualityIssue(code="manual_review_required", message="人工审阅"))
     result.test_cases[0].source_refs = [SourceRef(label="无效来源", source_id="missing")]
     store = FakeStore(existing=[{"case_key": "CASE-001", "title": result.test_cases[0].title}])
     embedding = Mock()
-    _apply_persisted_asset_quality(store, job(), embedding, {"evidence": [], "warnings": []}, result)
+    _apply_persisted_asset_quality(
+        store, job(), embedding, {"evidence": [], "warnings": []}, result
+    )
     embedding.embed.assert_not_called()
     assert not result.quality.passed
-    assert {i.code for i in result.quality.issues} >= {"invalid_source_reference", "possible_existing_case_duplicate"}
+    assert {i.code for i in result.quality.issues} >= {
+        "invalid_source_reference",
+        "possible_existing_case_duplicate",
+    }

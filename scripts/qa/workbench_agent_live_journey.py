@@ -88,6 +88,7 @@ TOOLS = frozenset(
 )
 SAFE_CODES = frozenset(
     {
+        "agent_preparation_unresolved", "workbench_plan_step_mismatch",
         "agent_final_effect_invalid",
         "agent_final_receipt_invalid",
         "agent_final_receipt_required",

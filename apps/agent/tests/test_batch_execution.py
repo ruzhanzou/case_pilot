@@ -1,9 +1,10 @@
 import pytest
+
 from casepilot_agent.contracts import (
     GenerationRequest,
-    RewriteRequest,
     RewriteCaseDraft,
     RewritePatchBatch,
+    RewriteRequest,
 )
 from casepilot_agent.pipeline import GenerationPipeline
 from casepilot_agent.providers.mock import MockProvider
@@ -32,6 +33,7 @@ def test_generation_batches_points_and_publishes_cumulative_normalized_results(c
     def execute(stage, instruction, payload, result_type, model_id):
         if stage == "output_quantity.interpreted":
             from casepilot_agent.quantity import OutputQuantity
+
             return OutputQuantity()
         calls.append(payload["batch_count"])
         batch = provider.complete(
@@ -64,6 +66,7 @@ def test_bad_generation_point_binding_is_not_published():
     def execute(stage, instruction, payload, result_type, model_id):
         if stage == "output_quantity.interpreted":
             from casepilot_agent.quantity import OutputQuantity
+
             return OutputQuantity()
         batch = provider.complete(
             stage=stage,
@@ -97,6 +100,7 @@ class BatchProvider:
     def complete(self, **kwargs):
         if kwargs.get("stage") == "rewrite.constraints_validated":
             from semantic_validation_fixture import constraint_report
+
             return constraint_report(kwargs["payload"]), None
         self.calls.append(kwargs)
         items = []
@@ -187,6 +191,7 @@ def test_real_generation_audits_original_sources_before_publishing():
     def execute(stage, instruction, payload, result_type, model_id):
         if stage == "output_quantity.interpreted":
             from casepilot_agent.quantity import OutputQuantity
+
             return OutputQuantity()
         stages.append(stage)
         if stage == "test_case.grounded":
@@ -229,6 +234,7 @@ def test_grounding_cannot_silently_drop_cases_or_publish_partial_batch():
     def execute(stage, instruction, payload, result_type, model_id):
         if stage == "output_quantity.interpreted":
             from casepilot_agent.quantity import OutputQuantity
+
             return OutputQuantity()
         if stage == "test_case.grounded":
             return result_type.model_validate({"test_cases": payload["test_cases"][:1]})
@@ -260,16 +266,25 @@ def test_malformed_later_batch_splits_without_repeating_completed_points():
     def execute(stage, instruction, payload, result_type, model_id):
         if stage == "output_quantity.interpreted":
             from casepilot_agent.quantity import OutputQuantity
+
             return OutputQuantity()
         start, size = payload["batch_start_index"], payload["batch_count"]
         calls.append((start, size))
         if start == 21 and size == 20:
             raise ModelBehaviorError("invalid JSON")
-        return provider.complete(stage=stage, instruction=instruction, payload=payload,
-                                 result_type=result_type, model_id=model_id)[0]
+        return provider.complete(
+            stage=stage,
+            instruction=instruction,
+            payload=payload,
+            result_type=result_type,
+            model_id=model_id,
+        )[0]
 
     result = GenerationPipeline(provider).run(
-        request, context={}, answers={}, execute_stage=execute,
+        request,
+        context={},
+        answers={},
+        execute_stage=execute,
         on_batch=lambda cases, total: previews.append(len(cases)),
     )
     assert calls == [(1, 20), (21, 20), (21, 5), (26, 5), (31, 5), (36, 5), (41, 5)]
@@ -287,13 +302,17 @@ def test_malformed_small_batch_stops_with_no_partial_preview():
     def execute(stage, instruction, payload, result_type, model_id):
         if stage == "output_quantity.interpreted":
             from casepilot_agent.quantity import OutputQuantity
+
             return OutputQuantity()
         calls.append(payload["batch_count"])
         raise ModelBehaviorError("invalid JSON")
 
     with pytest.raises(ModelBehaviorError):
         GenerationPipeline(provider).run(
-            request, context={}, answers={}, execute_stage=execute,
+            request,
+            context={},
+            answers={},
+            execute_stage=execute,
             on_batch=lambda *args: previews.append(args),
         )
     assert calls == [10, 5]
@@ -304,6 +323,7 @@ def test_malformed_audit_splits_and_only_publishes_audited_batches():
     from agents.exceptions import ModelBehaviorError
 
     provider, request = planned(10)
+
     class RealProvider:
         name = "openai_compatible"
 
@@ -313,6 +333,7 @@ def test_malformed_audit_splits_and_only_publishes_audited_batches():
     def execute(stage, instruction, payload, result_type, model_id):
         if stage == "output_quantity.interpreted":
             from casepilot_agent.quantity import OutputQuantity
+
             return OutputQuantity()
         size = payload["batch_count"]
         calls.append((stage, size))
@@ -320,15 +341,26 @@ def test_malformed_audit_splits_and_only_publishes_audited_batches():
             if size > 5:
                 raise ModelBehaviorError("invalid JSON")
             return result_type.model_validate({"test_cases": payload["test_cases"]})
-        return provider.complete(stage=stage, instruction=instruction, payload=payload,
-                                 result_type=result_type, model_id=model_id)[0]
+        return provider.complete(
+            stage=stage,
+            instruction=instruction,
+            payload=payload,
+            result_type=result_type,
+            model_id=model_id,
+        )[0]
 
     result = pipeline.run(
-        request, context={}, answers={}, execute_stage=execute,
+        request,
+        context={},
+        answers={},
+        execute_stage=execute,
         on_batch=lambda cases, total: previews.append(len(cases)),
     )
-    assert calls == [(stage, size) for size in [10, 5, 5]
-                     for stage in ["test_case.generated", "test_case.grounded"]]
+    assert calls == [
+        (stage, size)
+        for size in [10, 5, 5]
+        for stage in ["test_case.generated", "test_case.grounded"]
+    ]
     assert previews == [5, 10]
     assert len({c.id for c in result.test_cases}) == 10
 
@@ -358,18 +390,23 @@ def test_expected_delta_preserves_actions_and_rejects_whole_steps():
         def complete(self, **kwargs):
             if kwargs.get("stage") == "rewrite.constraints_validated":
                 from semantic_validation_fixture import constraint_report
+
                 return constraint_report(kwargs["payload"]), None
-            result_type = kwargs['result_type']
-            item = {'ref': 'ref-0', 'changes': {'expected_updates': [
-                {'step_index': 0, 'expected': '原文规定的结果'}]},
-                'reason': '删除无依据断言', 'quality': {'passed': True, 'score': 90}}
-            return result_type.model_validate({'items': [item]}), None
+            result_type = kwargs["result_type"]
+            item = {
+                "ref": "ref-0",
+                "changes": {"expected_updates": [{"step_index": 0, "expected": "原文规定的结果"}]},
+                "reason": "删除无依据断言",
+                "quality": {"passed": True, "score": 90},
+            }
+            return result_type.model_validate({"items": [item]}), None
+
     source = requests(1)
-    source['ref-0'].instruction = '核对预期，保留已有全部操作步骤'
-    original = source['ref-0'].test_case
-    result = GenerationPipeline(ExpectedProvider()).rewrite_many(source)['ref-0'].proposed
+    source["ref-0"].instruction = "核对预期，保留已有全部操作步骤"
+    original = source["ref-0"].test_case
+    result = GenerationPipeline(ExpectedProvider()).rewrite_many(source)["ref-0"].proposed
     assert [s.action for s in result.steps] == [s.action for s in original.steps]
-    assert result.steps[0].expected == '原文规定的结果'
+    assert result.steps[0].expected == "原文规定的结果"
     assert result.steps[1:] == original.steps[1:]
 
 
@@ -380,6 +417,7 @@ def test_malformed_rewrite_splits_only_failed_batch_and_publishes_progress():
         def complete(self, **kwargs):
             if kwargs.get("stage") == "rewrite.constraints_validated":
                 from semantic_validation_fixture import constraint_report
+
                 return constraint_report(kwargs["payload"]), None
             if not kwargs["payload"].get("validation_feedback"):
                 self.calls.append(kwargs)
@@ -404,6 +442,7 @@ def test_persistent_malformed_single_rewrite_has_bounded_retry():
         def complete(self, **kwargs):
             if kwargs.get("stage") == "rewrite.constraints_validated":
                 from semantic_validation_fixture import constraint_report
+
                 return constraint_report(kwargs["payload"]), None
             self.calls.append(kwargs)
             raise ModelBehaviorError("malformed output")
@@ -424,15 +463,19 @@ def test_cancel_during_rewrite_recovery_stops_before_next_call():
     from agents.exceptions import ModelBehaviorError
 
     provider = BatchProvider()
+
     def broken(**kwargs):
         provider.calls.append(kwargs)
         raise ModelBehaviorError("truncated")
+
     provider.complete = broken
     checks = []
+
     def check():
         checks.append(True)
         if len(checks) == 2:
             raise RuntimeError("cancelled")
+
     with pytest.raises(RuntimeError, match="cancelled"):
         GenerationPipeline(provider).rewrite_many(requests(5), before_batch=check)
     assert len(provider.calls) == 1
@@ -447,6 +490,7 @@ def test_explicit_rewrites_wait_for_model_before_publishing():
         def complete(self, **kwargs):
             if kwargs.get("stage") == "rewrite.constraints_validated":
                 from semantic_validation_fixture import constraint_report
+
                 return constraint_report(kwargs["payload"]), None
             assert previews == []
             batch, usage = super().complete(**kwargs)
@@ -483,24 +527,29 @@ def test_rewrite_salvages_valid_entries_and_repairs_only_invalid_target():
         def complete(self, **kwargs):
             if kwargs.get("stage") == "rewrite.constraints_validated":
                 from semantic_validation_fixture import constraint_report
+
                 return constraint_report(kwargs["payload"]), None
             self.calls.append(kwargs)
             items = []
-            for item in kwargs['payload']['items']:
-                patch = {'ref': item['ref'], 'changes': {'title': '改写标题'}, 'reason': '修改'}
-                if item['ref'] == 'ref-1':
-                    patch['changes'] = {'priority': 'P99'}
+            for item in kwargs["payload"]["items"]:
+                patch = {"ref": item["ref"], "changes": {"title": "改写标题"}, "reason": "修改"}
+                if item["ref"] == "ref-1":
+                    patch["changes"] = {"priority": "P99"}
                 items.append(patch)
-            return kwargs['result_type'].model_validate({'items': items}), None
+            return kwargs["result_type"].model_validate({"items": items}), None
+
     provider = PartialProvider()
     source = requests(3)
     previews = []
-    result = GenerationPipeline(provider).rewrite_many(source,
-        on_batch=lambda items, total: previews.append(list(items)))
-    assert [[i['ref'] for i in call['payload']['items']] for call in provider.calls] == [
-        ['ref-0', 'ref-1', 'ref-2'], ['ref-1']]
-    assert previews[0] == ['ref-0', 'ref-2']
-    assert result['ref-0'].quality.passed and result['ref-2'].quality.passed
-    assert not result['ref-1'].quality.passed
-    assert result['ref-1'].proposed == source['ref-1'].test_case
-    assert all(c['payload']['validation_mode'] == 'human_review_basic' for c in provider.calls)
+    result = GenerationPipeline(provider).rewrite_many(
+        source, on_batch=lambda items, total: previews.append(list(items))
+    )
+    assert [[i["ref"] for i in call["payload"]["items"]] for call in provider.calls] == [
+        ["ref-0", "ref-1", "ref-2"],
+        ["ref-1"],
+    ]
+    assert previews[0] == ["ref-0", "ref-2"]
+    assert result["ref-0"].quality.passed and result["ref-2"].quality.passed
+    assert not result["ref-1"].quality.passed
+    assert result["ref-1"].proposed == source["ref-1"].test_case
+    assert all(c["payload"]["validation_mode"] == "human_review_basic" for c in provider.calls)

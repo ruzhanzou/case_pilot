@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+
 from casepilot_api import conversations as c
 from casepilot_api.schemas import ConversationMessageCreate
 

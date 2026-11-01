@@ -7,16 +7,18 @@ from casepilot_api.case_scope import (
     common_module_path,
     filter_priority,
     module_contains,
-    resolve_scope,
     requested_new_module,
+    resolve_scope,
 )
 from casepilot_api.conversations import classify_intent
+
 
 @pytest.fixture(autouse=True)
 def legacy_mock_scope(monkeypatch):
     # Deterministic demo-provider contracts. Production semantics are exercised
     # by test_model_scope and real-model acceptance.
     from casepilot_api import conversations
+
     monkeypatch.setattr(conversations.settings, "agent_provider", "mock")
 
 
@@ -45,16 +47,18 @@ CASES = [
 ]
 
 
-@pytest.mark.parametrize("text,expected", [
-    ('新增「发票管理」模块，并生成10条用例', '发票管理'),
-    ('新增「审计日志」空模块，只创建模块节点，不生成用例', '审计日志'),
-    ('新增名为「审计日志」的空模块，只创建模块节点，不生成用例', '审计日志'),
-    ('创建“订单/发票”模块', '订单/发票'),
-    ('新增退款模块', '退款'),
-    ('新增空模块', '空'),
-    ('create module Invoice', 'Invoice'),
-])
-
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("新增「发票管理」模块，并生成10条用例", "发票管理"),
+        ("新增「审计日志」空模块，只创建模块节点，不生成用例", "审计日志"),
+        ("新增名为「审计日志」的空模块，只创建模块节点，不生成用例", "审计日志"),
+        ("创建“订单/发票”模块", "订单/发票"),
+        ("新增退款模块", "退款"),
+        ("新增空模块", "空"),
+        ("create module Invoice", "Invoice"),
+    ],
+)
 def test_new_module_names_support_quoted_names_and_empty_modules(text, expected):
     assert requested_new_module(text) == expected
 
@@ -95,10 +99,15 @@ def test_numbered_module_label_resolves_natural_name():
 
 
 def test_generation_target_uses_common_parent_path():
-    assert common_module_path([
-        "性能验收/07-支付结算/01-场景组",
-        "性能验收/07-支付结算/02-场景组",
-    ]) == "性能验收/07-支付结算"
+    assert (
+        common_module_path(
+            [
+                "性能验收/07-支付结算/01-场景组",
+                "性能验收/07-支付结算/02-场景组",
+            ]
+        )
+        == "性能验收/07-支付结算"
+    )
     assert common_module_path(["A/B/C", "A/X/C"]) == "A"
 
 
@@ -225,7 +234,9 @@ def test_query_action_returns_all_matching_cases(monkeypatch):
     by_id = {item["id"]: item for item in snapshots}
     db = MagicMock()
     db.execute.return_value.all.return_value = rows
-    monkeypatch.setattr(conversations, "_collection_gate", lambda *args, resolved_collection=None: None)
+    monkeypatch.setattr(
+        conversations, "_collection_gate", lambda *args, resolved_collection=None: None
+    )
     monkeypatch.setattr(conversations, "_load_scope_snapshots", lambda *args: snapshots)
     monkeypatch.setattr(
         conversations,
@@ -268,12 +279,15 @@ def test_unclassified_module_target_remains_supported():
     assert not module_contains("", "支付")
 
 
-@pytest.mark.parametrize("text", [
-    '请改写「支付」模块下全部用例，不修改账号模块或其他模块。',
-    '请改写“支付”模块下全部用例，其他字段保持原样。',
-    '改写模块"支付"的前置条件，不影响账号/登录模块。',
-    '改写支付模块用例，不修改TC-2。',
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "请改写「支付」模块下全部用例，不修改账号模块或其他模块。",
+        "请改写“支付”模块下全部用例，其他字段保持原样。",
+        '改写模块"支付"的前置条件，不影响账号/登录模块。',
+        "改写支付模块用例，不修改TC-2。",
+    ],
+)
 def test_quoted_module_and_negative_guards_do_not_expand_scope(text):
     result = resolve_scope(text, CASES)
     assert not result.get("error")
@@ -281,7 +295,7 @@ def test_quoted_module_and_negative_guards_do_not_expand_scope(text):
 
 
 def test_unknown_quoted_module_still_requires_clarification():
-    assert resolve_scope('改写「不存在」模块，不修改支付模块', CASES)["error"]
+    assert resolve_scope("改写「不存在」模块，不修改支付模块", CASES)["error"]
 
 
 def test_negative_only_and_overlapping_guards_never_fall_back_to_all():
@@ -300,65 +314,86 @@ def test_preserving_module_field_does_not_name_an_unknown_module():
     assert set(result["ids"]) == {CASES[0]["id"], CASES[1]["id"]}
 
 
-@pytest.mark.parametrize('instruction', ['修改「未支付」模块的优先级为P0', '修改未支付模块的优先级为P0'])
+@pytest.mark.parametrize(
+    "instruction", ["修改「未支付」模块的优先级为P0", "修改未支付模块的优先级为P0"]
+)
 def test_unknown_module_suffix_cannot_select_existing_module(instruction):
-    cases = [{**CASES[0], 'module': '支付'}]
-    assert resolve_scope(instruction, cases)['error']
+    cases = [{**CASES[0], "module": "支付"}]
+    assert resolve_scope(instruction, cases)["error"]
 
 
 def test_explicit_case_key_takes_precedence_over_new_title_matching_other_case():
     cases = [
-        {**CASES[0], 'case_key': 'TC-1', 'title': '支付成功验证'},
-        {**CASES[1], 'case_key': 'TC-2', 'title': '支付失败验证'},
+        {**CASES[0], "case_key": "TC-1", "title": "支付成功验证"},
+        {**CASES[1], "case_key": "TC-2", "title": "支付失败验证"},
     ]
-    assert resolve_scope('修改 TC-1 的标题为「支付失败验证」', cases)['ids'] == [cases[0]['id']]
+    assert resolve_scope("修改 TC-1 的标题为「支付失败验证」", cases)["ids"] == [cases[0]["id"]]
 
 
 def test_semantic_target_without_module_marker_cannot_bypass_explicit_missing_module(monkeypatch):
     from types import SimpleNamespace
+
     from casepilot_api import conversations
     from casepilot_api.schemas import ConversationMessageCreate
-    monkeypatch.setattr(conversations, '_load_scope_snapshots', lambda db, conversation: CASES)
-    conversation = SimpleNamespace(collection_id=uuid4(), context={'phase': 'maintenance'})
-    payload = ConversationMessageCreate(content='修改「未支付」模块，优先级统一改为P0。')
-    _, error = conversations._resolve_action_scope(None, conversation, payload, 'CASE_MODIFY', '未支付')
-    assert error and '未找到指定模块' in error
+
+    monkeypatch.setattr(conversations, "_load_scope_snapshots", lambda db, conversation: CASES)
+    conversation = SimpleNamespace(collection_id=uuid4(), context={"phase": "maintenance"})
+    payload = ConversationMessageCreate(content="修改「未支付」模块，优先级统一改为P0。")
+    _, error = conversations._resolve_action_scope(
+        None, conversation, payload, "CASE_MODIFY", "未支付"
+    )
+    assert error and "未找到指定模块" in error
 
 
 def test_semantic_generation_can_intentionally_create_unknown_module(monkeypatch):
     from types import SimpleNamespace
+
     from casepilot_api import conversations
     from casepilot_api.schemas import ConversationMessageCreate
-    monkeypatch.setattr(conversations, '_load_scope_snapshots', lambda db, conversation: CASES)
-    conversation = SimpleNamespace(collection_id=uuid4(), context={'phase': 'maintenance'})
-    payload = ConversationMessageCreate(content='新增「发票」模块，生成10条用例。', target_case_ids=[CASES[0]['id']])
-    resolved, error = conversations._resolve_action_scope(None, conversation, payload, 'CASE_GENERATE', '发票')
+
+    monkeypatch.setattr(conversations, "_load_scope_snapshots", lambda db, conversation: CASES)
+    conversation = SimpleNamespace(collection_id=uuid4(), context={"phase": "maintenance"})
+    payload = ConversationMessageCreate(
+        content="新增「发票」模块，生成10条用例。", target_case_ids=[CASES[0]["id"]]
+    )
+    resolved, error = conversations._resolve_action_scope(
+        None, conversation, payload, "CASE_GENERATE", "发票"
+    )
     assert error is None
     assert resolved.target_case_ids == []
 
 
 def test_numeric_candidate_identity_requires_an_explicit_reference():
-    cases=[{'id':'candidate-2','case_key':'2','title':'错误密码登录','module':'账号登录'},
-           {'id':'candidate-3','case_key':'3','title':'锁定账号登录','module':'账号登录'}]
-    assert resolve_scope('重写剩余未纳入的2条候选用例，最多3步',cases) is None
-    assert resolve_scope('修改候选 2 的步骤',cases)['ids'] == ['candidate-2']
-    assert resolve_scope('修改用例编号3的前置条件',cases)['ids'] == ['candidate-3']
+    cases = [
+        {"id": "candidate-2", "case_key": "2", "title": "错误密码登录", "module": "账号登录"},
+        {"id": "candidate-3", "case_key": "3", "title": "锁定账号登录", "module": "账号登录"},
+    ]
+    assert resolve_scope("重写剩余未纳入的2条候选用例，最多3步", cases) is None
+    assert resolve_scope("修改候选 2 的步骤", cases)["ids"] == ["candidate-2"]
+    assert resolve_scope("修改用例编号3的前置条件", cases)["ids"] == ["candidate-3"]
 
 
 def test_other_modules_unchanged_is_a_guard_not_an_unknown_module():
-    cases=[{'id':'one','case_key':'TC-1','title':'目标用例','module':'预约变更'},
-           {'id':'two','case_key':'TC-2','title':'保留用例','module':'签到与释放'}]
-    result=resolve_scope('整体重写“预约变更”模块的全部10条候选，其他模块不要动。',cases)
-    assert result['ids'] == ['one']
-    assert resolve_scope('其他模块不要动。',cases).get('error')
+    cases = [
+        {"id": "one", "case_key": "TC-1", "title": "目标用例", "module": "预约变更"},
+        {"id": "two", "case_key": "TC-2", "title": "保留用例", "module": "签到与释放"},
+    ]
+    result = resolve_scope("整体重写“预约变更”模块的全部10条候选，其他模块不要动。", cases)
+    assert result["ids"] == ["one"]
+    assert resolve_scope("其他模块不要动。", cases).get("error")
 
 
 def test_preserve_title_and_module_is_not_a_module_name():
-    cases=[{'id':'one','case_key':'TC-1','title':'目标用例','module':'预约变更'},
-           {'id':'two','case_key':'TC-2','title':'保留用例','module':'签到与释放'}]
-    content='还是“预约变更”模块这10条候选，改成页面测试。保留必要的业务边界、原标题和模块，其他模块不要动。'
-    assert resolve_scope(content,cases)['ids'] == ['one']
-    assert resolve_scope('修改“预约变更”模块，保留“预约变更”模块。',cases).get('error')
+    cases = [
+        {"id": "one", "case_key": "TC-1", "title": "目标用例", "module": "预约变更"},
+        {"id": "two", "case_key": "TC-2", "title": "保留用例", "module": "签到与释放"},
+    ]
+    content = (
+        "还是“预约变更”模块这10条候选，改成页面测试。保留必要的业务边界、原标题和模块，其他模块不要动"
+        "。"
+    )
+    assert resolve_scope(content, cases)["ids"] == ["one"]
+    assert resolve_scope("修改“预约变更”模块，保留“预约变更”模块。", cases).get("error")
 
 
 @pytest.mark.parametrize(
@@ -382,11 +417,19 @@ def test_mutation_conditions_cannot_expand_to_whole_module(text, monkeypatch):
 
     db = Mock()
     from casepilot_api import conversations
-    monkeypatch.setattr(conversations, "_load_scope_snapshots", lambda *args: [
-        {**CASES[0], "module": "登录"}, {**CASES[1], "module": "登录"},
-    ])
+
+    monkeypatch.setattr(
+        conversations,
+        "_load_scope_snapshots",
+        lambda *args: [
+            {**CASES[0], "module": "登录"},
+            {**CASES[1], "module": "登录"},
+        ],
+    )
+
     def unavailable(*args, **kwargs):
         raise ValueError("ambiguous")
+
     monkeypatch.setattr(conversations, "select_query_case_ids", unavailable)
     conversation = SimpleNamespace(collection_id=uuid4(), context={"phase": "maintenance"})
     resolved, error = _resolve_action_scope(
@@ -406,8 +449,10 @@ def test_quoted_new_content_is_not_a_scope_condition():
 
 def test_fresh_generation_business_state_is_not_a_mutation_guard(monkeypatch):
     from types import SimpleNamespace
+
     from casepilot_api import conversations
     from casepilot_api.schemas import ConversationMessageCreate
+
     monkeypatch.setattr(conversations, "_load_scope_snapshots", lambda db, conversation: [])
     conversation = SimpleNamespace(collection_id=uuid4(), context={"phase": "maintenance"})
     payload = ConversationMessageCreate(content="生成2条登录用例：密码错误时保持未登录")
@@ -421,36 +466,41 @@ def test_fresh_generation_business_state_is_not_a_mutation_guard(monkeypatch):
 
 def test_explicit_case_exclusion_preserves_positive_module_scope():
     cases = [
-        {'id': '1', 'case_key': 'QA-1', 'module': '登录', 'title': '验证码登录'},
-        {'id': '2', 'case_key': 'QA-2', 'module': '登录', 'title': '密码登录'},
-        {'id': '3', 'case_key': 'QA-3', 'module': '订单', 'title': '库存不足'},
+        {"id": "1", "case_key": "QA-1", "module": "登录", "title": "验证码登录"},
+        {"id": "2", "case_key": "QA-2", "module": "登录", "title": "密码登录"},
+        {"id": "3", "case_key": "QA-3", "module": "订单", "title": "库存不足"},
     ]
     assert resolve_scope(
-        '将登录模块的用例优先级改为P2，但排除用例 QA-1，其他字段和订单模块不变', cases,
-    )['ids'] == ['2']
+        "将登录模块的用例优先级改为P2，但排除用例 QA-1，其他字段和订单模块不变",
+        cases,
+    )["ids"] == ["2"]
     assert resolve_scope(
-        '删除登录模块的用例，但排除用例 QA-1，订单模块保持不变', cases,
-    )['ids'] == ['2']
-    assert resolve_scope('修改登录模块的用例，订单模块保持不变', cases)['ids'] == ['1', '2']
-    assert resolve_scope('查询全部用例，排除QA-1、QA-2', cases)['ids'] == ['3']
-    assert resolve_scope('查询登录模块，排除QA-1、QA-2', cases)['ids'] == []
+        "删除登录模块的用例，但排除用例 QA-1，订单模块保持不变",
+        cases,
+    )["ids"] == ["2"]
+    assert resolve_scope("修改登录模块的用例，订单模块保持不变", cases)["ids"] == ["1", "2"]
+    assert resolve_scope("查询全部用例，排除QA-1、QA-2", cases)["ids"] == ["3"]
+    assert resolve_scope("查询登录模块，排除QA-1、QA-2", cases)["ids"] == []
     for content in [
-        '修改登录模块，排除QA-404', '修改登录模块，排除失败用例',
-        '排除QA-1', '修改登录模块，排除QA-1, QA-2',
+        "修改登录模块，排除QA-404",
+        "修改登录模块，排除失败用例",
+        "排除QA-1",
+        "修改登录模块，排除QA-1, QA-2",
     ]:
-        assert resolve_scope(content, cases).get('error'), content
+        assert resolve_scope(content, cases).get("error"), content
 
 
-@pytest.mark.parametrize('value', ['支付成功', 'TC-10', '支付/退款'])
+@pytest.mark.parametrize("value", ["支付成功", "TC-10", "支付/退款"])
 def test_assignment_values_do_not_become_case_or_module_targets(value):
-    assert resolve_scope(f'把刚才查到的用例标题改为「{value}」', CASES) is None
-    assert resolve_scope(f'把用例 TC-2 标题改为「{value}」', CASES)['ids'] == [CASES[2]['id']]
+    assert resolve_scope(f"把刚才查到的用例标题改为「{value}」", CASES) is None
+    assert resolve_scope(f"把用例 TC-2 标题改为「{value}」", CASES)["ids"] == [CASES[2]["id"]]
 
 
-@pytest.mark.parametrize('missing', ['QA-NOT-EXIST-999', 'EXT-999', 'TC-999'])
+@pytest.mark.parametrize("missing", ["QA-NOT-EXIST-999", "EXT-999", "TC-999"])
 def test_mixed_imported_case_keys_reject_unknown_references(missing):
-    cases = [{**CASES[0], 'case_key': 'QA-VALID-1'}]
-    assert resolve_scope(f'将用例 QA-VALID-1 和 {missing} 的优先级改为P2', cases)['error']
+    cases = [{**CASES[0], "case_key": "QA-VALID-1"}]
+    assert resolve_scope(f"将用例 QA-VALID-1 和 {missing} 的优先级改为P2", cases)["error"]
     assert resolve_scope(
-        '将用例 QA-VALID-1 的标题改为「QA-NOT-EXIST-999」', cases,
-    )['ids'] == [cases[0]['id']]
+        "将用例 QA-VALID-1 的标题改为「QA-NOT-EXIST-999」",
+        cases,
+    )["ids"] == [cases[0]["id"]]

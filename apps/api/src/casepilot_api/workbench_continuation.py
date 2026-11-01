@@ -717,6 +717,15 @@ def record_approval(db, conversation, source_kind, source_id, source_version,
         removed_refs=removed, adopted_sources=adopted,
         approved_destination_id=approved_destination_id)
     checkpoint = dict(run.checkpoint)
+    if source_kind == "operation_collection" and approved_destination_id is not None:
+        from casepilot_api.models import ConversationOperation
+
+        operation = db.get(ConversationOperation, UUID(str(source_id)))
+        if (operation is not None and operation.conversation_id == conversation.id
+                and operation.payload.get("reuse_destination_approved")
+                == str(approved_destination_id)):
+            checkpoint["reference_binding"] = deepcopy(operation.payload["reference_binding"])
+            run.checkpoint = checkpoint
     if token.waiting_job_id:
         checkpoint.update(waiting_job_id=None, waiting_artifact_kind=source_kind,
             waiting_artifact_id=str(source_id), waiting_artifact_version=str(source_version))

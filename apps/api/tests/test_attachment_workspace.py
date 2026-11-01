@@ -33,7 +33,9 @@ def test_upload_stays_pending_until_a_later_user_message_is_sent():
         status="ready",
         created_at=now,
     )
-    conversation = SimpleNamespace(space_id=uuid4(), context={"document_ids": [str(document.id)]})
+    conversation = SimpleNamespace(
+        account_id=uuid4(), space_id=uuid4(), context={"document_ids": [str(document.id)]}
+    )
     db = SimpleNamespace(scalars=lambda _: [document])
     pending = []
     assert conversations._messages_with_attachments(db, conversation, [], pending) == []
@@ -83,22 +85,44 @@ def test_upload_stays_pending_until_a_later_user_message_is_sent():
 
 def test_expired_attachment_is_not_presented_as_ready():
     now = datetime.now(UTC)
-    document = SimpleNamespace(id=uuid4(), original_name='旧需求.pdf', mime_type='application/pdf', size_bytes=1024,
-        status='ready', created_at=now - timedelta(days=8), expires_at=now - timedelta(days=1))
-    conversation = SimpleNamespace(space_id=uuid4(), context={'document_ids': [str(document.id)]})
+    document = SimpleNamespace(
+        id=uuid4(),
+        original_name="旧需求.pdf",
+        mime_type="application/pdf",
+        size_bytes=1024,
+        status="ready",
+        created_at=now - timedelta(days=8),
+        expires_at=now - timedelta(days=1),
+    )
+    conversation = SimpleNamespace(
+        account_id=uuid4(), space_id=uuid4(), context={"document_ids": [str(document.id)]}
+    )
     pending = []
-    conversations._messages_with_attachments(SimpleNamespace(scalars=lambda _: [document]),
-                                             conversation, [], pending)
-    assert pending[0]['status'] == 'expired'
-    assert pending[0]['expires_at'] == document.expires_at.isoformat()
-    assert document.status == 'ready'  # Projection must not rewrite persisted parsing history.
+    conversations._messages_with_attachments(
+        SimpleNamespace(scalars=lambda _: [document]), conversation, [], pending
+    )
+    assert pending[0]["status"] == "expired"
+    assert pending[0]["expires_at"] == document.expires_at.isoformat()
+    assert document.status == "ready"  # Projection must not rewrite persisted parsing history.
 
 
 def test_failed_attachment_reason_survives_conversation_projection():
-    document = SimpleNamespace(id=uuid4(), original_name='扫描.pdf', mime_type='application/pdf', size_bytes=1024,
-        status='failed', error_code='DocumentOcrUnavailable', created_at=datetime.now(UTC), expires_at=None)
-    conversation = SimpleNamespace(space_id=uuid4(), context={'document_ids': [str(document.id)]})
+    document = SimpleNamespace(
+        id=uuid4(),
+        original_name="扫描.pdf",
+        mime_type="application/pdf",
+        size_bytes=1024,
+        status="failed",
+        error_code="DocumentOcrUnavailable",
+        created_at=datetime.now(UTC),
+        expires_at=None,
+    )
+    conversation = SimpleNamespace(
+        account_id=uuid4(), space_id=uuid4(), context={"document_ids": [str(document.id)]}
+    )
     pending = []
-    conversations._messages_with_attachments(SimpleNamespace(scalars=lambda _: [document]), conversation, [], pending)
-    assert pending[0]['status'] == 'failed'
-    assert pending[0]['error_code'] == 'DocumentOcrUnavailable'
+    conversations._messages_with_attachments(
+        SimpleNamespace(scalars=lambda _: [document]), conversation, [], pending
+    )
+    assert pending[0]["status"] == "failed"
+    assert pending[0]["error_code"] == "DocumentOcrUnavailable"

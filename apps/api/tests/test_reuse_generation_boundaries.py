@@ -11,7 +11,12 @@ from sqlalchemy import delete, select
 from casepilot_api import conversations
 from casepilot_api.database import get_session_factory
 from casepilot_api.main import app
-from casepilot_api.models import CollectionCaseMembership, GenerationJob, WorkspaceCandidate, WorkspaceTestBrief
+from casepilot_api.models import (
+    CollectionCaseMembership,
+    GenerationJob,
+    WorkspaceCandidate,
+    WorkspaceTestBrief,
+)
 
 
 @pytest.mark.asyncio
@@ -64,7 +69,13 @@ async def test_partial_generation_preserves_siblings_and_commit_reuses_only_live
                 "confirmed_asset_keys": [source["key"]],
                 "user_choices": {"P1": "copy"} if choice == "copy" else {},
                 "decisions": [
-                    {"point_id": p["id"], "action": "reuse", "test_object_match": "same", "source": source} for p in points
+                    {
+                        "point_id": p["id"],
+                        "action": "reuse",
+                        "test_object_match": "same",
+                        "source": source,
+                    }
+                    for p in points
                 ],
             },
         }
@@ -96,8 +107,11 @@ async def test_partial_generation_preserves_siblings_and_commit_reuses_only_live
                 input_payload={
                     "conversation_id": str(cid),
                     "confirmed_test_brief_version": 1,
-                    "confirmed_plan": {**plan, "test_points": [points[0]],
-                        "generation_budget": {"preserve_existing": choice == "append"}},
+                    "confirmed_plan": {
+                        **plan,
+                        "test_points": [points[0]],
+                        "generation_budget": {"preserve_existing": choice == "append"},
+                    },
                 },
                 output_payload={},
             )
@@ -169,7 +183,11 @@ async def test_partial_generation_preserves_siblings_and_commit_reuses_only_live
             assert edited.status_code == 200, edited.text
         if choice == "external":
             with get_session_factory()() as db:
-                db.execute(delete(CollectionCaseMembership).where(CollectionCaseMembership.test_case_id == UUID(case["id"])))
+                db.execute(
+                    delete(CollectionCaseMembership).where(
+                        CollectionCaseMembership.test_case_id == UUID(case["id"])
+                    )
+                )
                 db.commit()
         result = await client.post(
             f"/api/v1/workspaces/{cid}/candidates/commit", json={"candidate_ids": ids}

@@ -208,8 +208,9 @@ def append_reserved_source_point(plan, sources):
     )}) for ref in refs]
     feature = FeaturePoint(id=feature_id, name="已确认来源的原样复用覆盖",
         description=description, module=snapshots[0].get("module", ""),
-        requirement_refs=list(dict.fromkeys(ref for f in plan.get("feature_points", [])
-                                           for ref in f.get("requirement_refs", []))),
+        # Source evidence is exact; a retained source does not inherit every
+        # unrelated requirement in the gap plan. Do not guess semantic mappings.
+        requirement_refs=[],
         source_refs=refs)
     point = TestPoint(id=point_id, title="保留已明确要求原样复用的来源用例",
         scenario=description, objective="按所列来源的原始前提、步骤与预期分别保留候选输出",

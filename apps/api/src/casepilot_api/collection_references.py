@@ -209,13 +209,27 @@ def merge_references(db, conversation, payload):
 def capture_reference_binding(db, conversation, payload, *, lock=False):
     collection_version = 0
     bound_ids = []
-    if conversation.collection_id:
-        collection, bound_ids = collection_state(
-            db, conversation.collection_id, conversation.space_id, lock=lock
+    origin_ids = set(payload.source_collection_ids)
+    if payload.reuse_destination and payload.reuse_destination.collection_id:
+        origin_ids.add(payload.reuse_destination.collection_id)
+    collection_ids = origin_ids | (
+        {conversation.collection_id} if conversation.collection_id else set()
+    )
+    origins = []
+    for collection_id in sorted(collection_ids, key=str):
+        collection, source_ids = collection_state(
+            db, collection_id, conversation.space_id, lock=lock
         )
-        collection_version = collection.reference_version
+        if collection_id == conversation.collection_id:
+            bound_ids = source_ids
+            collection_version = collection.reference_version
+        if collection_id in origin_ids:
+            origins.append({"collection_id": str(collection_id),
+                            "collection_version": collection.reference_version,
+                            "bound_source_ids": sorted(map(str, source_ids))})
     doc_ids = set(payload.document_ids)
     ids = set(payload.knowledge_source_ids) | set(bound_ids)
+    ids.update(UUID(sid) for origin in origins for sid in origin["bound_source_ids"])
     if doc_ids:
         docs = list(
             db.scalars(
@@ -233,6 +247,7 @@ def capture_reference_binding(db, conversation, payload, *, lock=False):
     )
     return {
         "schema_version": 1,
+        **({"source_collections": origins} if origins else {}),
         "collection_id": str(conversation.collection_id)
         if conversation.collection_id and (bound_ids or collection_version)
         else None,
@@ -260,6 +275,8 @@ def assert_reference_binding(db, account, conversation, binding, *, lock=True):
         raise HTTPException(409, "reference_context_changed")
     payload = ConversationMessageCreate(
         content="Reference validation",
+        source_collection_ids=[UUID(row["collection_id"])
+                               for row in binding.get("source_collections", [])],
         knowledge_source_ids=[UUID(row["source_id"]) for row in binding["sources"]],
     )
     try:
@@ -270,6 +287,44 @@ def assert_reference_binding(db, account, conversation, binding, *, lock=True):
         raise
     if current != binding:
         raise HTTPException(409, "reference_context_changed")
+
+
+def capture_brief_reference_binding(db, conversation, content, *, inherited=None):
+    """Capture a saved draft without letting client JSON replace server authority."""
+    from casepilot_api.schemas import ConversationMessageCreate
+
+    source_ids = {UUID(row["source_id"]) for row in (inherited or {}).get("sources", [])}
+    context = conversation.context or {}
+    source_ids.update(UUID(str(value)) for value in context.get("knowledge_source_ids", []))
+
+    def collect(value):
+        if isinstance(value, dict):
+            for ref in value.get("source_refs", []):
+                if isinstance(ref, dict) and ref.get("source_id"):
+                    try:
+                        source_ids.add(UUID(str(ref["source_id"])))
+                    except (TypeError, ValueError):
+                        raise HTTPException(422, "brief_source_reference_invalid") from None
+            for key, child in value.items():
+                if key != "source_refs":
+                    collect(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect(child)
+
+    collect(content.get("planning", {}))
+    return capture_reference_binding(
+        db,
+        conversation,
+        ConversationMessageCreate(
+            content="Saved draft material authority",
+            source_collection_ids=[UUID(row["collection_id"])
+                                   for row in (inherited or {}).get("source_collections", [])],
+            document_ids=context.get("document_ids", []),
+            knowledge_source_ids=sorted(source_ids, key=str),
+        ),
+        lock=True,
+    )
 
 
 def selected_snapshots(db, account, conversation):

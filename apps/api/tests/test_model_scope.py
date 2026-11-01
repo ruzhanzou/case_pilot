@@ -64,8 +64,12 @@ def test_no_explicit_selection_does_not_expand_to_whole_collection(scope, monkey
     db, conversation, cases, selector = scope
     expand = Mock(side_effect=AssertionError("implicit collection selection"))
     monkeypatch.setattr(conversations, "_expand_conversation_targets", expand)
-    result, error = conversations._resolve_model_scope(db, conversation,
-        ConversationMessageCreate(content="找登录用例参考，只改写QA-1，其他用例不变"), "CASE_MODIFY")
+    result, error = conversations._resolve_model_scope(
+        db,
+        conversation,
+        ConversationMessageCreate(content="找登录用例参考，只改写QA-1，其他用例不变"),
+        "CASE_MODIFY",
+    )
     assert error is None
     assert selector.call_args.args[2]["selected_ids"] == []
     assert list(map(str, result.target_case_ids)) == [cases[1]["id"]]
@@ -80,8 +84,12 @@ def test_scope_uses_routing_model_with_shared_retry_budget(scope, monkeypatch):
     times = iter([100, 100, 130])
     monkeypatch.setattr(conversations, "monotonic", lambda: next(times))
     selector.side_effect = [TimeoutError(), selector.return_value]
-    result, error = conversations._resolve_model_scope(db, conversation,
-        ConversationMessageCreate(content="修改登录步骤", model_id="ark-code-latest"), "CASE_MODIFY")
+    result, error = conversations._resolve_model_scope(
+        db,
+        conversation,
+        ConversationMessageCreate(content="修改登录步骤", model_id="ark-code-latest"),
+        "CASE_MODIFY",
+    )
     assert error is None
     assert list(map(str, result.target_case_ids)) == [cases[1]["id"]]
     assert [call.kwargs["timeout_seconds"] for call in selector.call_args_list] == [45, 15]
@@ -148,8 +156,10 @@ def test_explicit_current_candidate_can_be_rewritten_after_discarded_proposal(sc
     db.scalars.return_value = [candidate]
     db.scalar.return_value = None
     db.get.side_effect = lambda model, key: (
-        source if model is ConversationOperation and key == source_id
-        else discarded if model is CaseChangeSet and key == change_id
+        source
+        if model is ConversationOperation and key == source_id
+        else discarded
+        if model is CaseChangeSet and key == change_id
         else None
     )
     monkeypatch.setattr(conversations, "_load_scope_snapshots", lambda *args: [])
@@ -180,7 +190,8 @@ def test_relative_scope_receives_selection_in_display_order(scope):
     db, conversation, cases, selector = scope
     ordered_ids = sorted([case["id"] for case in cases], reverse=True)
     conversations._resolve_action_scope(
-        db, conversation,
+        db,
+        conversation,
         ConversationMessageCreate(content="只改前一条", target_case_ids=ordered_ids),
         "CASE_MODIFY",
     )
@@ -236,7 +247,9 @@ def test_candidates_are_selected_by_model_and_mapped_to_snapshots(scope):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("changes_scope", [True, False])
-async def test_resume_text_reselects_instead_of_freezing_stale_ui_targets(monkeypatch, changes_scope):
+async def test_resume_text_reselects_instead_of_freezing_stale_ui_targets(
+    monkeypatch, changes_scope
+):
     from httpx import ASGITransport, AsyncClient
 
     from casepilot_api.main import app
@@ -293,16 +306,24 @@ async def test_resume_text_reselects_instead_of_freezing_stale_ui_targets(monkey
         monkeypatch.setattr(conversations.settings, "agent_provider", "openai_compatible")
         monkeypatch.setattr(conversations, "select_case_scope", selector)
         from casepilot_api.rewrite_dialogue import RewriteReply
-        monkeypatch.setattr(conversations, "interpret_rewrite_reply", lambda *a, **k: RewriteReply(
-            action="update", scope_action="replace" if changes_scope else "preserve",
-            scope_instruction=f"仅用例 {cases[1]['case_key']}" if changes_scope else "",
-            requirements="优先级改为P2；步骤更清晰",
-        ))
+
+        monkeypatch.setattr(
+            conversations,
+            "interpret_rewrite_reply",
+            lambda *a, **k: RewriteReply(
+                action="update",
+                scope_action="replace" if changes_scope else "preserve",
+                scope_instruction=f"仅用例 {cases[1]['case_key']}" if changes_scope else "",
+                requirements="优先级改为P2；步骤更清晰",
+            ),
+        )
         resume = f"/api/v1/conversation-operations/{operation}/resume"
         corrected = await client.post(
             resume,
             json={
-                "content": f"范围缩小为仅用例 {cases[1]['case_key']}，优先级改为P2" if changes_scope else "步骤更清晰",
+                "content": f"范围缩小为仅用例 {cases[1]['case_key']}，优先级改为P2"
+                if changes_scope
+                else "步骤更清晰",
                 "targets": [{"kind": "case", "case_ids": [case["id"] for case in cases]}],
             },
         )
@@ -343,7 +364,9 @@ def test_router_scope_question_cannot_bypass_catalog_selector(monkeypatch):
     monkeypatch.setattr(collection_references, "merge_references", lambda db, c, p: p)
 
     monkeypatch.setattr(conversations.settings, "agent_provider", "openai_compatible")
-    monkeypatch.setattr(conversations, "_collection_gate", lambda *args, resolved_collection=None: None)
+    monkeypatch.setattr(
+        conversations, "_collection_gate", lambda *args, resolved_collection=None: None
+    )
     monkeypatch.setattr(conversations, "_link_rewrite_round", lambda db, c, op, p: p)
     payload = ConversationMessageCreate(content="查询前置条件包含只读审计账号的正式用例")
     operation = SimpleNamespace(
@@ -547,7 +570,8 @@ def test_scope_ranges_are_bounded_and_preserve_excluded_gaps(monkeypatch, refs, 
 def test_polish_explicit_selection_skips_model(scope):
     db, conversation, cases, selector = scope
     payload = ConversationMessageCreate(
-        content="润色标题", target_scope="selected",
+        content="润色标题",
+        target_scope="selected",
         targets=[{"kind": "case", "case_ids": [cases[0]["id"]]}],
         target_case_ids=[cases[0]["id"]],
     )
@@ -561,7 +585,8 @@ def test_polish_explicit_selection_skips_model(scope):
 def test_polish_never_expands_missing_selection(scope, targets):
     db, conversation, _, selector = scope
     _, error = conversations._resolve_action_scope(
-        db, conversation,
+        db,
+        conversation,
         ConversationMessageCreate(content="润色", target_scope="selected", targets=targets),
         "CASE_MODIFY",
     )
@@ -572,12 +597,15 @@ def test_polish_never_expands_missing_selection(scope, targets):
 def test_polish_does_not_silently_drop_missing_candidate(scope):
     db, conversation, cases, selector = scope
     _, error = conversations._resolve_action_scope(
-        db, conversation,
+        db,
+        conversation,
         ConversationMessageCreate(
-            content="润色", target_scope="selected",
+            content="润色",
+            target_scope="selected",
             targets=[{"kind": "case", "case_ids": [cases[0]["id"]], "candidate_refs": ["missing"]}],
             target_case_ids=[cases[0]["id"]],
-        ), "CASE_MODIFY",
+        ),
+        "CASE_MODIFY",
     )
     assert error
     selector.assert_not_called()
@@ -585,34 +613,52 @@ def test_polish_does_not_silently_drop_missing_candidate(scope):
 
 def test_exact_case_query_in_large_collection_uses_semantic_filter(scope, monkeypatch):
     db, conversation, cases, selector = scope
-    catalog = [{**cases[0], 'id': str(uuid4()), 'case_key': f'BIG-{i}'} for i in range(2001)]
-    monkeypatch.setattr(conversations, '_load_scope_snapshots', lambda *args: catalog)
+    catalog = [{**cases[0], "id": str(uuid4()), "case_key": f"BIG-{i}"} for i in range(2001)]
+    monkeypatch.setattr(conversations, "_load_scope_snapshots", lambda *args: catalog)
     from casepilot_api import scope_filter
-    filtered = Mock(return_value=CaseScopeDecision(
-        ids=[catalog[-1]["id"]], ambiguous=False, clarification="", reference="none",
-        referenced_case_keys=["BIG-2000"], requested_count=1))
+
+    filtered = Mock(
+        return_value=CaseScopeDecision(
+            ids=[catalog[-1]["id"]],
+            ambiguous=False,
+            clarification="",
+            reference="none",
+            referenced_case_keys=["BIG-2000"],
+            requested_count=1,
+        )
+    )
     monkeypatch.setattr(scope_filter, "select_large_scope", filtered)
-    result, error = conversations._resolve_model_scope(db, conversation,
-        ConversationMessageCreate(content='查询 BIG-2000'), 'CASE_QUERY')
+    result, error = conversations._resolve_model_scope(
+        db, conversation, ConversationMessageCreate(content="查询 BIG-2000"), "CASE_QUERY"
+    )
     assert error is None
-    assert list(map(str, result.target_case_ids)) == [catalog[-1]['id']]
+    assert list(map(str, result.target_case_ids)) == [catalog[-1]["id"]]
     filtered.assert_called_once()
     selector.assert_not_called()
 
 
 def test_complex_large_scope_uses_filter_selector(scope, monkeypatch):
     from casepilot_api import scope_filter
+
     db, conversation, cases, selector = scope
-    catalog = [{**cases[0], 'id': str(uuid4()), 'case_key': f'BIG-{i}'} for i in range(2001)]
-    monkeypatch.setattr(conversations, '_load_scope_snapshots', lambda *args: catalog)
-    filtered = Mock(return_value=CaseScopeDecision(
-        ids=[catalog[-1]['id']], ambiguous=False, clarification='', reference='none',
-        referenced_case_keys=[], requested_count=None))
-    monkeypatch.setattr(scope_filter, 'select_large_scope', filtered)
-    result, error = conversations._resolve_model_scope(db, conversation,
-        ConversationMessageCreate(content='删除登录模块但保留P0'), 'CASE_DELETE')
+    catalog = [{**cases[0], "id": str(uuid4()), "case_key": f"BIG-{i}"} for i in range(2001)]
+    monkeypatch.setattr(conversations, "_load_scope_snapshots", lambda *args: catalog)
+    filtered = Mock(
+        return_value=CaseScopeDecision(
+            ids=[catalog[-1]["id"]],
+            ambiguous=False,
+            clarification="",
+            reference="none",
+            referenced_case_keys=[],
+            requested_count=None,
+        )
+    )
+    monkeypatch.setattr(scope_filter, "select_large_scope", filtered)
+    result, error = conversations._resolve_model_scope(
+        db, conversation, ConversationMessageCreate(content="删除登录模块但保留P0"), "CASE_DELETE"
+    )
     assert error is None
-    assert list(map(str, result.target_case_ids)) == [catalog[-1]['id']]
+    assert list(map(str, result.target_case_ids)) == [catalog[-1]["id"]]
     filtered.assert_called_once()
     selector.assert_not_called()
 
@@ -620,41 +666,54 @@ def test_complex_large_scope_uses_filter_selector(scope, monkeypatch):
 def test_previous_query_scope_preserves_display_order(scope):
     db, conversation, cases, selector = scope
     # Reverse lexical UUID order so sorting cannot accidentally satisfy the test.
-    ordered = sorted([c['id'] for c in cases], reverse=True)
+    ordered = sorted([c["id"] for c in cases], reverse=True)
     db.scalar.return_value = SimpleNamespace(
-        id=uuid4(), conversation_id=conversation.id,
-        target={'case_ids': ordered, 'candidate_refs': []},
+        id=uuid4(),
+        conversation_id=conversation.id,
+        target={"case_ids": ordered, "candidate_refs": []},
     )
-    conversations._resolve_model_scope(db, conversation,
-        ConversationMessageCreate(content='刚才列出的第二条改成P0'), 'CASE_MODIFY')
-    assert selector.call_args.args[2]['latest_query']['ids'] == ordered
+    conversations._resolve_model_scope(
+        db, conversation, ConversationMessageCreate(content="刚才列出的第二条改成P0"), "CASE_MODIFY"
+    )
+    assert selector.call_args.args[2]["latest_query"]["ids"] == ordered
 
 
 def test_previous_query_order_places_candidates_before_formal_cases(scope):
     db, conversation, cases, selector = scope
     candidate_id = uuid4()
-    db.scalars.return_value = [SimpleNamespace(
-        id=candidate_id, ref='CAND-ORDER', snapshot={'title': '候选'}, version=1,
-    )]
+    db.scalars.return_value = [
+        SimpleNamespace(
+            id=candidate_id,
+            ref="CAND-ORDER",
+            snapshot={"title": "候选"},
+            version=1,
+        )
+    ]
     db.scalar.return_value = SimpleNamespace(
-        id=uuid4(), conversation_id=conversation.id,
-        target={'case_ids': [cases[0]['id']], 'candidate_refs': ['CAND-ORDER']},
+        id=uuid4(),
+        conversation_id=conversation.id,
+        target={"case_ids": [cases[0]["id"]], "candidate_refs": ["CAND-ORDER"]},
     )
-    conversations._resolve_model_scope(db, conversation,
-        ConversationMessageCreate(content='刚列出的第一条'), 'CASE_QUERY')
-    assert selector.call_args.args[2]['latest_query']['ids'] == [str(candidate_id), cases[0]['id']]
+    conversations._resolve_model_scope(
+        db, conversation, ConversationMessageCreate(content="刚列出的第一条"), "CASE_QUERY"
+    )
+    assert selector.call_args.args[2]["latest_query"]["ids"] == [str(candidate_id), cases[0]["id"]]
 
 
-@pytest.mark.parametrize("instruction", [
-    "17个case太少了，增加到30个",
-    "再补充13条登录用例",
-    "生成三十条用例，保留已有用例",
-])
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        "17个case太少了，增加到30个",
+        "再补充13条登录用例",
+        "生成三十条用例，保留已有用例",
+    ],
+)
 def test_fresh_generation_budget_never_enters_asset_scope(scope, instruction):
     db, conversation, _, selector = scope
     selector.side_effect = AssertionError("generation budget interpreted as asset selection")
     result, error = conversations._resolve_action_scope(
-        db, conversation,
+        db,
+        conversation,
         ConversationMessageCreate(content=instruction, generation_strategy="generate"),
         "CASE_GENERATE",
     )
@@ -665,56 +724,71 @@ def test_fresh_generation_budget_never_enters_asset_scope(scope, instruction):
     selector.assert_not_called()
 
 
-@pytest.mark.parametrize('intent', ['CASE_MODIFY', 'CASE_DELETE', 'CASE_QUERY'])
+@pytest.mark.parametrize("intent", ["CASE_MODIFY", "CASE_DELETE", "CASE_QUERY"])
 def test_explicit_missing_key_cannot_be_silently_corrected(scope, intent):
     db, conversation, cases, selector = scope
-    result, error = conversations._resolve_model_scope(db, conversation,
-        ConversationMessageCreate(content='删除用例 QA-1-123456，其他不变'), intent)
-    assert 'QA-1-123456' in error
+    result, error = conversations._resolve_model_scope(
+        db,
+        conversation,
+        ConversationMessageCreate(content="删除用例 QA-1-123456，其他不变"),
+        intent,
+    )
+    assert "QA-1-123456" in error
     selector.assert_not_called()
     assert not result.target_case_ids
 
 
-@pytest.mark.parametrize('content', [
-    '修改用例 QA-0，标题改为「用例 QA-MISSING」',
-    '修改用例 QA-0，标题改为用例 QA-MISSING',
-    '不是用例 QA-MISSING，而是用例 QA-0，步骤更清晰',
-])
+@pytest.mark.parametrize(
+    "content",
+    [
+        "修改用例 QA-0，标题改为「用例 QA-MISSING」",
+        "修改用例 QA-0，标题改为用例 QA-MISSING",
+        "不是用例 QA-MISSING，而是用例 QA-0，步骤更清晰",
+    ],
+)
 def test_target_validation_excludes_values_and_retracted_keys(scope, content):
     db, conversation, cases, selector = scope
-    _, error = conversations._resolve_model_scope(db, conversation,
-        ConversationMessageCreate(content=content), 'CASE_MODIFY')
+    _, error = conversations._resolve_model_scope(
+        db, conversation, ConversationMessageCreate(content=content), "CASE_MODIFY"
+    )
     assert error is None
     selector.assert_called_once()
 
 
 def test_mixed_identifier_list_cannot_drop_missing_member(scope):
     db, conversation, _, selector = scope
-    _, error = conversations._resolve_model_scope(db, conversation,
-        ConversationMessageCreate(content='修改用例 QA-0、QA-NOTFOUND 和 QA-1，步骤清晰'),
-        'CASE_MODIFY')
-    assert 'QA-NOTFOUND' in error
+    _, error = conversations._resolve_model_scope(
+        db,
+        conversation,
+        ConversationMessageCreate(content="修改用例 QA-0、QA-NOTFOUND 和 QA-1，步骤清晰"),
+        "CASE_MODIFY",
+    )
+    assert "QA-NOTFOUND" in error
     selector.assert_not_called()
 
 
-@pytest.mark.parametrize('content', [
-    '查询标题包含「用例 QA-MISSING」的用例',
-    '删除用例 QA-MISSING\n补充说明：不是用例 QA-MISSING，而是用例 QA-0',
-    '修改用例 QA-0，标题改为「用例 QA-MISSING，候选 QA-OTHER」',
-])
+@pytest.mark.parametrize(
+    "content",
+    [
+        "查询标题包含「用例 QA-MISSING」的用例",
+        "删除用例 QA-MISSING\n补充说明：不是用例 QA-MISSING，而是用例 QA-0",
+        "修改用例 QA-0，标题改为「用例 QA-MISSING，候选 QA-OTHER」",
+    ],
+)
 def test_scope_integrity_respects_content_predicates_and_correction_history(scope, content):
     db, conversation, _, selector = scope
-    _, error = conversations._resolve_model_scope(db, conversation,
-        ConversationMessageCreate(content=content), 'CASE_MODIFY')
+    _, error = conversations._resolve_model_scope(
+        db, conversation, ConversationMessageCreate(content=content), "CASE_MODIFY"
+    )
     assert error is None
     selector.assert_called_once()
 
 
-
-@pytest.mark.parametrize('content', ['删除用例编号： QA-1-INVALID', 'delete case id: QA-1-INVALID'])
+@pytest.mark.parametrize("content", ["删除用例编号： QA-1-INVALID", "delete case id: QA-1-INVALID"])
 def test_explicit_reference_labels_allow_spaces_after_colon(scope, content):
     db, conversation, _, selector = scope
-    _, error = conversations._resolve_model_scope(db, conversation,
-        ConversationMessageCreate(content=content), 'CASE_DELETE')
-    assert 'QA-1-INVALID' in error
+    _, error = conversations._resolve_model_scope(
+        db, conversation, ConversationMessageCreate(content=content), "CASE_DELETE"
+    )
+    assert "QA-1-INVALID" in error
     selector.assert_not_called()

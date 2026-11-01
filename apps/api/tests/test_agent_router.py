@@ -334,7 +334,9 @@ def test_sdk_router_uses_the_configured_chat_completions_provider(
     assert plan.operations[0].action == "ANSWER_QUESTION"
     assert captured["tracing_disabled"] is True
 
-    assert json.loads(captured["prompt"])["available_attachments"] == {"document_ids": ["checked-document"]}
+    assert json.loads(captured["prompt"])["available_attachments"] == {
+        "document_ids": ["checked-document"]
+    }
 
 
 def test_unique_coverage_in_dedup_request_does_not_create_an_extra_review():
@@ -460,25 +462,49 @@ def test_model_cannot_invent_action_evidence() -> None:
     assert draft.intent == "UNRESOLVED"
 
 
-@pytest.mark.parametrize(('content', 'evidence', 'expected'), [
-    ('仅将用例 CASE-176BE2 的标题改为「登录成功」，其他字段保持不变。', '将用例的标题改为', 'CASE_MODIFY'),
-    ('修改用例 CASE-176BE2：仅将标题改为「库存不足时拒绝创建订单」，其他字段保持不变。', '修改用例 CASE-176BE2', 'CASE_MODIFY'),
-    ('不要将用例 CASE-176BE2 的标题改为「登录成功」。', '将用例的标题改为', 'KNOWLEDGE_QA'),
-    ('仅将用例 CASE-176BE2 的标题改为「登录成功」。', '将用例 CASE-OTHER 的标题改为', 'UNRESOLVED'),
-    ('仅查看用例 CASE-176BE2 的标题。', '将用例的标题改为', 'UNRESOLVED'),
-    ('将用例 CASE-176BE2 归档，标题改为需要另行确认。', '将用例的标题改为', 'UNRESOLVED'),
-])
+@pytest.mark.parametrize(
+    ("content", "evidence", "expected"),
+    [
+        (
+            "仅将用例 CASE-176BE2 的标题改为「登录成功」，其他字段保持不变。",
+            "将用例的标题改为",
+            "CASE_MODIFY",
+        ),
+        (
+            "修改用例 CASE-176BE2：仅将标题改为「库存不足时拒绝创建订单」，其他字段保持不变。",
+            "修改用例 CASE-176BE2",
+            "CASE_MODIFY",
+        ),
+        ("不要将用例 CASE-176BE2 的标题改为「登录成功」。", "将用例的标题改为", "KNOWLEDGE_QA"),
+        (
+            "仅将用例 CASE-176BE2 的标题改为「登录成功」。",
+            "将用例 CASE-OTHER 的标题改为",
+            "UNRESOLVED",
+        ),
+        ("仅查看用例 CASE-176BE2 的标题。", "将用例的标题改为", "UNRESOLVED"),
+        ("将用例 CASE-176BE2 归档，标题改为需要另行确认。", "将用例的标题改为", "UNRESOLVED"),
+    ],
+)
 def test_action_evidence_can_omit_case_identifier_but_not_meaning(content, evidence, expected):
-    plan = IntentPlanDraft(operations=[agent_router.IntentOperationDraft(
-        intent=expected if expected != 'UNRESOLVED' else 'CASE_MODIFY',
-        instruction=content, confidence=1,
-        target_kind='case', target_text='CASE-176BE2', action_evidence=evidence,
-    )])
-    draft = agent_router._validate_model_plan(content, plan, has_targets=False, phase='idle').operations[0]
+    plan = IntentPlanDraft(
+        operations=[
+            agent_router.IntentOperationDraft(
+                intent=expected if expected != "UNRESOLVED" else "CASE_MODIFY",
+                instruction=content,
+                confidence=1,
+                target_kind="case",
+                target_text="CASE-176BE2",
+                action_evidence=evidence,
+            )
+        ]
+    )
+    draft = agent_router._validate_model_plan(
+        content, plan, has_targets=False, phase="idle"
+    ).operations[0]
     assert draft.intent == expected
-    if expected == 'CASE_MODIFY':
+    if expected == "CASE_MODIFY":
         assert draft.action_evidence in content
-        assert 'CASE-176BE2' in draft.action_evidence
+        assert "CASE-176BE2" in draft.action_evidence
 
 
 def test_setting_priority_without_modify_keyword_is_an_explicit_action() -> None:
@@ -573,172 +599,329 @@ def test_preservation_before_action_does_not_negate_the_action() -> None:
     assert validated.operations[0].intent == "CASE_MODIFY"
 
 
-@pytest.mark.parametrize("suffix,accepted", [("，只查询不修改。", True), ("，排除账号登录模块。", False)])
+@pytest.mark.parametrize(
+    "suffix,accepted", [("，只查询不修改。", True), ("，排除账号登录模块。", False)]
+)
 def test_original_query_keeps_quantity_and_exclusions_for_selector(suffix, accepted):
     content = "查询当前集合的全部100条用例" + suffix
-    plan = IntentPlanDraft.model_validate({"operations": [{
-        "intent": "CASE_QUERY", "instruction": content, "confidence": 1,
-        "action_evidence": "查询当前集合的全部100条用例",
-        "target_kind": "none", "target_text": "当前集合的全部用例",
-    }]})
-    result = agent_router._validate_model_plan(content, plan, has_targets=False, phase="idle").operations[0]
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "CASE_QUERY",
+                    "instruction": content,
+                    "confidence": 1,
+                    "action_evidence": "查询当前集合的全部100条用例",
+                    "target_kind": "none",
+                    "target_text": "当前集合的全部用例",
+                }
+            ]
+        }
+    )
+    result = agent_router._validate_model_plan(
+        content, plan, has_targets=False, phase="idle"
+    ).operations[0]
     assert result.instruction == content
     assert result.target_text == "当前集合的全部用例"
 
 
-@pytest.mark.parametrize("target,accepted", [
-    ("账号登录模块的全部10条用例，其他9个模块不得改动", True),
-    ("账号登录模块的全部10条用例", True),
-    ("账号登录模块的全部100条用例", False),
-    ("账号登录模块的全部10条用例，排除管理员", False),
-])
+@pytest.mark.parametrize(
+    "target,accepted",
+    [
+        ("账号登录模块的全部10条用例，其他9个模块不得改动", True),
+        ("账号登录模块的全部10条用例", True),
+        ("账号登录模块的全部100条用例", False),
+        ("账号登录模块的全部10条用例，排除管理员", False),
+    ],
+)
 def test_model_scope_is_preserved_for_separate_selection(target, accepted):
     content = "整体重写「账号登录」模块的全部10条用例，保留原标题，其他9个模块不得改动。"
-    plan = IntentPlanDraft.model_validate({"operations": [{
-        "intent": "CASE_MODIFY", "instruction": content, "confidence": 1,
-        "action_evidence": "整体重写「账号登录」模块的全部10条用例",
-        "target_kind": "module", "target_text": target,
-    }]})
-    result = agent_router._validate_model_plan(content, plan, has_targets=False, phase="idle").operations[0]
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "CASE_MODIFY",
+                    "instruction": content,
+                    "confidence": 1,
+                    "action_evidence": "整体重写「账号登录」模块的全部10条用例",
+                    "target_kind": "module",
+                    "target_text": target,
+                }
+            ]
+        }
+    )
+    result = agent_router._validate_model_plan(
+        content, plan, has_targets=False, phase="idle"
+    ).operations[0]
     assert result.target_text == target
     assert result.instruction == content
 
 
 def test_new_module_generation_uses_the_explicit_action_name():
-    content = '新增「发票管理」模块，并生成恰好10条新的候选用例。现有100条用例不得修改。'
-    plan = IntentPlanDraft.model_validate({"operations": [{
-        "intent": "CASE_GENERATE", "instruction": content, "confidence": 1,
-        "action_evidence": '新增「发票管理」模块，并生成恰好10条新的候选用例',
-        "target_kind": "module", "target_text": "当前集合新增的发票管理模块",
-    }]})
-    result = agent_router._validate_model_plan(content, plan, has_targets=False, phase="maintenance").operations[0]
-    assert result.target_text == '当前集合新增的发票管理模块'
+    content = "新增「发票管理」模块，并生成恰好10条新的候选用例。现有100条用例不得修改。"
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "CASE_GENERATE",
+                    "instruction": content,
+                    "confidence": 1,
+                    "action_evidence": "新增「发票管理」模块，并生成恰好10条新的候选用例",
+                    "target_kind": "module",
+                    "target_text": "当前集合新增的发票管理模块",
+                }
+            ]
+        }
+    )
+    result = agent_router._validate_model_plan(
+        content, plan, has_targets=False, phase="maintenance"
+    ).operations[0]
+    assert result.target_text == "当前集合新增的发票管理模块"
     assert result.clarification_questions == []
-    assert result.intent == 'CASE_GENERATE'
+    assert result.intent == "CASE_GENERATE"
 
 
 def test_explicit_whole_collection_modification_does_not_need_target_clarification():
-    content = '将当前集合全部用例的优先级改为P0，其他字段不变。'
-    plan = IntentPlanDraft.model_validate({'operations': [{
-        'intent': 'CASE_MODIFY', 'instruction': content, 'confidence': 1,
-        'action_evidence': '改为', 'target_kind': 'none', 'target_text': '当前集合全部用例的优先级',
-    }]})
-    result = agent_router._validate_model_plan(content, plan, has_targets=False, phase='maintenance').operations[0]
-    assert result.target_kind == 'none'
-    assert result.target_text == '当前集合全部用例的优先级'
+    content = "将当前集合全部用例的优先级改为P0，其他字段不变。"
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "CASE_MODIFY",
+                    "instruction": content,
+                    "confidence": 1,
+                    "action_evidence": "改为",
+                    "target_kind": "none",
+                    "target_text": "当前集合全部用例的优先级",
+                }
+            ]
+        }
+    )
+    result = agent_router._validate_model_plan(
+        content, plan, has_targets=False, phase="maintenance"
+    ).operations[0]
+    assert result.target_kind == "none"
+    assert result.target_text == "当前集合全部用例的优先级"
     assert not result.clarification_questions
 
 
 def test_model_scope_paraphrase_is_preserved_for_semantic_selector():
-    content = '重写用例 QA-1791437437142-1 的步骤和预期：校验登录响应HTTP 200。'
-    plan = IntentPlanDraft.model_validate({'operations': [{
-        'intent': 'CASE_MODIFY', 'instruction': content, 'confidence': 1,
-        'action_evidence': '重写用例 QA-1791437437142-1 的步骤和预期',
-        'target_kind': 'case', 'target_text': '编号为QA-1791437437142-1的用例',
-    }]})
-    result = agent_router._validate_model_plan(content, plan, has_targets=False, phase='maintenance').operations[0]
-    assert result.target_text == '编号为QA-1791437437142-1的用例'
+    content = "重写用例 QA-1791437437142-1 的步骤和预期：校验登录响应HTTP 200。"
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "CASE_MODIFY",
+                    "instruction": content,
+                    "confidence": 1,
+                    "action_evidence": "重写用例 QA-1791437437142-1 的步骤和预期",
+                    "target_kind": "case",
+                    "target_text": "编号为QA-1791437437142-1的用例",
+                }
+            ]
+        }
+    )
+    result = agent_router._validate_model_plan(
+        content, plan, has_targets=False, phase="maintenance"
+    ).operations[0]
+    assert result.target_text == "编号为QA-1791437437142-1的用例"
     assert result.instruction == content
     assert result.clarification_questions == []
 
 
 def test_model_candidate_scope_keeps_original_quantity_in_instruction():
-    content='重写剩余未纳入的2条候选用例，已纳入正式集合的用例不得改动。补充前置条件。'
-    plan=IntentPlanDraft.model_validate({'operations':[{
-        'intent':'CASE_MODIFY','instruction':content,'confidence':1,
-        'action_evidence':'重写剩余未纳入的2条候选用例','target_kind':'previous_result',
-        'target_text':'剩余未纳入的候选用例',
-    }]})
-    result=agent_router._validate_model_plan(content,plan,has_targets=False,phase='candidate_review').operations[0]
+    content = "重写剩余未纳入的2条候选用例，已纳入正式集合的用例不得改动。补充前置条件。"
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "CASE_MODIFY",
+                    "instruction": content,
+                    "confidence": 1,
+                    "action_evidence": "重写剩余未纳入的2条候选用例",
+                    "target_kind": "previous_result",
+                    "target_text": "剩余未纳入的候选用例",
+                }
+            ]
+        }
+    )
+    result = agent_router._validate_model_plan(
+        content, plan, has_targets=False, phase="candidate_review"
+    ).operations[0]
     assert not result.clarification_questions
-    assert result.target_text == '剩余未纳入的候选用例'
+    assert result.target_text == "剩余未纳入的候选用例"
     assert result.instruction == content
 
 
 def test_pending_candidate_multi_intent_scope_does_not_absorb_other_clauses():
-    content='先查询剩余未纳入的候选用例，然后修改查到的候选：增加前置条件。'
-    plan=IntentPlanDraft.model_validate({'operations':[
-        {'intent':'CASE_QUERY','instruction':'查询剩余候选','confidence':1,'action_evidence':'先查询剩余未纳入的候选用例','target_kind':'condition','target_text':'当前任务剩余未纳入的候选'},
-        {'intent':'CASE_MODIFY','instruction':'修改候选','confidence':1,'action_evidence':'然后修改查到的候选','target_kind':'previous_result','target_text':'上述查询结果','depends_on':0},
-    ]})
-    result=agent_router._validate_model_plan(content,plan,has_targets=False,phase='candidate_review')
-    assert result.operations[0].target_text == '当前任务剩余未纳入的候选'
-    assert result.operations[1].target_text == '上述查询结果'
+    content = "先查询剩余未纳入的候选用例，然后修改查到的候选：增加前置条件。"
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "CASE_QUERY",
+                    "instruction": "查询剩余候选",
+                    "confidence": 1,
+                    "action_evidence": "先查询剩余未纳入的候选用例",
+                    "target_kind": "condition",
+                    "target_text": "当前任务剩余未纳入的候选",
+                },
+                {
+                    "intent": "CASE_MODIFY",
+                    "instruction": "修改候选",
+                    "confidence": 1,
+                    "action_evidence": "然后修改查到的候选",
+                    "target_kind": "previous_result",
+                    "target_text": "上述查询结果",
+                    "depends_on": 0,
+                },
+            ]
+        }
+    )
+    result = agent_router._validate_model_plan(
+        content, plan, has_targets=False, phase="candidate_review"
+    )
+    assert result.operations[0].target_text == "当前任务剩余未纳入的候选"
+    assert result.operations[1].target_text == "上述查询结果"
     assert all(not op.clarification_questions for op in result.operations)
 
 
 @pytest.mark.parametrize("intent,accepted", [("CASE_GENERATE", True), ("CASE_MODIFY", False)])
 def test_literal_multi_module_generation_scope(intent, accepted):
-    content = '生成30条测试用例，分为“预约创建”“预约变更”“签到与释放”三个模块，每个模块10条。'
-    plan = IntentPlanDraft.model_validate({'operations': [{
-        'intent': intent, 'instruction': content, 'confidence': 1,
-        'action_evidence': '生成30条测试用例', 'target_kind': 'module',
-        'target_text': '会议室预约的三个功能模块',
-    }]})
-    result = agent_router._validate_model_plan(content, plan, has_targets=False, phase='maintenance').operations[0]
+    content = "生成30条测试用例，分为“预约创建”“预约变更”“签到与释放”三个模块，每个模块10条。"
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": intent,
+                    "instruction": content,
+                    "confidence": 1,
+                    "action_evidence": "生成30条测试用例",
+                    "target_kind": "module",
+                    "target_text": "会议室预约的三个功能模块",
+                }
+            ]
+        }
+    )
+    result = agent_router._validate_model_plan(
+        content, plan, has_targets=False, phase="maintenance"
+    ).operations[0]
     assert result.instruction == content
-    assert result.target_text == '会议室预约的三个功能模块'
+    assert result.target_text == "会议室预约的三个功能模块"
 
 
 def test_candidate_module_rewrite_preserves_model_scope():
-    content='整体重写“预约变更”模块的全部10条候选。其他模块不要动。'
-    plan=IntentPlanDraft.model_validate({'operations':[{
-        'intent':'CASE_MODIFY','instruction':content,'confidence':1,
-        'action_evidence':'整体重写“预约变更”模块的全部10条候选',
-        'target_kind':'module','target_text':'预约变更模块全部待纳入候选用例',
-    }]})
-    result=agent_router._validate_model_plan(content,plan,has_targets=False,phase='candidate_review').operations[0]
+    content = "整体重写“预约变更”模块的全部10条候选。其他模块不要动。"
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "CASE_MODIFY",
+                    "instruction": content,
+                    "confidence": 1,
+                    "action_evidence": "整体重写“预约变更”模块的全部10条候选",
+                    "target_kind": "module",
+                    "target_text": "预约变更模块全部待纳入候选用例",
+                }
+            ]
+        }
+    )
+    result = agent_router._validate_model_plan(
+        content, plan, has_targets=False, phase="candidate_review"
+    ).operations[0]
     assert not result.clarification_questions
-    assert result.target_text == '预约变更模块全部待纳入候选用例'
+    assert result.target_text == "预约变更模块全部待纳入候选用例"
 
 
-@pytest.mark.parametrize('ids,ambiguous,raises', [(['one'],False,False),(['outside'],False,True),(['one'],True,True)])
-def test_query_selector_supplies_schema_and_rejects_ungrounded_ids(monkeypatch,ids,ambiguous,raises):
+@pytest.mark.parametrize(
+    "ids,ambiguous,raises",
+    [(["one"], False, False), (["outside"], False, True), (["one"], True, True)],
+)
+def test_query_selector_supplies_schema_and_rejects_ungrounded_ids(
+    monkeypatch, ids, ambiguous, raises
+):
     import sys
     from types import ModuleType, SimpleNamespace
-    agents, openai = ModuleType('agents'), ModuleType('openai')
-    captured={}
+
+    agents, openai = ModuleType("agents"), ModuleType("openai")
+    captured = {}
+
     def agent(**kwargs):
         captured.update(kwargs)
         return SimpleNamespace(**kwargs)
-    agents.Agent=agent
-    agents.AgentOutputSchema=lambda *args,**kwargs:None
-    agents.ModelSettings=SimpleNamespace
-    agents.OpenAIChatCompletionsModel=lambda **kwargs:None
-    agents.set_tracing_disabled=lambda value:None
-    agents.Runner=SimpleNamespace(run_sync=lambda *args,**kwargs:SimpleNamespace(final_output=agent_router.QueryCaseSelection(ids=ids,ambiguous=ambiguous)))
-    openai.AsyncOpenAI=lambda **kwargs:None
-    monkeypatch.setitem(sys.modules,'agents',agents)
-    monkeypatch.setitem(sys.modules,'openai',openai)
-    kwargs=dict(model_name='test',base_url='https://example.invalid',api_key='test',timeout_seconds=1,tracing_enabled=False)
+
+    agents.Agent = agent
+    agents.AgentOutputSchema = lambda *args, **kwargs: None
+    agents.ModelSettings = SimpleNamespace
+    agents.OpenAIChatCompletionsModel = lambda **kwargs: None
+    agents.set_tracing_disabled = lambda value: None
+    agents.Runner = SimpleNamespace(
+        run_sync=lambda *args, **kwargs: SimpleNamespace(
+            final_output=agent_router.QueryCaseSelection(ids=ids, ambiguous=ambiguous)
+        )
+    )
+    openai.AsyncOpenAI = lambda **kwargs: None
+    monkeypatch.setitem(sys.modules, "agents", agents)
+    monkeypatch.setitem(sys.modules, "openai", openai)
+    kwargs = dict(
+        model_name="test",
+        base_url="https://example.invalid",
+        api_key="test",
+        timeout_seconds=1,
+        tracing_enabled=False,
+    )
     if raises:
         with pytest.raises(ValueError):
-            agent_router.select_query_case_ids('目标场景',[{'id':'one','title':'目标场景'}],**kwargs)
+            agent_router.select_query_case_ids(
+                "目标场景", [{"id": "one", "title": "目标场景"}], **kwargs
+            )
     else:
-        assert agent_router.select_query_case_ids('目标场景',[{'id':'one','title':'目标场景'}],**kwargs)==['one']
-    assert 'JSON Schema:' in captured['instructions']
-    assert 'ambiguous' in captured['instructions']
+        assert agent_router.select_query_case_ids(
+            "目标场景", [{"id": "one", "title": "目标场景"}], **kwargs
+        ) == ["one"]
+    assert "JSON Schema:" in captured["instructions"]
+    assert "ambiguous" in captured["instructions"]
 
 
 def test_topic_query_keeps_original_instruction_alongside_model_scope():
-    content='查询“预约查询”模块中关于无结果展示和取消后状态展示的用例，只列出来，不修改。'
-    plan=IntentPlanDraft.model_validate({'operations':[{
-        'intent':'CASE_QUERY','instruction':content,'confidence':1,
-        'action_evidence':'查询','target_kind':'condition','target_text':'预约查询模块的两类场景',
-    }]})
-    result=agent_router._validate_model_plan(content,plan,has_targets=False,phase='maintenance').operations[0]
+    content = "查询“预约查询”模块中关于无结果展示和取消后状态展示的用例，只列出来，不修改。"
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "CASE_QUERY",
+                    "instruction": content,
+                    "confidence": 1,
+                    "action_evidence": "查询",
+                    "target_kind": "condition",
+                    "target_text": "预约查询模块的两类场景",
+                }
+            ]
+        }
+    )
+    result = agent_router._validate_model_plan(
+        content, plan, has_targets=False, phase="maintenance"
+    ).operations[0]
     assert not result.clarification_questions
-    assert '无结果展示和取消后状态展示' in result.instruction
-    assert result.target_text == '预约查询模块的两类场景'
+    assert "无结果展示和取消后状态展示" in result.instruction
+    assert result.target_text == "预约查询模块的两类场景"
 
 
 def test_planning_preview_and_generation_are_one_task_with_literal_object():
     content = "为账号安全系统生成恰好12条候选用例。先提供测试规划供确认，再生成候选。"
-    plan = IntentPlanDraft(operations=[
-        dict(intent="CASE_GENERATE", instruction="生成12条候选", confidence=1,
-             action_evidence="为账号安全系统生成恰好12条候选用例", depends_on=None,
-             target_kind="module", target_text="账号安全系统"),
-    ])
+    plan = IntentPlanDraft(
+        operations=[
+            dict(
+                intent="CASE_GENERATE",
+                instruction="生成12条候选",
+                confidence=1,
+                action_evidence="为账号安全系统生成恰好12条候选用例",
+                depends_on=None,
+                target_kind="module",
+                target_text="账号安全系统",
+            ),
+        ]
+    )
     result = agent_router._validate_model_plan(content, plan, has_targets=False, phase="idle")
     assert len(result.operations) == 1
     operation = result.operations[0]
@@ -750,40 +933,67 @@ def test_planning_preview_and_generation_are_one_task_with_literal_object():
 
 def test_separate_generation_requests_are_not_merged():
     content = "生成登录用例，然后生成支付用例"
-    plan = IntentPlanDraft(operations=[
-        dict(intent="CASE_GENERATE", instruction="生成登录用例", confidence=1,
-             action_evidence="生成登录用例", target_kind="none"),
-        dict(intent="CASE_GENERATE", instruction="生成支付用例", confidence=1,
-             action_evidence="生成支付用例", target_kind="none", depends_on=0),
-    ])
+    plan = IntentPlanDraft(
+        operations=[
+            dict(
+                intent="CASE_GENERATE",
+                instruction="生成登录用例",
+                confidence=1,
+                action_evidence="生成登录用例",
+                target_kind="none",
+            ),
+            dict(
+                intent="CASE_GENERATE",
+                instruction="生成支付用例",
+                confidence=1,
+                action_evidence="生成支付用例",
+                target_kind="none",
+                depends_on=0,
+            ),
+        ]
+    )
     result = agent_router._validate_model_plan(content, plan, has_targets=False, phase="idle")
     assert len(result.operations) == 2
     assert result.operations[1].depends_on == 0
 
 
-@pytest.mark.parametrize('variant,expected', [('batch', 1), ('different', 2), ('ordered', 2), ('ambiguous', 2)])
+@pytest.mark.parametrize(
+    "variant,expected", [("batch", 1), ("different", 2), ("ordered", 2), ("ambiguous", 2)]
+)
 def test_shared_case_modification_is_one_batch(variant, expected):
-    content = '修改候选 TC-TP-aaa-1、TC-TP-bbb-1：前置条件增加审计账号，优先级统一改为P0，其他字段不变。'
-    if variant == 'ordered':
-        content = content.replace('、', '，然后修改候选 ')
-    operations = [dict(
-        intent='CASE_MODIFY', instruction=content, confidence=1,
-        action_evidence=key, target_kind='case', target_text=key,
-        changes=['前置条件增加审计账号', '优先级改为P0'], constraints=['其他字段不变'],
-        depends_on=None if index == 0 else 0,
-    ) for index, key in enumerate(['TC-TP-aaa-1', 'TC-TP-bbb-1'])]
-    if variant == 'different':
-        operations[1]['changes'] = ['优先级改为P2']
-    if variant == 'ambiguous':
-        operations[1]['clarification_questions'] = ['请确认范围']
-    if variant == 'batch':
+    content = (
+        "修改候选 TC-TP-aaa-1、TC-TP-bbb-1：前置条件增加审计账号，优先级统一改为P0，其他字段不变。"
+    )
+    if variant == "ordered":
+        content = content.replace("、", "，然后修改候选 ")
+    operations = [
+        dict(
+            intent="CASE_MODIFY",
+            instruction=content,
+            confidence=1,
+            action_evidence=key,
+            target_kind="case",
+            target_text=key,
+            changes=["前置条件增加审计账号", "优先级改为P0"],
+            constraints=["其他字段不变"],
+            depends_on=None if index == 0 else 0,
+        )
+        for index, key in enumerate(["TC-TP-aaa-1", "TC-TP-bbb-1"])
+    ]
+    if variant == "different":
+        operations[1]["changes"] = ["优先级改为P2"]
+    if variant == "ambiguous":
+        operations[1]["clarification_questions"] = ["请确认范围"]
+    if variant == "batch":
         operations = [operations[0]]
-        operations[0]['target_text'] = 'TC-TP-aaa-1、TC-TP-bbb-1'
-    result = agent_router._validate_model_plan(content, IntentPlanDraft(operations=operations), has_targets=False, phase='candidate_review')
+        operations[0]["target_text"] = "TC-TP-aaa-1、TC-TP-bbb-1"
+    result = agent_router._validate_model_plan(
+        content, IntentPlanDraft(operations=operations), has_targets=False, phase="candidate_review"
+    )
     assert len(result.operations) == expected
     if expected == 1:
         operation = result.operations[0]
-        assert operation.target_text == 'TC-TP-aaa-1、TC-TP-bbb-1'
+        assert operation.target_text == "TC-TP-aaa-1、TC-TP-bbb-1"
         assert operation.instruction == content
         assert operation.requires_confirmation
         assert operation.depends_on is None
@@ -791,86 +1001,151 @@ def test_shared_case_modification_is_one_batch(variant, expected):
         assert result.operations[1].depends_on == 0
 
 
-@pytest.mark.parametrize('intent', ['CASE_MODIFY', 'CASE_DELETE'])
+@pytest.mark.parametrize("intent", ["CASE_MODIFY", "CASE_DELETE"])
 def test_previous_query_reference_survives_paraphrased_case_scope(intent):
-    content = '仅把刚才查询到的用例优先级改为P2，其他字段和其他用例保持不变' if intent == 'CASE_MODIFY' else '删除刚才查询到的用例，其他用例保持不变'
-    plan = IntentPlanDraft(operations=[dict(
-        intent=intent, instruction='处理上次结果', confidence=1,
-        action_evidence='改为' if intent == 'CASE_MODIFY' else '删除',
-        target_kind='case', target_text='上次查询结果中的两条用例',
-    )])
-    operation = agent_router._validate_model_plan(content, plan, has_targets=False, phase='maintenance').operations[0]
-    assert operation.target_text == '上次查询结果中的两条用例'
+    content = (
+        "仅把刚才查询到的用例优先级改为P2，其他字段和其他用例保持不变"
+        if intent == "CASE_MODIFY"
+        else "删除刚才查询到的用例，其他用例保持不变"
+    )
+    plan = IntentPlanDraft(
+        operations=[
+            dict(
+                intent=intent,
+                instruction="处理上次结果",
+                confidence=1,
+                action_evidence="改为" if intent == "CASE_MODIFY" else "删除",
+                target_kind="case",
+                target_text="上次查询结果中的两条用例",
+            )
+        ]
+    )
+    operation = agent_router._validate_model_plan(
+        content, plan, has_targets=False, phase="maintenance"
+    ).operations[0]
+    assert operation.target_text == "上次查询结果中的两条用例"
     assert operation.instruction == content
-    assert operation.target_kind == 'case'
+    assert operation.target_kind == "case"
     assert not operation.clarification_questions
     assert operation.requires_confirmation
 
 
-@pytest.mark.parametrize('content,uses_model', [
-    ('删除刚才查询到的用例', False),
-    ('请删除刚才查到的两条用例。', False),
-    ('移除上次查询到的2条测试用例', False),
-    ('不要删除刚才查询到的用例', True),
-    ('如何删除刚才查询到的用例？', True),
-    ('删除刚才查询到的失败用例', True),
-    ('删除刚才查询到的用例，然后查询订单模块', True),
-    ('删除登录模块的用例', True),
-])
+@pytest.mark.parametrize(
+    "content,uses_model",
+    [
+        ("删除刚才查询到的用例", False),
+        ("请删除刚才查到的两条用例。", False),
+        ("移除上次查询到的2条测试用例", False),
+        ("不要删除刚才查询到的用例", True),
+        ("如何删除刚才查询到的用例？", True),
+        ("删除刚才查询到的失败用例", True),
+        ("删除刚才查询到的用例，然后查询订单模块", True),
+        ("删除登录模块的用例", True),
+    ],
+)
 def test_literal_previous_query_always_uses_model(
-    monkeypatch, content, uses_model,
+    monkeypatch,
+    content,
+    uses_model,
 ):
     from unittest.mock import Mock
 
-    model = Mock(return_value=IntentPlanDraft(operations=[agent_router.IntentOperationDraft(
-        intent='KNOWLEDGE_QA', instruction=content, confidence=1,
-    )]))
-    monkeypatch.setattr(agent_router, 'sdk_plan', model)
-    plan = plan_intents(content, classify_intent, has_targets=False,
-        phase='maintenance', target_context=[], provider='openai_compatible',
-        model_name='test', base_url='https://example.test/v1', api_key='test-only',
-        timeout_seconds=5, tracing_enabled=False)
+    model = Mock(
+        return_value=IntentPlanDraft(
+            operations=[
+                agent_router.IntentOperationDraft(
+                    intent="KNOWLEDGE_QA",
+                    instruction=content,
+                    confidence=1,
+                )
+            ]
+        )
+    )
+    monkeypatch.setattr(agent_router, "sdk_plan", model)
+    plan = plan_intents(
+        content,
+        classify_intent,
+        has_targets=False,
+        phase="maintenance",
+        target_context=[],
+        provider="openai_compatible",
+        model_name="test",
+        base_url="https://example.test/v1",
+        api_key="test-only",
+        timeout_seconds=5,
+        tracing_enabled=False,
+    )
     model.assert_called_once()
-    assert plan.operations[0].intent == 'KNOWLEDGE_QA'
-    assert plan.operations[0].routing_source == 'semantic'
+    assert plan.operations[0].intent == "KNOWLEDGE_QA"
+    assert plan.operations[0].routing_source == "semantic"
 
 
 def test_model_failure_does_not_turn_query_result_modification_into_query(monkeypatch):
     from unittest.mock import Mock
-    monkeypatch.setattr(agent_router, 'sdk_plan', Mock(side_effect=TimeoutError()))
-    plan = plan_intents('把刚才查询到的用例优先级改为P0，其他内容保持不变',
-        classify_intent, has_targets=False, phase='maintenance', target_context=[],
-        provider='openai_compatible', model_name='test', base_url='https://example.test/v1',
-        api_key='test-only', timeout_seconds=5, tracing_enabled=False)
-    assert plan.operations[0].intent == 'UNRESOLVED'
+
+    monkeypatch.setattr(agent_router, "sdk_plan", Mock(side_effect=TimeoutError()))
+    plan = plan_intents(
+        "把刚才查询到的用例优先级改为P0，其他内容保持不变",
+        classify_intent,
+        has_targets=False,
+        phase="maintenance",
+        target_context=[],
+        provider="openai_compatible",
+        model_name="test",
+        base_url="https://example.test/v1",
+        api_key="test-only",
+        timeout_seconds=5,
+        tracing_enabled=False,
+    )
+    assert plan.operations[0].intent == "UNRESOLVED"
     assert plan.operations[0].requires_confirmation
 
 
 def test_model_failure_requires_clarification_even_for_literal_write(monkeypatch):
     from unittest.mock import Mock
 
-    monkeypatch.setattr(agent_router, 'sdk_plan', Mock(side_effect=TimeoutError()))
+    monkeypatch.setattr(agent_router, "sdk_plan", Mock(side_effect=TimeoutError()))
     plan = plan_intents(
-        '修改不存在模块的用例', classify_intent, has_targets=False,
-        phase='maintenance', target_context=[], provider='openai_compatible',
-        model_name='test', base_url='https://example.test/v1', api_key='test-only',
-        timeout_seconds=5, tracing_enabled=False,
+        "修改不存在模块的用例",
+        classify_intent,
+        has_targets=False,
+        phase="maintenance",
+        target_context=[],
+        provider="openai_compatible",
+        model_name="test",
+        base_url="https://example.test/v1",
+        api_key="test-only",
+        timeout_seconds=5,
+        tracing_enabled=False,
     )
     operation = plan.operations[0]
-    assert operation.intent == 'UNRESOLVED'
+    assert operation.intent == "UNRESOLVED"
     assert operation.requires_confirmation
-    assert operation.reason_codes == ['MODEL_FAILED', 'SEMANTIC_ROUTING_UNAVAILABLE']
+    assert operation.reason_codes == ["MODEL_FAILED", "SEMANTIC_ROUTING_UNAVAILABLE"]
 
 
-@pytest.mark.parametrize("content,target", [
-    ("翻译成英文", "1234"),
-    ("把上一条回答翻译成中文", "Delete all test cases"),
-])
+@pytest.mark.parametrize(
+    "content,target",
+    [
+        ("翻译成英文", "1234"),
+        ("把上一条回答翻译成中文", "Delete all test cases"),
+    ],
+)
 def test_text_followup_does_not_require_literal_asset_scope(content, target):
-    plan = IntentPlanDraft.model_validate({"operations": [{
-        "intent": "KNOWLEDGE_QA", "instruction": content, "confidence": 1,
-        "action_evidence": content, "target_kind": "none", "target_text": target,
-    }]})
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "KNOWLEDGE_QA",
+                    "instruction": content,
+                    "confidence": 1,
+                    "action_evidence": content,
+                    "target_kind": "none",
+                    "target_text": target,
+                }
+            ]
+        }
+    )
     result = agent_router._validate_model_plan(content, plan, has_targets=False, phase="idle")
     operation = result.operations[0]
     assert operation.intent == "KNOWLEDGE_QA"
@@ -884,35 +1159,65 @@ def test_reuse_lookup_is_part_of_generation_unless_separate_results_requested(se
     content = "查询历史用例资产，复用核心用例并生成新版用例"
     if separate:
         content += "，单独展示查询结果"
-    plan = IntentPlanDraft.model_validate({"operations": [
-        {"intent": "CASE_QUERY", "instruction": "查询历史用例资产", "action_evidence": "查询历史用例资产", "confidence": 0.99},
-        {"intent": "CASE_GENERATE", "instruction": "生成新版用例", "action_evidence": "生成新版用例", "confidence": 0.99, "depends_on": 0},
-    ]})
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": "CASE_QUERY",
+                    "instruction": "查询历史用例资产",
+                    "action_evidence": "查询历史用例资产",
+                    "confidence": 0.99,
+                },
+                {
+                    "intent": "CASE_GENERATE",
+                    "instruction": "生成新版用例",
+                    "action_evidence": "生成新版用例",
+                    "confidence": 0.99,
+                    "depends_on": 0,
+                },
+            ]
+        }
+    )
     if not separate:
         plan.operations = [plan.operations[1]]
         plan.operations[0].instruction = content
         plan.operations[0].depends_on = None
     result = agent_router._validate_model_plan(content, plan, has_targets=False, phase="idle")
-    assert [op.intent for op in result.operations] == (["CASE_QUERY", "CASE_GENERATE"] if separate else ["CASE_GENERATE"])
+    assert [op.intent for op in result.operations] == (
+        ["CASE_QUERY", "CASE_GENERATE"] if separate else ["CASE_GENERATE"]
+    )
     if not separate:
         assert result.operations[0].instruction == content
         assert result.operations[0].depends_on is None
 
 
-@pytest.mark.parametrize("content,expected", [
-    ("重写登录模块用例", "CASE_MODIFY"),
-    ("请改写登录模块用例", "CASE_MODIFY"),
-    ("重写登录模块用例，步骤写得更清楚", "CASE_MODIFY"),
-    ("重写登录模块用例并生成一套新版", "CASE_GENERATE"),
-    ("如何重写登录模块用例？", "KNOWLEDGE_QA"),
-    ("不要重写登录模块用例", "KNOWLEDGE_QA"),
-])
+@pytest.mark.parametrize(
+    "content,expected",
+    [
+        ("重写登录模块用例", "CASE_MODIFY"),
+        ("请改写登录模块用例", "CASE_MODIFY"),
+        ("重写登录模块用例，步骤写得更清楚", "CASE_MODIFY"),
+        ("重写登录模块用例并生成一套新版", "CASE_GENERATE"),
+        ("如何重写登录模块用例？", "KNOWLEDGE_QA"),
+        ("不要重写登录模块用例", "KNOWLEDGE_QA"),
+    ],
+)
 def test_model_rewrite_intent_survives_validation(content, expected):
-    plan = IntentPlanDraft.model_validate({"operations": [{
-        "intent": expected, "instruction": content, "confidence": 0.9,
-        "action_evidence": content, "target_kind": "module", "target_text": "登录模块用例",
-        "clarification_questions": ["请说明改动方向"],
-    }]})
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": expected,
+                    "instruction": content,
+                    "confidence": 0.9,
+                    "action_evidence": content,
+                    "target_kind": "module",
+                    "target_text": "登录模块用例",
+                    "clarification_questions": ["请说明改动方向"],
+                }
+            ]
+        }
+    )
     result = agent_router._validate_model_plan(content, plan, has_targets=True, phase="maintenance")
     assert result.operations[0].intent == expected
     if expected == "CASE_MODIFY":
@@ -921,44 +1226,71 @@ def test_model_rewrite_intent_survives_validation(content, expected):
         assert result.operations[0].action != "BRIEF_CREATE"
 
 
-@pytest.mark.parametrize('intent,value,clarifies', [
-    ('CASE_MODIFY', 'P9', True), ('CASE_MODIFY', 'P3', True),
-    ('CASE_MODIFY', 'P2', False), ('CASE_MODIFY', None, False),
-    ('CASE_QUERY', 'P9', False),
-])
+@pytest.mark.parametrize(
+    "intent,value,clarifies",
+    [
+        ("CASE_MODIFY", "P9", True),
+        ("CASE_MODIFY", "P3", True),
+        ("CASE_MODIFY", "P2", False),
+        ("CASE_MODIFY", None, False),
+        ("CASE_QUERY", "P9", False),
+    ],
+)
 def test_priority_assignment_validation_never_coerces_unknown_values(intent, value, clarifies):
-    content = '把用例TC-1的优先级改成P9，其他不变'
-    plan = IntentPlanDraft.model_validate({'operations': [{
-        'intent': intent, 'instruction': content, 'confidence': 1,
-        'action_evidence': content, 'priority_assignment': value,
-    }]})
-    operation = agent_router._validate_model_plan(content, plan, has_targets=True, phase='maintenance').operations[0]
+    content = "把用例TC-1的优先级改成P9，其他不变"
+    plan = IntentPlanDraft.model_validate(
+        {
+            "operations": [
+                {
+                    "intent": intent,
+                    "instruction": content,
+                    "confidence": 1,
+                    "action_evidence": content,
+                    "priority_assignment": value,
+                }
+            ]
+        }
+    )
+    operation = agent_router._validate_model_plan(
+        content, plan, has_targets=True, phase="maintenance"
+    ).operations[0]
     assert operation.priority_assignment == value
     assert bool(operation.clarification_questions) is clarifies
     if clarifies:
-        assert operation.clarification_kind == 'requirements'
+        assert operation.clarification_kind == "requirements"
         assert value in operation.clarification_questions[0]
-        assert 'P0、P1、P2' in operation.clarification_questions[0]
+        assert "P0、P1、P2" in operation.clarification_questions[0]
 
 
 @pytest.mark.parametrize("fails", [False, True])
 def test_routing_timing_logs_outcome_without_prompt_or_exception_text(monkeypatch, caplog, fails):
     from types import SimpleNamespace
     from unittest.mock import Mock
+
     from casepilot_api import agent_router
+
     clock = iter([10.0, 35.25])
     monkeypatch.setattr(agent_router, "perf_counter", lambda: next(clock))
     private = "private-request-title-and-credential"
     result = object()
-    runner = SimpleNamespace(run_sync=Mock(
-        side_effect=RuntimeError(private) if fails else None,
-        return_value=SimpleNamespace(final_output=result),
-    ))
+    runner = SimpleNamespace(
+        run_sync=Mock(
+            side_effect=RuntimeError(private) if fails else None,
+            return_value=SimpleNamespace(final_output=result),
+        )
+    )
     if fails:
         with pytest.raises(RuntimeError):
-            agent_router._run_routing_agent(runner, object(), private, stage="rewrite_reply", model_name="test-model")
+            agent_router._run_routing_agent(
+                runner, object(), private, stage="rewrite_reply", model_name="test-model"
+            )
     else:
-        assert agent_router._run_routing_agent(runner, object(), private, stage="rewrite_reply", model_name="test-model") is result
+        assert (
+            agent_router._run_routing_agent(
+                runner, object(), private, stage="rewrite_reply", model_name="test-model"
+            )
+            is result
+        )
     assert "stage=rewrite_reply" in caplog.text
     assert f"outcome={'error' if fails else 'ok'}" in caplog.text
     assert "duration_seconds=25.250" in caplog.text

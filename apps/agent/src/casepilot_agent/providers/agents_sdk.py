@@ -28,9 +28,14 @@ def _response_options(base_url: str, stage: str) -> dict:
     # Literal rule extraction can skip thinking. Case generation and rewriting
     # share the configured model's default inference behavior.
     host = urlparse(base_url).hostname or ""
-    if host.endswith(".volces.com") and host.startswith("ark.") and stage in {
-        "requirement.extracted",
-    }:
+    if (
+        host.endswith(".volces.com")
+        and host.startswith("ark.")
+        and stage
+        in {
+            "requirement.extracted",
+        }
+    ):
         options["thinking"] = {"type": "disabled"}
     return options
 
@@ -68,8 +73,11 @@ class AgentsSdkProvider:
         if api_type not in {"chat_completions", "responses"}:
             raise ValueError("unsupported_agent_api_type")
         self.api_type = api_type
-        self.base_url = (responses_base_url(base_url).rstrip("/")
-                         if api_type == "responses" else base_url.rstrip("/"))
+        self.base_url = (
+            responses_base_url(base_url).rstrip("/")
+            if api_type == "responses"
+            else base_url.rstrip("/")
+        )
         self.api_key = api_key
         self.model = model
         self.pro_model = pro_model
@@ -101,6 +109,7 @@ class AgentsSdkProvider:
         if not images:
             return prompt
         from casepilot_agent.config import get_settings
+
         allowed = {v.strip() for v in get_settings().image_models.split(",") if v.strip()}
         if model not in allowed:
             raise ValueError("model_does_not_support_images")
@@ -140,9 +149,13 @@ class AgentsSdkProvider:
             for item in payload.get("shared", [])
         )
         basic_review = payload.get("validation_mode") == "human_review_basic"
-        if model_id == "auto" and not basic_review and (
-            stage == "test_case.grounded"
-            or (stage == "rewrite.batch" and (self._prefer_pro_rewrite or evidence_review))
+        if (
+            model_id == "auto"
+            and not basic_review
+            and (
+                stage == "test_case.grounded"
+                or (stage == "rewrite.batch" and (self._prefer_pro_rewrite or evidence_review))
+            )
         ):
             # Evidence verification needs the configured quality model. Do not
             # silently downgrade a semantic review to the failed fast reviewer.
@@ -172,13 +185,22 @@ class AgentsSdkProvider:
             and stage.startswith(_STRUCTURED_GENERATION_STAGE_PREFIXES)
             else stage_timeout
         )
+
         async def before_request(request):
             if self.request_guard is not None:
                 self.request_guard()
 
-        bounded_client = ({"http_client": httpx.AsyncClient(
-            event_hooks={"request": [before_request]}, follow_redirects=False, timeout=timeout
-        )} if self.request_guard is not None else {})
+        bounded_client = (
+            {
+                "http_client": httpx.AsyncClient(
+                    event_hooks={"request": [before_request]},
+                    follow_redirects=False,
+                    timeout=timeout,
+                )
+            }
+            if self.request_guard is not None
+            else {}
+        )
         client = AsyncOpenAI(
             **bounded_client,
             api_key=self.api_key,
@@ -192,7 +214,8 @@ class AgentsSdkProvider:
             model = OpenAIChatCompletionsModel(model=resolved_model, openai_client=client)
         generation_skill = (
             load_test_case_generation_skill()
-            if stage != "test_case.rewritten" and stage.startswith(
+            if stage != "test_case.rewritten"
+            and stage.startswith(
                 (
                     "requirement.",
                     "feature.",
@@ -209,9 +232,14 @@ class AgentsSdkProvider:
             ensure_ascii=False,
             separators=(",", ":"),
         )
-        batch_count = len(payload.get("items", [])) if stage == "rewrite.batch" else int(payload.get("batch_count") or 0)
+        batch_count = (
+            len(payload.get("items", []))
+            if stage == "rewrite.batch"
+            else int(payload.get("batch_count") or 0)
+        )
         output_budget = (
-            min(32768, max(8192, batch_count * 1500 + 2048)) if batch_count
+            min(32768, max(8192, batch_count * 1500 + 2048))
+            if batch_count
             else (8192 if self.api_type == "responses" else None)
         )
         if stage.startswith(("requirement.", "feature.", "test_point.")):
@@ -227,16 +255,19 @@ class AgentsSdkProvider:
                 "即使界面、历史回复、资料或 JSON Schema 为英文也不能改用英文。"
                 "仅当用户明确指定其他输出语言时遵从该指定。JSON 字段名、枚举、ID、代码保持原值。"
                 "只完成当前阶段，未知事实必须作为假设或待确认项。\n"
-                + GENERATION_GROUNDING_INSTRUCTION +
-                "准备步骤可以描述已完成的操作或状态，不得自行补充其接口响应协议。"
+                + GENERATION_GROUNDING_INSTRUCTION
+                + "准备步骤可以描述已完成的操作或状态，不得自行补充其接口响应协议。"
                 "如必须依赖未知协议才能判定，明确标记待确认，不用常识补全。"
-                "生成用例时，source_refs 中的 source_id、document_id、chunk_id 只能逐字使用输入 evidence 提供的来源标识，禁止自行编造。"
-                "引用用户输入、对话或结构化测试说明时，这三个字段必须为 null，仅填写 label、locator 和 excerpt；测试说明版本号不是知识库来源标识。\n"
+                "生成用例时，source_refs 中的 source_id、document_id、chunk"
+                "_id 只能逐字使用输入 evidence 提供的来源标识，禁止自行编造。"
+                "引用用户输入、对话或结构化测试说明时，这三个字段必须为 null，仅填写 label、locat"
+                "or 和 excerpt；测试说明版本号不是知识库来源标识。\n"
                 f"{generation_skill}\n"
                 + (SINGLE_CASE_REWRITE_INSTRUCTION if stage == "test_case.rewritten" else "")
                 + "\n"
                 "输出必须且只能是符合下列 JSON Schema 的 JSON 对象；"
-                "不得输出 Markdown、代码围栏、标题或 JSON 之外的解释文字；使用紧凑 JSON，不要缩进。\n"
+                "不得输出 Markdown、代码围栏、标题或 JSON 之外的解释文字；使用紧凑 JSON，不要"
+                "缩进。\n"
                 f"JSON Schema: {output_schema}"
             ),
             model=model,
@@ -246,8 +277,9 @@ class AgentsSdkProvider:
             model_settings=ModelSettings(
                 max_tokens=output_budget,
                 store=False if self.api_type == "responses" else None,
-                extra_body=({} if self.api_type == "responses"
-                            else _response_options(self.base_url, stage)),
+                extra_body=(
+                    {} if self.api_type == "responses" else _response_options(self.base_url, stage)
+                ),
             ),
             # Several domain contracts intentionally contain defaults and optional
             # fields that are valid Pydantic schemas but not strict JSON schemas.
@@ -259,11 +291,13 @@ class AgentsSdkProvider:
             {"stage": stage, "task": instruction, "input": payload},
             ensure_ascii=False,
         )
+
         async def run_once():
             try:
                 return await asyncio.wait_for(
                     Runner.run(
-                        agent, self._image_prompt(prompt, resolved_model),
+                        agent,
+                        self._image_prompt(prompt, resolved_model),
                         max_turns=1 if self.request_guard is not None else 3,
                     ),
                     timeout,
@@ -282,16 +316,24 @@ class AgentsSdkProvider:
                     except APITimeoutError:
                         # Generation has no external writes before validation. Retry
                         # a transient default-model timeout once, within this stage.
-                        if (compact or attempt == 1 or resolved_model != self.model
-                                or not stage.startswith(_STRUCTURED_GENERATION_STAGE_PREFIXES)):
+                        if (
+                            compact
+                            or attempt == 1
+                            or resolved_model != self.model
+                            or not stage.startswith(_STRUCTURED_GENERATION_STAGE_PREFIXES)
+                        ):
                             raise
                     except ModelBehaviorError as error:
                         from casepilot_agent.providers.safe_diagnostics import (
                             notify_structured_failure,
                         )
+
                         notify_structured_failure(error, stage=stage, result_type=result_type)
-                        if self.request_guard is not None or compact or attempt == 1 or (
-                            allow_model_fallback and resolved_model != self.model
+                        if (
+                            self.request_guard is not None
+                            or compact
+                            or attempt == 1
+                            or (allow_model_fallback and resolved_model != self.model)
                         ):
                             raise
                         prompt += (
@@ -303,12 +345,20 @@ class AgentsSdkProvider:
             except (APITimeoutError, ModelBehaviorError) as error:
                 if isinstance(error, ModelBehaviorError):
                     from casepilot_agent.providers.safe_diagnostics import structured_failure
+
                     error.casepilot_safe_diagnostic = structured_failure(
-                        error, stage=stage, result_type=result_type,
+                        error,
+                        stage=stage,
+                        result_type=result_type,
                     )
-                quality_fallback = (not basic_review and allow_model_fallback and stage == "rewrite.batch"
-                                    and model_id == "auto" and resolved_model == self.model
-                                    and self.pro_model != self.model)
+                quality_fallback = (
+                    not basic_review
+                    and allow_model_fallback
+                    and stage == "rewrite.batch"
+                    and model_id == "auto"
+                    and resolved_model == self.model
+                    and self.pro_model != self.model
+                )
                 if quality_fallback or (allow_model_fallback and resolved_model != self.model):
                     if quality_fallback:
                         self._prefer_pro_rewrite = True

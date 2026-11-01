@@ -102,15 +102,15 @@ def test_receipt_diagnostics_drop_unknown_values_at_storage_boundary():
 
 
 @pytest.mark.parametrize("effects,expected", [
-    ([], ["none"]), (["plan"], ["none"]),
-    (["read"], ["none", "read"]), (["prepare"], ["none", "prepare"]),
+    ([], ["answer_none", "clarify_none"]), (["plan"], ["answer_none", "clarify_none"]),
+    (["read"], ["answer_none", "clarify_none", "answer_read", "clarify_read", "action_read"]),
+    (["prepare"], ["answer_none", "clarify_none", "action_prepare"]),
 ])
 def test_final_effect_choices_require_real_current_receipts(effects, expected):
     receipts = {str(i): {"effect": effect} for i, effect in enumerate(effects)}
     schema = CurrentReceiptSchema(FinalAnswer, receipts).json_schema()
-    assert schema["properties"]["effect"]["enum"] == expected
-    if expected == ["none"]:
-        assert schema["properties"]["kind"]["enum"] == ["answer", "clarify"]
+    assert schema["properties"]["outcome"]["enum"] == expected
+    assert "kind" not in schema["properties"] and "effect" not in schema["properties"]
 
 
 def test_no_tool_replacement_failure_remains_failed_without_fabricating_receipts():

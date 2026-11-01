@@ -61,7 +61,11 @@ def evidence_batches(context: dict[str, Any], budget: int = 18000) -> list[dict[
     current: list[dict[str, Any]] = []
     size = 0
     for item in context.get("evidence", []):
-        item = {k: v for k, v in item.items() if k not in {"reference_cases", "sheet", "case_import_rows"}}
+        item = {
+            k: v
+            for k, v in item.items()
+            if k not in {"reference_cases", "sheet", "case_import_rows"}
+        }
         text = str(item.get("excerpt", ""))
         for start in range(0, max(1, len(text)), budget):
             piece = {**item, "excerpt": text[start : start + budget]}
@@ -75,8 +79,7 @@ def evidence_batches(context: dict[str, Any], budget: int = 18000) -> list[dict[
     return batches
 
 
-def analyze_batches(batches, complete, *, load, save, on_progress, check_cancelled,
-                    concurrency=3):
+def analyze_batches(batches, complete, *, load, save, on_progress, check_cancelled, concurrency=3):
     """Bound model calls; checkpoint each result before publishing progress."""
     completed, active = {}, {}
     pending = []
@@ -158,14 +161,14 @@ MAX_POINT_BATCHES = 32
 MAX_CONSOLIDATED_EVIDENCE_CHARS = 180000
 
 
-
 class PlanningAnalysis(ReuseAnalysis):
     """Extract requirements and their features in one pass over large documents."""
 
     feature_points: list[FeaturePoint] = Field(default_factory=list)
     planning_update_mode: Literal["merge", "replace"] = "merge"
     planning_revision_action: Literal["upsert", "delete_only"] = Field(
-        default="upsert", description=(
+        default="upsert",
+        description=(
             "本轮只删除已有测试点/功能且保留其余内容时必须delete_only，不生成替代内容；"
             "有新增或替换场景时才用upsert。"
         ),
@@ -216,10 +219,15 @@ def requested_point_count(
 
 def reconcile_planning(previous, incoming, analyses):
     """Apply an explicit revision; omission in an incremental response is not deletion."""
-    if analyses and all(isinstance(item, PlanningAnalysis) and item.planning_revision_action == "delete_only"
-                        for item in analyses):
-        if not previous or incoming.get("test_points") or incoming.get("feature_points"):
-            raise ValueError("delete_only_revision_generated_content")
+    if (
+        analyses
+        and all(
+            isinstance(item, PlanningAnalysis) and item.planning_revision_action == "delete_only"
+            for item in analyses
+        )
+        and (not previous or incoming.get("test_points") or incoming.get("feature_points"))
+    ):
+        raise ValueError("delete_only_revision_generated_content")
     if not previous or any(item.planning_update_mode == "replace" for item in analyses):
         return deepcopy(incoming)
     removed_features = {ref for item in analyses for ref in item.superseded_feature_ids}
@@ -229,8 +237,11 @@ def reconcile_planning(previous, incoming, analyses):
     if not removed_features <= known_features or not removed_points <= known_points:
         raise ValueError("Planning revision references unknown prior IDs")
     result = deepcopy(incoming)
-    features = {item["id"]: deepcopy(item) for item in previous.get("feature_points", [])
-                if item["id"] not in removed_features}
+    features = {
+        item["id"]: deepcopy(item)
+        for item in previous.get("feature_points", [])
+        if item["id"] not in removed_features
+    }
     features.update({item["id"]: deepcopy(item) for item in incoming.get("feature_points", [])})
     points = {}
     for item in previous.get("test_points", []):
@@ -267,17 +278,28 @@ def reconcile_planning(previous, incoming, analyses):
             continue
         batch["obligations"] = obligations
         identifiers = {item["id"] for item in obligations}
-        batch["uncovered_ids"] = [ref for ref in batch.get("uncovered_ids", [])
-                                  if ref in identifiers]
+        batch["uncovered_ids"] = [
+            ref for ref in batch.get("uncovered_ids", []) if ref in identifiers
+        ]
         batch["duplicate_suggestions"] = []
-        batch["warnings"] = list(dict.fromkeys([
-            *batch.get("warnings", []), "retained_previous_point_coverage",
-        ]))
+        batch["warnings"] = list(
+            dict.fromkeys(
+                [
+                    *batch.get("warnings", []),
+                    "retained_previous_point_coverage",
+                ]
+            )
+        )
         retained_batches.append(batch)
     if retained_batches:
-        review = result.setdefault("coverage_review", {
-            "status": "pending_independent_review", "source": "model_proposed", "batches": [],
-        })
+        review = result.setdefault(
+            "coverage_review",
+            {
+                "status": "pending_independent_review",
+                "source": "model_proposed",
+                "batches": [],
+            },
+        )
         current_batches = review.setdefault("batches", [])
         next_index = max((batch.get("batch_index", 0) for batch in current_batches), default=0) + 1
         for offset, batch in enumerate(retained_batches):
@@ -312,11 +334,14 @@ def compact_planning_context(common, features):
                 return common
             ref_matched = False
             for source in evidence:
-                if (not (ref.document_id or ref.chunk_id or ref.source_id)
-                        and ref.label != source.get("label")):
+                if not (
+                    ref.document_id or ref.chunk_id or ref.source_id
+                ) and ref.label != source.get("label"):
                     continue
-                if any(getattr(ref, key) and getattr(ref, key) != source.get(key)
-                       for key in ("source_id", "document_id", "chunk_id")):
+                if any(
+                    getattr(ref, key) and getattr(ref, key) != source.get(key)
+                    for key in ("source_id", "document_id", "chunk_id")
+                ):
                     continue
                 text = str(source.get("excerpt", ""))
                 # Server-hydrated refs retain full original text. A unique, explicitly
@@ -326,8 +351,11 @@ def compact_planning_context(common, features):
                 if ref.excerpt == text and len(feature.requirement_refs) == 1:
                     rule = feature.requirement_refs[0].strip()
                     if rule and len(rule) <= 80:
-                        pattern = (r"(?<![A-Za-z0-9_.-])" + re.escape(rule)
-                                   + r"\s*[:：]\s*[^\n。；;]+[。；;]")
+                        pattern = (
+                            r"(?<![A-Za-z0-9_.-])"
+                            + re.escape(rule)
+                            + r"\s*[:：]\s*[^\n。；;]+[。；;]"
+                        )
                         matches = set(re.findall(pattern, text))
                         if len(matches) == 1:
                             source_quote = matches.pop()
@@ -346,7 +374,8 @@ def compact_planning_context(common, features):
                     if re.search(
                         r"[。；;.!?！？\d]|除外|例外|除非|不适用|不包括|"
                         r"exception|except|unless|exempt|however",
-                        omitted, re.IGNORECASE,
+                        omitted,
+                        re.IGNORECASE,
                     ):
                         return common
                 excerpt = text[lower:upper]
@@ -360,8 +389,9 @@ def compact_planning_context(common, features):
         selected.extend(matched)
     # Feature ownership must not hide other rules supplied in this same batch:
     # point models can need their independent evidence for state interactions.
-    selected.extend(source for source in evidence
-                    if json.dumps(source, sort_keys=True) not in matched_originals)
+    selected.extend(
+        source for source in evidence if json.dumps(source, sort_keys=True) not in matched_originals
+    )
     unique = {json.dumps(item, sort_keys=True): item for item in selected}
     if not unique or sum(len(item["excerpt"]) for item in unique.values()) >= sum(
         len(str(item.get("excerpt", ""))) for item in evidence
@@ -377,6 +407,7 @@ def build_planning(
     analyses=None,
     *,
     target_count=None,
+    reserved_outputs=(),
     on_progress=None,
     on_feature_progress=None,
     feature_plans=None,
@@ -386,26 +417,34 @@ def build_planning(
     """Plan disjoint feature groups concurrently; publish validated, stable snapshots."""
     features, points, groups = [], [], []
     batches = evidence_batches(context)
+
     def plan_features(index, batch):
         check_cancelled()
         local = analyses[index] if analyses else requirement
-        common = {"requirement": local.model_dump(mode="json", exclude={"feature_points"}),
-                  "context": batch, "source_catalog": payload_catalog(batch)}
-        feature_plan = (feature_plans[index].model_copy(deep=True)
-                        if feature_plans and (feature_plans[index].feature_points or allow_empty) else complete(
-            "feature.generated",
-            CASE_DESIGN_INSTRUCTION + "按本批资料规划全部相关功能，保留具体规则和来源。不生成用例。"
-            "若context包含historical_cases，回归模式包含仍适用的核心场景，变更模式区分旧规则与本次新需求。"
-            "历史用例仅作覆盖参考，不得把与新需求冲突的旧预期当成当前规则。"
-            "module 为业务模块路径，name 为功能名；不得为凑数量合并不同功能。"
-            "当前只是完整资料的一个分片，其他模块由其他批次处理。"
-            "仅为本批有明确证据的规则生成功能；不得为全局数量补位、生成占位功能或推测其他模块规则。"
-            "同一规则的样例记录不是新功能，功能名使用资料中的规则名称，保留原始规则编号。"
-            "source_refs仅选择source_catalog的slot填入locator；三个身份ID必须为null。"
-            "引用正文、名称与真实来源标识由服务器填充，不要发明来源。",
-            common,
-            source_selection_schema(FeaturePlan, batch),
-        ))
+        common = {
+            "requirement": local.model_dump(mode="json", exclude={"feature_points"}),
+            "context": batch,
+            "source_catalog": payload_catalog(batch),
+        }
+        feature_plan = (
+            feature_plans[index].model_copy(deep=True)
+            if feature_plans and (feature_plans[index].feature_points or allow_empty)
+            else complete(
+                "feature.generated",
+                CASE_DESIGN_INSTRUCTION
+                + "按本批资料规划全部相关功能，保留具体规则和来源。不生成用例。"
+                "若context包含historical_cases，回归模式包含仍适用的核心场景，变更模式区分旧规则与本次新需求。"
+                "历史用例仅作覆盖参考，不得把与新需求冲突的旧预期当成当前规则。"
+                "module 为业务模块路径，name 为功能名；不得为凑数量合并不同功能。"
+                "当前只是完整资料的一个分片，其他模块由其他批次处理。"
+                "仅为本批有明确证据的规则生成功能；不得为全局数量补位、生成占位功能或推测其他模块规则。"
+                "同一规则的样例记录不是新功能，功能名使用资料中的规则名称，保留原始规则编号。"
+                "source_refs仅选择source_catalog的slot填入locator；三个身份ID必须为null。"
+                "引用正文、名称与真实来源标识由服务器填充，不要发明来源。",
+                common,
+                source_selection_schema(FeaturePlan, batch),
+            )
+        )
         feature_plan = project_feature_sources(feature_plan, batch)
         for ordinal, feature in enumerate(feature_plan.feature_points):
             feature.id = f"FP-{index + 1}-{ordinal + 1}"
@@ -418,9 +457,13 @@ def build_planning(
         return common, feature_plan
 
     feature_results = analyze_batches(
-        batches, plan_features, load=lambda *_: None, save=lambda *_: None,
+        batches,
+        plan_features,
+        load=lambda *_: None,
+        save=lambda *_: None,
         on_progress=on_feature_progress or (lambda *_: None),
-        check_cancelled=check_cancelled, concurrency=PLANNING_CONCURRENCY,
+        check_cancelled=check_cancelled,
+        concurrency=PLANNING_CONCURRENCY,
     )
     # A verified rule in the same document is still the same rule when different
     # slices propose different module paths. Conflicting definitions never qualify.
@@ -430,8 +473,12 @@ def build_planning(
         for feature in feature_plan.feature_points:
             name = source_rule_name(feature, context)
             documents = {ref.document_id for ref in feature.source_refs}
-            if (name and len(documents) == 1 and None not in documents
-                    and documents <= known_documents):
+            if (
+                name
+                and len(documents) == 1
+                and None not in documents
+                and documents <= known_documents
+            ):
                 identity = (next(iter(documents)), name)
                 feature.name = name
                 feature.module = rule_modules.setdefault(identity, feature.module)
@@ -446,8 +493,15 @@ def build_planning(
         if allow_empty:
             result = merge_planning([], [], context, len(batches))
             if on_progress:
-                on_progress(result, {"completed_batches": 0, "total_batches": 0,
-                                     "active_batches": [], "test_point_count": 0})
+                on_progress(
+                    result,
+                    {
+                        "completed_batches": 0,
+                        "total_batches": 0,
+                        "active_batches": [],
+                        "test_point_count": 0,
+                    },
+                )
             return result
         raise ValueError("planning_has_no_features")
 
@@ -547,6 +601,7 @@ def build_planning(
             asyncio.set_event_loop(runner.get_loop())
             check_cancelled()
             common, feature_slice = groups[index]
+            common = {**common, "reserved_outputs": deepcopy(list(reserved_outputs))}
             quota = sum(feature_budget[f.id] for f in feature_slice)
             count = quota if target_count is not None else min(POINTS_PER_BATCH, quota)
             allowed_ref = Literal[tuple(f.id for f in feature_slice)]
@@ -563,20 +618,24 @@ def build_planning(
             def expand_assertion(value):
                 if not isinstance(value, dict):
                     return value
-                selected = next((b for b in bindings
-                                 if b["id"] == value.get("assertion_binding")), None)
+                selected = next(
+                    (b for b in bindings if b["id"] == value.get("assertion_binding")), None
+                )
                 if selected is None:
                     return value
                 data = deepcopy(value)
-                for field, expected in (("assertion_feature_id", selected["feature_id"]),
-                                        ("assertion_source_slot", selected["source_slot"])):
+                for field, expected in (
+                    ("assertion_feature_id", selected["feature_id"]),
+                    ("assertion_source_slot", selected["source_slot"]),
+                ):
                     if data.get(field) not in (None, "", expected):
                         schema_coverage_guard(_boundary_binding_conflict)
                     data[field] = expected
                 return data
 
             sample_type = create_model(
-                "BatchBoundarySample", __base__=BoundarySample,
+                "BatchBoundarySample",
+                __base__=BoundarySample,
                 value=(SkipJsonSchema[FiniteFloat | None], None),
                 assertion_binding=(binding_ref, ...),
                 assertion_feature_id=(SkipJsonSchema[str], ""),
@@ -586,18 +645,22 @@ def build_planning(
                 unit=(SkipJsonSchema[Literal[""]], ""),
                 axis=(SkipJsonSchema[Literal[""]], ""),
                 time_origin=(SkipJsonSchema[Literal[""]], ""),
-                __validators__={"expand_assertion": model_validator(mode="before")(
-                    expand_assertion)},
+                __validators__={
+                    "expand_assertion": model_validator(mode="before")(expand_assertion)
+                },
             )
             point_type = create_model(
-                "BatchTestPoint", __base__=source_point_type,
+                "BatchTestPoint",
+                __base__=source_point_type,
                 scenario=(str, Field(min_length=1)),
                 boundary_samples=(list[sample_type] | None, None),
                 primary_binding=(binding_ref, ...),
                 primary_feature_id=(SkipJsonSchema[allowed_ref | None], None),
                 feature_point_ids=(list[allowed_ref], Field(default_factory=list)),
-                source_refs=(source_point_type.model_fields["source_refs"].annotation,
-                             Field(default_factory=list)),
+                source_refs=(
+                    source_point_type.model_fields["source_refs"].annotation,
+                    Field(default_factory=list),
+                ),
                 __validators__={"expand_binding": model_validator(mode="before")(expand_binding)},
             )
 
@@ -624,22 +687,33 @@ def build_planning(
                         candidate = obligation.model_dump(mode="json")
                         reason = obligation.boundary_contract.reason
                         candidate.update(boundary_contract=None, clarification="")
-                        schema_coverage_guard(validate_coverage, [candidate], plan.test_points,
-                                              {f.id for f in feature_slice})
-                        if any(sample.obligation_id == obligation.id
-                               for point in plan.test_points
-                               for sample in point.boundary_samples or []):
+                        schema_coverage_guard(
+                            validate_coverage,
+                            [candidate],
+                            plan.test_points,
+                            {f.id for f in feature_slice},
+                        )
+                        if any(
+                            sample.obligation_id == obligation.id
+                            for point in plan.test_points
+                            for sample in point.boundary_samples or []
+                        ):
                             schema_coverage_guard(_boundary_contract_required, structural_metadata)
                         obligation.boundary_contract = None
                         obligation.point_ids = []
                         obligation.clarification = reason
-                    if (obligation.dimension == "boundary"
-                            and obligation.boundary_contract is None
-                            and not obligation.clarification.strip()):
+                    if (
+                        obligation.dimension == "boundary"
+                        and obligation.boundary_contract is None
+                        and not obligation.clarification.strip()
+                    ):
                         schema_coverage_guard(_boundary_contract_required, structural_metadata)
                 incomplete = schema_coverage_guard(
-                    validate_boundary_contracts, obligations, plan.test_points,
-                    common["context"], feature_source_slots(feature_slice, common["context"]),
+                    validate_boundary_contracts,
+                    obligations,
+                    plan.test_points,
+                    common["context"],
+                    feature_source_slots(feature_slice, common["context"]),
                     derive_missing_values=True,
                 )
                 # Canonical source projection also validates canonical sample values.
@@ -649,73 +723,128 @@ def build_planning(
                     validate_primary_sources, plan, feature_slice, common["context"]
                 )
                 if obligations or suggestions:
-                    schema_coverage_guard(validate_coverage, obligations, plan.test_points,
-                                          {f.id for f in feature_slice}, suggestions,
-                                          incomplete=incomplete)
+                    schema_coverage_guard(
+                        validate_coverage,
+                        obligations,
+                        plan.test_points,
+                        {f.id for f in feature_slice},
+                        suggestions,
+                        incomplete=incomplete,
+                    )
                 return plan
 
-            source_slot_ref = Literal[tuple(item["slot"]
-                                            for item in payload_catalog(common["context"]))]
+            source_slot_ref = Literal[
+                tuple(item["slot"] for item in payload_catalog(common["context"]))
+            ]
+
             def expand_boundary_evidence(value):
                 if not isinstance(value, dict):
                     return value
                 data = deepcopy(value)
-                selected = next((entry for entry in boundary_bindings
-                                 if entry["id"] == data.get("evidence_binding")), None)
+                selected = next(
+                    (
+                        entry
+                        for entry in boundary_bindings
+                        if entry["id"] == data.get("evidence_binding")
+                    ),
+                    None,
+                )
                 # Old scripted/cache inputs remain valid only with exact matching
                 # current evidence. Model-facing schema requires the selector.
                 if selected is None and "evidence_binding" not in data:
-                    selected = next((entry for entry in boundary_bindings
-                                     if entry["source_slot"] == data.get("source_slot")
-                                     and entry["threshold"] == data.get("threshold")
-                                     and entry["source_literal"]
-                                     in data.get("source_literal", "")), None)
+                    selected = next(
+                        (
+                            entry
+                            for entry in boundary_bindings
+                            if entry["source_slot"] == data.get("source_slot")
+                            and entry["threshold"] == data.get("threshold")
+                            and entry["source_literal"] in data.get("source_literal", "")
+                        ),
+                        None,
+                    )
                     if selected:
                         data["evidence_binding"] = selected["id"]
                         data["source_literal"] = selected["source_literal"]
                 if selected:
-                    for field in ("source_slot", "source_literal", "threshold",
-                                  "unit", "quantity_axis_id", "sampling_step", "sampling_literal"):
+                    for field in (
+                        "source_slot",
+                        "source_literal",
+                        "threshold",
+                        "unit",
+                        "quantity_axis_id",
+                        "sampling_step",
+                        "sampling_literal",
+                    ):
                         if field in data and data[field] != selected[field]:
-                            code = ("planning_boundary_sampling_invalid"
-                                    if field in {"sampling_step", "sampling_literal"}
-                                    else "planning_boundary_binding_conflict")
+                            code = (
+                                "planning_boundary_sampling_invalid"
+                                if field in {"sampling_step", "sampling_literal"}
+                                else "planning_boundary_binding_conflict"
+                            )
                             schema_coverage_guard(_boundary_binding_conflict, code)
                         data[field] = selected[field]
                 return data
 
             contract_type = create_model(
-                "BatchBoundaryContract", __base__=BoundaryContract,
-                evidence_binding=(Literal[tuple(entry["id"] for entry in boundary_bindings)]
-                                  if boundary_bindings else Literal["unavailable"], ...),
+                "BatchBoundaryContract",
+                __base__=BoundaryContract,
+                evidence_binding=(
+                    Literal[tuple(entry["id"] for entry in boundary_bindings)]
+                    if boundary_bindings
+                    else Literal["unavailable"],
+                    ...,
+                ),
                 source_slot=(SkipJsonSchema[source_slot_ref], ""),
                 source_literal=(SkipJsonSchema[str], ""),
                 unit=(SkipJsonSchema[str], ""),
                 quantity_axis_id=(SkipJsonSchema[str | None], None),
                 sampling_step=(SkipJsonSchema[float | None], None),
                 sampling_literal=(SkipJsonSchema[str], ""),
-                axis=(str, Field(min_length=1, description=(
-                    "Proposed human-readable axis description, not a machine identity or proof."))),
-                time_origin=(str, Field(min_length=1, description=(
-                    "Proposed time-origin for human review; not_applicable for counts."))),
+                axis=(
+                    str,
+                    Field(
+                        min_length=1,
+                        description=(
+                            "Proposed human-readable axis description, not a "
+                            "machine identity or proof."
+                        ),
+                    ),
+                ),
+                time_origin=(
+                    str,
+                    Field(
+                        min_length=1,
+                        description=(
+                            "Proposed time-origin for human review; not_applicable for counts."
+                        ),
+                    ),
+                ),
                 threshold=(
-                    SkipJsonSchema[BoundaryContract.model_fields["threshold"].annotation], 0.0
+                    SkipJsonSchema[BoundaryContract.model_fields["threshold"].annotation],
+                    0.0,
                 ),
                 source_ref=(SkipJsonSchema[type(None)], None),
-                __validators__={"expand_evidence": model_validator(mode="before")(
-                    expand_boundary_evidence)},
+                __validators__={
+                    "expand_evidence": model_validator(mode="before")(expand_boundary_evidence)
+                },
             )
-            contract_choice = (contract_type | UnresolvedBoundaryContract
-                               if boundary_bindings else UnresolvedBoundaryContract)
+            contract_choice = (
+                contract_type | UnresolvedBoundaryContract
+                if boundary_bindings
+                else UnresolvedBoundaryContract
+            )
 
             def restore_clarification(value):
                 # Canonical/cache form stores unresolved state as clarification,
                 # not a new persisted contract shape. Restore only that explicit state.
-                if (isinstance(value, dict) and value.get("dimension") == "boundary"
-                        and value.get("boundary_contract") is None
-                        and not value.get("point_ids")
-                        and isinstance(value.get("clarification"), str)
-                        and value["clarification"].strip()):
+                if (
+                    isinstance(value, dict)
+                    and value.get("dimension") == "boundary"
+                    and value.get("boundary_contract") is None
+                    and not value.get("point_ids")
+                    and isinstance(value.get("clarification"), str)
+                    and value["clarification"].strip()
+                ):
                     data = deepcopy(value)
                     data["boundary_contract"] = dict(
                         status="unresolved", reason=data["clarification"]
@@ -724,15 +853,18 @@ def build_planning(
                 return value
 
             boundary_obligation_type = create_model(
-                "BatchBoundaryObligation", __base__=CoverageObligation,
+                "BatchBoundaryObligation",
+                __base__=CoverageObligation,
                 dimension=(Literal["boundary"], ...),
                 boundary_contract=(contract_choice, ...),
                 feature_point_ids=(list[allowed_ref], Field(min_length=1, max_length=24)),
-                __validators__={"restore_clarification": model_validator(mode="before")(
-                    restore_clarification)},
+                __validators__={
+                    "restore_clarification": model_validator(mode="before")(restore_clarification)
+                },
             )
             ordinary_obligation_type = create_model(
-                "BatchOrdinaryObligation", __base__=CoverageObligation,
+                "BatchOrdinaryObligation",
+                __base__=CoverageObligation,
                 dimension=(Literal["normal", "exception", "state"], ...),
                 boundary_contract=(type(None), None),
                 feature_point_ids=(list[allowed_ref], Field(min_length=1, max_length=24)),
@@ -767,8 +899,11 @@ def build_planning(
                         + "\n【本批输出约束】\n"
                         "title保留边界数值和例外。feature_point_ids是所属功能ID，不是测试点序号，"
                         "必须逐字复用本批feature_points的id，多个测试点可以复用同一个功能ID，严禁递增或发明功能ID。"
-                        "本批每个功能ID都必须被至少一个测试点关联；一个测试点可以同时关联多个相关功能ID，"
-                        "数量预算小于功能数时也不能遗漏功能关联，不得通过超出数量预算来修复。"
+                        "每个功能必须有实际测试点关联，或有point_ids为空的明确coverage_obligation保留未覆盖状态。"
+                        "只关联实际被观察/校验的功能；不得为凑全功能关联而把正常规则挂到异常点。"
+                        "数量不足时保留具体未覆盖义务，不超出预算也不伪造覆盖。"
+                        "reserved_outputs是服务器另行保留的原样来源，不占本批缺口数量；"
+                        "本批只规划剩余缺口。不能把其规则强行关联到缺口点，也不能凭来源存在宣称语义已核验。"
                         "本批数量为batch_count；target_count非空表示用户明确指定数量，必须恰好输出batch_count个不同测试点，"
                         "不得合并用户明确拆开的测试点；target_count为空时batch_count只是上限。不得在本批重复追求全局总数。"
                         "coverage_matrix留空；source_refs独立选择本请求source_catalog槽填locator，三个身份ID为null。"
@@ -821,20 +956,32 @@ def build_planning(
                 else CoverageReport()
             )
             incomplete = validate_boundary_contracts(
-                obligations, plan.test_points, common["context"],
+                obligations,
+                plan.test_points,
+                common["context"],
                 feature_source_slots(feature_slice, common["context"]),
             )
             report = (
-                validate_coverage(obligations, plan.test_points,
-                                  {f.id for f in feature_slice}, suggestions,
-                                  incomplete=incomplete)
-                if obligations or suggestions else CoverageReport()
+                validate_coverage(
+                    obligations,
+                    plan.test_points,
+                    {f.id for f in feature_slice},
+                    suggestions,
+                    incomplete=incomplete,
+                )
+                if obligations or suggestions
+                else CoverageReport()
             )
             # Missing test setup is not an invitation to invent adjacent samples.
-            fillable = {item.id for item in report.uncovered
-                        if item.boundary_contract is None
-                        or (item.boundary_contract.sampling_step is not None
-                            and item.boundary_contract.sampling_literal)}
+            fillable = {
+                item.id
+                for item in report.uncovered
+                if item.boundary_contract is None
+                or (
+                    item.boundary_contract.sampling_step is not None
+                    and item.boundary_contract.sampling_literal
+                )
+            }
             completion_attempted = False
             if target_count is None and fillable and len(plan.test_points) < count:
                 check_cancelled()
@@ -844,14 +991,20 @@ def build_planning(
                 original_plan = plan
 
                 def validate_completion(candidate):
-                    schema_coverage_guard(validate_coverage_completion, original_plan, candidate,
-                                          incomplete=incomplete)
+                    schema_coverage_guard(
+                        validate_coverage_completion,
+                        original_plan,
+                        candidate,
+                        incomplete=incomplete,
+                    )
                     return candidate
 
                 completion_type = create_model(
-                    "BatchTestPointPlan", __base__=plan_type,
-                    __validators__={"validate_completion": model_validator(mode="after")(
-                        validate_completion)},
+                    "BatchTestPointPlan",
+                    __base__=plan_type,
+                    __validators__={
+                        "validate_completion": model_validator(mode="after")(validate_completion)
+                    },
                 )
                 filled = complete(
                     "test_point.generated",
@@ -877,7 +1030,8 @@ def build_planning(
                         },
                         "existing_plan": plan.model_dump(mode="json"),
                         "coverage_gaps": [
-                            item.model_dump(mode="json") for item in report.uncovered
+                            item.model_dump(mode="json")
+                            for item in report.uncovered
                             if item.id in fillable
                         ],
                         "target_count": None,
@@ -900,21 +1054,31 @@ def build_planning(
                     else CoverageReport()
                 )
             incomplete = validate_boundary_contracts(
-                obligations, plan.test_points, common["context"],
+                obligations,
+                plan.test_points,
+                common["context"],
                 feature_source_slots(feature_slice, common["context"]),
             )
             report = (
-                validate_coverage(obligations, plan.test_points,
-                                  {f.id for f in feature_slice}, suggestions,
-                                  incomplete=incomplete)
-                if obligations or suggestions else CoverageReport()
+                validate_coverage(
+                    obligations,
+                    plan.test_points,
+                    {f.id for f in feature_slice},
+                    suggestions,
+                    incomplete=incomplete,
+                )
+                if obligations or suggestions
+                else CoverageReport()
             )
-            projected_boundary = project_boundary_metadata(plan.model_dump(mode="json"),
-                                                           common["context"])
+            projected_boundary = project_boundary_metadata(
+                plan.model_dump(mode="json"), common["context"]
+            )
             # Canonical boundary projection happens after all model validation.
             boundary_points = {p["id"]: p for p in projected_boundary["test_points"]}
-            obligations = [CoverageObligation.model_validate(item)
-                           for item in projected_boundary.get("coverage_obligations", [])]
+            obligations = [
+                CoverageObligation.model_validate(item)
+                for item in projected_boundary.get("coverage_obligations", [])
+            ]
             # Keep the exact displayed catalog text. Canonical context validates
             # identity and textual provenance, never adds unseen citation content.
             plan = project_point_sources(
@@ -954,11 +1118,15 @@ def build_planning(
                 "completion_attempted": completion_attempted,
                 "warnings": (["coverage_not_assessed"] if not obligations else [])
                 + (["coverage_unverified"] if incomplete or report.clarifications else [])
-                + (["boundary_semantics_requires_review"] if any(
-                    item.boundary_contract is not None
-                    and item.boundary_contract.quantity_axis_id is not None
-                    for item in obligations
-                ) else [])
+                + (
+                    ["boundary_semantics_requires_review"]
+                    if any(
+                        item.boundary_contract is not None
+                        and item.boundary_contract.quantity_axis_id is not None
+                        for item in obligations
+                    )
+                    else []
+                )
                 + (
                     [
                         "coverage_budget_limited"
@@ -1028,25 +1196,46 @@ def validate_coverage_completion(original, candidate, *, incomplete=()):
     if any(new.get(key) != value for key, value in old.items()):
         raise ValueError("planning_coverage_existing_point_changed")
     revised = {item.id: item for item in getattr(candidate, "coverage_obligations", [])}
-    if any(item.id not in revised or item.model_dump(exclude={"point_ids"}) !=
-           revised[item.id].model_dump(exclude={"point_ids"})
-           for item in getattr(original, "coverage_obligations", [])):
+    if any(
+        item.id not in revised
+        or item.model_dump(exclude={"point_ids"})
+        != revised[item.id].model_dump(exclude={"point_ids"})
+        for item in getattr(original, "coverage_obligations", [])
+    ):
         raise ValueError("planning_coverage_obligation_changed")
     validate_completion_ownership(original, candidate, incomplete=incomplete)
 
 
 def validate_point_batch(plan, feature_ids, count, *, exact=False):
-    if not plan.test_points or len(plan.test_points) > count or (exact and len(plan.test_points) != count):
+    if (
+        not plan.test_points
+        or len(plan.test_points) > count
+        or (exact and len(plan.test_points) != count)
+    ):
         raise ValueError("planning_point_batch_size_invalid")
-    if exact and len({(tuple(sorted(p.feature_point_ids)), p.scenario, p.title) for p in plan.test_points}) != len(plan.test_points):
+    if exact and len(
+        {(tuple(sorted(p.feature_point_ids)), p.scenario, p.title) for p in plan.test_points}
+    ) != len(plan.test_points):
         raise ValueError("planning_duplicate_test_point")
     covered = set()
     for point in plan.test_points:
         if not point.feature_point_ids or set(point.feature_point_ids) - feature_ids:
             raise ValueError("planning_feature_reference_invalid")
         covered.update(point.feature_point_ids)
-    if covered != feature_ids:
-        raise ValueError("planning_feature_uncovered:" + ",".join(sorted(feature_ids - covered)))
+    # An explicitly uncovered obligation is accounted for, never counted as
+    # coverage. Requiring a point link here forced unrelated rules onto the same
+    # point under a narrow quantity budget. Downstream coverage validation still
+    # checks every obligation/ref and persists the uncovered/clarification state.
+    unrepresented = feature_ids - covered
+    for raw in getattr(plan, "coverage_obligations", []):
+        obligation = CoverageObligation.model_validate(raw)
+        owners = set(obligation.feature_point_ids)
+        if not owners <= feature_ids:
+            raise ValueError("planning_coverage_feature_reference_invalid")
+        if not obligation.point_ids:
+            unrepresented -= owners
+    if unrepresented:
+        raise ValueError("planning_feature_uncovered:" + ",".join(sorted(unrepresented)))
 
 
 def source_rule_name(feature, batch):
@@ -1061,16 +1250,18 @@ def source_rule_name(feature, batch):
     quoted = {
         match
         for ref in feature.source_refs
-        for match in re.findall(r"(?<![A-Za-z0-9_.-])([A-Za-z][A-Za-z0-9_.-]{0,79})\s*[:：]",
-                                ref.excerpt or "")
+        for match in re.findall(
+            r"(?<![A-Za-z0-9_.-])([A-Za-z][A-Za-z0-9_.-]{0,79})\s*[:：]", ref.excerpt or ""
+        )
     }
     candidates = [reference, *sorted(quoted - {reference})]
     names = set()
     for candidate in candidates:
         # A sample or chunk may end in a truncated rule, even before a newline.
         # Only complete, explicitly terminated definitions establish identity.
-        pattern = re.compile(r"(?<![A-Za-z0-9_.-])" + re.escape(candidate)
-                             + r"\s*[:：]\s*([^\n。；;]+)(?=[。；;])")
+        pattern = re.compile(
+            r"(?<![A-Za-z0-9_.-])" + re.escape(candidate) + r"\s*[:：]\s*([^\n。；;]+)(?=[。；;])"
+        )
         definitions = {
             match.strip().rstrip("。.")
             for item in batch.get("evidence", [])
@@ -1090,8 +1281,10 @@ def consolidate_feature_groups(features, groups, context):
     Use the same exact module/name identity as final snapshots. Retain all rules
     and all contributing original evidence; no similarity-based deletion.
     """
+
     def key(feature):
         return feature.module, feature.name
+
     canonical = FeaturePlan.model_validate(merge_planning(features, [], {}, 0)).feature_points
     by_key = {key(feature): feature for feature in canonical}
     origins = {}
@@ -1165,8 +1358,10 @@ def _stable_point_ids(features, points):
             + [point.scenario, point.title]
         )
         if point.primary_feature_id is not None and len(set(point.feature_point_ids)) > 1:
-            key = json.dumps([key, {"primary_feature_id": feature_map[point.primary_feature_id]}],
-                             ensure_ascii=False)
+            key = json.dumps(
+                [key, {"primary_feature_id": feature_map[point.primary_feature_id]}],
+                ensure_ascii=False,
+            )
         if point.boundary_samples:
             sample_keys = []
             for sample in point.boundary_samples:
@@ -1228,7 +1423,8 @@ def merge_planning(features, points, context, processed_batches):
             if point.boundary_samples:
                 current.boundary_samples = current.boundary_samples or []
                 current.boundary_samples.extend(
-                    sample for sample in point.boundary_samples
+                    sample
+                    for sample in point.boundary_samples
                     if sample not in current.boundary_samples
                 )
             if point.objective not in current.objective:
@@ -1246,9 +1442,11 @@ def merge_planning(features, points, context, processed_batches):
 
 
 def planned_module(point, features) -> str:
-    feature = (next(item for item in features if item.id == point.primary_feature_id)
-               if point.primary_feature_id is not None
-               else next(item for item in features if item.id in point.feature_point_ids))
+    feature = (
+        next(item for item in features if item.id == point.primary_feature_id)
+        if point.primary_feature_id is not None
+        else next(item for item in features if item.id in point.feature_point_ids)
+    )
     parts = [part.strip() for part in feature.module.split("/") if part.strip()]
     for part in (feature.name,):
         part = part.strip().replace("/", "／")
@@ -1264,15 +1462,20 @@ def rewrite_evidence(context, snapshot, complete):
     batches = evidence_batches(context)
     rules = []
     sources = []
+
     # Existing expected outcomes are under review, not source material. Supplying
     # them to extraction lets a model copy the very assertions we must check.
     def scope_only(value):
         if isinstance(value, dict):
-            return {key: scope_only(item) for key, item in value.items()
-                    if key not in {"expected", "source_refs"}}
+            return {
+                key: scope_only(item)
+                for key, item in value.items()
+                if key not in {"expected", "source_refs"}
+            }
         if isinstance(value, list):
             return [scope_only(item) for item in value]
         return value
+
     scope = scope_only(snapshot)
 
     def extract(index, batch):
@@ -1315,8 +1518,9 @@ def rewrite_evidence(context, snapshot, complete):
                 # never evidence. Resolve the ID to its actual original sentence.
                 ids = re.findall(r"(?<![A-Za-z0-9_.-])([A-Za-z][A-Za-z0-9_.-]{0,79})\s*[:：]", rule)
                 if len(set(ids)) == 1:
-                    pattern = re.compile(r"(?<![A-Za-z0-9_.-])" + re.escape(ids[0])
-                                         + r"\s*[:：][^\n。；;]+[。；;]")
+                    pattern = re.compile(
+                        r"(?<![A-Za-z0-9_.-])" + re.escape(ids[0]) + r"\s*[:：][^\n。；;]+[。；;]"
+                    )
                     anchors = {}
                     for source in batch["evidence"]:
                         for match in pattern.finditer(str(source.get("excerpt", ""))):
@@ -1327,7 +1531,9 @@ def rewrite_evidence(context, snapshot, complete):
                         for source, start, end in others:
                             text = source["excerpt"]
                             rules.append(text[start:end])
-                            matched.append({**source, "excerpt": text[max(0, start - 240):end + 240]})
+                            matched.append(
+                                {**source, "excerpt": text[max(0, start - 240) : end + 240]}
+                            )
             if found is None:
                 # Preserve the entire batch on an unresolved rule; do not promote
                 # a model paraphrase into the business_rules evidence list.
@@ -1336,16 +1542,22 @@ def rewrite_evidence(context, snapshot, complete):
             source, start, end = found
             text = source["excerpt"]
             rules.append(text[start:end])
-            matched.append({**source, "excerpt": text[max(0, start - 240):end + 240]})
+            matched.append({**source, "excerpt": text[max(0, start - 240) : end + 240]})
         sources.extend(item for item in matched if item not in sources)
     # Merge overlapping windows from the same original chunk. Repeated rules
     # otherwise repeat their surrounding text and metadata in every model call.
     windows = {}
     for source in sources:
         metadata = {k: v for k, v in source.items() if k != "excerpt"}
-        original = next((item for item in context["evidence"]
-                         if {k: v for k, v in item.items() if k != "excerpt"} == metadata
-                         and source["excerpt"] in item["excerpt"]), source)
+        original = next(
+            (
+                item
+                for item in context["evidence"]
+                if {k: v for k, v in item.items() if k != "excerpt"} == metadata
+                and source["excerpt"] in item["excerpt"]
+            ),
+            source,
+        )
         key = json.dumps(original, sort_keys=True)
         start = original["excerpt"].index(source["excerpt"])
         windows.setdefault(key, (original, []))[1].append((start, start + len(source["excerpt"])))
@@ -1357,9 +1569,15 @@ def rewrite_evidence(context, snapshot, complete):
                 merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
             else:
                 merged.append((start, end))
-        sources.extend({**original, "excerpt": original["excerpt"][start:end]} for start, end in merged)
-    source_metadata = {json.dumps({k: v for k, v in item.items() if k != "excerpt"}, sort_keys=True):
-                       {k: v for k, v in item.items() if k != "excerpt"} for item in sources}
+        sources.extend(
+            {**original, "excerpt": original["excerpt"][start:end]} for start, end in merged
+        )
+    source_metadata = {
+        json.dumps({k: v for k, v in item.items() if k != "excerpt"}, sort_keys=True): {
+            k: v for k, v in item.items() if k != "excerpt"
+        }
+        for item in sources
+    }
     return {
         "business_rules": list(dict.fromkeys(rules)),
         "sources": list(source_metadata.values()),

@@ -13,12 +13,18 @@ from casepilot_api.models import ConversationOperation, GenerationJob
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("target_scope", ["inferred", "selected"])
-@pytest.mark.parametrize("confirmation", [
-    {"confirm_modification": True}, {"content": "确认"},
-    {"content": "确认", "echo_targets": True},
-    {"content": "确认", "echo_case_ids": True},
-])
-async def test_confirmation_rejects_bypass_and_refreshes_changed_assets(monkeypatch, confirmation, target_scope):
+@pytest.mark.parametrize(
+    "confirmation",
+    [
+        {"confirm_modification": True},
+        {"content": "确认"},
+        {"content": "确认", "echo_targets": True},
+        {"content": "确认", "echo_case_ids": True},
+    ],
+)
+async def test_confirmation_rejects_bypass_and_refreshes_changed_assets(
+    monkeypatch, confirmation, target_scope
+):
     dispatched = []
     monkeypatch.setattr(
         conversations, "enqueue_task", lambda *args, **kwargs: dispatched.append(args)
@@ -114,16 +120,22 @@ async def test_confirmation_rejects_bypass_and_refreshes_changed_assets(monkeypa
 
 def test_confirmation_compares_assets_instead_of_selector_representation():
     from types import SimpleNamespace
+
     from casepilot_api.schemas import ConversationOperationResumeRequest
 
     ids = [uuid4(), uuid4()]
-    operation = SimpleNamespace(target={"selectors": []}, payload={
-        "modification_confirmation": {"cases": [
-            {"ref": str(item), "target_type": "formal"} for item in ids
-        ] + [{"ref": "candidate-one", "target_type": "candidate"}]},
-    })
+    operation = SimpleNamespace(
+        target={"selectors": []},
+        payload={
+            "modification_confirmation": {
+                "cases": [{"ref": str(item), "target_type": "formal"} for item in ids]
+                + [{"ref": "candidate-one", "target_type": "candidate"}]
+            },
+        },
+    )
     same = ConversationOperationResumeRequest(
-        content="确认", targets=[
+        content="确认",
+        targets=[
             {"kind": "case", "case_ids": list(reversed(ids)), "candidate_refs": ["candidate-one"]},
         ],
     )
@@ -136,41 +148,61 @@ def test_confirmation_compares_assets_instead_of_selector_representation():
         [{"kind": "case", "case_ids": ids}],
     ]:
         assert not conversations._same_confirmation_targets(
-            operation, ConversationOperationResumeRequest(content="确认", targets=targets),
+            operation,
+            ConversationOperationResumeRequest(content="确认", targets=targets),
         )
 
 
 def test_recover_polluted_instruction_preserves_actual_supplements():
-    assert conversations._without_confirmation_supplements(
-        "改写多端模块用例\n补充说明：确认\n补充说明：步骤更清晰\n补充说明：确认！"
-    ) == "改写多端模块用例\n补充说明：步骤更清晰"
+    assert (
+        conversations._without_confirmation_supplements(
+            "改写多端模块用例\n补充说明：确认\n补充说明：步骤更清晰\n补充说明：确认！"
+        )
+        == "改写多端模块用例\n补充说明：步骤更清晰"
+    )
 
 
 @pytest.mark.asyncio
-async def test_changed_selection_is_previewed_and_old_confirmation_pollution_is_recovered(monkeypatch):
+async def test_changed_selection_is_previewed_and_old_confirmation_pollution_is_recovered(
+    monkeypatch,
+):
     dispatched = []
-    monkeypatch.setattr(conversations, "enqueue_task", lambda *args, **kwargs: dispatched.append(args))
+    monkeypatch.setattr(
+        conversations, "enqueue_task", lambda *args, **kwargs: dispatched.append(args)
+    )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        registration = await client.post("/api/v1/auth/register", json={
-            "email": f"confirmation-scope-{uuid4().hex}@casepilot.test",
-            "display_name": "Confirmation scope", "password": "CasePilot123!",
-        })
+        registration = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": f"confirmation-scope-{uuid4().hex}@casepilot.test",
+                "display_name": "Confirmation scope",
+                "password": "CasePilot123!",
+            },
+        )
         space = registration.json()["spaces"][0]["id"]
         collection = (await client.get(f"/api/v1/spaces/{space}/collections")).json()[0]["id"]
         cases = []
         for title in ["登录成功", "取消登录"]:
-            response = await client.post(f"/api/v1/collections/{collection}/test-cases", json={
-                "title": title, "module": "登录",
-                "steps": [{"action": "操作", "expected": "符合要求"}],
-            })
+            response = await client.post(
+                f"/api/v1/collections/{collection}/test-cases",
+                json={
+                    "title": title,
+                    "module": "登录",
+                    "steps": [{"action": "操作", "expected": "符合要求"}],
+                },
+            )
             assert response.status_code == 201, response.text
             cases.append(response.json())
         workspace = (await client.put(f"/api/v1/collections/{collection}/workspace")).json()["id"]
         instruction = "把当前用例优先级改为P0"
-        turn = await client.post(f"/api/v1/conversations/{workspace}/messages", json={
-            "content": instruction, "intent_override": "CASE_MODIFY",
-            "target_case_ids": [cases[0]["id"]],
-        })
+        turn = await client.post(
+            f"/api/v1/conversations/{workspace}/messages",
+            json={
+                "content": instruction,
+                "intent_override": "CASE_MODIFY",
+                "target_case_ids": [cases[0]["id"]],
+            },
+        )
         assert turn.status_code == 202, turn.text
         oid = turn.json()["operation_plan"]["operations"][0]["id"]
         resume = f"/api/v1/conversation-operations/{oid}/resume"
@@ -189,8 +221,11 @@ async def test_changed_selection_is_previewed_and_old_confirmation_pollution_is_
             pending = dict(payload["modification_confirmation"])
             polluted = instruction + "\n补充说明：确认\n补充说明：确认"
             pending["instruction"] = polluted
-            operation.payload = {**payload, "instruction": polluted,
-                                 "modification_confirmation": pending}
+            operation.payload = {
+                **payload,
+                "instruction": polluted,
+                "modification_confirmation": pending,
+            }
             db.commit()
         confirmed = await client.post(resume, json={"content": "确认", "targets": selection})
         assert confirmed.status_code == 202, confirmed.text

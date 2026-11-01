@@ -1,4 +1,5 @@
 """Interpret a reply as an update to a persisted rewrite draft, never as execution."""
+
 import json
 import re
 from typing import Literal
@@ -21,13 +22,25 @@ from casepilot_api.model_client import compatible_model, structured_model_settin
 class RewriteReply(BaseModel):
     action: Literal["confirm", "update", "cancel", "clarify"]
     scope_action: Literal["preserve", "replace"] = "preserve"
-    scope_instruction: str = Field(default="", max_length=4000, description="完整的新范围条件；解释沿用用户对话语言，编号和引用值原样保留。")
+    scope_instruction: str = Field(
+        default="",
+        max_length=4000,
+        description="完整的新范围条件；解释沿用用户对话语言，编号和引用值原样保留。",
+    )
     # Complete replacement, including retained constraints; not appended history.
-    requirements: str = Field(default="", max_length=8000, description=(
-        "完整的最新修改要求，使用用户的对话语言；用户指定的字段值、编号、引用内容逐字保留，不翻译。"
-    ))
+    requirements: str = Field(
+        default="",
+        max_length=8000,
+        description=(
+            "完整的最新修改要求，使用用户的对话语言；用户指定的字段值、编号、引用内容逐字保留，不翻译。"
+        ),
+    )
     requirements_ready: bool = True
-    clarification: str = Field(default="", max_length=1000, description="用用户对话语言提出一个具体问题，不翻译用户指定的字段原值。")
+    clarification: str = Field(
+        default="",
+        max_length=1000,
+        description="用用户对话语言提出一个具体问题，不翻译用户指定的字段原值。",
+    )
     confidence: float = Field(default=1, ge=0, le=1)
     additional_intents: list[Literal["CASE_DELETE", "CASE_GENERATE", "OTHER_TASK"]] = Field(
         default_factory=list,
@@ -48,13 +61,17 @@ class RewriteReply(BaseModel):
 
 
 class SemanticRewriteReply(RewriteReply):
-    priority_assignment: str | None = Field(max_length=100, description=PRIORITY_ASSIGNMENT_DESCRIPTION)
+    priority_assignment: str | None = Field(
+        max_length=100, description=PRIORITY_ASSIGNMENT_DESCRIPTION
+    )
     # An omitted model decision must not silently authorize reuse of old scope.
-    scope_action: Literal["preserve", "replace"] = Field(description=(
-        "必须显式判断本轮是否改变目标成员。新增、追加、也加入、排除、换成、只改部分都选replace；"
-        "保留原来的目标同时追加新目标也是replace，scope_instruction写完整并集。"
-        "仅修改字段值且目标成员不变才选preserve。"
-    ))
+    scope_action: Literal["preserve", "replace"] = Field(
+        description=(
+            "必须显式判断本轮是否改变目标成员。新增、追加、也加入、排除、换成、只改部分都选replace；"
+            "保留原来的目标同时追加新目标也是replace，scope_instruction写完整并集。"
+            "仅修改字段值且目标成员不变才选preserve。"
+        )
+    )
 
 
 class ExplicitCollectionReference(CollectionReference):
@@ -64,31 +81,54 @@ class ExplicitCollectionReference(CollectionReference):
 
 
 class CollectionAwareRewriteReply(SemanticRewriteReply):
-    collection: ExplicitCollectionReference = Field(description="本轮回复的目标集合引用；不能从旧草稿推导新的集合切换授权。")
+    collection: ExplicitCollectionReference = Field(
+        description="本轮回复的目标集合引用；不能从旧草稿推导新的集合切换授权。"
+    )
 
 
-def interpret_rewrite_reply(content: str, state: dict, *, provider: str, model_name: str,
-                            base_url: str, api_key: str, timeout_seconds: float,
-                            tracing_enabled: bool) -> RewriteReply:
+def interpret_rewrite_reply(
+    content: str,
+    state: dict,
+    *,
+    provider: str,
+    model_name: str,
+    base_url: str,
+    api_key: str,
+    timeout_seconds: float,
+    tracing_enabled: bool,
+) -> RewriteReply:
     if provider == "mock":
         # Offline fixtures only. Live replies always use semantic interpretation.
         if re.fullmatch(r"\s*(确认|确认修改|好的|可以|yes|ok|confirm)[。!！]?\s*", content, re.I):
             return RewriteReply(action="confirm")
         if re.fullmatch(r"\s*(不改了|取消|停止|cancel)[。!！]?\s*", content, re.I):
             return RewriteReply(action="cancel")
-        scope_change = bool(re.search(r"模块|用例\s+(?:CP|TC|CASE)-|范围|排除|只改|前\d+条", content))
+        scope_change = bool(
+            re.search(r"模块|用例\s+(?:CP|TC|CASE)-|范围|排除|只改|前\d+条", content)
+        )
         scope_change = scope_change and not re.search(r"模块(?:改为|改成|名称)", content)
-        return RewriteReply(action="update", scope_action="replace" if scope_change else "preserve",
-                            scope_instruction=content if scope_change else "",
-                            requirements=content if re.search(r"步骤|标题|优先级|预期|前置|简洁|清晰", content) else "",
-                            requirements_ready=bool(state.get("requirements_ready") or re.search(r"步骤|标题|优先级|预期|前置|简洁|清晰", content)))
+        return RewriteReply(
+            action="update",
+            scope_action="replace" if scope_change else "preserve",
+            scope_instruction=content if scope_change else "",
+            requirements=content
+            if re.search(r"步骤|标题|优先级|预期|前置|简洁|清晰", content)
+            else "",
+            requirements_ready=bool(
+                state.get("requirements_ready")
+                or re.search(r"步骤|标题|优先级|预期|前置|简洁|清晰", content)
+            ),
+        )
     from agents import Agent, AgentOutputSchema, Runner, set_tracing_disabled
     from openai import AsyncOpenAI
 
     set_tracing_disabled(not tracing_enabled)
-    client = AsyncOpenAI(api_key=api_key, base_url=base_url.rstrip("/"),
-                         timeout=timeout_seconds, max_retries=1)
-    output_model = CollectionAwareRewriteReply if "collection_catalog" in state else SemanticRewriteReply
+    client = AsyncOpenAI(
+        api_key=api_key, base_url=base_url.rstrip("/"), timeout=timeout_seconds, max_retries=1
+    )
+    output_model = (
+        CollectionAwareRewriteReply if "collection_catalog" in state else SemanticRewriteReply
+    )
     agent = Agent(
         name="Rewrite draft update",
         instructions=(
@@ -123,13 +163,16 @@ def interpret_rewrite_reply(content: str, state: dict, *, provider: str, model_n
             "若仍缺修改方向则requirements_ready=false。没有可靠依据时clarify，不猜测范围，不替用户确认。"
             "输出示例（仅示范规则，实际目标和值必须来自当前输入）："
             "旧要求为把TC-A优先级改P9，本轮为刚才写错了，改成P2，还是同一条，其他字段不变："
-            '返回action=update、scope_action=preserve、priority_assignment=P2，requirements为“把TC-A的优先级改为P2，其他字段保持不变。”。'
-            "旧要求为Set the title to Login / OTP — v2, keep other fields unchanged，本轮为再把优先级改P0，标题也保留："
-            'requirements为“标题改为Login / OTP — v2，优先级改为P0，其余字段保持不变。”，不能返回英文修改说明或把标题翻译成中文。'
+            "返回action=update、scope_action=preserve、priority_assignment=P2，requirements为“把TC-A的优先级改为P2，其他字段保持不变。”。"
+            "旧要求为Set the title to Login / OTP — v2, keep othe"
+            "r fields unchanged，本轮为再把优先级改P0，标题也保留："
+            "requirements为“标题改为Login / OTP — v2，优先级改为P0，其余字段保"
+            "持不变。”，不能返回英文修改说明或把标题翻译成中文。"
             "这些示例不授权添加用户未提出的要求；旧要求被否定时必须撤销，不能照抄示例。"
             "若本轮明确要求改其他集合，action必须为update，不能当作确认当前预览。"
             + (collection_instructions if "collection_catalog" in state else "")
-            + "JSON Schema: " + json.dumps(output_model.model_json_schema(), ensure_ascii=False)
+            + "JSON Schema: "
+            + json.dumps(output_model.model_json_schema(), ensure_ascii=False)
         ),
         model=compatible_model(model=model_name, openai_client=client),
         model_settings=structured_model_settings(),
@@ -140,35 +183,54 @@ def interpret_rewrite_reply(content: str, state: dict, *, provider: str, model_n
     context = dict(state)
     if isinstance(state.get("scope_cases"), list):
         context["scope_cases"] = [
-            {"ref": item.get("ref"), **{
-                key: item.get("snapshot", item).get(key, "")
-                for key in ("case_key", "title", "module")
-            }} for item in state["scope_cases"]
+            {
+                "ref": item.get("ref"),
+                **{
+                    key: item.get("snapshot", item).get(key, "")
+                    for key in ("case_key", "title", "module")
+                },
+            }
+            for item in state["scope_cases"]
         ]
     reply = _run_routing_agent(
-        Runner, agent, json.dumps({"reply": content, "draft": context}, ensure_ascii=False, default=str),
-        stage="rewrite_reply", model_name=model_name, client=client,
+        Runner,
+        agent,
+        json.dumps({"reply": content, "draft": context}, ensure_ascii=False, default=str),
+        stage="rewrite_reply",
+        model_name=model_name,
+        client=client,
     )
     if isinstance(reply, CollectionAwareRewriteReply):
-        target = validate_collection_reference(reply.collection, content, state["collection_catalog"], state.get("current_collection_id"))
+        target = validate_collection_reference(
+            reply.collection,
+            content,
+            state["collection_catalog"],
+            state.get("current_collection_id"),
+        )
         reply.collection.target_collection_id = target
         if target and reply.action == "confirm":
             raise ValueError("confirmation_cannot_switch_collection")
     error = priority_assignment_error(reply.priority_assignment)
     if error and reply.action not in {"cancel"}:
-        return reply.model_copy(update={"action": "clarify", "requirements_ready": False, "clarification": error})
+        return reply.model_copy(
+            update={"action": "clarify", "requirements_ready": False, "clarification": error}
+        )
     return reply
 
 
-def rewrite_transition(state: dict, reply: RewriteReply, *, has_preview: bool,
-                       selection_changed: bool) -> tuple[str, str]:
+def rewrite_transition(
+    state: dict, reply: RewriteReply, *, has_preview: bool, selection_changed: bool
+) -> tuple[str, str]:
     """Pure execution gate: interpretation never authorizes an incomplete draft.
 
     Returns cancel, clarify, update, or confirm. Every update invalidates the
     previous preview, including a confirmation accompanied by a new selection.
     """
     if reply.confidence < 0.85:
-        return "clarify", reply.clarification or "这次回复是调整范围、修改要求，还是确认当前方案？请补充说明。"
+        return (
+            "clarify",
+            reply.clarification or "这次回复是调整范围、修改要求，还是确认当前方案？请补充说明。",
+        )
     if reply.action == "cancel":
         return "cancel", ""
     if reply.action == "clarify":
@@ -178,9 +240,13 @@ def rewrite_transition(state: dict, reply: RewriteReply, *, has_preview: bool,
             return "clarify", state["clarification"]
         if selection_changed:
             return "update", ""
-        if not (has_preview and state.get("scope_resolved")
-                and state.get("requirements_ready") and reply.requirements_ready
-                and str(state.get("requirements") or "").strip()):
+        if not (
+            has_preview
+            and state.get("scope_resolved")
+            and state.get("requirements_ready")
+            and reply.requirements_ready
+            and str(state.get("requirements") or "").strip()
+        ):
             return "clarify", "当前方案还未确定，请先补充用例范围和修改要求。"
         return "confirm", ""
     return "update", ""

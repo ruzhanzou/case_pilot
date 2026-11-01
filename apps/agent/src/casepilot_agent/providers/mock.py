@@ -42,8 +42,7 @@ class MockProvider:
     def generate(self, request: GenerationRequest) -> GenerationResult:
         login = any(keyword in request.prompt for keyword in ("登录", "验证码", "手机号"))
         voice_call = any(
-            keyword in request.prompt
-            for keyword in ("豆包", "实时语音", "语音通话", "双向流式")
+            keyword in request.prompt for keyword in ("豆包", "实时语音", "语音通话", "双向流式")
         )
         if voice_call:
             features, points, cases = self._voice_call_design(request.prompt)
@@ -159,28 +158,64 @@ class MockProvider:
             raise ValueError("mock_spreadsheet_organization_unavailable")
         if stage == "reuse.objects_matched":
             test_object = str(payload.get("test_object", "")).strip().casefold()
-            result = result_type.model_validate({"matches": [{
-                "source_key": source["key"],
-                "test_object_match": "same" if test_object and test_object == str(
-                    source["snapshot"].get("test_object") or source["snapshot"].get("module", "")
-                ).strip().casefold() else "unknown",
-                "reason": "模拟模式仅接受明确测试对象或模块完全一致，其余需真实模型核对",
-            } for source in payload.get("sources", [])]})
+            result = result_type.model_validate(
+                {
+                    "matches": [
+                        {
+                            "source_key": source["key"],
+                            "test_object_match": "same"
+                            if test_object
+                            and test_object
+                            == str(
+                                source["snapshot"].get("test_object")
+                                or source["snapshot"].get("module", "")
+                            )
+                            .strip()
+                            .casefold()
+                            else "unknown",
+                            "reason": "模拟模式仅接受明确测试对象或模块完全一致，其余需" \
+                                "真实模型核对",
+                        }
+                        for source in payload.get("sources", [])
+                    ]
+                }
+            )
             return result, UsageMetadata(model="mock", latency_ms=0)
         if stage == "reuse.compared":
-            result = result_type.model_validate({"decisions": [{
-                "point_id": point["id"], "action": "new", "source_key": None,
-                "test_object_match": "unknown", "reason": "模拟模式不推断历史规则仍然适用",
-            } for point in payload.get("test_points", [])]})
+            result = result_type.model_validate(
+                {
+                    "decisions": [
+                        {
+                            "point_id": point["id"],
+                            "action": "new",
+                            "source_key": None,
+                            "test_object_match": "unknown",
+                            "reason": "模拟模式不推断历史规则仍然适用",
+                        }
+                        for point in payload.get("test_points", [])
+                    ]
+                }
+            )
             return result, UsageMetadata(model="mock", latency_ms=0)
         if payload.get("output_contract") == "case_batch_v2" and stage == "test_case.generated":
-            result = result_type.model_validate({"test_cases": [
-                {"slot": item["slot"], "title": item["point"]["title"],
-                 "preconditions": ["已准备测试账号和所需环境"],
-                 "steps": [{"action": "执行" + item["point"]["title"],
-                            "expected": item["point"]["objective"]}]}
-                for item in payload["points"]
-            ]})
+            result = result_type.model_validate(
+                {
+                    "test_cases": [
+                        {
+                            "slot": item["slot"],
+                            "title": item["point"]["title"],
+                            "preconditions": ["已准备测试账号和所需环境"],
+                            "steps": [
+                                {
+                                    "action": "执行" + item["point"]["title"],
+                                    "expected": item["point"]["objective"],
+                                }
+                            ],
+                        }
+                        for item in payload["points"]
+                    ]
+                }
+            )
             return result, UsageMetadata(model="mock", latency_ms=0)
         prompt = str(payload.get("prompt", "核心业务需求"))
         if "取消竞争" in prompt:
@@ -212,18 +247,26 @@ class MockProvider:
                 case.source_refs = [source_ref]
 
         from casepilot_agent.reuse import ReuseDecisions
+
         if payload.get("source_catalog") and "feature_points" in result_type.model_fields:
             # Planning-only schema selects a slot; real provenance is server-hydrated.
             catalog = payload["source_catalog"]
             index = 1 if payload.get("context", {}).get("evidence") and len(catalog) > 1 else 0
             for feature in baseline.feature_points:
-                feature.source_refs = [
-                    SourceRef(label="selection", locator=catalog[index]["slot"])
-                ]
+                feature.source_refs = [SourceRef(label="selection", locator=catalog[index]["slot"])]
 
         if issubclass(result_type, ReuseDecisions):
-            result = ReuseDecisions(decisions=[{"point_id": point["id"], "action": "new",
-                "source_key": None, "reason": "Mock模式不推断历史用例适用性"} for point in payload["test_points"]])
+            result = ReuseDecisions(
+                decisions=[
+                    {
+                        "point_id": point["id"],
+                        "action": "new",
+                        "source_key": None,
+                        "reason": "Mock模式不推断历史用例适用性",
+                    }
+                    for point in payload["test_points"]
+                ]
+            )
         elif result_type is CaseAnalysisReport:
             result = CaseAnalysisReport(
                 summary="模拟评审完成", findings=[], limitations=["模拟模式不执行语义评审"]
@@ -237,14 +280,8 @@ class MockProvider:
                     test_object_specified=bool(
                         str(current_test_brief.get("test_object", "")).strip()
                     ),
-                    summary=str(
-                        current_test_brief.get("test_objective")
-                        or requirement.summary
-                    ),
-                    actors=[
-                        str(item)
-                        for item in current_test_brief.get("roles", [])
-                    ],
+                    summary=str(current_test_brief.get("test_objective") or requirement.summary),
+                    actors=[str(item) for item in current_test_brief.get("roles", [])],
                     flows=[
                         str(item)
                         for item in (
@@ -253,28 +290,14 @@ class MockProvider:
                         )
                     ],
                     business_rules=[
-                        str(item)
-                        for item in current_test_brief.get(
-                            "business_rules", []
-                        )
+                        str(item) for item in current_test_brief.get("business_rules", [])
                     ],
-                    constraints=[
-                        str(item)
-                        for item in current_test_brief.get("constraints", [])
-                    ],
-                    risks=[
-                        str(item)
-                        for item in current_test_brief.get("risks", [])
-                    ],
-                    assumptions=[
-                        str(item)
-                        for item in current_test_brief.get("assumptions", [])
-                    ],
+                    constraints=[str(item) for item in current_test_brief.get("constraints", [])],
+                    risks=[str(item) for item in current_test_brief.get("risks", [])],
+                    assumptions=[str(item) for item in current_test_brief.get("assumptions", [])],
                     open_questions=[
                         OpenQuestion.model_validate(item)
-                        for item in current_test_brief.get(
-                            "open_questions", []
-                        )
+                        for item in current_test_brief.get("open_questions", [])
                         if isinstance(item, dict)
                     ],
                 )
@@ -302,14 +325,16 @@ class MockProvider:
             if answered_object:
                 requirement.test_object = answered_object
                 requirement.test_object_specified = True
-            result: Any = result_type.model_validate({
-                **requirement.model_dump(),
-                "feature_points": [feature.model_dump() for feature in baseline.feature_points],
-            })
+            result: Any = result_type.model_validate(
+                {
+                    **requirement.model_dump(),
+                    "feature_points": [feature.model_dump() for feature in baseline.feature_points],
+                }
+            )
         elif issubclass(result_type, FeaturePlan):
-            result = result_type.model_validate({"feature_points": [
-                feature.model_dump() for feature in baseline.feature_points
-            ]})
+            result = result_type.model_validate(
+                {"feature_points": [feature.model_dump() for feature in baseline.feature_points]}
+            )
         elif issubclass(result_type, TestPointPlan):
             scoped_features = payload.get("feature_points", {}).get("feature_points", [])
             if scoped_features:
@@ -370,7 +395,9 @@ class MockProvider:
                 cases = []
                 for index, point in enumerate(scoped_points):
                     case = baseline.test_cases[0].model_copy(deep=True)
-                    case.title = f"{point['title']}（{payload.get('batch_start_index', 1) + index}）"
+                    case.title = (
+                        f"{point['title']}（{payload.get('batch_start_index', 1) + index}）"
+                    )
                     case.test_point_ids = [point["id"]]
                     cases.append(case)
                 result = TestCaseBatch(test_cases=cases)
@@ -412,9 +439,7 @@ class MockProvider:
                     citations=[
                         SourceRef(
                             label=str(
-                                first_case.get("case_key")
-                                or first_case.get("id")
-                                or "当前用例"
+                                first_case.get("case_key") or first_case.get("id") or "当前用例"
                             ),
                             excerpt=str(first_case.get("title", "")),
                         )
@@ -728,8 +753,7 @@ class MockProvider:
                     {
                         "action": "按听筒、扬声器、蓝牙、有线耳机顺序切换输出路由",
                         "expected": (
-                            "每次只激活一个正确路由，"
-                            "音量合理且无爆音、长时间静音或双路播放"
+                            "每次只激活一个正确路由，音量合理且无爆音、长时间静音或双路播放"
                         ),
                     },
                     {
@@ -771,15 +795,13 @@ class MockProvider:
                     {
                         "action": "点击结束通话并观察系统麦克风指示、音频焦点和网络连接",
                         "expected": (
-                            "会话只结束一次，麦克风和音频焦点立即释放，"
-                            "连接关闭且不再上传音频"
+                            "会话只结束一次，麦克风和音频焦点立即释放，连接关闭且不再上传音频"
                         ),
                     },
                     {
                         "action": "进入会话记录查看文本摘要并重复点击通话入口",
                         "expected": (
-                            "仅保存允许留存的文本摘要，"
-                            "新通话使用新会话标识且不会复用旧音频缓存"
+                            "仅保存允许留存的文本摘要，新通话使用新会话标识且不会复用旧音频缓存"
                         ),
                     },
                 ],

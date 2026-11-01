@@ -5,6 +5,8 @@ from pydantic import ValidationError
 
 REJECTION_CODES = frozenset(
     {
+        "reuse_destination_required",
+        "reuse_destination_name_ambiguous",
         "skill_version_changed",
         "selection_version_conflict",
         "plan_required",

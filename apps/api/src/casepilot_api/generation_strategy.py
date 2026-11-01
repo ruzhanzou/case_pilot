@@ -39,12 +39,21 @@ def _authorization_text(content: str) -> str:
         clause = clause.strip()
         negative = re.search(
             r"(?:不是让你|不是要|不要|不用|不再|禁止|取消|别|不)(?:需要|再|主动|自动|使用)?\s*"
-            r"(?:搜索|查找|检索|找|搜|复用|参考|选用|历史|已有|select)", clause, re.I)
-        postponed = re.search(r"(?:搜索|查找|检索|复用|参考).*(?:先不做|先别做|暂不执行|以后再做|取消)$", clause)
+            r"(?:搜索|查找|检索|找|搜|复用|参考|选用|历史|已有|select)",
+            clause,
+            re.I,
+        )
+        postponed = re.search(
+            r"(?:搜索|查找|检索|复用|参考).*(?:先不做|先别做|暂不执行|以后再做|取消)$", clause
+        )
         if negative or postponed:
-            if negative and _has_search_command("，".join(retained)) and (
-                re.search(r"(?:先|暂时)?(?:不要|别)(?:直接)?复用", clause)
-                or re.search(r"(?:不要|别)(?:参考|沿用|使用)(?:旧|原有|原来的)?规则", clause)
+            if (
+                negative
+                and _has_search_command("，".join(retained))
+                and (
+                    re.search(r"(?:先|暂时)?(?:不要|别)(?:直接)?复用", clause)
+                    or re.search(r"(?:不要|别)(?:参考|沿用|使用)(?:旧|原有|原来的)?规则", clause)
+                )
             ):
                 continue
             retained = []
@@ -60,9 +69,13 @@ def _authorization_text(content: str) -> str:
 
 
 def _has_search_command(text: str) -> bool:
-    return bool(re.search(
-        r"(?:^|[。；;，,\n？?])\s*(?:(?:但|另外|然后|现在|先|再|请|帮我|麻烦|能否|能不能|可以|帮忙)\s*)*"
-        r"(?:查找|检索|搜索|搜搜|搜|找找|找)(?!索?(?:功能|接口|按钮|页面|框)).{0,60}(?:用例|测试案例|资产)", text))
+    return bool(
+        re.search(
+            r"(?:^|[。；;，,\n？?])\s*(?:(?:但|另外|然后|现在|先|再|请|帮我|麻烦|能否|能不能|可以|帮忙)\s*)*"
+            r"(?:查找|检索|搜索|搜搜|搜|找找|找)(?!索?(?:功能|接口|按钮|页面|框)).{0,60}(?:用例|测试案例|资产)",
+            text,
+        )
+    )
 
 
 def generation_strategy_from_text(content: str) -> str:
@@ -79,7 +92,9 @@ def generation_strategy_from_text(content: str) -> str:
         else:
             strategy = next(value for value in match.groups() if value).lower()
     # Explicit refusal wins over an earlier directive, including mixed instructions.
-    conditional_operation = bool(re.search(r"(?:如果|若).*(?:就|则).*(?:找|搜|参考|复用).*(?:确认|改写|补齐|生成)", text))
+    conditional_operation = bool(
+        re.search(r"(?:如果|若).*(?:就|则).*(?:找|搜|参考|复用).*(?:确认|改写|补齐|生成)", text)
+    )
     if not (_has_search_command(text) or conditional_operation) and re.search(
         r"(?:不要|不再|禁止|取消|不用)\s*(?:复用|参考|搜索|选用|select)(?:\b|用例|资产|已有|现有|[，。；\s]|$)",
         text,
@@ -98,7 +113,9 @@ def generation_strategy_from_text(content: str) -> str:
         text,
     ):
         return "generate"
-    if re.search(r"(?:复用|沿用)(?:已有|现有|原有)(?:的)?(?:会话|账号(?!系统)|token|连接|缓存)", text, re.I):
+    if re.search(
+        r"(?:复用|沿用)(?:已有|现有|原有)(?:的)?(?:会话|账号(?!系统)|token|连接|缓存)", text, re.I
+    ):
         return "generate"
     asset = r"(?:已有|现有|历史|原有|原来|以前|之前|过去|现成|旧(?:版|的)?用例|资产|用例库)"
     # “候选用例” contains the characters “选用”, but does not authorize
@@ -106,7 +123,9 @@ def generation_strategy_from_text(content: str) -> str:
     action = r"(?:找|搜|查找|检索|参考|参照|借鉴|复用|(?<!候)选用|挑选|选择|只选|沿用)"
     explicit_search = _has_search_command(text)
     if not (
-        explicit_search or re.search(action + r".{0,24}" + asset, text) or re.search(asset + r".{0,24}" + action, text)
+        explicit_search
+        or re.search(action + r".{0,24}" + asset, text)
+        or re.search(asset + r".{0,24}" + action, text)
     ):
         return "generate"
     if re.search(r"改写|重写|修改|补齐|补充|缺少|不足|重新生成|参考|参照|借鉴", text):
@@ -149,9 +168,16 @@ def asset_choice_from_text(content: str, case_ids: list[str]) -> list[str] | Non
     return None
 
 
-def _interpret_generation_choice(content, settings, case_ids=None, conversation_memory=None,
-                                collection_catalog=None, explicit_collection_only=False,
-                                current_collection_id=None, retry_only=False):
+def _interpret_generation_choice(
+    content,
+    settings,
+    case_ids=None,
+    conversation_memory=None,
+    collection_catalog=None,
+    explicit_collection_only=False,
+    current_collection_id=None,
+    retry_only=False,
+):
     """Interpret strategy and selection without interpreting numeric text locally."""
     import json
     from typing import Literal
@@ -164,25 +190,42 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
 
     class RetryChoice(BaseModel):
         retry_requested: bool = False
-        retry_kind: Literal[
-            "CASE_GENERATE", "CASE_MODIFY", "CASE_DELETE", "CASE_QUERY", "CASE_REVIEW",
-            "CASE_DEDUP", "COVERAGE_ANALYZE", "KNOWLEDGE_QA", "SMALL_TALK"
-        ] | None = None
+        retry_kind: (
+            Literal[
+                "CASE_GENERATE",
+                "CASE_MODIFY",
+                "CASE_DELETE",
+                "CASE_QUERY",
+                "CASE_REVIEW",
+                "CASE_DEDUP",
+                "COVERAGE_ANALYZE",
+                "KNOWLEDGE_QA",
+                "SMALL_TALK",
+            ]
+            | None
+        ) = None
 
     class Choice(CollectionReference, RetryChoice):
         strategy: Literal["generate", "select", "select_and_generate"] = "generate"
-        strategy_change_requested: bool = Field(default=False, description="仅当前用户明确要求切换生成策略、搜索或选择历史用例资产时为true；编辑测试规划、保留测试点、复用登录会话均为false。")
+        strategy_change_requested: bool = Field(
+            default=False,
+            description="仅当前用户明确要求切换生成策略、搜索或选择历史用例资产时为true；编辑测试规划、保留测试点、复用登录会话均为false。",
+        )
         strategy_question: bool = False
         brief_action: Literal["none", "revise", "confirm"] = Field(
-            default="none", description=(
+            default="none",
+            description=(
                 "当前对测试规划的动作：增删改测试点、补充需求是revise；"
                 "明确接受现有规划且无任何修改要求、直接开始生成候选才是confirm；其他none。"
-            )
+            ),
         )
-        continue_cases: bool = Field(default=False, description=(
-            "对已生成用例要求继续追加、补足数量或增加覆盖，且没有修改测试点、"
-            "更换测试对象、新模块或新增业务规则时为true；询问、否定、重做规划为false。"
-        ))
+        continue_cases: bool = Field(
+            default=False,
+            description=(
+                "对已生成用例要求继续追加、补足数量或增加覆盖，且没有修改测试点、"
+                "更换测试对象、新模块或新增业务规则时为true；询问、否定、重做规划为false。"
+            ),
+        )
         confirms_brief: bool = False
         test_object: str = ""
         new_module: str = ""
@@ -193,23 +236,38 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
         requested_count: int | None = Field(default=None, ge=0)
 
     if settings.agent_provider == "mock":
-        return Choice(strategy=generation_strategy_from_text(content),
-                      strategy_question=is_strategy_question(content),
-                      selected_ids=asset_choice_from_text(content, case_ids) if case_ids else None)
+        return Choice(
+            strategy=generation_strategy_from_text(content),
+            strategy_question=is_strategy_question(content),
+            selected_ids=asset_choice_from_text(content, case_ids) if case_ids else None,
+        )
     set_tracing_disabled(not settings.agent_tracing_enabled)
-    client = AsyncOpenAI(api_key=settings.agent_api_key,
-                         base_url=settings.agent_base_url.rstrip("/"),
-                         timeout=settings.routing_timeout_seconds, max_retries=0)
+    client = AsyncOpenAI(
+        api_key=settings.agent_api_key,
+        base_url=settings.agent_base_url.rstrip("/"),
+        timeout=settings.routing_timeout_seconds,
+        max_retries=0,
+    )
     retry_instructions = (
         "retry_requested仅当用户要求重试刚才失败或未完成的任务；解释重试、否定重试都不是重试。"
         "简短确认只有紧接助手明确询问是否重试才算重试。新任务或追加修改不算重试。"
         "retry_kind只填写用户指明的任务类型，未指明则null，不能从资料或旧任务猜测。"
     )
     # Collection gates need no generation, retry, or numeric-selection decisions.
-    collection_only = collection_catalog is not None and case_ids is None and not conversation_memory
+    collection_only = (
+        collection_catalog is not None and case_ids is None and not conversation_memory
+    )
     agent = Agent(
-        name="Task retry" if retry_only else "Collection reference" if collection_only else "Generation and asset choice",
-        instructions=retry_instructions if retry_only else collection_instructions if collection_only else (
+        name="Task retry"
+        if retry_only
+        else "Collection reference"
+        if collection_only
+        else "Generation and asset choice",
+        instructions=retry_instructions
+        if retry_only
+        else collection_instructions
+        if collection_only
+        else (
             "理解当前用户的生成策略和已展示资产的选择。默认generate。"
             "用例太少、17个case增加到30个、继续补充用例属于continue_cases=true，brief_action=none；"
             "不要把增加用例数量理解为修改测试点数量。明确修改测试点或需求时continue_cases=false。"
@@ -228,7 +286,9 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
             "rewrite_existing_assets表示明确要求依据参考资产改写已有候选，"
             "不包括重新规划、只增加测试点或生成全新用例。"
             "历史仅作理解上下文，不把过去已撤销的指令当当前授权。"
-            "Referencing historical cases to add new scenarios is select_and_generate, even without available_ids."
+            "Referencing historical cases to add new scenario"
+            "s is select_and_generate, even without available"
+            "_ids."
             "明确只搜索或选取已有用例为select；参考已有资产生成、改写或补齐为select_and_generate。"
             "解释概念、引用示例、业务本身复用会话等不授权搜索资产；strategy_question标明策略问答。"
             "理解否定、条件、纠正，最新有效要求优先。"
@@ -239,55 +299,116 @@ def _interpret_generation_choice(content, settings, case_ids=None, conversation_
             "Never replace the user's requested count with the number of available IDs. "
             "If the user says use these three but only two IDs exist, return requested_count=3, "
             "ambiguous=true and selected_ids=null."
-        ) + collection_instructions + retry_instructions,
+        )
+        + collection_instructions
+        + retry_instructions,
         model=compatible_model(
-            model=settings.routing_model, openai_client=client, settings=settings,
+            model=settings.routing_model,
+            openai_client=client,
+            settings=settings,
         ),
         **optional_model_settings(settings),
-        output_type=RetryChoice if retry_only else CollectionReference if collection_only else Choice,
+        output_type=RetryChoice
+        if retry_only
+        else CollectionReference
+        if collection_only
+        else Choice,
     )
-    result = _run_routing_agent(Runner, agent, json.dumps(
-            {"message": content, "available_ids": case_ids or [],
-             "conversation_memory": conversation_memory or [],
-             "collection_catalog": collection_catalog or [],
-             "explicit_collection_only": explicit_collection_only,
-             "current_collection_id": current_collection_id}, ensure_ascii=False),
-            stage="retry_intent" if retry_only else "collection_reference" if collection_only else "generation_choice",
-            model_name=settings.routing_model, client=client)
+    result = _run_routing_agent(
+        Runner,
+        agent,
+        json.dumps(
+            {
+                "message": content,
+                "available_ids": case_ids or [],
+                "conversation_memory": conversation_memory or [],
+                "collection_catalog": collection_catalog or [],
+                "explicit_collection_only": explicit_collection_only,
+                "current_collection_id": current_collection_id,
+            },
+            ensure_ascii=False,
+        ),
+        stage="retry_intent"
+        if retry_only
+        else "collection_reference"
+        if collection_only
+        else "generation_choice",
+        model_name=settings.routing_model,
+        client=client,
+    )
     if collection_only or retry_only:
         result = Choice.model_validate(result.model_dump())
     result.confirms_brief = result.confirms_brief and result.brief_action == "confirm"
     result.target_collection_id = validate_collection_reference(
-        result, content, collection_catalog or [], current_collection_id,
+        result,
+        content,
+        collection_catalog or [],
+        current_collection_id,
     )
     if result.selected_ids is not None:
         selected = result.selected_ids
-        if (len(selected) != len(set(selected)) or not set(selected) <= set(case_ids or [])
-                or result.requested_count is not None and len(selected) != result.requested_count):
+        if (
+            len(selected) != len(set(selected))
+            or not set(selected) <= set(case_ids or [])
+            or result.requested_count is not None
+            and len(selected) != result.requested_count
+        ):
             result.ambiguous = True
         if result.ambiguous:
             result.selected_ids = None
     return result
 
 
-def interpret_generation_choice(content, settings, case_ids=None, conversation_memory=None,
-                                collection_catalog=None, explicit_collection_only=False,
-                                current_collection_id=None, retry_only=False):
+def interpret_generation_choice(
+    content,
+    settings,
+    case_ids=None,
+    conversation_memory=None,
+    collection_catalog=None,
+    explicit_collection_only=False,
+    current_collection_id=None,
+    retry_only=False,
+):
     """Reuse identical interpretations only within the current HTTP request."""
     if settings.agent_provider == "mock":
-        return _interpret_generation_choice(content, settings, case_ids, conversation_memory,
-                                            collection_catalog, explicit_collection_only,
-                                            current_collection_id, retry_only)
+        return _interpret_generation_choice(
+            content,
+            settings,
+            case_ids,
+            conversation_memory,
+            collection_catalog,
+            explicit_collection_only,
+            current_collection_id,
+            retry_only,
+        )
     cache = choice_request_cache.get()
-    key = json.dumps([content, case_ids, conversation_memory, collection_catalog,
-                      explicit_collection_only, current_collection_id, retry_only,
-                      settings.agent_provider, settings.routing_model],
-                     ensure_ascii=False, sort_keys=True)
+    key = json.dumps(
+        [
+            content,
+            case_ids,
+            conversation_memory,
+            collection_catalog,
+            explicit_collection_only,
+            current_collection_id,
+            retry_only,
+            settings.agent_provider,
+            settings.routing_model,
+        ],
+        ensure_ascii=False,
+        sort_keys=True,
+    )
     if cache is not None and key in cache:
         return cache[key].model_copy(deep=True)
-    result = _interpret_generation_choice(content, settings, case_ids, conversation_memory,
-                                         collection_catalog, explicit_collection_only,
-                                            current_collection_id, retry_only)
+    result = _interpret_generation_choice(
+        content,
+        settings,
+        case_ids,
+        conversation_memory,
+        collection_catalog,
+        explicit_collection_only,
+        current_collection_id,
+        retry_only,
+    )
     if cache is not None:
         cache[key] = result.model_copy(deep=True)
     return result

@@ -12,6 +12,7 @@ from starlette.responses import FileResponse
 from casepilot_api.auth import CurrentAccount, require_space_membership
 from casepilot_api.config import get_settings
 from casepilot_api.database import get_db_session
+from casepilot_api.knowledge_access import source_access_filter
 from casepilot_api.models import KnowledgeChunk, KnowledgeDocument, KnowledgeSource
 from casepilot_api.schemas import (
     KnowledgeDocumentView,
@@ -228,6 +229,7 @@ def list_knowledge_sources(
         .where(
             KnowledgeSource.space_id == space_id,
             KnowledgeSource.deleted_at.is_(None),
+            source_access_filter(account.id),
         )
         .order_by(KnowledgeSource.created_at.desc())
     ).all()
@@ -237,14 +239,12 @@ def list_knowledge_sources(
 def _get_source(
     db: Session, account_id: UUID, source_id: UUID, *, lock=False,
 ) -> KnowledgeSource:
-    source = db.scalar(
-        select(KnowledgeSource).where(
-            KnowledgeSource.id == source_id,
-            KnowledgeSource.deleted_at.is_(None),
-        ).with_for_update() if lock else select(KnowledgeSource).where(
-            KnowledgeSource.id == source_id, KnowledgeSource.deleted_at.is_(None),
-        )
+    query = select(KnowledgeSource).where(
+        KnowledgeSource.id == source_id,
+        KnowledgeSource.deleted_at.is_(None),
+        source_access_filter(account_id),
     )
+    source = db.scalar(query.with_for_update() if lock else query)
     if source is None:
         raise HTTPException(status_code=404, detail="knowledge_source_not_found")
     require_space_membership(db, account_id, source.space_id)
@@ -308,7 +308,12 @@ def _get_document(db: Session, account_id: UUID, document_id: UUID) -> Knowledge
     document = db.get(KnowledgeDocument, document_id)
     if document is None:
         raise HTTPException(status_code=404, detail="knowledge_document_not_found")
-    _get_source(db, account_id, document.source_id)
+    try:
+        _get_source(db, account_id, document.source_id)
+    except HTTPException as error:
+        if error.status_code == 404:
+            raise HTTPException(404, "knowledge_document_not_found") from None
+        raise
     if document.expires_at and document.expires_at <= datetime.now(UTC):
         raise HTTPException(status_code=410, detail="knowledge_document_expired")
     return document

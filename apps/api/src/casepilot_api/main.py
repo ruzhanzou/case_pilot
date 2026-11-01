@@ -1,6 +1,9 @@
 import asyncio
+import json
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -64,6 +67,30 @@ async def share_turn_interpretations(request, call_next):
         return await call_next(request)
     finally:
         choice_request_cache.reset(token)
+
+
+@app.middleware("http")
+async def safe_request_failure(request, call_next):
+    from casepilot_api.failure_diagnostics import failure_context, failure_diagnostic
+
+    correlation = {"request_id": str(uuid4())}
+    token = failure_context.set(correlation)
+    try:
+        response = await call_next(request)
+    except Exception as error:
+        # Never use exc_info, exception text, request bodies, headers or SQL params.
+        try:
+            diagnostic = failure_diagnostic(error, correlation)
+            logging.getLogger("casepilot.safe_failure").error(json.dumps(diagnostic))
+        except Exception:
+            pass  # A broken diagnostic sink must not replace the original HTTP failure.
+        response = JSONResponse(status_code=500, content={
+            "detail": "internal_error", "request_id": correlation["request_id"],
+        })
+    finally:
+        failure_context.reset(token)
+    response.headers["X-Request-ID"] = correlation["request_id"]
+    return response
 
 
 @app.get("/health/live")

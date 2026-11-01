@@ -36,6 +36,7 @@ TOOLS = {
     "query_uploaded_cases", "preview_uploaded_cases",
 }
 ERROR_CODES = {
+    "agent_preparation_unresolved", "workbench_plan_step_mismatch",
     "agent_execution_unverified",
     "agent_cancelled", "agent_tool_failed", "agent_stopped", "invalid_tool_arguments",
     "tool_not_allowed", "agent_tool_budget_exhausted", "agent_turn_budget_exhausted",

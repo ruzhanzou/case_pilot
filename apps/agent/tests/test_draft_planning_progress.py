@@ -51,8 +51,10 @@ class Store:
         self.job.update(deepcopy(values))
 
     def load_completed_stage(self, connection, job_id, stage, input_payload):
-        return next((s for s in self.stages if s["stage"] == stage
-                     and s["input_payload"] == input_payload), None)
+        return next(
+            (s for s in self.stages if s["stage"] == stage and s["input_payload"] == input_payload),
+            None,
+        )
 
     def record_stage(self, connection, **values):
         self.stages.append(deepcopy({"latency_ms": 0, "token_usage": {}, **values}))
@@ -83,6 +85,7 @@ def test_draft_persists_before_streaming_and_only_finalizes_complete_plan(monkey
         def complete(self, *, stage, payload, **kwargs):
             if stage == "output_quantity.interpreted":
                 from casepilot_agent.quantity import OutputQuantity
+
                 return OutputQuantity(test_point_count=12), UsageMetadata(model="fixture")
             calls.append(stage)
             if stage == "requirement.analyzed":
@@ -125,8 +128,9 @@ def test_draft_persists_before_streaming_and_only_finalizes_complete_plan(monkey
         ]
         assert previews
         assert previews[-1]["planning_progress"]["progress"] == 95
-        feature_events = [e for e in store.events
-                          if e.get("planning_progress", {}).get("phase") == "features"]
+        feature_events = [
+            e for e in store.events if e.get("planning_progress", {}).get("phase") == "features"
+        ]
         assert feature_events[0]["planning_progress"]["completed_batches"] == 0
         assert feature_events[-1]["planning_progress"]["completed_batches"] == 1
         assert feature_events[-1]["progress"] == 35
@@ -134,7 +138,8 @@ def test_draft_persists_before_streaming_and_only_finalizes_complete_plan(monkey
 
 @pytest.mark.parametrize("legacy", [False, True])
 def test_invalid_point_checkpoint_is_regenerated_without_repeating_valid_batches(
-    monkeypatch, legacy,
+    monkeypatch,
+    legacy,
 ):
     store = Store()
     calls = []
@@ -144,62 +149,84 @@ def test_invalid_point_checkpoint_is_regenerated_without_repeating_valid_batches
         def complete(self, *, stage, payload, **kwargs):
             if stage == "output_quantity.interpreted":
                 from casepilot_agent.quantity import OutputQuantity
+
                 return OutputQuantity(test_point_count=12), UsageMetadata(model="fixture")
-            calls.append((stage, payload.get('batch_index')))
-            if stage == 'requirement.analyzed':
-                result = RequirementAnalysis(summary='登录', test_object='登录',
-                                             test_object_specified=True)
-            elif stage == 'feature.generated':
+            calls.append((stage, payload.get("batch_index")))
+            if stage == "requirement.analyzed":
+                result = RequirementAnalysis(
+                    summary="登录", test_object="登录", test_object_specified=True
+                )
+            elif stage == "feature.generated":
                 result = features(6)
             else:
-                contracts[payload['batch_index']] = (
-                    kwargs['instruction'], kwargs['result_type'].model_json_schema(),
+                contracts[payload["batch_index"]] = (
+                    kwargs["instruction"],
+                    kwargs["result_type"].model_json_schema(),
                 )
                 result = points(payload, fill_budget=True)
-            return result, UsageMetadata(model='mock')
+            return result, UsageMetadata(model="mock")
 
-    monkeypatch.setattr(tasks, 'JobStore', lambda *args: store)
-    monkeypatch.setattr(tasks, 'create_provider', lambda *args: Provider())
-    monkeypatch.setattr(tasks, 'create_embedding_provider', lambda: None)
-    monkeypatch.setattr(tasks, '_context_payload', lambda *args, **kwargs: {'evidence': []})
-    tasks.draft_test_brief(str(store.job['id']))
+    monkeypatch.setattr(tasks, "JobStore", lambda *args: store)
+    monkeypatch.setattr(tasks, "create_provider", lambda *args: Provider())
+    monkeypatch.setattr(tasks, "create_embedding_provider", lambda: None)
+    monkeypatch.setattr(tasks, "_context_payload", lambda *args, **kwargs: {"evidence": []})
+    tasks.draft_test_brief(str(store.job["id"]))
     if legacy:
         for checkpoint in store.stages:
-            if checkpoint['stage'] != 'test_point.generated':
+            if checkpoint["stage"] != "test_point.generated":
                 continue
-            instruction, schema = contracts[checkpoint['input_payload']['batch_index']]
-            schema['properties']['test_points'].pop('minItems')
-            schema['properties']['test_points'].pop('maxItems')
-            checkpoint['input_payload']['_execution_contract'] = sha256(json.dumps({
-                'instruction': instruction, 'schema': schema, 'model': 'auto',
-            }, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
-    checkpoint = next(s for s in store.stages if s['stage'] == 'test_point.generated'
-                      and s['input_payload']['batch_index'] == 1)
+            instruction, schema = contracts[checkpoint["input_payload"]["batch_index"]]
+            schema["properties"]["test_points"].pop("minItems")
+            schema["properties"]["test_points"].pop("maxItems")
+            checkpoint["input_payload"]["_execution_contract"] = sha256(
+                json.dumps(
+                    {
+                        "instruction": instruction,
+                        "schema": schema,
+                        "model": "auto",
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ).encode()
+            ).hexdigest()
+    checkpoint = next(
+        s
+        for s in store.stages
+        if s["stage"] == "test_point.generated" and s["input_payload"]["batch_index"] == 1
+    )
     # Simulate a legacy checkpoint saved before the cardinality check.
-    checkpoint['output_payload']['test_points'] *= 3
+    checkpoint["output_payload"]["test_points"] *= 3
     calls.clear()
-    tasks.draft_test_brief(str(store.job['id']))
-    assert calls == [('test_point.generated', 1)]
-    assert len(store.briefs[-1]['planning']['test_points']) == 12
+    tasks.draft_test_brief(str(store.job["id"]))
+    assert calls == [("test_point.generated", 1)]
+    assert len(store.briefs[-1]["planning"]["test_points"]) == 12
 
 
 def test_single_batch_extracts_features_without_another_model_pass(monkeypatch):
     from casepilot_agent.planning import PlanningAnalysis
+
     store = Store()
     calls = []
+
     class Provider:
         def complete(self, *, stage, payload, **kwargs):
             if stage == "output_quantity.interpreted":
                 from casepilot_agent.quantity import OutputQuantity
+
                 return OutputQuantity(test_point_count=12), UsageMetadata(model="fixture")
             calls.append(stage)
             if stage == "requirement.analyzed":
-                result = PlanningAnalysis(summary="登录", test_object="登录", test_object_specified=True,
-                                          feature_points=features(6).feature_points)
+                result = PlanningAnalysis(
+                    summary="登录",
+                    test_object="登录",
+                    test_object_specified=True,
+                    feature_points=features(6).feature_points,
+                )
             else:
                 assert stage == "test_point.generated"
                 result = points(payload, fill_budget=True)
             return result, UsageMetadata(model="mock")
+
     monkeypatch.setattr(tasks, "JobStore", lambda *args: store)
     monkeypatch.setattr(tasks, "create_provider", lambda *args: Provider())
     monkeypatch.setattr(tasks, "create_embedding_provider", lambda: None)

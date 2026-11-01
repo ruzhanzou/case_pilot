@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from casepilot_api.auth import CurrentAccount, require_space_membership
 from casepilot_api.config import get_settings
 from casepilot_api.database import get_db_session
-from casepilot_api.submissions import after_commit
+from casepilot_api.knowledge_access import source_access_filter
 from casepilot_api.models import (
     Account,
     CaseChangeSet,
@@ -35,6 +35,7 @@ from casepilot_api.schemas import (
     GenerationJobView,
     GenerationStartRequest,
 )
+from casepilot_api.submissions import after_commit
 from casepilot_api.task_outbox import enqueue_task
 
 router = APIRouter(prefix="/api/v1", tags=["generation"])
@@ -64,8 +65,7 @@ def list_generation_models(account: CurrentAccount) -> dict[str, object]:
         }
 
     configured = [
-        (model, model, settings.agent_provider_label)
-        for model in settings.available_agent_models
+        (model, model, settings.agent_provider_label) for model in settings.available_agent_models
     ]
     models: list[dict[str, object]] = []
     seen_labels: set[str] = set()
@@ -79,16 +79,17 @@ def list_generation_models(account: CurrentAccount) -> dict[str, object]:
                 "id": model_id,
                 "label": normalized_label,
                 "provider": provider,
-                "supports_images": model_id in {
-                    v.strip() for v in settings.image_models.split(",") if v.strip()
-                },
+                "supports_images": model_id
+                in {v.strip() for v in settings.image_models.split(",") if v.strip()},
             }
         )
     configured_ids = {str(model["id"]) for model in models}
     default_model_id = (
         settings.agent_model
         if settings.agent_model in configured_ids
-        else models[0]["id"] if models else "auto"
+        else models[0]["id"]
+        if models
+        else "auto"
     )
     return {"default_model_id": default_model_id, "models": models}
 
@@ -102,8 +103,11 @@ def ensure_job_access(db: Session, account: Account, job_id: UUID) -> Generation
 
 
 STAGE_PROGRESS = {
-    "knowledge.searching": 3, "documents.reading": 5, "cases.searching": 23,
-    "reuse.comparing": 95, "reuse.compared": 95,
+    "knowledge.searching": 3,
+    "documents.reading": 5,
+    "cases.searching": 23,
+    "reuse.comparing": 95,
+    "reuse.compared": 95,
     "queued": 0,
     "context.prepared": 10,
     "requirement.analyzed": 22,
@@ -127,7 +131,12 @@ def public_error_code(error_code: str | None) -> str | None:
         return None
     if error_code in {"TimeoutError", "APITimeoutError", "ConnectionError", "APIConnectionError"}:
         return "provider_temporarily_unavailable"
-    if error_code in {"ProviderResponseError", "ValidationError", "ModelBehaviorError", "StageContractError"}:
+    if error_code in {
+        "ProviderResponseError",
+        "ValidationError",
+        "ModelBehaviorError",
+        "StageContractError",
+    }:
         return "provider_response_invalid"
     if error_code == "GenerationQualityError":
         return "generation_quality_blocked"
@@ -146,7 +155,7 @@ def job_view(db: Session, job: GenerationJob) -> GenerationJobView:
         )
     ).all()
     return GenerationJobView(
-        analysis_progress=output.get('analysis_progress'),
+        analysis_progress=output.get("analysis_progress"),
         planning_preview=output.get("planning_preview"),
         planning_progress=output.get("planning_progress"),
         retry_attempt=output.get("retry_attempt"),
@@ -160,21 +169,23 @@ def job_view(db: Session, job: GenerationJob) -> GenerationJobView:
         status=job.status.value if hasattr(job.status, "value") else str(job.status),
         stage=job.stage,
         space_id=job.space_id,
-        progress=(int(output['analysis_progress'].get('progress', 0))
-                  if job.status == 'running' and output.get('analysis_progress')
-                  else int(output["planning_progress"].get("progress", 0))
-                  if job.status in {"running", "failed", "cancelled"} and output.get("planning_progress")
-                  else min(95, int(95 * output.get("generated_count", 0) / output["total_count"]))
-                  if job.status in {"running", "failed", "cancelled"} and job.input_payload.get("output_contract") == "case_batch_v2" and output.get("total_count")
-                  else min(90, 40 + int(50 * output["generated_count"] / output["total_count"]))
-                  if job.status == "running" and output.get("generated_count") and output.get("total_count")
-                  else STAGE_PROGRESS.get(job.stage, 0)),
+        progress=(
+            int(output["analysis_progress"].get("progress", 0))
+            if job.status == "running" and output.get("analysis_progress")
+            else int(output["planning_progress"].get("progress", 0))
+            if job.status in {"running", "failed", "cancelled"} and output.get("planning_progress")
+            else min(95, int(95 * output.get("generated_count", 0) / output["total_count"]))
+            if job.status in {"running", "failed", "cancelled"}
+            and job.input_payload.get("output_contract") == "case_batch_v2"
+            and output.get("total_count")
+            else min(90, 40 + int(50 * output["generated_count"] / output["total_count"]))
+            if job.status == "running"
+            and output.get("generated_count")
+            and output.get("total_count")
+            else STAGE_PROGRESS.get(job.stage, 0)
+        ),
         error_code=public_error_code(job.error_code),
-        questions=[
-            item
-            for item in requirement.get("open_questions", [])
-            if item.get("blocking")
-        ],
+        questions=[item for item in requirement.get("open_questions", []) if item.get("blocking")],
         stages=[
             {
                 "stage": stage.stage,
@@ -216,7 +227,11 @@ def start_generation(
     require_space_membership(db, account.id, collection.space_id)
     if payload.document_ids:
         documents = db.scalars(
-            select(KnowledgeDocument).where(
+            select(KnowledgeDocument)
+            .join(KnowledgeSource)
+            .where(
+                source_access_filter(account.id),
+                KnowledgeSource.deleted_at.is_(None),
                 KnowledgeDocument.id.in_(payload.document_ids),
                 KnowledgeDocument.space_id == collection.space_id,
                 KnowledgeDocument.status == "ready",
@@ -228,6 +243,7 @@ def start_generation(
         sources = db.scalars(
             select(KnowledgeSource).where(
                 KnowledgeSource.id.in_(payload.knowledge_source_ids),
+                source_access_filter(account.id),
                 KnowledgeSource.space_id == collection.space_id,
                 KnowledgeSource.status == "ready",
                 KnowledgeSource.deleted_at.is_(None),
@@ -249,9 +265,7 @@ def start_generation(
             "mode": settings.ai_mode,
             "model_id": payload.model_id,
             "document_ids": [str(item) for item in payload.document_ids],
-            "knowledge_source_ids": [
-                str(item) for item in payload.knowledge_source_ids
-            ],
+            "knowledge_source_ids": [str(item) for item in payload.knowledge_source_ids],
             "use_space_knowledge": payload.use_space_knowledge,
             "answers": {},
             "persist_cases": False,
@@ -306,9 +320,10 @@ def answer_generation_questions(
     job.error_code = None
     enqueue_task(db, "casepilot.agent.generate", [str(job.id)], task_id=job.id)
     db.commit()
-    after_commit(db, lambda: Redis.from_url(settings.redis_url).delete(
-        f"casepilot:generation:{job.id}:events"
-    ))
+    after_commit(
+        db,
+        lambda: Redis.from_url(settings.redis_url).delete(f"casepilot:generation:{job.id}:events"),
+    )
     return job_view(db, job)
 
 
@@ -332,9 +347,13 @@ def retry_generation(
     if conversation_id:
         from casepilot_api.conversations import _require_idle_conversation
 
-        conversation = db.scalar(select(Conversation).where(
-            Conversation.id == UUID(str(conversation_id)),
-        ).with_for_update())
+        conversation = db.scalar(
+            select(Conversation)
+            .where(
+                Conversation.id == UUID(str(conversation_id)),
+            )
+            .with_for_update()
+        )
         if conversation is not None:
             _require_idle_conversation(db, conversation)
             operation_id = job.input_payload.get("conversation_operation_id")
@@ -343,20 +362,29 @@ def retry_generation(
             )
             active_job_id = conversation.context.get("active_job_id")
             active_operation_id = conversation.context.get("active_operation_id")
-            latest_brief_version = db.scalar(
-                select(WorkspaceTestBrief.version)
-                .where(WorkspaceTestBrief.conversation_id == conversation.id)
-                .order_by(WorkspaceTestBrief.version.desc()).limit(1)
-            ) if job.operation == "draft_brief" else None
+            latest_brief_version = (
+                db.scalar(
+                    select(WorkspaceTestBrief.version)
+                    .where(WorkspaceTestBrief.conversation_id == conversation.id)
+                    .order_by(WorkspaceTestBrief.version.desc())
+                    .limit(1)
+                )
+                if job.operation == "draft_brief"
+                else None
+            )
             if (
                 (active_job_id and str(active_job_id) != str(job.id))
                 or (active_operation_id and str(active_operation_id) != str(operation_id))
                 or (operation and operation.related_job_id != job.id)
-                or (job.operation == "generate" and
-                    conversation.context.get("confirmed_brief_version")
-                    != job.input_payload.get("confirmed_test_brief_version"))
-                or (job.operation == "draft_brief" and latest_brief_version
-                    != job.input_payload.get("current_test_brief_version"))
+                or (
+                    job.operation == "generate"
+                    and conversation.context.get("confirmed_brief_version")
+                    != job.input_payload.get("confirmed_test_brief_version")
+                )
+                or (
+                    job.operation == "draft_brief"
+                    and latest_brief_version != job.input_payload.get("current_test_brief_version")
+                )
             ):
                 raise HTTPException(status_code=409, detail="retry_context_mismatch")
             conversation.context = {
@@ -378,12 +406,19 @@ def retry_generation(
         .where(ConversationMessage.related_job_id == job.id)
         .values(status="running", content="", message_metadata={"retrying": True})
     )
-    enqueue_task(db, "casepilot.agent.draft_brief" if job.operation == "draft_brief"
-                 else "casepilot.agent.generate", [str(job.id)], task_id=job.id)
+    enqueue_task(
+        db,
+        "casepilot.agent.draft_brief"
+        if job.operation == "draft_brief"
+        else "casepilot.agent.generate",
+        [str(job.id)],
+        task_id=job.id,
+    )
     db.commit()
-    after_commit(db, lambda: Redis.from_url(settings.redis_url).delete(
-        f"casepilot:generation:{job.id}:events"
-    ))
+    after_commit(
+        db,
+        lambda: Redis.from_url(settings.redis_url).delete(f"casepilot:generation:{job.id}:events"),
+    )
     return job_view(db, job)
 
 
@@ -406,9 +441,7 @@ def cancel_generation(
         update(GenerationJob)
         .where(
             GenerationJob.id == job.id,
-            GenerationJob.status.in_(
-                ("queued", "running", "awaiting_input")
-            ),
+            GenerationJob.status.in_(("queued", "running", "awaiting_input")),
         )
         .values(
             status="cancelled",
@@ -420,9 +453,7 @@ def cancel_generation(
     if cancelled_id is None:
         db.expire(job)
         db.refresh(job)
-        fresh_status = (
-            job.status.value if hasattr(job.status, "value") else str(job.status)
-        )
+        fresh_status = job.status.value if hasattr(job.status, "value") else str(job.status)
         if fresh_status == "cancelled":
             return job_view(db, job)
         raise HTTPException(status_code=409, detail="generation_job_already_terminal")
@@ -435,22 +466,32 @@ def cancel_generation(
             message_metadata=ConversationMessage.message_metadata.op("||")({"cancelled": True}),
         )
     )
-    operation = db.scalar(select(ConversationOperation).where(
-        ConversationOperation.related_job_id == job.id,
-    ))
+    operation = db.scalar(
+        select(ConversationOperation).where(
+            ConversationOperation.related_job_id == job.id,
+        )
+    )
     if operation is not None:
         operation.status = "cancelled"
         operation.completed_at = datetime.now(UTC)
         if operation.related_change_set_id:
-            db.execute(update(CaseChangeSet).where(
-                CaseChangeSet.id == operation.related_change_set_id,
-                CaseChangeSet.status.not_in(["applied", "rejected"]),
-            ).values(status="rejected"))
-        db.execute(update(ConversationOperation).where(
-            ConversationOperation.message_id == operation.message_id,
-            ConversationOperation.sequence > operation.sequence,
-            ConversationOperation.status == "queued",
-        ).values(status="cancelled", completed_at=datetime.now(UTC)))
+            db.execute(
+                update(CaseChangeSet)
+                .where(
+                    CaseChangeSet.id == operation.related_change_set_id,
+                    CaseChangeSet.status.not_in(["applied", "rejected"]),
+                )
+                .values(status="rejected")
+            )
+        db.execute(
+            update(ConversationOperation)
+            .where(
+                ConversationOperation.message_id == operation.message_id,
+                ConversationOperation.sequence > operation.sequence,
+                ConversationOperation.status == "queued",
+            )
+            .values(status="cancelled", completed_at=datetime.now(UTC))
+        )
     conversation_id = job.input_payload.get("conversation_id")
     if conversation_id:
         conversation = db.get(Conversation, UUID(str(conversation_id)))
@@ -459,18 +500,32 @@ def cancel_generation(
             restored_source = False
             phase = "brief_review" if context.get("confirmed_brief_version") else "idle"
             if operation is not None and operation.intent == "CASE_MODIFY":
-                phase = "candidate_review" if db.scalar(select(WorkspaceCandidate.id).where(
-                    WorkspaceCandidate.conversation_id == conversation.id,
-                    WorkspaceCandidate.status == "candidate",
-                ).limit(1)) else "maintenance"
+                phase = (
+                    "candidate_review"
+                    if db.scalar(
+                        select(WorkspaceCandidate.id)
+                        .where(
+                            WorkspaceCandidate.conversation_id == conversation.id,
+                            WorkspaceCandidate.status == "candidate",
+                        )
+                        .limit(1)
+                    )
+                    else "maintenance"
+                )
                 source_id = dict(operation.payload).get("source_operation_id")
                 if source_id:
                     source = db.get(ConversationOperation, UUID(str(source_id)))
-                    if source is not None and dict(source.payload).get("task_id") == context.get("active_mutation_task_id"):
+                    if source is not None and dict(source.payload).get("task_id") == context.get(
+                        "active_mutation_task_id"
+                    ):
                         context["active_mutation_operation_id"] = str(source.id)
                         restored_source = True
-            conversation.context = {**context, "phase": phase,
-                                    "active_job_id": None, "active_operation_id": None}
+            conversation.context = {
+                **context,
+                "phase": phase,
+                "active_job_id": None,
+                "active_operation_id": None,
+            }
             if operation is not None and not restored_source:
                 # A first-round cancellation has no previous draft to resume.
                 # Close its task as well as its job so new writes are not blocked.
@@ -480,6 +535,7 @@ def cancel_generation(
                 if not conversation.context.get("active_mutation_task_id"):
                     conversation.context = {**dict(conversation.context), "selected_targets": []}
     db.commit()
+
     def notify_cancelled():
         task_client.control.revoke(str(job.id), terminate=False)
         Redis.from_url(settings.redis_url, decode_responses=True).rpush(
@@ -494,6 +550,7 @@ def cancel_generation(
                 ensure_ascii=False,
             ),
         )
+
     after_commit(db, notify_cancelled)
     db.refresh(job)
     return job_view(db, job)

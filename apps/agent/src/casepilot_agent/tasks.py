@@ -1,6 +1,7 @@
 import json
 import logging
 from collections.abc import Callable
+from contextlib import suppress
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from functools import wraps
@@ -532,6 +533,12 @@ def lock_active_job(store: JobStore, connection: Any, job_id: UUID) -> None:
 
 
 def fail_job(store: JobStore, job_id: UUID, event_name: str, error: Exception) -> None:
+    from casepilot_agent.failure_diagnostics import worker_failure
+
+    # Preserve failure persistence even when the diagnostic sink is unavailable.
+    with suppress(Exception):
+        logging.getLogger("casepilot.safe_failure").error(
+            json.dumps(worker_failure(error, event_name, job_id)))
     with store.connection() as connection:
         if store.is_cancelled(connection, job_id):
             return
@@ -1873,6 +1880,15 @@ def draft_test_brief(job_id: str) -> dict[str, Any]:
                         complete_plan,
                         analyses,
                         target_count=gap_point_count,
+                        reserved_outputs=[{
+                            "source_key": source["key"],
+                            "source_revision": source.get("revision"),
+                            "snapshot": {
+                                field: source["snapshot"].get(field)
+                                for field in ("title", "module", "preconditions", "steps")
+                            },
+                            "coverage_status": "pending_independent_review",
+                        } for source in reserve_sources] if fresh_reserved else [],
                         on_progress=publish_planning,
                         allow_empty=bool(previous_planning)
                         and all(item.planning_update_mode == "merge" for item in analyses),

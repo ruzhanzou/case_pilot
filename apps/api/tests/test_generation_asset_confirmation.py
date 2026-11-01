@@ -191,19 +191,27 @@ async def test_selected_assets_form_new_collection_and_only_combined_mode_enqueu
         if mode == "select":
             # Shared collection provenance survives reopening in another member's
             # workspace, without granting access to the author's conversation.
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as peer:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as peer:
                 email = f"provenance-{uuid4().hex}@casepilot.test"
-                registered = await peer.post("/api/v1/auth/register", json={
-                    "email": email, "password": "CasePilot123!", "display_name": "Peer"})
+                registered = await peer.post(
+                    "/api/v1/auth/register",
+                    json={"email": email, "password": "CasePilot123!", "display_name": "Peer"},
+                )
                 assert registered.status_code == 201
                 denied = await peer.get(f"/api/v1/conversations/{cid}")
                 assert denied.status_code in {403, 404}
-                invited = await client.post(f"/api/v1/spaces/{space}/members", json={
-                    "email": email, "role": "member"})
+                invited = await client.post(
+                    f"/api/v1/spaces/{space}/members", json={"email": email, "role": "member"}
+                )
                 assert invited.status_code in {200, 201}
                 reopened = await peer.put(f"/api/v1/collections/{target['id']}/workspace")
                 assert reopened.status_code == 200, reopened.text
-                assert reopened.json()["context"]["selected_asset_provenance"][case["id"]]["revision"] == case["current_revision_id"]
+                assert (
+                    reopened.json()["context"]["selected_asset_provenance"][case["id"]]["revision"]
+                    == case["current_revision_id"]
+                )
 
 
 @pytest.mark.asyncio

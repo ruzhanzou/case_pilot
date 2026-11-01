@@ -158,7 +158,8 @@ class CollectionReference(Base):
 
     collection_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("case_collections.id", ondelete="CASCADE"), primary_key=True
+        ForeignKey("case_collections.id", ondelete="CASCADE"),
+        primary_key=True,
     )
     source_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("knowledge_sources.id"), primary_key=True
@@ -169,14 +170,27 @@ class TestCase(TimestampMixin, Base):
     __tablename__ = "test_cases"
     __table_args__ = (
         UniqueConstraint("space_id", "case_key", name="uq_test_case_space_key"),
-        Index("ix_test_case_key_search", "case_key", postgresql_using="gin",
-              postgresql_ops={"case_key": "gin_trgm_ops"}),
-        Index("ix_test_case_live_page", "space_id", "created_at", "id",
-              postgresql_include=["current_revision_id"],
-              postgresql_where=text("deleted_at IS NULL")),
-        Index("ix_test_case_live_space_id", "space_id", "id",
-              postgresql_include=["current_revision_id"],
-              postgresql_where=text("deleted_at IS NULL")),
+        Index(
+            "ix_test_case_key_search",
+            "case_key",
+            postgresql_using="gin",
+            postgresql_ops={"case_key": "gin_trgm_ops"},
+        ),
+        Index(
+            "ix_test_case_live_page",
+            "space_id",
+            "created_at",
+            "id",
+            postgresql_include=["current_revision_id"],
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index(
+            "ix_test_case_live_space_id",
+            "space_id",
+            "id",
+            postgresql_include=["current_revision_id"],
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -197,13 +211,26 @@ class TestCase(TimestampMixin, Base):
 class TestCaseRevision(TimestampMixin, Base):
     __tablename__ = "test_case_revisions"
     __table_args__ = (
-        Index("ix_case_revision_management_text", "management_search_text", postgresql_using="gin",
-              postgresql_ops={"management_search_text": "gin_trgm_ops"}),
-        Index("ix_case_revision_reuse_text", "reuse_search_text", postgresql_using="gin",
-              postgresql_ops={"reuse_search_text": "gin_trgm_ops"}),
-        Index("ix_case_revision_reuse_search",
-              text("(title || ' ' || module || ' ' || preconditions::text || ' ' || steps::text) gin_trgm_ops"),
-              postgresql_using="gin"),
+        Index(
+            "ix_case_revision_management_text",
+            "management_search_text",
+            postgresql_using="gin",
+            postgresql_ops={"management_search_text": "gin_trgm_ops"},
+        ),
+        Index(
+            "ix_case_revision_reuse_text",
+            "reuse_search_text",
+            postgresql_using="gin",
+            postgresql_ops={"reuse_search_text": "gin_trgm_ops"},
+        ),
+        Index(
+            "ix_case_revision_reuse_search",
+            text(
+                "(title || ' ' || module || ' ' || preconditions:"
+                ":text || ' ' || steps::text) gin_trgm_ops"
+            ),
+            postgresql_using="gin",
+        ),
         UniqueConstraint(
             "test_case_id",
             "revision_number",
@@ -220,10 +247,23 @@ class TestCaseRevision(TimestampMixin, Base):
     )
     revision_number: Mapped[int] = mapped_column(nullable=False)
     title: Mapped[str] = mapped_column(String(300), nullable=False)
-    management_search_text: Mapped[str] = mapped_column(Text, Computed(
-        "title || ' ' || module || ' ' || case_type || ' ' || priority || ' ' || COALESCE(source_refs->0->>'label', '') || ' ' || tags::text || ' ' || test_domains::text", persisted=True))
-    reuse_search_text: Mapped[str] = mapped_column(Text, Computed(
-        "title || ' ' || module || ' ' || preconditions::text || ' ' || steps::text", persisted=True))
+    management_search_text: Mapped[str] = mapped_column(
+        Text,
+        Computed(
+            "title || ' ' || module || ' ' || case_type || ' "
+            "' || priority || ' ' || COALESCE(source_refs->0-"
+            ">>'label', '') || ' ' || tags::text || ' ' || te"
+            "st_domains::text",
+            persisted=True,
+        ),
+    )
+    reuse_search_text: Mapped[str] = mapped_column(
+        Text,
+        Computed(
+            "title || ' ' || module || ' ' || preconditions::text || ' ' || steps::text",
+            persisted=True,
+        ),
+    )
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     module: Mapped[str] = mapped_column(String(4000), default="", nullable=False)
     priority: Mapped[str] = mapped_column(String(8), default="P1", nullable=False)
@@ -447,6 +487,7 @@ class ExecutionRecord(TimestampMixin, Base):
 class CaseProject(TimestampMixin, Base):
     __tablename__ = "case_projects"
     __table_args__ = (
+        UniqueConstraint("public_id", name="case_projects_public_id_key"),
         UniqueConstraint(
             "space_id",
             "source_system",
@@ -485,6 +526,7 @@ class CaseProject(TimestampMixin, Base):
 
 class CaseGenerationSession(TimestampMixin, Base):
     __tablename__ = "case_generation_sessions"
+    __table_args__ = (UniqueConstraint("public_id", name="case_generation_sessions_public_id_key"),)
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     public_id: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
@@ -538,6 +580,7 @@ class CaseGenerationCase(TimestampMixin, Base):
 
 class IntegrationTask(TimestampMixin, Base):
     __tablename__ = "integration_tasks"
+    __table_args__ = (UniqueConstraint("public_id", name="integration_tasks_public_id_key"),)
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     public_id: Mapped[str] = mapped_column(String(24), unique=True, nullable=False, index=True)
@@ -578,10 +621,16 @@ class PlaylistCreationSession(TimestampMixin, Base):
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     case_project_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("case_projects.id", ondelete="CASCADE"), nullable=False
+        PGUUID(as_uuid=True),
+        ForeignKey("case_projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     creator_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("accounts.id", ondelete="RESTRICT"), nullable=False
+        PGUUID(as_uuid=True),
+        ForeignKey("accounts.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
     )
     playlist_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("playlists.id", ondelete="SET NULL"), unique=True
@@ -745,6 +794,12 @@ class WorkspaceTestBrief(TimestampMixin, Base):
         PGUUID(as_uuid=True),
         ForeignKey("conversation_operations.id", ondelete="SET NULL"),
         index=True,
+    )
+    reference_binding: Mapped[dict] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+        nullable=False,
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
@@ -1125,8 +1180,15 @@ class AuditEvent(TimestampMixin, Base):
     __tablename__ = "audit_events"
     __table_args__ = (
         Index("ix_audit_space_actor", "space_id", "actor_id", "action", "resource_type"),
-        Index("ix_audit_case_creator", "resource_type", "action", "resource_id", "created_at", "id",
-              postgresql_include=["actor_id"]),
+        Index(
+            "ix_audit_case_creator",
+            "resource_type",
+            "action",
+            "resource_id",
+            "created_at",
+            "id",
+            postgresql_include=["actor_id"],
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -1145,14 +1207,29 @@ class AuditEvent(TimestampMixin, Base):
 
 class WorkspaceCaseLink(TimestampMixin, Base):
     __tablename__ = "workspace_case_links"
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC), nullable=False)
-    __table_args__ = (UniqueConstraint("brief_id", "test_point_id", "test_case_id", name="uq_workspace_point_case"),)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+    __table_args__ = (
+        UniqueConstraint(
+            "brief_id", "test_point_id", "test_case_id", name="uq_workspace_point_case"
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
-    brief_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("workspace_test_briefs.id", ondelete="CASCADE"), index=True)
+    brief_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("workspace_test_briefs.id", ondelete="CASCADE"), index=True
+    )
     test_point_id: Mapped[str] = mapped_column(String(200))
-    test_case_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("test_cases.id", ondelete="CASCADE"), index=True)
-    revision_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("test_case_revisions.id", ondelete="CASCADE"))
+    test_case_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("test_cases.id", ondelete="CASCADE"), index=True
+    )
+    revision_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("test_case_revisions.id", ondelete="CASCADE")
+    )
     origin: Mapped[str] = mapped_column(String(20), default="manual")
 
 
@@ -1201,8 +1278,13 @@ class WorkbenchContinuation(TimestampMixin, Base):
 
     __tablename__ = "workbench_continuations"
     __table_args__ = (
-        UniqueConstraint("run_id", "event_kind", "source_id", "source_version",
-                         name="uq_workbench_continuation_source"),
+        UniqueConstraint(
+            "run_id",
+            "event_kind",
+            "source_id",
+            "source_version",
+            name="uq_workbench_continuation_source",
+        ),
         Index("ix_workbench_continuation_status", "status"),
     )
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -1235,8 +1317,11 @@ class WorkbenchReservation(TimestampMixin, Base):
 
 class PlanningReview(TimestampMixin, Base):
     __tablename__ = "planning_reviews"
-    __table_args__ = (CheckConstraint("requests_used >= 0 AND requests_used <= 2",
-                                    name="ck_planning_review_budget"),)
+    __table_args__ = (
+        CheckConstraint(
+            "requests_used >= 0 AND requests_used <= 2", name="ck_planning_review_budget"
+        ),
+    )
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     conversation_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), index=True
@@ -1244,6 +1329,13 @@ class PlanningReview(TimestampMixin, Base):
     account_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("accounts.id"))
     brief_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("workspace_test_briefs.id")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        server_default=text("now()"),
+        nullable=False,
     )
     base_version: Mapped[int] = mapped_column(Integer)
     binding: Mapped[str] = mapped_column(String(64))
