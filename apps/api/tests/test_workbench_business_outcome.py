@@ -71,7 +71,10 @@ async def test_real_pg_no_execution_does_not_create_job_diff_or_change_cases(mon
         assert state["status"] == ("awaiting_input" if clarify else "completed")
         assert len(provider.observations) == (1 if clarify else 2)
         if not clarify:
-            assert turn["assistant_message"]["content"].startswith("执行记录：本轮未启动任务")
+            assert turn["assistant_message"]["content"] == "已启动改写草稿计算"
+            assert state["answer_sections"]["actions"] == []
+            assert state["answer_sections"]["information_authority"] == "unverified_dialogue"
+            assert state["final"]["message"] == turn["assistant_message"]["content"]
         assert not turn.get("operation_plan")
         for case in cases:
             row = (await client.get(f"/api/v1/test-cases/{case['id']}")).json()
@@ -171,7 +174,7 @@ async def test_pg_rejected_plan_recovery_creates_only_a_reviewable_job(monkeypat
         assert len(provider.observations) == (4 if recover else 3)
         if not recover:
             assert not turn.get("operation_plan")
-            assert turn["assistant_message"]["content"].startswith("执行记录：本轮未启动任务")
+            assert agent["answer_sections"]["actions"] == []
         else:
             assert turn["operation_plan"] is not None
         for case in cases:
@@ -199,3 +202,114 @@ async def test_rejected_new_preparation_clarification_is_not_a_completed_side_qu
         assert not latest(cid)["plan"].get("steps")
         assert snapshot(prior_id) == before  # Invalid arguments do not revoke earlier authority.
         assert not turn.get("operation_plan")
+
+
+@pytest.mark.parametrize("activity,coverage,guarded,kind,retain", [
+    ("not_executed", "not_planned", True, "answer", False),
+    ("context_observed", "not_planned", True, "answer", False),
+    ("planned", "pending_steps", True, "answer", False),
+    ("read_completed", "pending_steps", False, "answer", False),
+    ("workspace_updated", "pending_steps", False, "answer", False),
+    ("not_executed", "not_planned", False, "answer", True),
+    ("not_executed", "not_planned", False, "clarify", True),
+    ("read_completed", "not_planned", False, "answer", True),
+    ("read_completed", "steps_verified", False, "answer", True),
+    ("preparation_verified", "pending_steps", False, "action", True),
+])
+def test_display_projection_never_appends_unverified_claims(
+    activity, coverage, guarded, kind, retain,
+):
+    from casepilot_api.workbench_business_outcome import BusinessOutcome, present_final
+
+    original = FinalAnswer(kind=kind, message="synthetic original assertion")
+    result = SimpleNamespace(
+        final=original, status="completed" if kind != "clarify" else "awaiting_input",
+        events=[{"error_code": "agent_execution_unverified"}] if guarded else [],
+    )
+    outcome = BusinessOutcome(activity=activity, plan_coverage=coverage,
+                              run_id="current", receipt_ids=[])
+    displayed = present_final(result, outcome)
+    assert original.message == displayed["message"]  # Information is not execution evidence.
+    assert result.final is original and original.message == "synthetic original assertion"
+    assert set(displayed) == set(original.model_dump())
+    assert "synthetic original assertion" not in str(outcome.model_dump())
+
+
+@pytest.mark.parametrize("status", ["failed", "cancelled"])
+def test_failed_or_cancelled_final_does_not_expose_model_prose(status):
+    from casepilot_api.workbench_business_outcome import present_final
+
+    result = SimpleNamespace(final=None, status=status, events=[])
+    assert present_final(result, business_outcome("current", [])) is None
+
+
+@pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])
+def test_sections_preserve_read_data_with_receipt_and_never_approve(status):
+    from casepilot_api.workbench_business_outcome import answer_sections
+
+    rows = [{"ref": "synthetic", "snapshot": {"title": "Valid observed result"}}]
+    records = [
+        {"tool": "query_assets",
+         "receipt": {"id": "run:1", "tool": "query_assets", "effect": "read"},
+         "result": {"cases": rows}},
+        {"tool": "prepare_rewrite",
+         "receipt": {"id": "run:2", "tool": "prepare_rewrite", "effect": "prepare"},
+         "result": {"status": "queued", "requires_human_review": False}},
+        {"tool": "query_assets",
+         "receipt": {"id": "old:1", "tool": "query_assets", "effect": "read"},
+         "result": {"cases": [{"private": "must not leak"}]}},
+        {"tool": "prepare_rewrite", "receipt": None, "result": {"status": "rejected"}},
+    ]
+    section = answer_sections("run", records, status)
+    assert len(section["actions"]) == 2
+    assert section["actions"][0]["state"] == "read_completed"
+    assert section["actions"][1]["state"] == "queued"
+    assert section["read_results"][0]["rows"] == rows
+    assert section["read_results"][0]["receipt_id"] == "run:1"
+    assert "must not leak" not in str(section)
+    assert "applied" not in str(section)
+
+
+@pytest.mark.parametrize("state,review,expected", [
+    ("queued", False, "queued"), ("running", False, "queued"),
+    ("awaiting_input", True, "awaiting_review"),
+    ("completed", False, "preparation_recorded"), ("failed", False, "failed"),
+])
+def test_preparation_section_is_not_formal_application(state, review, expected):
+    from casepilot_api.workbench_business_outcome import answer_sections
+
+    sections = answer_sections("run", [{"tool": "prepare_rewrite",
+         "receipt": {
+        "id": "run:1", "tool": "prepare_rewrite", "effect": "prepare"},
+        "result": {"status": state, "requires_human_review": review}}], "completed")
+    assert sections["actions"][0]["state"] == expected
+
+@pytest.mark.parametrize("tool,expected", [
+    ("select_assets", "workspace_updated"),
+    ("select_collection", "workspace_updated"),
+    ("preview_uploaded_cases", "preparation_recorded"),
+])
+def test_turn_cancel_does_not_relabel_completed_workspace_effect(tool, expected):
+    from casepilot_api.workbench_business_outcome import answer_sections
+
+    result = answer_sections("run", [{"tool": tool, "receipt": {
+        "id": "run:1", "tool": tool, "effect": "prepare"},
+        "result": {"status": "completed"}}], "cancelled")
+    assert result["actions"][0]["state"] == expected
+
+
+def test_actual_agent_segment_receipt_survives_durable_run_projection():
+    from casepilot_api.workbench_business_outcome import answer_sections
+
+    result = WorkbenchAgent(Provider(call("query_assets"), action), [ToolSpec(
+        "query_assets", "Read", Args, lambda _: {"cases": [{"snapshot": {"title": "Read"}}]},
+        "read",
+    )]).run([], "Scoped")
+    assert result.receipt_namespace and result.receipt_namespace != "durable-run"
+    section = answer_sections("durable-run", result.tool_results, result.status,
+                              receipt_namespace=result.receipt_namespace)
+    assert section["run_id"] == "durable-run"
+    assert len(section["actions"]) == len(result.tool_results) == 1
+    assert section["read_results"][0]["rows"][0]["snapshot"]["title"] == "Read"
+    assert answer_sections("durable-run", result.tool_results, result.status,
+                           receipt_namespace="foreign")["actions"] == []

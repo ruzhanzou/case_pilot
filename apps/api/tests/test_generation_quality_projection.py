@@ -1,4 +1,5 @@
 """Generation explanations survive refresh without altering stored messages."""
+
 from uuid import UUID, uuid4
 
 import pytest
@@ -15,29 +16,50 @@ async def test_conversation_projects_generation_notes_without_changing_saved_met
     account_id = space_id = None
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            registration = await client.post("/api/v1/auth/register", json={
-                "email": f"quality-{uuid4().hex}@casepilot.test",
-                "display_name": "Quality projection", "password": "CasePilot123!",
-            })
+            registration = await client.post(
+                "/api/v1/auth/register",
+                json={
+                    "email": f"quality-{uuid4().hex}@casepilot.test",
+                    "display_name": "Quality projection",
+                    "password": "CasePilot123!",
+                },
+            )
             assert registration.status_code == 201
             account_id = UUID(registration.json()["id"])
             space_id = UUID(registration.json()["spaces"][0]["id"])
             created = await client.post("/api/v1/conversations", json={"space_id": str(space_id)})
             assert created.status_code == 201, created.text
             cid = UUID(created.json()["id"])
-            notes = [{"code": "independent_scenarios_below_target", "severity": "warning",
-                      "message": "请求50条，已确认独立场景仅24条；未循环测试点凑数。"}]
+            notes = [
+                {
+                    "code": "independent_scenarios_below_target",
+                    "severity": "warning",
+                    "message": "请求50条，已确认独立场景仅24条；未循环测试点凑数。",
+                }
+            ]
             with get_session_factory()() as db:
-                job = GenerationJob(space_id=space_id, account_id=account_id,
-                    operation="generate", status="completed", stage="completed",
+                job = GenerationJob(
+                    space_id=space_id,
+                    account_id=account_id,
+                    operation="generate",
+                    status="completed",
+                    stage="completed",
                     input_payload={"conversation_id": str(cid)},
-                    output_payload={"quality": {"passed": True, "issues": notes}})
+                    output_payload={"quality": {"passed": True, "issues": notes}},
+                )
                 db.add(job)
                 db.flush()
-                message = ConversationMessage(conversation_id=cid, role="assistant",
-                    content="已生成24条", intent="CASE_GENERATE", status="completed",
-                    related_job_id=job.id, message_metadata={"candidate_count": 24},
-                    target_case_ids=[], citations=[])
+                message = ConversationMessage(
+                    conversation_id=cid,
+                    role="assistant",
+                    content="已生成24条",
+                    intent="CASE_GENERATE",
+                    status="completed",
+                    related_job_id=job.id,
+                    message_metadata={"candidate_count": 24},
+                    target_case_ids=[],
+                    citations=[],
+                )
                 db.add(message)
                 db.commit()
                 mid = message.id
@@ -55,3 +77,52 @@ async def test_conversation_projects_generation_notes_without_changing_saved_met
                 db.execute(delete(Space).where(Space.id == space_id))
                 db.execute(delete(Account).where(Account.id == account_id))
                 db.commit()
+
+
+@pytest.mark.asyncio
+async def test_current_notes_do_not_hide_older_notes_or_weaken_their_severity():
+    from test_workbench_bridge_integration import setup
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        account, _, workspace = await setup(client)
+        old = [{"code": "old", "message": "Historical finding", "severity": "error"}]
+        current = [
+            {"code": "current", "message": "Current finding", "severity": "warning"},
+            {"code": "old", "message": "Historical finding", "severity": "warning"},
+        ]
+        with get_session_factory()() as db:
+            job = GenerationJob(
+                space_id=UUID(workspace["space_id"]),
+                account_id=UUID(account["id"]),
+                operation="generate",
+                status="completed",
+                stage="completed",
+                input_payload={"conversation_id": workspace["id"]},
+                output_payload={"quality": {"issues": current}},
+            )
+            db.add(job)
+            db.flush()
+            message = ConversationMessage(
+                conversation_id=UUID(workspace["id"]),
+                role="assistant",
+                content="Historical context",
+                status="completed",
+                related_job_id=job.id,
+                message_metadata={"generation_quality_issues": old},
+                target_case_ids=[],
+                citations=[],
+            )
+            db.add(message)
+            db.commit()
+            mid = str(message.id)
+        response = await client.get("/api/v1/conversations/" + workspace["id"])
+        assert response.status_code == 200, response.text
+        notes = next(m for m in response.json()["messages"] if m["id"] == mid)["metadata"][
+            "generation_quality_issues"
+        ]
+        assert notes == [old[0], current[0]]
+        with get_session_factory()() as db:
+            assert (
+                db.get(ConversationMessage, UUID(mid)).message_metadata["generation_quality_issues"]
+                == old
+            )

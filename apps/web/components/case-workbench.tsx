@@ -1,5 +1,7 @@
 "use client";
 
+import { CandidateReviewNotice } from "@/components/candidate-review-notice";
+
 import { DurableAgentProgress } from "@/components/durable-agent-progress";
 import { durableFromConversation } from "@/lib/workbench-durable-run";
 import { CollectionReferencePanel } from "@/components/collection-reference-panel";
@@ -25,7 +27,7 @@ import { CaseTaskArtifacts } from "@/components/case-task-artifacts";
 import { LiveAgentProgress } from "@/components/live-agent-progress";
 import { createJobObserverGuard, refreshCurrentWorkspace } from "@/lib/workbench-refresh";
 import { useWorkbenchAgentRun } from "@/lib/use-workbench-agent-run";
-import { WorkbenchAgentActivity } from "@/components/workbench-agent-activity";
+import { WorkbenchAgentActivity, WorkbenchAnswerBoundary } from "@/components/workbench-agent-activity";
 import { CollectionProposalConfirmation } from "@/components/collection-proposal-confirmation";
 import { parseCollectionProposal } from "@/lib/workbench-collection-proposal";
 import { ConversationCandidates } from "@/components/conversation-candidates";
@@ -2120,6 +2122,7 @@ export function CaseWorkbench({
                 )}
                 {querySnapshots && <div className="principle-analysis-summary"><div><strong>{pick(`Found ${querySnapshots.length} cases`, `找到 ${querySnapshots.length} 条用例`)}</strong><p>{[...new Set(querySnapshots.map((item) => item.module))].join(" · ") || pick("No matching cases", "暂无匹配用例")}</p></div><button type="button" onClick={() => navigateToReview(message.id)}>{pick("View table", "查看结果表格")}</button></div>}
                 <ConversationAttachments metadata={message.metadata} />
+                  {message.role === "assistant" && <WorkbenchAnswerBoundary value={message.metadata.workbench_agent} />}
                 {isModificationConfirmation && <CompactModificationConfirmation content={message.content} historical={isHistoricalConfirmation} />}
                 {message.content && showAnalysisDetails && !isMutationSummary && !querySnapshots && !isModificationConfirmation && (
                   <Streamdown
@@ -2299,7 +2302,7 @@ export function CaseWorkbench({
                 </div>}
                 {conversationTask?.message.id === message.id && <ConversationTaskFlow tasks={[conversationTask]} labels={localizedIntentLabels} statusLabels={localizedOperationStatusLabels} busy={conversationRunning} onResume={(task) => void resumeTask(task)} onResult={navigateToReview} />}
                 {conversationTask?.message.id === message.id && conversationTask.id === selectedTask?.id && selectedTaskChangeSet && !historicalVersion && !selectedScopeChanged && <ConversationReview changeSet={selectedTaskChangeSet} selection={acceptedFields} busy={conversationRunning} onApply={applySelectedReview} onInspect={() => navigateToReview(conversationTask.id)} />}
-                {conversationTask?.message.id === message.id && !["failed", "cancelled", "superseded", "not_applied"].includes(conversationTask.status) && <ConversationCandidates
+                {conversationTask?.message.id === message.id && !["failed", "cancelled", "superseded", "not_applied"].includes(conversationTask.status) && <ConversationCandidates conversation={workspace}
                   candidates={candidatesForTask(conversationTask, workspace).flatMap(item => {
                     const current = candidates.find(candidate => candidate.id === item.id);
                     return current?.included && !pendingCandidateRefs.includes(current.ref) ? [current] : [];
@@ -2900,6 +2903,7 @@ export function CaseWorkbench({
           </section>
         ) : workspace ? (
           <section className="principle-case-area">
+            <CandidateReviewNotice conversation={workspace} candidates={candidates.filter(item => item.included)} />
             <div className="principle-viewbar">
               <div>
                 <button

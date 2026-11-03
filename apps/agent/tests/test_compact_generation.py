@@ -532,7 +532,7 @@ def test_batch_configuration_preserves_coverage(size, concurrency, count):
 
             return OutputQuantity()
         calls.append(payload)
-        assert payload["prompt_version"] == "case-batch-v11-authorized-modifications"
+        assert payload["prompt_version"] == "case-batch-v15-risk-scope"
         assert payload["batch_count"] <= size
         return execute(stage, instruction, payload, result_type, model_id)
 
@@ -578,6 +578,8 @@ def test_runtime_skill_uses_stage_schema_without_obsolete_four_field_contract():
 
     load_test_case_generation_skill.cache_clear()
     skill = load_test_case_generation_skill()
+    assert "Use an empty array when no source-supported setup is required" in skill
+    assert "explicit no-special-setup item" not in skill
     assert "counts need not match" in skill
     assert "containing exactly the requested slots" in skill
     assert "their item counts must match" not in skill
@@ -958,3 +960,274 @@ def test_production_semantic_failure_repairs_only_affected_slots(failure):
     assert generated == [[1, 2], [2] if failure == "semantic_error" else [1, 2]]
     assert checked == generated
     assert len(result.test_cases) == 2
+
+
+def test_content_schema_allows_source_without_setup_requirements():
+    from casepilot_agent.compact_generation import CaseContent
+
+    for title, action, expected in [
+        ("输入格式校验", "提交非数字输入", "提示格式错误"),
+        ("导出空列表", "导出没有记录的列表", "得到合法空文件"),
+    ]:
+        value = CaseContent.model_validate({"slot": 1, "title": title,
+            "preconditions": [], "steps": [{"action": action, "expected": expected}]})
+        assert value.preconditions == []
+    supported = CaseContent.model_validate({"slot": 1, "title": "明确环境要求",
+        "preconditions": ["用户指定的测试租户已有一条记录"],
+        "steps": [{"action": "查询该记录", "expected": "返回指定记录"}]})
+    assert supported.preconditions == ["用户指定的测试租户已有一条记录"]
+    schema = CaseContent.model_json_schema()["properties"]["preconditions"]
+    assert schema.get("minItems", 0) == 0 and schema["maxItems"] == 12
+
+
+def test_empty_preconditions_pass_production_postprocessing_but_blank_entries_do_not():
+    from casepilot_agent.compact_generation import StageContractError, validate_case_content
+
+    case = CaseContent(slot=1, title="无来源前提", preconditions=[],
+                       steps=[CaseStep(action="执行检查", expected="返回定义结果")])
+    validate_case_content(case)
+    for changes in ({"preconditions": [" "]}, {"title": " "},
+                    {"steps": [CaseStep(action="执行检查", expected=" ")]}):
+        with pytest.raises(StageContractError):
+            validate_case_content(case.model_copy(update=changes))
+
+
+def test_generated_empty_setup_survives_full_pipeline_projection():
+    def without_setup(stage, instruction, payload, result_type, model_id):
+        result = execute(stage, instruction, payload, result_type, model_id)
+        if isinstance(result, ContentBatch):
+            for case in result.test_cases:
+                case.preconditions = []
+        return result
+
+    result = run(request(1), without_setup)
+    assert result.test_cases[0].preconditions == []
+    assert not any(i.code == "empty_test_setup" and i.severity == "error"
+                   for i in result.quality.issues)
+    assert result.quality.grounding_status == "unverified"
+
+
+def test_semantic_checker_receives_original_basis_separate_from_generated_scenario():
+    from casepilot_agent.compact_generation import PointSemanticChecks
+
+    req = request(1).model_copy(update={"prompt": "按原始规范生成", "markdown_content": "当前规范",
+        "conversation_memory": [{"role": "user", "content": "明确用户要求"},
+                                {"role": "assistant", "content": "助手推断"}]})
+    req.confirmed_plan["test_points"][0]["scenario"] = "规划模型推断的环境条件"
+    req.confirmed_plan["evidence"] = [
+        {"excerpt": "历史用例的旧条件", "material_role": "historical_cases"},
+        {"excerpt": "当前需求材料", "material_role": "requirements"},
+    ]
+    checks = []
+    def tracked(stage, instruction, payload, result_type, model_id):
+        if result_type is PointSemanticChecks:
+            checks.append(payload)
+            assert payload["planning_authority"] == "proposal_not_independent_evidence"
+            assert payload["original_requirement_sources"] == [
+                "当前规范", "按原始规范生成", "明确用户要求", "当前需求材料",
+            ]
+            assert "规划模型推断的环境条件" not in payload["original_requirement_sources"]
+            return PointSemanticChecks(checks=[{"slot": c["slot"], "errors": [],
+                                               "assertion_risks": []}
+                                              for c in payload["test_cases"]])
+        return execute(stage, instruction, payload, result_type, model_id)
+    result = GenerationPipeline(SimpleNamespace(name="real")).run(
+        req, context={}, answers={}, execute_stage=tracked)
+    assert checks and len(result.test_cases) == 1
+
+
+def test_risks_remaining_after_grounding_revision_do_not_become_valid_cases():
+    from casepilot_agent.compact_generation import MAX_REPAIR_ROUNDS, PointSemanticChecks
+
+    generation_calls = []
+    def unresolved(stage, instruction, payload, result_type, model_id):
+        if result_type is PointSemanticChecks:
+            return PointSemanticChecks(checks=[{"slot": c["slot"], "errors": [],
+                "assertion_risks": ["仍有未确认的环境前提"]} for c in payload["test_cases"]])
+        if result_type is BatchAudit:
+            result = execute(stage, instruction, payload, result_type, model_id)
+            for review in result.reviews:
+                review.verdict = "revise"
+                review.reason = "尝试修订，复查仍需判断未决风险"
+                review.replacement = CaseContent.model_validate(next(
+                    c for c in payload["test_cases"] if c["slot"] == review.slot))
+            return result
+        result = execute(stage, instruction, payload, result_type, model_id)
+        if isinstance(result, ContentBatch):
+            generation_calls.append(payload["retry_attempt"])
+        return result
+    result = GenerationPipeline(SimpleNamespace(name="real")).run(
+        request(1), context={}, answers={}, execute_stage=unresolved)
+    assert result.test_cases == []
+    assert len(generation_calls) == MAX_REPAIR_ROUNDS + 1
+    assert any(i.code == "uncovered_test_point" for i in result.quality.issues)
+    assert result.quality.grounding_status == "unverified"
+
+
+def test_explicit_user_precondition_survives_repair():
+    from casepilot_agent.compact_generation import PointSemanticChecks
+
+    condition = "用户明确要求使用只读测试租户"
+    req = request(1).model_copy(update={"prompt": condition + "；生成一条校验用例"})
+    attempts = []
+    def repair(stage, instruction, payload, result_type, model_id):
+        if result_type is PointSemanticChecks:
+            assert condition in " ".join(payload["original_requirement_sources"])
+            return PointSemanticChecks(checks=[{"slot": c["slot"],
+                "errors": [] if condition in c["preconditions"] else ["遗漏明确用户前提"],
+                "assertion_risks": []} for c in payload["test_cases"]])
+        result = execute(stage, instruction, payload, result_type, model_id)
+        if isinstance(result, ContentBatch):
+            attempts.append(payload["retry_attempt"])
+            for case in result.test_cases:
+                case.preconditions = [condition] if payload["retry_attempt"] else []
+        return result
+    result = GenerationPipeline(SimpleNamespace(name="real")).run(
+        req, context={}, answers={}, execute_stage=repair)
+    assert result.test_cases[0].preconditions == [condition]
+    assert attempts == [0, 1]
+
+
+@pytest.mark.parametrize("setup,expected_severity", [([], "warning"), ([" "], "error")])
+def test_final_quality_distinguishes_absent_setup_from_blank_placeholder(setup, expected_severity):
+    from casepilot_agent.pipeline import validate_generation
+
+    result = run(request(1))
+    result.test_cases[0].preconditions = setup
+    quality = validate_generation(result)
+    issue = next(i for i in quality.issues if i.code == "empty_test_setup")
+    assert issue.severity == expected_severity
+
+
+@pytest.mark.parametrize("origin", ["derived_brief", "unknown"])
+def test_rendered_plan_context_is_not_reintroduced_as_original_evidence(origin):
+    from casepilot_agent.compact_generation import PointSemanticChecks
+
+    req = request(1).model_copy(update={"prompt": "只按提供规范生成",
+        "markdown_content": "派生规划中的未核前提", "markdown_origin": origin})
+    req.confirmed_plan["evidence"] = [{"excerpt": "有来源的需求", "material_role": "requirements"}]
+    seen = []
+    def tracked(stage, instruction, payload, result_type, model_id):
+        if result_type is PointSemanticChecks:
+            seen.append(payload)
+            assert payload["original_requirement_sources"] == ["只按提供规范生成", "有来源的需求"]
+            assert payload["brief_context_origin"] == origin
+            return PointSemanticChecks(checks=[{"slot": c["slot"], "errors": [],
+                "assertion_risks": []} for c in payload["test_cases"]])
+        if payload.get("output_contract") == "case_batch_v2":
+            assert payload["confirmed_brief"] == "派生规划中的未核前提"
+            assert payload["confirmed_brief_origin"] == origin
+        return execute(stage, instruction, payload, result_type, model_id)
+    result = GenerationPipeline(SimpleNamespace(name="real")).run(
+        req, context={}, answers={}, execute_stage=tracked)
+    assert seen and result.test_cases
+
+
+def test_plan_only_uncertainty_does_not_force_an_unsupported_case_prerequisite():
+    from casepilot_agent.compact_generation import PointSemanticChecks
+
+    req = request(1)
+    req.confirmed_plan['test_points'][0]['scenario'] = '模型未核实的环境限制'
+    stages = []
+    def review(stage, instruction, payload, result_type, model_id):
+        stages.append(stage)
+        if result_type is PointSemanticChecks:
+            assert all(c['preconditions'] == [] for c in payload['test_cases'])
+            return PointSemanticChecks(checks=[{'slot':c['slot'],
+                'planning_warnings':['规划中的环境条件没有来源，尚待核实']}
+                for c in payload['test_cases']])
+        result = execute(stage, instruction, payload, result_type, model_id)
+        if isinstance(result, ContentBatch):
+            for case in result.test_cases:
+                case.preconditions = []
+        return result
+    result = GenerationPipeline(SimpleNamespace(name='real')).run(
+        req, context={}, answers={}, execute_stage=review)
+    assert len(result.test_cases) == 1 and result.test_cases[0].preconditions == []
+    assert result.test_points[0].scenario == '模型未核实的环境限制'
+    warning = next(i for i in result.quality.issues if i.code == 'planning_source_unverified')
+    assert warning.object_id == result.test_points[0].id and warning.severity == 'warning'
+    assert result.model_metadata['planning_review_status'] == 'pending_manual'
+    assert result.quality.grounding_status == 'unverified'
+    assert 'test_case.grounded' not in stages
+
+
+def test_real_failure_pattern_grounding_removes_case_risk_but_keeps_plan_warning():
+    from casepilot_agent.compact_generation import PointSemanticChecks
+
+    stages = []
+    feedback = []
+    def review(stage, instruction, payload, result_type, model_id):
+        stages.append(stage)
+        if stage == "test_case.generated":
+            feedback.append(payload.get("validation_feedback"))
+        if result_type is PointSemanticChecks:
+            return PointSemanticChecks(checks=[{'slot':c['slot'],
+                'assertion_risks':['用例存在未经来源支持的限制'] if c['preconditions'] else [],
+                'planning_warnings':['规划条件仍待核实'] if not c['preconditions'] else []}
+                for c in payload['test_cases']])
+        result = execute(stage, instruction, payload, result_type, model_id)
+        if result_type is BatchAudit:
+            for item in result.reviews:
+                item.verdict = 'revise'
+                item.reason = '合成审核发现用例前提缺少来源依据'
+                item.replacement = CaseContent.model_validate(next(
+                    c for c in payload['test_cases'] if c['slot'] == item.slot))
+                item.replacement.preconditions = []
+        return result
+    result = GenerationPipeline(SimpleNamespace(name='real')).run(
+        request(1), context={}, answers={}, execute_stage=review)
+    assert len(result.test_cases) == 1 and result.test_cases[0].preconditions == [], feedback
+    assert stages.count('test_case.generated') == 1
+    assert stages.count('test_case.semantics_checked') == 2
+    assert result.quality.grounding_status == 'unverified'
+    assert any(i.code == 'planning_source_unverified' for i in result.quality.issues)
+
+
+def test_planning_warning_never_waives_a_remaining_case_assertion_risk():
+    from casepilot_agent.compact_generation import MAX_REPAIR_ROUNDS, PointSemanticChecks
+
+    def review(stage, instruction, payload, result_type, model_id):
+        if result_type is PointSemanticChecks:
+            return PointSemanticChecks(checks=[{'slot':c['slot'],
+                'assertion_risks':['用例实际仍有无依据断言'],
+                'planning_warnings':['独立的规划待核事项']}
+                for c in payload['test_cases']])
+        result = execute(stage, instruction, payload, result_type, model_id)
+        if result_type is BatchAudit:
+            for item in result.reviews:
+                item.verdict = 'revise'
+                item.reason = '合成审核发现用例前提缺少来源依据'
+                item.replacement = CaseContent.model_validate(next(
+                    c for c in payload['test_cases'] if c['slot'] == item.slot))
+        return result
+    result = GenerationPipeline(SimpleNamespace(name='real')).run(
+        request(1), context={}, answers={}, execute_stage=review)
+    assert result.test_cases == []
+    assert result.quality.repair_rounds == MAX_REPAIR_ROUNDS
+    assert any(i.code == 'planning_source_unverified' for i in result.quality.issues)
+    assert any(i.code == 'uncovered_test_point' for i in result.quality.issues)
+    assert result.quality.grounding_status == 'unverified'
+
+
+def test_parallel_batches_keep_plan_warnings_bound_to_their_original_point():
+    from casepilot_agent.compact_generation import PointSemanticChecks
+
+    req = request(2).model_copy(update={'batch_size':1, 'batch_concurrency':2})
+    def review(stage, instruction, payload, result_type, model_id):
+        if result_type is PointSemanticChecks:
+            return PointSemanticChecks(checks=[{'slot':c['slot'],
+                'planning_warnings':['未核规划 '+str(c['slot'])]} for c in payload['test_cases']])
+        result = execute(stage, instruction, payload, result_type, model_id)
+        if isinstance(result, ContentBatch):
+            for case in result.test_cases:
+                case.preconditions = []
+        return result
+    result = GenerationPipeline(SimpleNamespace(name='real')).run(
+        req, context={}, answers={}, execute_stage=review)
+    assert len(result.test_cases) == 2
+    warnings = {i.object_id:i.message for i in result.quality.issues
+                if i.code == 'planning_source_unverified'}
+    assert warnings == {p.id:'规划来源待人工核实：未核规划 '+str(i)
+                        for i,p in enumerate(result.test_points, 1)}
+    assert result.quality.grounding_status == 'unverified'

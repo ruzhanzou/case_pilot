@@ -1,5 +1,7 @@
 "use client";
 
+import { CandidateReviewNotice } from "@/components/candidate-review-notice";
+
 import { CaseSource } from "@/components/workspace-case-sources";
 import { CandidatePointLinks } from "@/components/candidate-point-links";
 import { useState } from "react";
@@ -40,25 +42,6 @@ export function CaseTaskArtifacts({ readOnly = false, task, conversation, busy, 
   if (!generation) return null;
   const candidates = candidatesForTask(task, conversation);
   const visibleCandidates = candidates.filter(item => [item.ref, item.snapshot.title, item.snapshot.module].join(" ").toLocaleLowerCase().includes(candidateSearch.trim().toLocaleLowerCase()));
-  const candidateJobIds = new Set(candidates.map(item => item.generation_job_id));
-  const coveredPointIds = new Set(candidates.filter(candidate => ["candidate", "incorporated"].includes(candidate.status))
-    .flatMap(candidate => candidate.snapshot.test_point_ids ?? []));
-  const taskBrief = conversation.test_briefs.filter(item => item.source_operation_id === generation.operation?.id).at(-1);
-  const plannedPoints = taskBrief?.content.planning?.test_points ?? [];
-  const allPointsCovered = plannedPoints.length > 0 && plannedPoints.every(point => coveredPointIds.has(point.id));
-  const qualityNotes = [...new Set(conversation.messages
-    .filter(message => message.related_job_id && candidateJobIds.has(message.related_job_id))
-    .flatMap(message => {
-      const issues = message.metadata.generation_quality_issues;
-      const missing = Array.isArray(issues) ? issues.filter(issue => issue?.code === "uncovered_test_point") : [];
-      const repairedMissingPoints = missing.length > 0 && missing.every(issue => coveredPointIds.has(issue.object_id));
-      return Array.isArray(issues) ? issues.flatMap(issue => {
-        if (!issue || typeof issue.message !== "string") return [];
-        if (issue.code === "uncovered_test_point" && coveredPointIds.has(issue.object_id)) return [];
-        if (issue.code === "requirement_coverage_gap" && allPointsCovered && repairedMissingPoints) return [];
-        return [issue.message];
-      }) : [];
-    }))];
   const brief = conversation.test_briefs.filter((item) => item.source_operation_id === generation.operation?.id).at(-1);
   const currentBrief = conversation.test_briefs.at(-1);
   const canConfirmBrief = !readOnly && brief && brief.id === currentBrief?.id && conversation.context.phase === "brief_review" && !brief.content.open_questions.some((item) => item.blocking);
@@ -84,6 +67,7 @@ export function CaseTaskArtifacts({ readOnly = false, task, conversation, busy, 
       <small>{pick("Completed cases appear below after basic checks. Review them before accepting; unresolved items will be listed.", "通过基础校验的用例会展示在下方；生成结束后请人工审核再采纳，未完成项会单独列出。")}</small>
     </section>}
     {candidates.length > 0 && <section className="task-result-cases" data-testid="workspace-case-sources" aria-label={pick("Candidate results", "候选结果")}>
+      <CandidateReviewNotice conversation={conversation} candidates={candidates} />
       <header>
         <div className="task-candidate-overview"><h4><span className="task-candidate-count">{candidates.filter(item => !["archived", "discarded"].includes(item.status)).length}</span> {pick("candidate cases", "条候选用例")}</h4><span className="task-candidate-stats">{pick(`${candidates.filter(item => item.status === "candidate").length} awaiting review · ${candidates.filter(item => item.status === "incorporated").length} added`, `待审阅 ${candidates.filter(item => item.status === "candidate").length} · 已纳入 ${candidates.filter(item => item.status === "incorporated").length}`)}</span></div>
         {canEdit && <div className="task-candidate-actions">
@@ -93,10 +77,6 @@ export function CaseTaskArtifacts({ readOnly = false, task, conversation, busy, 
           </button>
         </div>}
       </header>
-      {qualityNotes.length > 0 && <details className="task-generation-notes" aria-label={pick("Generation notes", "生成说明")} open={qualityNotes.some(note => !note.includes("已完成基础校验"))}>
-        <summary>{pick("Generation checks", "生成校验说明")} · {qualityNotes.length}</summary>
-        <ul>{qualityNotes.map(note => <li key={note}>{note}</li>)}</ul>
-      </details>}
       {candidates.some(item => item.status === "generating") && <p role="status" data-testid="generation-batch-preview">{pick("Batch preview — results appear as they finish. Adoption is available after generation and validation complete.", "分批预览：已生成内容会逐批更新，整轮生成和校验完成后可采纳。")}</p>}
       {needsReview && <div><p role="status">{pick("Review the AI changes for selected candidates before adding them to the official collection.", "所选候选存在待审阅的 AI 修改，请先采纳或丢弃建议，再纳入正式集合。")}</p>{!readOnly && onReviewChanges && <button type="button" disabled={busy} onClick={onReviewChanges}>{pick("Review AI changes", "审阅 AI 修改")}</button>}</div>}
       <div className="task-candidate-filter"><input type="search" aria-label={pick("Search candidate results", "搜索候选结果")} placeholder={pick("Search title, ID or module", "搜索标题、编号或模块")} value={candidateSearch} onChange={event => setCandidateSearch(event.target.value)} /><span role="status">{visibleCandidates.length} / {candidates.length}</span>{candidateSearch && <button type="button" onClick={() => setCandidateSearch("")}>{pick("Clear filter", "清除筛选")}</button>}</div>

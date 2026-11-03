@@ -394,7 +394,10 @@ class GenerationJobView(BaseModel):
     test_points: list[dict] = Field(default_factory=list)
     test_cases: list[dict] = Field(default_factory=list)
     coverage_matrix: list[dict] = Field(default_factory=list)
-    quality: dict = Field(default_factory=dict)
+    quality: dict = Field(default_factory=dict, description=(
+        "Stage check results and notes; passed/score do not certify business semantics or "
+        "coverage independently. Candidate adoption does not change this review status."
+    ))
     source_refs: list[dict] = Field(default_factory=list)
 
 
@@ -893,7 +896,25 @@ class PlanningCaseLinkRequest(BaseModel):
     remove: bool = False
 
 
+class CandidateReviewIssue(BaseModel):
+    code: str
+    message: str
+    object_id: str | None = None
+    severity: str = "unknown"
+
+
+class CandidateGenerationReview(BaseModel):
+    authority: Literal["server_generation_job"] = "server_generation_job"
+    generation_job_id: UUID
+    status: Literal["pending_manual", "not_assessed"] = "not_assessed"
+    independent_quality_verified: Literal[False] = False
+    structural_passed: bool | None = None
+    grounding_status: Literal["unverified", "model_reviewed", "unknown"] = "unknown"
+    issues: list[CandidateReviewIssue] = Field(default_factory=list)
+
+
 class ConversationView(BaseModel):
+    generation_reviews: dict[str, CandidateGenerationReview] = Field(default_factory=dict)
     id: UUID
     space_id: UUID
     collection_id: UUID | None

@@ -1118,12 +1118,18 @@ def _conversation_view(db: Session, conversation: Conversation) -> ConversationV
         )
     pending_attachments = []
     message_views = _messages_with_attachments(db, conversation, messages, pending_attachments)
+    from casepilot_api.candidate_review import generation_reviews, merge_generation_notes
+
     # Project persisted quality notes without another request or mutating messages.
-    quality_by_job = {
-        job.id: dict(job.output_payload or {}).get("quality", {}).get("issues", [])
-        for job in jobs
-        if job.operation == "generate"
-    }
+    quality_by_job = {}
+    for job in jobs:
+        if job.operation != "generate":
+            continue
+        output = job.output_payload if isinstance(job.output_payload, dict) else {}
+        quality = output.get("quality")
+        issues = quality.get("issues") if isinstance(quality, dict) else None
+        if isinstance(issues, list):
+            quality_by_job[job.id] = issues
     from casepilot_api.workbench_run_projection import project_durable_state
     from casepilot_api.workbench_tools import refresh_agent_domain_state
 
@@ -1137,8 +1143,12 @@ def _conversation_view(db: Session, conversation: Conversation) -> ConversationV
                 ),
             }
         issues = quality_by_job.get(view.related_job_id)
-        if issues:
-            view.metadata = {**view.metadata, "generation_quality_issues": issues}
+        if issues is not None:
+            merged_issues = merge_generation_notes(
+                view.metadata.get("generation_quality_issues"), issues,
+            )
+            if merged_issues:
+                view.metadata = {**view.metadata, "generation_quality_issues": merged_issues}
     provenance = {}
     if conversation.collection_id:
         for source_context in db.scalars(
@@ -1167,7 +1177,11 @@ def _conversation_view(db: Session, conversation: Conversation) -> ConversationV
             ),
             latest=True,
         )
+    candidate_history = list(db.scalars(select(WorkspaceCandidate).where(
+        WorkspaceCandidate.conversation_id == conversation.id,
+    ).order_by(WorkspaceCandidate.created_at, WorkspaceCandidate.position)))
     return ConversationView(
+        generation_reviews=generation_reviews(db, conversation, candidate_history),
         id=conversation.id,
         space_id=conversation.space_id,
         collection_id=conversation.collection_id,
@@ -1191,14 +1205,7 @@ def _conversation_view(db: Session, conversation: Conversation) -> ConversationV
         workflow_runs=workflow_runs,
         operation_plan=_operation_plan_view(operations),
         operation_history=[_operation_view(item) for item in operation_history],
-        candidate_history=[
-            _candidate_view(item)
-            for item in db.scalars(
-                select(WorkspaceCandidate)
-                .where(WorkspaceCandidate.conversation_id == conversation.id)
-                .order_by(WorkspaceCandidate.created_at, WorkspaceCandidate.position)
-            )
-        ],
+        candidate_history=[_candidate_view(item) for item in candidate_history],
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
     )
@@ -4539,6 +4546,11 @@ def create_test_brief(
         if source_operation is not None:
             _assert_workbench_selection(db, conversation, source_operation, account=account)
         assert_revision_authority(db, conversation, previous)
+    from casepilot_api.brief_user_sources import KEY, capture_user_edits
+
+    content_data[KEY] = capture_user_edits(
+        previous.content if previous else {}, content_data, latest_version + 1,
+    )
     db.execute(
         update(WorkspaceTestBrief)
         .where(
@@ -4893,11 +4905,16 @@ def confirm_test_brief(
             **dict(brief_content.get("planning") or {}),
             "point_review_receipt": copy.deepcopy(planning["point_review_receipt"]),
         }
+    from casepilot_api.brief_user_sources import KEY, user_sources_for_brief
+
+    if isinstance(brief.content.get(KEY), dict):
+        brief_content[KEY] = copy.deepcopy(brief.content[KEY])
     brief.content = brief_content
     brief.markdown_content = render_test_brief_markdown(
         brief.version,
         brief_content,
     )
+    explicit_user_sources = user_sources_for_brief(db, conversation, brief)
     if brief.status == "draft":
         brief.status = "confirmed"
         brief.confirmed_by = account.id
@@ -4943,11 +4960,14 @@ def confirm_test_brief(
         )
     )
     prompt = str(brief_content.get("test_objective") or "生成测试用例")
+    prompt_origin = "unknown"
     # Preserve explicit quantities and scope that a brief summary may omit.
     if active_operation:
         original_request = db.get(ConversationMessage, active_operation.message_id)
-        if original_request:
+        if (original_request is not None and original_request.role == "user"
+                and original_request.conversation_id == conversation.id):
             prompt = original_request.content[:8000]
+            prompt_origin = "provided"
     # Snapshot the live inventory at confirmation, not historical chat counts.
     existing_cases = _load_scope_snapshots(db, conversation)
     pending_candidates = list(
@@ -4978,6 +4998,8 @@ def confirm_test_brief(
         stage="queued",
         input_payload={
             "prompt": prompt,
+            "prompt_origin": prompt_origin,
+            "explicit_user_sources": explicit_user_sources,
             "markdown_content": brief.markdown_content
             or render_test_brief_markdown(brief.version, brief_content),
             "file_names": [],
@@ -5224,6 +5246,9 @@ def commit_workspace_candidates(
             assert_reference_binding(
                 db, account, conversation, dict(operation.payload).get("reference_binding")
             )
+    from casepilot_api.candidate_review import generation_reviews
+
+    review_states = generation_reviews(db, conversation, candidates)
     selected_refs = {candidate.ref for candidate in candidates}
     pending_changes = db.scalars(
         select(CaseChangeSet).where(
@@ -5421,7 +5446,9 @@ def commit_workspace_candidates(
                 "当前任务继续，您可以继续修改或放弃剩余建议。"
                 if remaining
                 else "当前任务已结束，可以发起新任务。"
-            ),
+            )
+            + ("采纳仅保存用例，不代表业务预期或覆盖已独立认证；未核事项仍需人工复核。"
+               if review_states else ""),
             intent="CASE_GENERATE",
             intent_confidence=1.0,
             status="completed",
@@ -5429,6 +5456,10 @@ def commit_workspace_candidates(
             citations=[],
             message_metadata={
                 "action": "candidates_committed",
+                "generation_review_states": {
+                    job_id: {"status": review.status, "independent_quality_verified": False}
+                    for job_id, review in review_states.items()
+                },
                 "operation_id": str(active_operation_id) if active_operation_id else None,
             },
         )

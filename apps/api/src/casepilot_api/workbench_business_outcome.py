@@ -56,3 +56,50 @@ def unexecuted_answer_notice(result, outcome):
                     for event in result.events)):
         return "执行记录：本轮未启动任务或生成差异。以下仅为对话答复，不是执行成功凭据。\n\n"
     return ""
+
+
+def present_final(result, outcome):
+    """Preserve informational prose; execution authority lives in a separate section."""
+    return result.final.model_dump(mode="json") if result.final is not None else None
+
+
+def answer_sections(run_id, tool_results, status, *, receipt_namespace=None):
+    """Server-only projection. Model prose/claimed receipts cannot create actions.
+
+    Read results remain available with their exact successful current-segment receipt.
+    No preparation receipt establishes formal application or the whole goal's completion.
+    """
+    namespace = receipt_namespace or str(run_id)
+    actions = []
+    reads = []
+    for item in tool_results:
+        receipt = item.get("receipt")
+        if not receipt or not receipt["id"].startswith(namespace + ":"):
+            continue
+        data = item["result"]
+        effect = receipt["effect"]
+        state = "read_completed" if effect == "read" else "plan_recorded"
+        if effect == "prepare":
+            state = ("workspace_updated" if item["tool"] in {
+                "select_assets", "select_collection", "update_selection",
+            } else "cancelled" if data.get("status") == "cancelled" else
+                     "failed" if data.get("status") == "failed" else
+                     "queued" if data.get("status") in {"queued", "running"} else
+                     "awaiting_review" if data.get("requires_human_review") is True else
+                     "preparation_recorded")
+        actions.append({"receipt_id": receipt["id"], "tool": receipt["tool"],
+                        "effect": effect, "state": state})
+        if effect == "read" and item["tool"] in {
+            "query_assets", "query_candidates", "query_uploaded_cases", "query_collections",
+        }:
+            # This already-authorized, bounded result is business data, not a claim.
+            key = "collections" if item["tool"] == "query_collections" else "cases"
+            rows = data.get(key)
+            if isinstance(rows, list):
+                reads.append({"receipt_id": receipt["id"], "kind": key, "rows": rows,
+                              "truncated": data.get("truncated") is True,
+                              "has_more": data.get("has_more") is True})
+    return {"version": 1, "authority": "server_tool_records", "run_id": str(run_id),
+            "receipt_namespace": namespace,
+            "information_authority": "unverified_dialogue", "actions": actions,
+            "read_results": reads}

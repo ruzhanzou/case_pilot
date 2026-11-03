@@ -642,10 +642,14 @@ def test_unchanged_assets_keep_empty_setup_and_full_steps_without_new_generation
         for issue in result.quality.issues
     )
     assert result.quality.grounding_status == "unverified"
-    # The model-facing new-generation schema remains strict; a JSON claim of
-    # preserved origin does not select the server-only projection type.
-    with pytest.raises(ValidationError):
-        NewCase.model_validate({**case.model_dump(), "preserved": True})
+    # Empty setup is valid for new content too; a model origin claim still
+    # cannot select the server-only type or bypass the compact step limit.
+    if step_count <= 4:
+        parsed = NewCase.model_validate({**case.model_dump(), "preserved": True})
+        assert type(parsed) is NewCase and parsed.preconditions == []
+    else:
+        with pytest.raises(ValidationError):
+            NewCase.model_validate({**case.model_dump(), "preserved": True})
 
 
 def test_invalid_existing_shape_is_not_made_reusable():

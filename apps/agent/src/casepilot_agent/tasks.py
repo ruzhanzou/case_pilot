@@ -561,6 +561,17 @@ def fail_job(store: JobStore, job_id: UUID, event_name: str, error: Exception) -
     )
 
 
+def generation_markdown_origin(payload):
+    """Classify server job provenance without guessing from rendered text."""
+    if "confirmed_test_brief" in payload:
+        return "derived_brief"
+    if payload.get("confirmed_plan"):
+        # Legacy plan jobs without a provenance marker retain their context,
+        # but cannot promote its rendered text to independent source evidence.
+        return "unknown"
+    return "provided"
+
+
 def publish_work(store, job, stage, progress):
     output = {}
     with store.connection() as connection:
@@ -2105,7 +2116,11 @@ def generate_test_cases(job_id: str) -> dict[str, Any]:
         request = GenerationRequest(
             test_object=str((payload.get("confirmed_test_brief") or {}).get("test_object") or ""),
             prompt=str(payload["prompt"]),
+            prompt_origin=payload.get("prompt_origin", (
+                "unknown" if "confirmed_test_brief" in payload else "provided")),
+            explicit_user_sources=list(payload.get("explicit_user_sources", [])),
             markdown_content=str(payload.get("markdown_content", "")),
+            markdown_origin=generation_markdown_origin(payload),
             file_names=list(payload.get("file_names", [])),
             conversation_memory=list(payload.get("conversation_memory", [])),
             model_id=str(payload.get("model_id", "auto")),

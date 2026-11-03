@@ -664,8 +664,11 @@ def test_rewrite_preserves_legal_existing_case_shape(count):
     assert len(result.proposed.steps) == count
     assert result.proposed.steps == original.steps
     assert RewriteCandidate.model_validate(result.model_dump()).proposed.title == "现有用例标题调整"
-    with pytest.raises(ValidationError):
-        TestCaseDraft.model_validate(base)
+    if count <= 4:
+        assert TestCaseDraft.model_validate(base).preconditions == []
+    else:
+        with pytest.raises(ValidationError):
+            TestCaseDraft.model_validate(base)
 
 
 @pytest.mark.parametrize("authorized", [True, False])

@@ -92,6 +92,7 @@ class AgentResult:
     error_code: str | None = None
     final: FinalAnswer | None = None
     completion_diagnostic: dict = field(default_factory=dict)
+    receipt_namespace: str | None = None
 
 
 def responses_base_url(value: str) -> str:
@@ -720,5 +721,5 @@ class WorkbenchAgent:
              **final_diagnostics)
         return AgentResult(
             status, final.message if final else "", events, results, error_code, final,
-            completion_diagnostic,
+            completion_diagnostic, receipt_namespace=run_id,
         )

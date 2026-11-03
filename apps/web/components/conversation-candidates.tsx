@@ -1,13 +1,15 @@
 "use client";
-import type { WorkspaceCandidateDto } from "@/lib/casepilot-api";
+import { CandidateReviewNotice } from "@/components/candidate-review-notice";
+import type { ConversationDto, WorkspaceCandidateDto } from "@/lib/casepilot-api";
 import { useI18n } from "@/lib/i18n";
 
-export function ConversationCandidates({ candidates, busy, onCommit, onInspect }: { candidates: WorkspaceCandidateDto[]; busy: boolean; onCommit: (ids: string[]) => void; onInspect: () => void }) {
+export function ConversationCandidates({ conversation, candidates, busy, onCommit, onInspect }: { conversation?: ConversationDto | null; candidates: WorkspaceCandidateDto[]; busy: boolean; onCommit: (ids: string[]) => void; onInspect: () => void }) {
   const { pick } = useI18n();
   if (!candidates.length) return null;
   return <details className="conversation-review">
     <summary>{pick(`Review ${candidates.length} selected candidates`, `审阅 ${candidates.length} 条已选候选`)}</summary>
     <small>{pick("Only these selected candidates in this task will be accepted. Their displayed versions are checked by the server.", "仅采纳本任务下列已选候选，服务器会校验当前展示版本。")}</small>
+    <CandidateReviewNotice conversation={conversation ?? { messages: [] }} candidates={candidates} />
     <div className="conversation-review__items">{candidates.map(candidate => <details key={candidate.id}>
       <summary>{candidate.snapshot.title} · V{candidate.version}</summary>
       <p>{candidate.snapshot.module} · {candidate.snapshot.priority}</p>

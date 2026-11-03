@@ -302,6 +302,7 @@ export type GenerationCompleted = {
   quality: {
     structural_passed?: boolean | null;
     grounding_status?: "unverified" | "model_reviewed";
+    /** A stage check, never independent business or coverage certification. */
     passed: boolean;
     score: number;
     issues: { message: string }[];
@@ -489,7 +490,18 @@ export type PlanningCaseLinkDto = {
   case_key: string; title: string; origin: "manual" | "generated"; stale: boolean;
 };
 
+export type CandidateGenerationReviewDto = {
+  authority: "server_generation_job";
+  generation_job_id: string;
+  status: "pending_manual" | "not_assessed";
+  independent_quality_verified: false;
+  structural_passed: boolean | null;
+  grounding_status: "unverified" | "model_reviewed" | "unknown";
+  issues: { code: string; message: string; object_id: string | null; severity: string }[];
+};
+
 export type ConversationDto = {
+  generation_reviews?: Record<string, CandidateGenerationReviewDto>;
   planning_case_links?: PlanningCaseLinkDto[];
   id: string;
   space_id: string;

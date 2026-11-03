@@ -532,7 +532,7 @@ def validate_generation(result: GenerationResult) -> QualityReport:
                 )
             )
         seen_content.add(fingerprint)
-        if not case.preconditions or not any(item.strip() for item in case.preconditions):
+        if not case.preconditions or any(not item.strip() for item in case.preconditions):
             from casepilot_agent.contracts import PreservedCaseDraft
 
             issues.append(
@@ -540,9 +540,11 @@ def validate_generation(result: GenerationResult) -> QualityReport:
                     code="empty_test_setup",
                     message=("原样复用保留了已有用例的空前置条件，需人工核查。"
                              if isinstance(case, PreservedCaseDraft) else
-                             "test_setup 不能为空；无特殊前置条件时必须明确声明"),
+                             "尚未声明前置条件；来源未规定时可保持为空，不得补造限制。"
+                             if not case.preconditions else "前置条件含空白占位项。"),
                     object_id=case.id,
-                    severity="warning" if isinstance(case, PreservedCaseDraft) else "error",
+                    severity=("warning" if isinstance(case, PreservedCaseDraft)
+                              or not case.preconditions else "error"),
                 )
             )
         if not case.steps:

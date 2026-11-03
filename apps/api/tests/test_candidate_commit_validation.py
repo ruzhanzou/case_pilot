@@ -33,6 +33,11 @@ def test_candidate_excerpt_preview_preserves_reference_and_original(length):
 
 @pytest.mark.parametrize("invalid_last", [False, True])
 def test_commit_160_candidates_validates_whole_batch_before_writing(monkeypatch, invalid_last):
+    from casepilot_api import candidate_review
+
+    # Disclosure/ownership projection has real-PG coverage. This unit isolates
+    # whole-batch snapshot validation with its intentionally minimal fake session.
+    monkeypatch.setattr(candidate_review, "generation_reviews", lambda *args: {})
     conversation = SimpleNamespace(id=uuid4(), space_id=uuid4(), collection_id=uuid4(), context={})
     candidates = [
         SimpleNamespace(

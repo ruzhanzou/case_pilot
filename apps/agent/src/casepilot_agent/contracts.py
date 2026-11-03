@@ -218,9 +218,9 @@ class TestCaseDraft(RewriteCaseDraft):
     """Newly generated cases retain the compact generation contract."""
 
     preconditions: list[str] = Field(
-        min_length=1,
+        min_length=0,
         max_length=50,
-        description="test_setup：环境、状态、身份、权限和测试数据前提；新生成用例无前提时明确写无特殊前置条件。",
+        description="test_setup：仅填写有来源支持或用户明确确认的前提；没有已知前提时返回空列表，不虚构限制。",
     )
     steps: list[TestStep] = Field(
         min_length=1,
@@ -233,7 +233,7 @@ class PreservedCaseDraft(TestCaseDraft):
     """Server-only unchanged asset projection; never a model response schema.
 
     Existing assets retain their API-valid shape. New/model-written cases still
-    use TestCaseDraft, including its required setup and compact step limits.
+    use TestCaseDraft, including its compact step limits.
     """
     preconditions: list[str] = Field(min_length=0, max_length=50)
     steps: list[TestStep] = Field(min_length=1, max_length=100)
@@ -299,6 +299,15 @@ class UsageMetadata(BaseModel):
     token_usage: dict[str, int] = Field(default_factory=dict)
 
 
+class ExplicitUserSource(BaseModel):
+    """Server-recorded user field input; provenance is not a quality certificate."""
+
+    text: str = Field(min_length=1, max_length=100_000)
+    point_id: str | None = None
+    feature_id: str | None = None
+    source_version: int = Field(ge=1)
+
+
 class GenerationRequest(BaseModel):
     test_object: str = Field(default="", max_length=1000)
     batch_size: int | None = Field(default=None, ge=1, le=10)
@@ -306,13 +315,22 @@ class GenerationRequest(BaseModel):
     output_contract: str = "legacy"
     confirmed_plan: dict[str, Any] = Field(default_factory=dict)
     prompt: str = Field(min_length=1, max_length=8000)
+    prompt_origin: Literal["provided", "unknown"] = "provided"
+    explicit_user_sources: list[ExplicitUserSource] = Field(default_factory=list, max_length=512)
     markdown_content: str = Field(default="", max_length=100_000)
+    markdown_origin: Literal["provided", "derived_brief", "unknown"] = "provided"
     file_names: list[str] = Field(default_factory=list, max_length=10)
     conversation_memory: list[dict[str, str]] = Field(
         default_factory=list,
         max_length=100,
     )
     model_id: str = "auto"
+
+    @model_validator(mode="after")
+    def bounded_explicit_sources(self):
+        if sum(len(item.text) for item in self.explicit_user_sources) > 100_000:
+            raise ValueError("generation_user_source_limit")
+        return self
 
 
 class GenerationResult(BaseModel):

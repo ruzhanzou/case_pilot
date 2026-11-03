@@ -6,7 +6,7 @@ import { CollectionProposalConfirmation } from "@/components/collection-proposal
 import { parseCollectionProposal } from "@/lib/workbench-collection-proposal";
 import { LiveAgentProgress } from "@/components/live-agent-progress";
 import { useWorkbenchAgentRun } from "@/lib/use-workbench-agent-run";
-import { WorkbenchAgentActivity } from "@/components/workbench-agent-activity";
+import { WorkbenchAgentActivity, WorkbenchAnswerBoundary } from "@/components/workbench-agent-activity";
 
 // UI identifiers must also work on HTTP origins without crypto.randomUUID.
 import { attachmentAccept, clipboardImages, isImageAttachment } from "@/lib/image-attachments";
@@ -541,6 +541,7 @@ export function NewConversation({
                     <strong>CasePilot</strong>
                   )}
                   <ConversationAttachments metadata={message.metadata} />
+                  {message.role === "assistant" && <WorkbenchAnswerBoundary value={message.metadata.workbench_agent} />}
                   {message.status === "running" && !message.content ? (
                     <span className="new-conversation__thinking">
                       <LoaderCircle className="auth-spinner" size={15} />

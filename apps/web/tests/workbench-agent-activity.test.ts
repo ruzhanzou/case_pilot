@@ -40,3 +40,25 @@ test("turn completion and server business outcome remain distinct", () => {
   assert.equal(parseAgentActivity({...data,business_outcome:{...data.business_outcome,...change}})?.business_outcome,undefined);
  }
 });
+
+test("partitioned execution never derives evidence from informational claims", () => {
+ const receipt={id:"run:1",tool:"query_assets",effect:"read"};
+ const sections={version:1,authority:"server_tool_records",information_authority:"unverified_dialogue",run_id:"run",actions:[{receipt_id:"run:1",tool:"query_assets",effect:"read",state:"read_completed"}],read_results:[{receipt_id:"run:1",kind:"cases",rows:[{snapshot:{title:"Observed"}}],truncated:false,has_more:false}]};
+ const data={run_id:"run",status:"failed",events:[],receipts:[receipt],final:{kind:"answer",effect:"none",message:"All applied",receipt_ids:[]},answer_sections:sections};
+ const parsed=parseAgentActivity(data)!;
+ assert.equal(parsed.final?.message,"All applied");
+ assert.equal(verifiedAgentEffect(parsed),null);
+ assert.equal(parsed.answer_sections?.actions[0].state,"read_completed");
+ assert.equal(parsed.answer_sections?.read_results[0].rows.length,1);
+ for(const change of [{run_id:"old"},{authority:"model"},{actions:[{...sections.actions[0],state:"applied"}]},{actions:[{...sections.actions[0],receipt_id:"old:1"}]},{read_results:[{...sections.read_results[0],receipt_id:"old:1"}]}]) {
+  assert.equal(parseAgentActivity({...data,answer_sections:{...sections,...change}})?.answer_sections,undefined);
+ }
+ assert.equal(parseAgentActivity({...data,receipts:[]})?.answer_sections,undefined);
+ assert.equal(parseAgentActivity({...data,answer_sections:undefined})?.final?.message,"All applied");
+});
+
+test("durable run and actual server segment namespaces are distinct", () => {
+ const data={run_id:"durable",status:"completed",events:[],receipts:[{id:"segment:1",tool:"query_assets",effect:"read"}],answer_sections:{version:1,authority:"server_tool_records",information_authority:"unverified_dialogue",run_id:"durable",receipt_namespace:"segment",actions:[{receipt_id:"segment:1",tool:"query_assets",effect:"read",state:"read_completed"}],read_results:[]}};
+ assert.equal(parseAgentActivity(data)?.answer_sections?.actions.length,1);
+ assert.equal(parseAgentActivity({...data,answer_sections:{...data.answer_sections,receipt_namespace:"foreign"}})?.answer_sections,undefined);
+});

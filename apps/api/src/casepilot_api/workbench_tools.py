@@ -1428,15 +1428,18 @@ def run_workbench_turn(db, account, conversation, payload, settings, *,
     if hasattr(final, "model_dump"):
         final = final.model_dump(mode="json")
     from casepilot_api.workbench_business_outcome import (
+        answer_sections,
         business_outcome,
-        unexecuted_answer_notice,
+        present_final,
     )
 
     outcome = business_outcome(run_id, result.tool_results, result.completion_diagnostic)
-    answer_notice = unexecuted_answer_notice(result, outcome)
-    if answer_notice and final is not None:
-        final = {**final, "message": answer_notice + final["message"]}
+    final = present_final(result, outcome)
     state = {
+        "answer_sections": answer_sections(
+            run_id, result.tool_results, result.status,
+            receipt_namespace=result.receipt_namespace,
+        ),
         "business_outcome": outcome.model_dump(mode="json"),
         "run_id": run_id,
         "status": "awaiting_input"
@@ -1524,7 +1527,7 @@ def run_workbench_turn(db, account, conversation, payload, settings, *,
     elif result.status == "cancelled":
         content = "本次任务已停止，未提交修改。"
     else:
-        content = answer_notice + (result.text or "请补充测试目标或需要修改的范围。")
+        content = final["message"] if final else "请补充测试目标或需要修改的范围。"
     user_message = root_message
     assistant = service._new_assistant_message(
         conversation.id,
